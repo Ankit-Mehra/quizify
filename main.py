@@ -4,7 +4,13 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from api import quiz_generator
 
-app = FastAPI()
+app = FastAPI(
+    title="Quiz Generator",
+    description="Generate quizzes from text",
+    version="0.1.0",
+    docs_url="/docs",
+    redoc_url="/redoc"
+)
 
 app.include_router(quiz_generator.router, prefix="/api")
 

@@ -8,3 +8,6 @@ class QuizQuestion(BaseModel):
     correct_answer: str
     source: str
     explanation: str
+
+class QuizQuestions(BaseModel):
+    quizzes: List[QuizQuestion]

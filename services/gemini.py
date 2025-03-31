@@ -1,7 +1,7 @@
 import os
 from google import genai
 from dotenv import load_dotenv
-from schemas.quiz import QuizQuestion
+from schemas.quiz import QuizQuestions
 
 load_dotenv()
 
@@ -10,18 +10,24 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 client = genai.Client(api_key=GEMINI_API_KEY)
 
 
-def generate_quiz(text: str) -> QuizQuestion:
+def generate_quiz(text: str, num_questions: int) -> QuizQuestions:
 
     prompt = f"""
     You are an AI assistant helping generate quiz questions from study content.
 
-    From the following text, generate one multiple-choice question in JSON format using the following schema:
+    From the following text, generate {num_questions} multiple-choice questions in JSON format using the following schema:
 
-    - question: a concise, clear question that tests understanding of the content.
-    - options: a list of 4 distinct, plausible answer choices.
-    - correct_answer: exactly one correct option from the list.
-    - source: the specific sentence or phrase from the input text that justifies the correct answer.
-    - explanation: a short explanation of why the correct answer is correct in the context of the question.
+    {{
+        "quizzes": [
+            {{
+                "question": "A clear, concise question that tests understanding of the provided content.",
+                "options": ["A list of four distinct and plausible answer choices."],
+                "correct_answer": "Exactly one of the options listed above, which is the correct answer.",
+                "source": "The sentence or phrase from the text that directly supports the correct answer.",
+                "explanation": "A short explanation of why the correct answer is correct, based on the source."
+            }}
+        ]
+    }}
 
     Text:
     \"\"\"
@@ -37,9 +43,10 @@ def generate_quiz(text: str) -> QuizQuestion:
         contents=prompt,
         config= {
             "response_mime_type": "application/json",
-            "response_schema": QuizQuestion
+            "response_schema": QuizQuestions
         }
     )
+    print(response)
     return response.parsed
 
 
