@@ -1,0 +1,29 @@
+from fastapi import HTTPException, Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+import os
+import requests
+
+security = HTTPBearer()
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+
+
+def get_current_user_id(credentials: HTTPAuthorizationCredentials = Depends(security)) -> str:
+    token = credentials.credentials
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "apikey": SUPABASE_KEY
+    }
+
+    try:
+        response = requests.get(f"{SUPABASE_URL}/auth/v1/user", headers=headers)
+        if response.status_code != 200:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+        user_info = response.json()
+
+        # Use user ID (recommended) or email as identifier
+        return user_info.get("id") or user_info.get("email")
+
+    except Exception as e:
+        raise HTTPException(status_code=401, detail="Authentication failed")

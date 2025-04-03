@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quizify - Dashboard</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;900&display=swap" rel="stylesheet"> 
+</head>
+<body>
+    <div class="container">
+        <h1>Welcome to Quizify</h1>
+        <p>This is your dashboard. You can start creating quizzes and tracking your progress here.</p>
+        <form action="/api/auth/logout" method="POST">
+            <button type="submit" class="btn btn-primary">Logout</button>
+        </form>
+    </div>
+</body>
+</html>
