@@ -1,7 +1,7 @@
 import os
 from google import genai
 from dotenv import load_dotenv
-from schemas.quiz import QuizQuestions
+from schemas.quiz import Quizzes
 
 load_dotenv()
 
@@ -10,7 +10,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 client = genai.Client(api_key=GEMINI_API_KEY)
 
 
-def generate_quiz(text: str, num_questions: int) -> QuizQuestions:
+def generate_quiz(text: str, num_questions: int) -> Quizzes:
 
     prompt = f"""
     You are an AI assistant helping generate quiz questions from study content.
@@ -43,7 +43,7 @@ def generate_quiz(text: str, num_questions: int) -> QuizQuestions:
         contents=prompt,
         config= {
             "response_mime_type": "application/json",
-            "response_schema": QuizQuestions
+            "response_schema": Quizzes
         }
     )
     print(response)

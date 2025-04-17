@@ -1,51 +1,72 @@
 import os
-from fastapi import HTTPException, Request, Form
+from fastapi import HTTPException, Body, Response
 from supabase import create_client, Client
-from fastapi.templating import Jinja2Templates
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse
+from typing import Dict, Any
+from pydantic import BaseModel
+
 # Initialize Supabase client
 supabase: Client = create_client(
     supabase_url=os.getenv("SUPABASE_URL"),
     supabase_key=os.getenv("SUPABASE_KEY")
 )
 
-templates = Jinja2Templates(directory="templates")
+# Define request models
+class LoginRequest(BaseModel):
+    email: str
+    password: str
 
-def signup_page(request: Request):
-    return templates.TemplateResponse("signup.html", {"request": request})
+class LogoutRequest(BaseModel):
+    token: str = None
 
-def login_page(request: Request):
-    return templates.TemplateResponse("login.html", {"request": request})
-
-def signup(email: str = Form(...), password: str = Form(...)):
+# Remove template rendering functions
+async def signup(email: str = Body(...), password: str = Body(...)):
     try:
-        supabase.auth.sign_up({
+        response = supabase.auth.sign_up({
             "email": email,
             "password": password
         })
-        return RedirectResponse(url="/dashboard", status_code=302)
+        return JSONResponse(
+            status_code=201,
+            content={"message": "User created successfully", "user_id": response.user.id if response.user else None}
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-def login(email: str = Form(...), password: str = Form(...)):
+async def login(request: LoginRequest,response: Response):
     try:
-        supabase.auth.sign_in_with_password({
-            "email": email,
-            "password": password
+        result = supabase.auth.sign_in_with_password({
+            "email": request.email,
+            "password": request.password
         })
-        return RedirectResponse(url="/dashboard", status_code=302)
+        
+        token = result.session.access_token
+        
+        response.set_cookie(
+            key="auth_token",
+            value=token,
+            httponly=True,
+            secure=True,
+            samesite="lax",
+            max_age=60*60*24
+        )
+        return {"message": "Successfully logged in",
+                "user": {
+                    "id": result.user.id,
+                    "email": result.user.email
+                }
+            }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=401, detail="Invalid credentials")
 
-def logout():
+async def logout(response: Response):
     try:
-        supabase.auth.sign_out()
-        return {"message": "Logout successful"}
+        response.delete_cookie(key="auth_token",path="/")
+        return {"message": "Successfully logged out"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
-def verify_email(email: str):
+async def verify_email(email: str = Body(...)):
     try:
         response = supabase.table("users").select("*").eq("email", email).execute()
         if not response.data:
@@ -54,8 +75,7 @@ def verify_email(email: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
-def change_password(email: str, new_password: str):
+async def change_password(email: str = Body(...), new_password: str = Body(...)):
     try:
         response = supabase.table("users").select("*").eq("email", email).execute()
         if not response.data:
@@ -66,8 +86,7 @@ def change_password(email: str, new_password: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
-def delete_account(email: str):
+async def delete_account(email: str = Body(...)):
     try:
         response = supabase.table("users").select("*").eq("email", email).execute()
         if not response.data:
@@ -78,8 +97,7 @@ def delete_account(email: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
-def update_email(email: str, new_email: str):
+async def update_email(email: str = Body(...), new_email: str = Body(...)):
     try:
         response = supabase.table("users").select("*").eq("email", email).execute()
         if not response.data:

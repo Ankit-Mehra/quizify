@@ -1,15 +1,32 @@
-from fastapi import HTTPException, Depends
+from fastapi import HTTPException, Depends, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import os
 import requests
 
-security = HTTPBearer()
+security = HTTPBearer(auto_error=False)
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 
-def get_current_user_id(credentials: HTTPAuthorizationCredentials = Depends(security)) -> str:
-    token = credentials.credentials
+def get_current_user_id(
+        request: Request,
+        credentials: HTTPAuthorizationCredentials = Depends(security)) -> str:
+    
+    # First check for Authorization header (preferred for API clients)
+    print(f"Credentials --->: {credentials}")
+    print(f"Cookies --->: {request.cookies}")
+    token = None
+    if credentials:
+        token = credentials.credentials
+    
+    # Fallback to cookie for backward compatibility
+    if not token:
+        token = request.cookies.get("auth_token")
+    
+    if not token:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    print(f"Token --->: {token}")
     headers = {
         "Authorization": f"Bearer {token}",
         "apikey": SUPABASE_KEY
@@ -26,4 +43,17 @@ def get_current_user_id(credentials: HTTPAuthorizationCredentials = Depends(secu
         return user_info.get("id") or user_info.get("email")
 
     except Exception as e:
-        raise HTTPException(status_code=401, detail="Authentication failed")
+        raise HTTPException(status_code=401, detail=f"Authentication failed: {str(e)}")
+
+def get_current_user_token(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+) -> str:
+    token = None
+    if credentials:
+        token = credentials.credentials
+    
+    if not token:
+        token = request.cookies.get("auth_token")
+    
+    return token

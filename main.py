@@ -1,34 +1,40 @@
-from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
-from api import auth_routes, quiz_routes
+from fastapi import FastAPI
+from api import auth_routes, quiz_routes, file_routes
 from fastapi.security import HTTPBearer
 from fastapi.openapi.utils import get_openapi
+from fastapi.middleware.cors import CORSMiddleware
+import os
+import json
+
+
+# Get the CORS origins from environment variable or use default
+try:
+    BACKEND_CORS_ORIGINS = json.loads(os.getenv("BACKEND_CORS_ORIGINS", '["http://localhost:3000", "http://localhost:3001"]'))
+except json.JSONDecodeError:
+    BACKEND_CORS_ORIGINS = ["http://localhost:3000", "http://localhost:3001"]  # Fallback default
+
 app = FastAPI(
-    title="Quiz Generator",
-    description="Generate quizzes from text",
+    title="Quiz Generator API",
+    description="Backend API for Quizify application",
     version="0.1.0",
     docs_url="/docs",
     redoc_url="/redoc"
 )
 
+# Configure CORS for frontend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=BACKEND_CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "Accept"],
+    max_age=3600,  # Cache preflight requests for 1 hour
+)
+
+# Include API routers
 app.include_router(quiz_routes.router, prefix="/api")
 app.include_router(auth_routes.router, prefix="/api")
-
-# Mount static files
-app.mount("/static", StaticFiles(directory="static"), name="static")
-
-# Setup templates
-templates = Jinja2Templates(directory="templates")
-
-@app.get("/", response_class=HTMLResponse)
-async def serve_home(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
-
-@app.get("/dashboard", response_class=HTMLResponse)
-async def serve_dashboard(request: Request):
-    return templates.TemplateResponse("dashboard.html", {"request": request})
+app.include_router(file_routes.router, prefix="/api")
 
 # Security scheme for Swagger UI
 bearer_scheme = HTTPBearer()
