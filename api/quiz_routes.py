@@ -18,17 +18,21 @@ from handlers.quiz_handlers import (
     submit_quiz_answers
 )
 from typing import List
+from services.logger import app_logger as logger
 
 router = APIRouter()
+logger.info("Quiz routes initialized")
 
 # Test endpoint to check if API is working
 @router.get("/test")
 async def test_api():
+    logger.debug("Test API endpoint called")
     return {"status": "ok", "message": "API is working correctly"}
 
 # OPTIONS handler for quiz/generate
 @router.options("/quiz/generate", tags=["Quiz Generation"])
 async def quiz_generate_options():
+    logger.debug("OPTIONS request for /quiz/generate")
     return Response(
         content="",
         status_code=200,
@@ -42,6 +46,7 @@ async def quiz_generate_options():
 # OPTIONS handler for quiz submissions
 @router.options("/quiz/{quiz_id}/submit", tags=["Quiz Management"])
 async def quiz_submit_options(quiz_id: str):
+    logger.debug(f"OPTIONS request for /quiz/{quiz_id}/submit")
     return Response(
         content="",
         status_code=200,
@@ -126,6 +131,7 @@ router.add_api_route(
 # Handle undefined quiz ID specifically
 @router.get("/quiz/undefined", tags=["Quiz Management"])
 async def handle_undefined_quiz_id():
+    logger.warning("Invalid quiz ID 'undefined' was requested")
     raise HTTPException(
         status_code=400, 
         detail="Invalid quiz ID. This usually happens when quiz generation fails or no quiz ID is provided."

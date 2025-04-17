@@ -4,6 +4,9 @@ from services.ai_services.prompts import build_quiz_prompt_mcq, build_quiz_promp
 from dotenv import load_dotenv
 import os
 from typing import List
+from services.logger import ai_logger as logger
+
+logger.info("OpenAI service initialized")
 load_dotenv()
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -26,7 +29,8 @@ def generate_quiz(text: str, num_questions: int) -> Quizzes:
 
 async def generate_quiz_async(text: str, num_questions: int, question_types: List[str]) -> Quizzes:
     prompt = build_quiz_prompt_mixed(text, num_questions, question_types)
-
+    
+    logger.info(f"Generating quiz with prompt: {prompt}")
     response = await client.beta.chat.completions.parse(
         model="gpt-4o-mini",
         messages=[{"role": "user", "content": prompt}],

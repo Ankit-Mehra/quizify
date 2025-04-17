@@ -2,8 +2,12 @@ import fitz  # PyMuPDF
 import os
 import tempfile
 from docx import Document
+from services.logger import app_logger as logger
+
+logger.info("Doc service initialized")
 
 def extract_text_from_pdf(contents):
+    logger.info("Extracting text from PDF")
     with open("temp.pdf", "wb") as f:
         f.write(contents)
 
@@ -18,6 +22,7 @@ def extract_text_from_pdf(contents):
 
 def extract_text_from_docx(contents):
     # Create a temporary file to save the binary content
+    logger.info("Extracting text from DOCX")
     with tempfile.NamedTemporaryFile(suffix='.docx', delete=False) as temp:
         temp.write(contents)
         temp_path = temp.name
@@ -35,6 +40,7 @@ def extract_text_from_docx(contents):
             os.remove(temp_path)
 
 def extract_text_from_plain_text(contents):
+    logger.info("Extracting text from plain text")
     # Try different encodings to handle various file types
     encodings = ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']
     
@@ -48,5 +54,6 @@ def extract_text_from_plain_text(contents):
     return contents.decode('utf-8', errors='replace')
 
 def is_pdf(bytes_data: bytes) -> bool:
+    logger.info("Checking if file is PDF")
     return bytes_data.startswith(b"%PDF")
 

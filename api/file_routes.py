@@ -3,8 +3,10 @@ from services.db_services.supabase_file import get_file_metadata, create_presign
 from dependencies.auth_helper import get_current_user_id
 from schemas.files import FileMetadataResponse, FileDownloadResponse, FileUploadResponse
 from handlers.file_handlers import upload_file  
+from services.logger import app_logger as logger
 
 router = APIRouter(prefix="/files", tags=["Files"])
+logger.info("File routes initialized")
 
 router.add_api_route(
     path="/metadata",

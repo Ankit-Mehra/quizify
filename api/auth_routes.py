@@ -5,11 +5,14 @@ from handlers.auth_handlers import (
     delete_account, update_email
 )
 from typing import Dict, Any
+from services.logger import app_logger as logger
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
+logger.info("Auth routes initialized")
 
 @router.options("/login")
 async def login_options():
+    logger.debug("OPTIONS request for /auth/login")
     return Response(
         content="",
         status_code=200,

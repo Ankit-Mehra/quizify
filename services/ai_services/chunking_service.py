@@ -4,6 +4,9 @@ from typing import List
 import tiktoken
 from services.ai_services.openai_service import generate_quiz_async
 from schemas.quiz import Question
+from services.logger import ai_logger as logger
+
+logger.info("Chunking service initialized")
 
 async def smart_chunk_text(
     text: str,
@@ -15,6 +18,7 @@ async def smart_chunk_text(
     Splits text into a certain number of chunks based on both
     text size and # questions, with safeguards against context limit.
     """
+    logger.info("Smart chunking text")
     enc = tiktoken.get_encoding("cl100k_base")
     tokens = enc.encode(text)
     total_tokens = len(tokens)
@@ -52,6 +56,7 @@ async def generate_questions_async(
     """
     Asynchronously chunkifies text + calls LLM to generate questions concurrently.
     """
+    logger.info("Generating questions asynchronously")
     # 1. Chunk text
     chunks = await smart_chunk_text(text, total_questions, model_token_limit=model_token_limit)
     chunk_count = len(chunks)
