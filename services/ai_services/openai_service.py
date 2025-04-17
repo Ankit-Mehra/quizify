@@ -37,8 +37,4 @@ async def generate_quiz_async(text: str, num_questions: int, question_types: Lis
     if not parsed_response or not parsed_response.quizzes:
         return []
 
-    print("✅ Parsed response (raw):", parsed_response)
-    print("✅ Parsed quizzes:", parsed_response.quizzes)
-    print("✅ Type of parsed quizzes:", type(parsed_response.quizzes))
-    print("================================================")
     return parsed_response.quizzes

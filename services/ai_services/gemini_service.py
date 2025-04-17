@@ -46,7 +46,6 @@ def generate_quiz(text: str, num_questions: int) -> Quizzes:
             "response_schema": Quizzes
         }
     )
-    print(response)
     return response.parsed
 
 

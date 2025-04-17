@@ -48,7 +48,6 @@ def save_file_to_supabase(user_id: str, file_bytes: bytes, original_filename: st
 def get_file_metadata(user_id: str = Depends(get_current_user_id)):
     try:
         metadata = supabase.table("user_files").select("*").eq("user_id", user_id).execute()
-        print("🧠 Metadata:", metadata)
         return {
             "files": metadata.data
         }

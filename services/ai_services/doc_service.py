@@ -28,8 +28,7 @@ def extract_text_from_docx(contents):
         text = "\n".join([paragraph.text for paragraph in doc.paragraphs])
         return text
     except Exception as e:
-        print(f"Error extracting text from DOCX: {str(e)}")
-        return "Failed to extract text from document"
+        return f"Failed to extract text from document: {str(e)}"
     finally:
         # Clean up the temporary file
         if os.path.exists(temp_path):

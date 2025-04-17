@@ -65,7 +65,6 @@ def save_quiz_to_database(title: str, quizzes: List[Question], created_by: str):
 
             question_payload.append(base)
 
-        print("📦 Payload to insert:", question_payload)
         # Insert into questions table
         supabase.table("questions").insert(question_payload).execute()
 
@@ -124,7 +123,6 @@ def get_user_quizzes(user_id: str):
         
         return quizzes
     except Exception as e:
-        print(f"Error in get_user_quizzes: {str(e)}")  # Detailed logging
         raise HTTPException(status_code=500, detail=str(e))
 
 

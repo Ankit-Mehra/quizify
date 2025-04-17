@@ -20,7 +20,6 @@ async def smart_chunk_text(
     total_tokens = len(tokens)
 
     if total_tokens <= small_text_threshold:
-        print("🧠 Total tokens <= small_text_threshold")
         return [enc.decode(tokens)]
 
     # baseline chunk_count = # questions
@@ -67,8 +66,6 @@ async def generate_questions_async(
         if q_for_this_chunk <= 0:
             break
         
-        print(f"🧠 Processing chunk {i+1}/{chunk_count} for {q_for_this_chunk} questions... (async)")
-
         # Create async task for each chunk
         tasks.append(asyncio.create_task(
             generate_quiz_async(chunk, q_for_this_chunk, question_types)
@@ -81,8 +78,6 @@ async def generate_questions_async(
     for raw in raw_results:
         for question in raw:
             all_questions.append(question)
-    print("================================================")        
-    print(f"🧠 All questions: {all_questions}")
     
     # Filter questions based on question_types
     if "mixed" in question_types:
@@ -93,6 +88,5 @@ async def generate_questions_async(
             q for q in all_questions
             if getattr(q, "type", None) in allowed_types
         ]
-
 
     return filtered[:total_questions]

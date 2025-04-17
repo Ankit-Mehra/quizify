@@ -13,8 +13,6 @@ def get_current_user_id(
         credentials: HTTPAuthorizationCredentials = Depends(security)) -> str:
     
     # First check for Authorization header (preferred for API clients)
-    print(f"Credentials --->: {credentials}")
-    print(f"Cookies --->: {request.cookies}")
     token = None
     if credentials:
         token = credentials.credentials
@@ -26,7 +24,6 @@ def get_current_user_id(
     if not token:
         raise HTTPException(status_code=401, detail="Authentication required")
     
-    print(f"Token --->: {token}")
     headers = {
         "Authorization": f"Bearer {token}",
         "apikey": SUPABASE_KEY

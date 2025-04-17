@@ -75,7 +75,6 @@ async def generate_quiz_from_fileid(
             raise HTTPException(status_code=404, detail="File not found")
         
         file_content = parse_file_from_supabase(file_record, user_token)
-        print("🧠 File content:", file_content)
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error reading file: {str(e)}")
@@ -105,9 +104,6 @@ async def generate_quiz_from_text(
 ):
     """Generate a quiz from text content provided directly by the user."""
     try:
-        # Log the request for debugging
-        print(f"Quiz generation request: title={data.title}, content_length={len(data.content) if data.content else 0}, num_questions={data.num_questions}")
-        
         # Validate the user ID
         if not current_user_id or current_user_id == "undefined":
             raise HTTPException(
@@ -153,15 +149,13 @@ async def generate_quiz_from_text(
     
     except HTTPException as he:
         # Re-raise HTTP exceptions as-is
-        print(f"HTTP exception in generate_quiz_from_text: {he.detail}")
         raise he
     except ValueError as ve:
         # Handle validation errors
-        print(f"Validation error in generate_quiz_from_text: {str(ve)}")
+
         raise HTTPException(status_code=422, detail=str(ve))
     except Exception as e:
         # Handle all other errors
-        print(f"Error in generate_quiz_from_text: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error generating quiz: {str(e)}")
 
 # === Get user quizzes ===
@@ -170,7 +164,6 @@ async def get_user_quizzes_handler(
 ):
     """Get all quizzes created by the current user."""
     try:
-        print(f"Getting quizzes for user: {current_user_id}")
         quizzes = get_user_quizzes(current_user_id)
         return quizzes
     except Exception as e:
@@ -214,7 +207,6 @@ async def get_metadata_handler(
         
         return sources
     except Exception as e:
-        print(f"Error in get_content_sources_handler: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # === Submit quiz answers ===
