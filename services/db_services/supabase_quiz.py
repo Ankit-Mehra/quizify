@@ -63,6 +63,7 @@ def save_quiz_to_database(title: str, quizzes: List[Question], created_by: str):
                 base["correct_answer"] = q.correct_answer  # boolean, JSONB-compatible
 
             elif q.type == "fill_blank":
+                base["options"] = q.options
                 base["correct_answer"] = q.correct_answer
 
             elif q.type == "matching":

@@ -6,7 +6,7 @@ from dependencies.auth_helper import get_current_user_id, get_current_user_token
 from schemas.quiz import TextQuizRequest, FileQuizRequest
 from typing import Dict, Any
 from datetime import datetime
-from services.ai_services.chunking_service import generate_questions_async
+from services.ai_services.chunking_service import generate_quizzes_single_async
 
 # === Generate quiz from file ===
 async def generate_quiz_from_file_openai(
@@ -28,7 +28,7 @@ async def generate_quiz_from_file_openai(
         else:  # text/plain
             parsed_text = extract_text_from_plain_text(text)
 
-        quizzes = await generate_questions_async(
+        quizzes = await generate_quizzes_single_async(
             parsed_text, 
             data.num_questions,
             question_types=data.question_type
@@ -80,11 +80,14 @@ async def generate_quiz_from_fileid(
         raise HTTPException(status_code=500, detail=f"Error reading file: {str(e)}")
 
     try:   
-        quizzes = await generate_questions_async(
+        quizzes = await generate_quizzes_single_async(
             file_content, 
             data.num_questions,
             question_types=data.question_type
         )
+        
+        for q in quizzes:
+            print(f"{q.type=}, {q.correct_answer=}, {getattr(q, 'options', 'n/a')=}")
 
         quiz_id = save_quiz_to_database(data.title, quizzes, current_user_id)
         
@@ -112,7 +115,7 @@ async def generate_quiz_from_text(
             )
             
         # Generate quiz questions
-        quizzes = await generate_questions_async(
+        quizzes = await generate_quizzes_single_async(
             data.content, 
             data.num_questions,
             question_types=data.question_type

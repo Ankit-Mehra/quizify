@@ -2,7 +2,11 @@ import math
 import asyncio
 from typing import List
 import tiktoken
-from services.ai_services.openai_service import generate_quiz_async
+from services.ai_services.openai_service import (
+    generate_quiz_for_type,
+    QUESTION_TYPE_PROMPTS,
+    generate_quiz_async
+)
 from schemas.quiz import Question
 from services.logger import ai_logger as logger
 
@@ -47,7 +51,47 @@ async def smart_chunk_text(
 
     return chunks
 
-async def generate_questions_async(
+async def generate_quizzes_async(
+    text: str,
+    total_questions: int,
+    question_types: List[str],
+    model_token_limit: int = 8000
+) -> List[Question]:
+    logger.info("Generating questions asynchronously")
+
+    
+
+    # 1. Chunk once up front
+    chunks = await smart_chunk_text(text, total_questions, model_token_limit=model_token_limit)
+    logger.info(f"Smart chunked into {len(chunks)} segments")
+
+    # 2. Handle "mixed"
+    if "mixed" in question_types:
+        question_types = list(QUESTION_TYPE_PROMPTS.keys())
+
+    # 3. Distribute total questions across types
+    base = total_questions // len(question_types)
+    remainder = total_questions % len(question_types)
+    q_counts = {qt: base for qt in question_types}
+    for qt in question_types[:remainder]:
+        q_counts[qt] += 1
+
+    logger.info(f"Distribution across types: {q_counts}")
+
+    # 4. Launch one LLM call per type, using full/partial text
+    tasks = []
+    for qtype in question_types:
+        merged_text = "\n\n".join(chunks)
+        tasks.append(generate_quiz_for_type(qtype, merged_text, q_counts[qtype]))
+
+    results = await asyncio.gather(*tasks)
+
+    # 5. Flatten results
+    questions = [q for group in results for q in group]
+
+    return questions[:total_questions]
+
+async def generate_quizzes_single_async(
     text: str,
     total_questions: int,
     question_types: List[str],

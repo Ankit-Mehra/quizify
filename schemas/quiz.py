@@ -23,6 +23,7 @@ class TrueFalseQuestion(BaseModel):
 class FillBlankQuestion(BaseModel):
     type: Literal["fill_blank"]
     question: str  # use ____ or {{blank}} in question
+    options: List[str]
     correct_answer: str
     explanation: str
     source: str
