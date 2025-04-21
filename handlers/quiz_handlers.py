@@ -1,7 +1,16 @@
 from fastapi import HTTPException, Depends, Path, Body
-from services.ai_services.doc_service import extract_text_from_pdf,extract_text_from_plain_text, extract_text_from_docx
-from services.db_services.supabase_quiz import save_quiz_to_database, get_user_quizzes, get_quiz_from_database,save_metadata, get_metadata
-from services.db_services.supabase_file import get_file_record, save_file_to_supabase, parse_file_from_supabase
+from services.ai_services.doc_service import ( 
+    extract_text_from_pdf,
+    extract_text_from_plain_text,
+    extract_text_from_docx
+)
+from services.db_services.supabase_quiz import ( 
+    save_quiz_to_database, get_user_quizzes,
+    get_quiz_from_database,save_metadata, 
+    get_metadata, delete_quiz_from_database)
+from services.db_services.supabase_file import ( 
+    get_file_record, save_file_to_supabase,
+    parse_file_from_supabase)
 from dependencies.auth_helper import get_current_user_id, get_current_user_token
 from schemas.quiz import TextQuizRequest, FileQuizRequest
 from typing import Dict, Any
@@ -199,6 +208,18 @@ async def get_quiz_by_id_handler(
         raise e
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error retrieving quiz: {str(e)}")
+
+# === Delete quiz by ID ===
+async def delete_quiz_by_id_handler(
+    quiz_id: str = Path(...),
+    current_user_id: str = Depends(get_current_user_id)
+):
+    """Delete a quiz by ID."""
+    try:
+        delete_quiz_from_database(quiz_id)
+        return {"message": "Quiz deleted successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error deleting quiz: {str(e)}")
 
 # === Get metadata ===
 async def get_metadata_handler(

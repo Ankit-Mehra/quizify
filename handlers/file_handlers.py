@@ -1,5 +1,5 @@
-from fastapi import HTTPException, Depends
-from services.db_services.supabase_file import save_file_to_supabase
+from fastapi import HTTPException, Depends, Path, Body
+from services.db_services.supabase_file import save_file_to_supabase, delete_file_from_supabase
 from dependencies.auth_helper import get_current_user_id, get_current_user_token
 from fastapi import UploadFile, File
 from services.logger import app_logger as logger
@@ -29,5 +29,15 @@ async def upload_file(
     
     
     
-    
+async def delete_file(
+    file_id: str = Path(...),
+    user_token: str = Depends(get_current_user_token),
+    user_id: str = Depends(get_current_user_id),
+    data: dict = Body(...)
+):
+    try:
+        delete_file_from_supabase(file_id, user_token, user_id, data["filename"])
+        return {"message": "File deleted successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 

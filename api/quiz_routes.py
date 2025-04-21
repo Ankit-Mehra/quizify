@@ -15,7 +15,8 @@ from handlers.quiz_handlers import (
     get_user_quizzes_handler,
     get_quiz_by_id_handler,
     get_metadata_handler,
-    submit_quiz_answers
+    submit_quiz_answers,
+    delete_quiz_by_id_handler
 )
 from typing import List
 from services.logger import app_logger as logger
@@ -157,6 +158,17 @@ router.add_api_route(
     methods=["GET"],
     response_model=QuizzesResponse,
     summary="Get Quiz by ID",
+    tags=["Quiz Management"],
+    dependencies=[Depends(get_current_user_id)],
+    openapi_extra={"security": [{"BearerAuth": []}]},
+)
+
+# Delete quiz by ID
+router.add_api_route(
+    path="/quiz/{quiz_id}",
+    endpoint=delete_quiz_by_id_handler,
+    methods=["DELETE"],
+    summary="Delete Quiz by ID",
     tags=["Quiz Management"],
     dependencies=[Depends(get_current_user_id)],
     openapi_extra={"security": [{"BearerAuth": []}]},

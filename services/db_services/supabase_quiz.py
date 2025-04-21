@@ -162,3 +162,11 @@ def get_metadata(user_id: str):
     except Exception as e:
         logger.error(f"Error retrieving metadata: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+def delete_quiz_from_database(quiz_id: str):
+    try:
+        logger.info(f"Deleting quiz with ID: {quiz_id}")
+        supabase.table("quizzes").delete().eq("id", quiz_id).execute()
+        logger.info(f"Quiz deleted successfully: {quiz_id}")
+    except Exception as e:
+        logger.error(f"Error deleting quiz: {str(e)}", exc_info=True)

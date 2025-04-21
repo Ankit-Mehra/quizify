@@ -118,3 +118,26 @@ def parse_file_from_supabase(file_record: dict, user_token: str) -> str:
         else:
             # assume text or handle docx, etc.
             return file_bytes.decode("utf-8", errors="ignore")
+
+def delete_file_from_supabase(file_id: str, token: str, user_id: str, original_filename: str):
+    try:
+        supabase.table("user_files").delete().eq("id", file_id).execute()
+        delete_file_from_supabase_storage(file_id, token, user_id, original_filename)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+def delete_file_from_supabase_storage(file_id: str, token: str, user_id: str, original_filename: str):
+    try:
+        file_name = f"{file_id}_{original_filename}"
+        path = f"{user_id}/{file_name}"
+        #using httpx to delete the file from supabase storage
+        url = f"{SUPABASE_URL}/storage/v1/object/{STORAGE_NAME}/{path}"
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/octet-stream"
+        }
+        response = httpx.delete(url, headers=headers)
+        response.raise_for_status()
+        return response.json()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
