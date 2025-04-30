@@ -27,7 +27,7 @@ router.add_api_route(
     endpoint=create_presigned_url,
     methods=["GET"],
     response_model=FileDownloadResponse,
-    summary="Get File Metadata by ID",
+    summary="Download File by ID",
     dependencies=[Depends(get_current_user_id)],
     tags=["Files"]
 )

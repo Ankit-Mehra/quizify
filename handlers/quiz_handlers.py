@@ -16,6 +16,7 @@ from schemas.quiz import TextQuizRequest, FileQuizRequest
 from typing import Dict, Any
 from datetime import datetime
 from services.ai_services.chunking_service import generate_quizzes_single_async
+from services.logger import app_logger as logger
 
 # === Generate quiz from file ===
 async def generate_quiz_from_file_openai(
@@ -78,34 +79,85 @@ async def generate_quiz_from_fileid(
     current_user_id: str = Depends(get_current_user_id),
     user_token: str = Depends(get_current_user_token)
 ):
+    logger.info(f"Generating quiz from file ID: {file_id}")
+    logger.info(f"User ID: {current_user_id}")
+    logger.info(f"Quiz parameters: title={data.title}, num_questions={data.num_questions}, question_types={data.question_type}")
+    
+    file_content = None
+    
     try:
+        # Check file record exists
         file_record = get_file_record(file_id)
-        if not file_record:
-            raise HTTPException(status_code=404, detail="File not found")
         
-        file_content = parse_file_from_supabase(file_record, user_token)
+        if not file_record:
+            logger.error(f"File not found with ID: {file_id}")
+            raise HTTPException(status_code=404, detail="File not found in the database")
+        
+        # Check user authorization
+        if file_record["user_id"] != current_user_id:
+            logger.error(f"Unauthorized access to file {file_id} by user {current_user_id}")
+            raise HTTPException(status_code=403, detail="You don't have permission to access this file")
+            
+        # Print the storage path for debugging
+        storage_path = file_record.get("storage_path")
+        logger.info(f"File storage path: {storage_path}")
+        
+        # Try to get content from storage
+        try:
+            logger.info("Attempting to get file content...")
+            file_content = parse_file_from_supabase(file_record, user_token)
+            logger.info(f"Successfully retrieved file content: {len(file_content)} characters")
+        except HTTPException as he:
+            if he.status_code == 404:
+                logger.error("File missing from storage but exists in database")
+                raise HTTPException(
+                    status_code=404,
+                    detail="The file was found in the database but is missing from storage. It may have been deleted."
+                )
+            # Re-raise other HTTP exceptions
+            raise he
+        
+        # Validate content
+        if not file_content or not isinstance(file_content, str) or len(file_content.strip()) < 10:
+            logger.error(f"Invalid or insufficient content extracted from file {file_id}")
+            raise HTTPException(status_code=400, detail="The file content couldn't be properly extracted or is too short")
 
+    except HTTPException as he:
+        # Re-raise HTTP exceptions
+        raise he
     except Exception as e:
+        logger.error(f"Error reading file {file_id}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error reading file: {str(e)}")
 
-    try:   
+    try:
+        logger.info(f"Generating quiz questions from file content (length: {len(file_content)})")
         quizzes = await generate_quizzes_single_async(
             file_content, 
             data.num_questions,
             question_types=data.question_type
         )
         
-        for q in quizzes:
-            print(f"{q.type=}, {q.correct_answer=}, {getattr(q, 'options', 'n/a')=}")
-
+        if not quizzes or len(quizzes) == 0:
+            logger.error(f"No questions were generated for file {file_id}")
+            raise HTTPException(status_code=500, detail="No questions were generated. The AI service may have failed.")
+        
+        logger.info(f"Generated {len(quizzes)} questions")
+        for i, q in enumerate(quizzes):
+            logger.info(f"Question {i+1}: type={q.type}, correct_answer={q.correct_answer}")
+        
         quiz_id = save_quiz_to_database(data.title, quizzes, current_user_id)
+        logger.info(f"Saved quiz with ID: {quiz_id}")
         
         return {
             "quiz_id": quiz_id, 
             "title": data.title,
             "message": "Quiz generated successfully from file"
         }
+    except HTTPException as he:
+        # Re-raise HTTP exceptions
+        raise he
     except Exception as e:
+        logger.error(f"Error generating quiz from file {file_id}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error generating quiz: {str(e)}")
 
 # === Generate quiz from text ===

@@ -72,7 +72,7 @@ class TextQuizRequest(BaseModel):
     title: str = Field(..., description="Title of the quiz")
     content: str = Field(..., description="Content to generate questions from")
     question_type: List[Literal[
-        "mcq", "true_false", "fill_in_the_blank","matching","mixed"]] = ["mixed"]
+        "multiple_choice", "true_false", "fill_blank","matching","mixed"]] = ["mixed"]
     num_questions: Optional[int] = Field(10, gt=0, le=50, description="Number of questions to generate")
 
     @model_validator(mode='after')
@@ -90,7 +90,7 @@ class FileQuizRequest(BaseModel):
     title: str = Field(..., description="Title of the quiz")
     num_questions: Optional[int] = Field(10, gt=0, le=50, description="Number of questions to generate")
     question_type: List[Literal[
-        "mcq", "true_false", "fill_in_the_blank","matching","mixed"]] = Field(default=["mixed"], description="Type of questions to generate")
+        "multiple_choice", "true_false", "fill_blank","matching","mixed"]] = Field(default=["mixed"], description="Type of questions to generate")
     file: Optional[UploadFile] = None
     
     @model_validator(mode='after')

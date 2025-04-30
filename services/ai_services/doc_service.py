@@ -8,17 +8,25 @@ logger.info("Doc service initialized")
 
 def extract_text_from_pdf(contents):
     logger.info("Extracting text from PDF")
-    with open("temp.pdf", "wb") as f:
-        f.write(contents)
-
-    text = ""
-    doc = fitz.open("temp.pdf")
-    for page in doc:
-        text += page.get_text()
-    doc.close()
-    os.remove("temp.pdf")
+    # Create a temporary file with proper context management
+    with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as temp:
+        temp.write(contents)
+        temp_path = temp.name
     
-    return text
+    try:
+        text = ""
+        doc = fitz.open(temp_path)
+        for page in doc:
+            text += page.get_text()
+        doc.close()
+        return text
+    except Exception as e:
+        logger.error(f"Error extracting text from PDF: {str(e)}")
+        raise Exception(f"Failed to extract text from PDF: {str(e)}")
+    finally:
+        # Clean up the temporary file
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
 
 def extract_text_from_docx(contents):
     # Create a temporary file to save the binary content
