@@ -98,7 +98,6 @@ async def generate_quiz_from_fileid(
             logger.error(f"Unauthorized access to file {file_id} by user {current_user_id}")
             raise HTTPException(status_code=403, detail="You don't have permission to access this file")
             
-        # Print the storage path for debugging
         storage_path = file_record.get("storage_path")
         logger.info(f"File storage path: {storage_path}")
         

@@ -28,7 +28,6 @@ def get_question(question_ids: List[UUID]) -> List[Question]:
             .in_("id", question_ids)
             .execute()
         )
-        print(f"Response: {response.data}")
         return response.data
     except Exception as e:
         logger.error(f"Error retrieving questions: {str(e)}")

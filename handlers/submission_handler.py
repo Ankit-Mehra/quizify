@@ -77,7 +77,6 @@ async def submit_quiz(
         })
 
     score = round((correct / submission.total_questions) * 100, 2)
-    print(f"score: {score}")
 
     new_submission = QuizSubmission(
         id=uuid4(),
@@ -114,7 +113,6 @@ async def submit_quiz(
 
 async def get_submission(submission_id: UUID, user_id: UUID = Depends(get_current_user_id)):
     submission = get_submission_by_id(submission_id)
-    print(f"Submission: {submission}")
     if submission["user_id"] != user_id:
         raise HTTPException(status_code=403, detail="You are not authorized to access this submission")
     return submission

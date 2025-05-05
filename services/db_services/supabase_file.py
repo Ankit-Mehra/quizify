@@ -99,7 +99,6 @@ def create_presigned_url(file_id: str, user_id: str = Depends(get_current_user_i
                 "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json"
             }
-            print(f"request url: {SUPABASE_URL}/storage/v1/object/sign/{STORAGE_NAME}/{storage_path}")
             response = httpx.post(
                 f"{SUPABASE_URL}/storage/v1/object/sign/{STORAGE_NAME}/{storage_path}",
                 headers=headers,
@@ -110,7 +109,6 @@ def create_presigned_url(file_id: str, user_id: str = Depends(get_current_user_i
             )
             
             response.raise_for_status()
-            print(f"url: {SUPABASE_URL}/storage/v1{response.json()['signedURL']}")
             return {
                 "url": f"{SUPABASE_URL}/storage/v1{response.json()['signedURL']}",
                 "expires_in": 300
@@ -149,16 +147,10 @@ def read_file_content(path: str, token: str):
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/octet-stream"
         }
-        
-        print(f"Attempting to read file from: {url}")
-        
+
         response = httpx.get(url, headers=headers)
         
-        # Print response details for debugging
-        print(f"Response status code: {response.status_code}")
-        
         if response.status_code == 404:
-            print(f"File not found in storage: {path}")
             raise HTTPException(
                 status_code=404, 
                 detail=f"File not found in storage. Please check if it was deleted or the path is correct: {path}"
@@ -167,12 +159,10 @@ def read_file_content(path: str, token: str):
         response.raise_for_status()
         
         # Successful retrieval
-        print(f"Successfully retrieved file, size: {len(response.content)} bytes")
+
         return response.content
     
     except httpx.HTTPStatusError as e:
-        print(f"HTTP error retrieving file: {str(e)}")
-        print(f"Response details: {e.response.status_code} - {e.response.text}")
         if e.response.status_code == 404:
             raise HTTPException(
                 status_code=404, 
@@ -180,7 +170,6 @@ def read_file_content(path: str, token: str):
             )
         raise HTTPException(status_code=e.response.status_code, detail=f"Storage service error: {e.response.text}")
     except Exception as e:
-        print(f"Unexpected error reading file content: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -199,8 +188,6 @@ def parse_file_from_supabase(file_record: dict, user_token: str) -> str:
         file_path = file_record["storage_path"]
         file_type = file_record.get("file_type", "")  # e.g. 'application/pdf'
         
-        print(f"Getting file content from path: {file_path}, type: {file_type}")
-        
         try:
             file_bytes = read_file_content(file_path, user_token)
             
@@ -209,24 +196,20 @@ def parse_file_from_supabase(file_record: dict, user_token: str) -> str:
     
             # Approach A: Use stored mime-type or extension
             if file_type == "application/pdf":
-                print("Extracting text from PDF based on mime type")
                 return extract_text_from_pdf(file_bytes)
             elif file_type.startswith("text/"):
-                print("Processing as text file based on mime type")
                 return file_bytes.decode("utf-8", errors="ignore")
             else:
                 # fallback: check the raw bytes
                 if is_pdf(file_bytes):
-                    print("Detected PDF format from bytes signature")
                     return extract_text_from_pdf(file_bytes)
                 else:
                     # assume text or handle docx, etc.
-                    print("Defaulting to text processing")
                     return file_bytes.decode("utf-8", errors="ignore")
         except HTTPException as he:
             if he.status_code == 404:
                 # File not found in storage - provide a clear error
-                print(f"File not found in storage: {file_path}")
+                logger.error(f"File not found in storage: {file_path}")
                 raise HTTPException(
                     status_code=404,
                     detail="The file could not be found in storage. It may have been deleted."
@@ -238,7 +221,7 @@ def parse_file_from_supabase(file_record: dict, user_token: str) -> str:
         # Re-raise HTTP exceptions
         raise he
     except Exception as e:
-        print(f"Error parsing file from Supabase: {str(e)}")
+        logger.error(f"Error parsing file content: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error parsing file content: {str(e)}")
 
 def delete_file_from_supabase(file_id: str, token: str, user_id: str, original_filename: str):
