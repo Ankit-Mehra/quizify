@@ -98,6 +98,7 @@ def get_quiz_from_database(quiz_id: str):
         
         quiz_data = quiz.data[0]
         questions_data = questions.data
+        print(questions_data)
         logger.info(f"Found quiz '{quiz_data['title']}' with {len(questions_data)} questions")
         
         # Format the response

@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from api import auth_routes, quiz_routes, file_routes
+from api import auth_routes, quiz_routes, file_routes, submission_routes
 from fastapi.security import HTTPBearer
 from fastapi.openapi.utils import get_openapi
 from fastapi.middleware.cors import CORSMiddleware
@@ -40,6 +40,7 @@ logger.info("CORS middleware configured")
 app.include_router(quiz_routes.router, prefix="/api")
 app.include_router(auth_routes.router, prefix="/api")
 app.include_router(file_routes.router, prefix="/api")
+app.include_router(submission_routes.router, prefix="/api")
 logger.info("API routers registered")
 
 # Security scheme for Swagger UI

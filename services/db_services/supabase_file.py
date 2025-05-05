@@ -4,7 +4,7 @@ import uuid
 from fastapi import HTTPException, Depends
 from supabase import create_client, Client
 from datetime import datetime
-from dependencies.auth_helper import get_current_user_id, get_current_user_token
+from dependencies.auth_dependencies import get_current_user_id, get_current_user_token
 from services.ai_services.doc_service import extract_text_from_pdf, is_pdf
 import logging
 

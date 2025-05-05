@@ -11,7 +11,7 @@ from services.db_services.supabase_quiz import (
 from services.db_services.supabase_file import ( 
     get_file_record, save_file_to_supabase,
     parse_file_from_supabase)
-from dependencies.auth_helper import get_current_user_id, get_current_user_token
+from dependencies.auth_dependencies import get_current_user_id, get_current_user_token
 from schemas.quiz import TextQuizRequest, FileQuizRequest
 from typing import Dict, Any
 from datetime import datetime

@@ -1,6 +1,6 @@
 from fastapi import HTTPException, Depends, Path, Body
 from services.db_services.supabase_file import save_file_to_supabase, delete_file_from_supabase
-from dependencies.auth_helper import get_current_user_id, get_current_user_token
+from dependencies.auth_dependencies import get_current_user_id, get_current_user_token
 from fastapi import UploadFile, File
 from services.logger import app_logger as logger
 

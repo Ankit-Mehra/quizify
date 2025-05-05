@@ -2,10 +2,14 @@
 from pydantic import BaseModel, Field, model_validator, ConfigDict
 from typing import List, Optional, Literal, Union
 from fastapi import UploadFile
-
+from uuid import UUID
 # === 1. Question type models ===
-
-class MCQQuestion(BaseModel):
+class QuestionBase(BaseModel):
+    id: Optional[UUID] = None
+    quiz_id: Optional[UUID] = None
+    explanation: str
+    source: str
+class MCQQuestion(QuestionBase):
     type: Literal["multiple_choice"]
     question: str
     options: List[str]
@@ -13,14 +17,14 @@ class MCQQuestion(BaseModel):
     explanation: str
     source: str
 
-class TrueFalseQuestion(BaseModel):
+class TrueFalseQuestion(QuestionBase):
     type: Literal["true_false"]
     question: str
     correct_answer: bool
     explanation: str
     source: str
 
-class FillBlankQuestion(BaseModel):
+class FillBlankQuestion(QuestionBase):
     type: Literal["fill_blank"]
     question: str  # use ____ or {{blank}} in question
     options: List[str]
@@ -28,7 +32,7 @@ class FillBlankQuestion(BaseModel):
     explanation: str
     source: str
 
-class MatchingQuestion(BaseModel):
+class MatchingQuestion(QuestionBase):
     type: Literal["matching"]
     question: str
     left: List[str]

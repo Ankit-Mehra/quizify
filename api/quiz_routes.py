@@ -7,7 +7,7 @@ from schemas.quiz import (
     MyQuizzesResponse,
     FileQuizRequest
 )
-from dependencies.auth_helper import get_current_user_id
+from dependencies.auth_dependencies import get_current_user_id
 from handlers.quiz_handlers import (
     generate_quiz_from_file_openai,
     generate_quiz_from_text,

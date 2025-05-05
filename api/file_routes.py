@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends
 from services.db_services.supabase_file import get_file_metadata, create_presigned_url
-from dependencies.auth_helper import get_current_user_id
+from dependencies.auth_dependencies import get_current_user_id
 from schemas.files import FileMetadataResponse, FileDownloadResponse, FileUploadResponse
 from handlers.file_handlers import upload_file, delete_file
 from services.logger import app_logger as logger
