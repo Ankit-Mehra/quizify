@@ -43,7 +43,12 @@ class MatchingQuestion(QuestionBase):
 
 # === 2. Discriminated union ===
 
-Question = Union[MCQQuestion, TrueFalseQuestion, FillBlankQuestion, MatchingQuestion]
+Question = Union[
+    MCQQuestion,
+    TrueFalseQuestion,
+    FillBlankQuestion,
+    MatchingQuestion
+]
 
 # === 3. Wrapper for lists of questions ===
 

@@ -1,5 +1,6 @@
 from openai import AsyncOpenAI
 from schemas.quiz import Quizzes, Question
+from schemas.quizzes_parsed import QuizzesParsed
 from services.ai_services.prompt_smart import (
     build_quiz_prompt_mcq,
     build_quiz_prompt_true_false,
@@ -12,6 +13,8 @@ from typing import List
 import os
 import re
 from services.logger import ai_logger as logger
+from uuid import uuid4
+from schemas.conversion import convert_parsed_to_quizzes
 
 logger.info("OpenAI service initialized")
 load_dotenv()
@@ -56,12 +59,13 @@ async def generate_quiz_async(text: str, num_questions: int, question_types: Lis
     response = await client.beta.chat.completions.parse(
         model="gpt-4o-mini",
         messages=[{"role": "user", "content": prompt}],
-        response_format= Quizzes
+        response_format= QuizzesParsed
     )
     parsed_response = response.choices[0].message.parsed
 
     if not parsed_response or not parsed_response.quizzes:
         return []
-
-    return parsed_response.quizzes
+    quiz_id = uuid4()
+    parsed_quizzes = convert_parsed_to_quizzes(parsed_response, quiz_id)
+    return parsed_quizzes.quizzes
 

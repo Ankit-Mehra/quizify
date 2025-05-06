@@ -146,7 +146,20 @@ async def generate_quiz_from_fileid(
         
         quiz_id = save_quiz_to_database(data.title, quizzes, current_user_id)
         logger.info(f"Saved quiz with ID: {quiz_id}")
-        
+
+        metadata = {
+            "quiz_id": quiz_id,
+            "content_type": file_record["file_type"],
+            "file_name": file_record["original_filename"],
+            "file_type": file_record["file_type"],
+            "word_count": len(file_content.split()),
+            "created_by": current_user_id,
+            "created_at": datetime.now().isoformat(),
+            "question_count": len(quizzes)
+        }
+        save_metadata(metadata)
+        logger.info(f"Saved metadata for quiz {quiz_id}")
+
         return {
             "quiz_id": quiz_id, 
             "title": data.title,
