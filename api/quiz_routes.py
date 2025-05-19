@@ -181,4 +181,6 @@ router.add_api_route(
     methods=["POST"],
     summary="Submit Quiz Answers",
     tags=["Quiz Management"],
+    dependencies=[Depends(get_current_user_id)],
+    openapi_extra={"security": [{"BearerAuth": []}]},
 )

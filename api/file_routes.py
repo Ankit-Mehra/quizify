@@ -29,6 +29,9 @@ router.add_api_route(
     response_model=FileDownloadResponse,
     summary="Download File by ID",
     dependencies=[Depends(get_current_user_id)],
+    openapi_extra={
+        "security": [{"BearerAuth": []}]
+    },
     tags=["Files"]
 )
 
@@ -39,6 +42,11 @@ router.add_api_route(
     methods=["POST"],
     response_model=FileUploadResponse,
     summary="Upload File",
+    dependencies=[Depends(get_current_user_id)],
+    openapi_extra={
+        "security": [{"BearerAuth": []}]
+    },
+    tags=["Files"]
 )
 
 # === Delete file by ID ===
@@ -48,5 +56,8 @@ router.add_api_route(
     methods=["DELETE"],
     summary="Delete File by ID",
     dependencies=[Depends(get_current_user_id)],
+    openapi_extra={
+        "security": [{"BearerAuth": []}]
+    },
     tags=["Files"]
 )

@@ -43,6 +43,7 @@ def setup_logger(name, log_file, level=logging.INFO):
 ai_logger = setup_logger('ai_services', 'ai_services.log')
 db_logger = setup_logger('db_services', 'db_services.log')
 app_logger = setup_logger('app', 'app.log')
+middleware_logger = setup_logger('middleware', 'middleware.log')
 
 # Placeholder for any additional loggers
 # auth_logger = setup_logger('auth', 'auth.log') 
