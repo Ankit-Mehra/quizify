@@ -10,28 +10,48 @@
 
 ### 1. User Tier Management Implementation Patterns
 
-**Decision**: Add `account_tier` ENUM column to Supabase Auth user metadata
+**Decision**: Add `account_tier` column to `public.profiles` table (not `auth.users`)
 
-**Rationale**:
-- Supabase Auth provides `user_metadata` JSON field for custom user attributes
-- Alternative: Separate `user_profiles` table → rejected for simplicity (auth already centralized)
-- ENUM ensures type safety: `('free', 'basic', 'educator')`
-- Default value: 'free' (aligned with FR-001a)
+**Rationale**: 
+- Supabase locks down `auth.users` table - only Supabase auth admin can modify it
+- Standard Supabase pattern is to create a `public.profiles` table for custom user data
+- Link profiles to auth.users via foreign key with ON DELETE CASCADE
+- Use database trigger to auto-create profile when user signs up
 
-**Implementation Approach**:
+**Implementation**:
 ```sql
--- Supabase migration (to be created)
-ALTER TABLE auth.users 
-ADD COLUMN IF NOT EXISTS account_tier TEXT DEFAULT 'free' 
-CHECK (account_tier IN ('free', 'basic', 'educator'));
+-- Create profiles table
+CREATE TABLE IF NOT EXISTS public.profiles (
+    id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+    account_tier TEXT DEFAULT 'free' 
+        CHECK (account_tier IN ('free', 'basic', 'educator')),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
 
-CREATE INDEX idx_users_tier ON auth.users(account_tier);
+CREATE INDEX idx_profiles_tier ON public.profiles(account_tier);
+
+-- Trigger to auto-create profiles
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS TRIGGER AS $$
+BEGIN
+    INSERT INTO public.profiles (id, account_tier)
+    VALUES (NEW.id, 'free');
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+CREATE TRIGGER on_auth_user_created
+    AFTER INSERT ON auth.users
+    FOR EACH ROW
+    EXECUTE FUNCTION public.handle_new_user();
 ```
 
 **Alternatives Considered**:
-- Separate `subscriptions` table → over-engineering for MVP
+- Direct `auth.users` modification → Supabase security prevents this
+- `raw_user_meta_data` JSONB field → Less structured, harder to query/index
 - Role-based access control (RBAC) → too complex for simple tier logic
-- JWT claims → requires custom auth flow, breaks Supabase Auth integration
+- Separate service/microservice → unnecessary overhead for single-app architecture
 
 ---
 

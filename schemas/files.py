@@ -1,6 +1,6 @@
 from pydantic import BaseModel, ConfigDict
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 
 class FileMetadata(BaseModel):
     id: str
@@ -9,6 +9,7 @@ class FileMetadata(BaseModel):
     file_type: str
     storage_path: str
     uploaded_at: datetime
+    file_size_bytes: Optional[int] = None  # NEW: file size for 10MB validation
 
 class FileMetadataResponse(BaseModel):
     model_config = ConfigDict(strict=True)

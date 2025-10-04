@@ -3,19 +3,36 @@
 -- Purpose: Add tier management, content source tracking, file size validation, and search indexes
 
 -- ============================================================================
--- 1. Add account_tier column to users
+-- 1. Profiles table setup (for account_tier)
 -- ============================================================================
 
--- Note: Supabase uses auth.users for user management
--- Adding tier column to track free/basic/educator tiers
-ALTER TABLE auth.users 
-ADD COLUMN IF NOT EXISTS account_tier TEXT DEFAULT 'free' 
-CHECK (account_tier IN ('free', 'basic', 'educator'));
+-- Note: Supabase auth.users is locked down, so we use public.profiles
+-- The profiles table should already exist in your Supabase project
+-- This section verifies it exists and has the required structure
 
-COMMENT ON COLUMN auth.users.account_tier IS 'User subscription tier: free (5 quizzes), basic (100 quizzes), educator (500 quizzes)';
+-- Verify profiles table exists
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.tables 
+                   WHERE table_schema = 'public' AND table_name = 'profiles') THEN
+        RAISE EXCEPTION 'profiles table does not exist. Please create it first via Supabase Dashboard.';
+    END IF;
+END $$;
 
--- Index for tier-based queries
-CREATE INDEX IF NOT EXISTS idx_users_tier ON auth.users(account_tier);
+-- Ensure account_tier column exists in profiles (should already be there)
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                   WHERE table_schema = 'public' 
+                   AND table_name = 'profiles' 
+                   AND column_name = 'account_tier') THEN
+        ALTER TABLE public.profiles 
+        ADD COLUMN account_tier TEXT DEFAULT 'free' 
+        CHECK (account_tier IN ('free', 'basic', 'educator'));
+        
+        CREATE INDEX idx_profiles_tier ON public.profiles(account_tier);
+    END IF;
+END $$;
 
 -- ============================================================================
 -- 2. Add content source tracking to quizzes
@@ -96,29 +113,30 @@ GROUP BY created_by;
 
 COMMENT ON VIEW user_quiz_counts IS 'Real-time count of quizzes per user for quota enforcement';
 
--- View to join users with their tier limits
+-- View to join users with their tier limits (using profiles table)
 CREATE OR REPLACE VIEW user_tier_info AS
 SELECT 
     u.id,
     u.email,
-    u.account_tier,
+    COALESCE(p.account_tier, 'free') AS account_tier,
     COALESCE(q.quiz_count, 0) AS current_quiz_count,
     CASE 
-        WHEN u.account_tier = 'free' THEN 5
-        WHEN u.account_tier = 'basic' THEN 100
-        WHEN u.account_tier = 'educator' THEN 500
+        WHEN COALESCE(p.account_tier, 'free') = 'free' THEN 5
+        WHEN COALESCE(p.account_tier, 'free') = 'basic' THEN 100
+        WHEN COALESCE(p.account_tier, 'free') = 'educator' THEN 500
         ELSE 5
     END AS quota_limit,
     CASE 
-        WHEN u.account_tier = 'free' THEN COALESCE(q.quiz_count, 0) >= 5
-        WHEN u.account_tier = 'basic' THEN COALESCE(q.quiz_count, 0) >= 100
-        WHEN u.account_tier = 'educator' THEN COALESCE(q.quiz_count, 0) >= 500
+        WHEN COALESCE(p.account_tier, 'free') = 'free' THEN COALESCE(q.quiz_count, 0) >= 5
+        WHEN COALESCE(p.account_tier, 'free') = 'basic' THEN COALESCE(q.quiz_count, 0) >= 100
+        WHEN COALESCE(p.account_tier, 'free') = 'educator' THEN COALESCE(q.quiz_count, 0) >= 500
         ELSE true
     END AS quota_exceeded
 FROM auth.users u
+LEFT JOIN public.profiles p ON u.id = p.id
 LEFT JOIN user_quiz_counts q ON u.id = q.user_id;
 
-COMMENT ON VIEW user_tier_info IS 'User tier information with quota status for easy enforcement';
+COMMENT ON VIEW user_tier_info IS 'User tier information with quota status for easy enforcement (using profiles table)';
 
 -- ============================================================================
 -- 7. Add policies for row-level security (if not already set)
@@ -128,19 +146,22 @@ COMMENT ON VIEW user_tier_info IS 'User tier information with quota status for e
 ALTER TABLE quizzes ENABLE ROW LEVEL SECURITY;
 
 -- Policy: Users can only see their own quizzes
-CREATE POLICY IF NOT EXISTS quizzes_user_policy 
+DROP POLICY IF EXISTS quizzes_user_policy ON quizzes;
+CREATE POLICY quizzes_user_policy 
 ON quizzes FOR ALL 
 USING (created_by = auth.uid());
 
 -- Policy: Users can only see their own files
 ALTER TABLE user_files ENABLE ROW LEVEL SECURITY;
-CREATE POLICY IF NOT EXISTS user_files_user_policy 
+DROP POLICY IF EXISTS user_files_user_policy ON user_files;
+CREATE POLICY user_files_user_policy 
 ON user_files FOR ALL 
 USING (user_id = auth.uid());
 
 -- Policy: Users can only see their own submissions
 ALTER TABLE submissions ENABLE ROW LEVEL SECURITY;
-CREATE POLICY IF NOT EXISTS submissions_user_policy 
+DROP POLICY IF EXISTS submissions_user_policy ON submissions;
+CREATE POLICY submissions_user_policy 
 ON submissions FOR ALL 
 USING (user_id = auth.uid());
 
@@ -152,9 +173,9 @@ USING (user_id = auth.uid());
 DO $$
 BEGIN
     RAISE NOTICE 'Migration 001 completed successfully';
-    RAISE NOTICE 'Added: account_tier to users';
+    RAISE NOTICE 'Verified: profiles table exists with account_tier column';
     RAISE NOTICE 'Added: content_source_type and content_source_reference to quizzes';
-    RAISE NOTICE 'Added: file_size_bytes to files';
+    RAISE NOTICE 'Added: file_size_bytes to user_files';
     RAISE NOTICE 'Added: search indexes for quiz titles';
     RAISE NOTICE 'Created: user_quiz_counts and user_tier_info views';
 END $$;

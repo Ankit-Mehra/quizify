@@ -10,35 +10,71 @@
 
 ### 1. User Entity Enhancement
 
-**Existing**: Managed by Supabase Auth (`auth.users` table)
+**Existing**: Managed by Supabase Auth (`auth.users` table)  
+**Note**: Due to Supabase security restrictions, `auth.users` table cannot be modified directly. User tier information is stored in `public.profiles` table instead.
 
-**New Field**:
+**New Table**: `public.profiles`
 ```sql
--- Migration: Add tier column
-ALTER TABLE auth.users 
-ADD COLUMN IF NOT EXISTS account_tier TEXT DEFAULT 'free' 
-CHECK (account_tier IN ('free', 'basic', 'educator'));
+-- User profiles table with tier information
+CREATE TABLE IF NOT EXISTS public.profiles (
+    id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+    account_tier TEXT DEFAULT 'free' 
+        CHECK (account_tier IN ('free', 'basic', 'educator')),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
 
-CREATE INDEX idx_users_tier ON auth.users(account_tier);
+CREATE INDEX idx_profiles_tier ON public.profiles(account_tier);
+
+-- Automatically create profile on user signup
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS TRIGGER AS $$
+BEGIN
+    INSERT INTO public.profiles (id, account_tier)
+    VALUES (NEW.id, 'free');
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+CREATE TRIGGER on_auth_user_created
+    AFTER INSERT ON auth.users
+    FOR EACH ROW
+    EXECUTE FUNCTION public.handle_new_user();
 ```
 
 **Updated User Model** (`schemas/user.py`):
 ```python
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from datetime import datetime
-from typing import Literal
+from typing import Optional, Literal
+from uuid import UUID
 
 class User(BaseModel):
     email: str
     password: str  # Hashed by Supabase Auth
-    account_tier: Literal["free", "basic", "educator"] = "free"
-    
+
 class UserProfile(BaseModel):
-    """Public user profile without sensitive data"""
-    id: str
+    """User profile with account tier information from profiles table"""
+    id: UUID
+    email: str
+    account_tier: Literal["free", "basic", "educator"] = "free"
+    created_at: Optional[datetime] = None
+
+class UserTierInfo(BaseModel):
+    """User tier information with quota details"""
+    id: UUID
     email: str
     account_tier: Literal["free", "basic", "educator"]
-    created_at: datetime
+    current_quiz_count: int
+    quota_limit: int
+    quota_exceeded: bool
+
+class TierUpgradeRequest(BaseModel):
+    """Request to upgrade user's account tier"""
+    target_tier: Literal["basic", "educator"] = Field(
+        ..., 
+        description="Target tier to upgrade to (cannot downgrade to free)"
+    )
 ```
 
 **Validation Rules**:
@@ -46,6 +82,7 @@ class UserProfile(BaseModel):
 - Default value: 'free' (enforced by database)
 - Cannot be null
 - Updates logged in audit trail
+- Profile automatically created on user signup via trigger
 
 **Relationships**:
 - User → Quizzes (1:many) with quota constraints by tier
