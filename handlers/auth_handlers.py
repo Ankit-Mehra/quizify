@@ -6,11 +6,18 @@ from pydantic import BaseModel
 from services.logger import app_logger as logger
 from fastapi import Depends
 from dependencies.auth_dependencies import get_current_user_id
+from typing import Optional
 
 # Initialize Supabase client
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+
+if SUPABASE_URL is None or SUPABASE_KEY is None:
+    raise RuntimeError("SUPABASE_URL and SUPABASE_KEY environment variables must be set")
+
 supabase: Client = create_client(
-    supabase_url=os.getenv("SUPABASE_URL"),
-    supabase_key=os.getenv("SUPABASE_KEY")
+    supabase_url=SUPABASE_URL,
+    supabase_key=SUPABASE_KEY
 )
 logger.info("Auth handlers initialized with Supabase client")
 
@@ -25,7 +32,7 @@ class LoginRequest(BaseModel):
     password: str
 
 class LogoutRequest(BaseModel):
-    token: str = None
+    token: Optional[str] = None
 
 # Remove template rendering functions
 async def signup(email: str = Body(...), password: str = Body(...), name: str = Body(...)):
@@ -46,8 +53,21 @@ async def signup(email: str = Body(...), password: str = Body(...), name: str = 
             content={"message": "User created successfully", "user_id": response.user.id if response.user else None}
         )
     except Exception as e:
-        logger.error(f"Error during signup: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error during signup: {str(e)}")
+        error_message = str(e)
+        
+        # Handle specific Supabase errors with appropriate status codes
+        if "already registered" in error_message.lower() or "already exists" in error_message.lower():
+            raise HTTPException(status_code=400, detail="Email already registered")
+        elif "invalid" in error_message.lower() and "email" in error_message.lower():
+            raise HTTPException(status_code=400, detail=error_message)
+        elif "password" in error_message.lower() and ("weak" in error_message.lower() or "at least" in error_message.lower()):
+            raise HTTPException(status_code=400, detail=error_message)
+        elif "unable to validate" in error_message.lower():
+            raise HTTPException(status_code=400, detail=error_message)
+        else:
+            # Generic server error for unexpected cases
+            raise HTTPException(status_code=500, detail=str(e))
 
 
 async def login(request: LoginRequest, response: Response):
@@ -59,10 +79,15 @@ async def login(request: LoginRequest, response: Response):
         })
         
         session = result.session
+        
+        if session is None:
+            logger.warning(f"Login failed: No session returned for {request.email}")
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+        
         access_token = session.access_token
         refresh_token = session.refresh_token
         
-        logger.info(f"User logged in: {result.user.id}")
+        logger.info(f"User logged in: {result.user.id if result.user else 'Unknown'}")
         
         # Set access token
         response.set_cookie(
@@ -86,8 +111,8 @@ async def login(request: LoginRequest, response: Response):
         return {
             "message": "Successfully logged in",
             "user": {
-                "id": result.user.id,
-                "email": result.user.email
+                "id": result.user.id if result.user else None,
+                "email": result.user.email if result.user else None
             }
         }
 
@@ -103,6 +128,8 @@ async def refresh_session(request: Request, response: Response):
 
     try:
         session = supabase.auth.refresh_session(refresh_token)
+        if session.session is None or not hasattr(session.session, "access_token"):
+            raise HTTPException(status_code=401, detail="Invalid refresh token or session expired")
         new_access_token = session.session.access_token
 
         response.set_cookie(
@@ -114,7 +141,7 @@ async def refresh_session(request: Request, response: Response):
             max_age=ACCESS_TOKEN_EXPIRE
         )
         return {"message": "Session refreshed"}
-    except Exception as e:
+    except Exception:
         raise HTTPException(status_code=401, detail="Invalid refresh token")
 
 
