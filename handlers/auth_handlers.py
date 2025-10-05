@@ -11,15 +11,20 @@ from typing import Optional
 # Initialize Supabase client
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+TESTING = os.getenv("TESTING", "false").lower() == "true"
 
-if SUPABASE_URL is None or SUPABASE_KEY is None:
-    raise RuntimeError("SUPABASE_URL and SUPABASE_KEY environment variables must be set")
+if not TESTING:
+    if SUPABASE_URL is None or SUPABASE_KEY is None:
+        raise RuntimeError("SUPABASE_URL and SUPABASE_KEY environment variables must be set")
 
-supabase: Client = create_client(
-    supabase_url=SUPABASE_URL,
-    supabase_key=SUPABASE_KEY
-)
-logger.info("Auth handlers initialized with Supabase client")
+    supabase: Client = create_client(
+        supabase_url=SUPABASE_URL,
+        supabase_key=SUPABASE_KEY
+    )
+    logger.info("Auth handlers initialized with Supabase client")
+else:
+    supabase = None
+    logger.info("Auth handlers initialized in TEST mode")
 
 ACCESS_TOKEN_EXPIRE = 3600  # 1 hour
 REFRESH_TOKEN_EXPIRE = 60 * 60 * 24 * 30  # 30 days
@@ -110,6 +115,7 @@ async def login(request: LoginRequest, response: Response):
 
         return {
             "message": "Successfully logged in",
+            "access_token": access_token,  # Include for testing/integration purposes
             "user": {
                 "id": result.user.id if result.user else None,
                 "email": result.user.email if result.user else None

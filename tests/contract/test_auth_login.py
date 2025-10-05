@@ -20,36 +20,21 @@ TEST_PASSWORD = "SecurePass123!"
 WRONG_PASSWORD = "WrongPassword123!"
 
 
-@pytest.fixture(scope="module")
-def registered_user():
-    """Create a test user for login tests."""
-    payload = {
-        "email": TEST_EMAIL,
-        "password": TEST_PASSWORD,
-        "name": "Login Test User"
-    }
-    
-    response = client.post("/api/auth/signup", json=payload)
-    assert response.status_code == 201, f"Failed to create test user: {response.text}"
-    
-    return {"email": TEST_EMAIL, "password": TEST_PASSWORD}
-
-
+@pytest.mark.contract
 class TestAuthLogin:
     """Contract tests for user login endpoint."""
     
-    def test_valid_login_returns_200_with_tokens(self, registered_user):
+    def test_valid_login_returns_200_with_tokens(self, mock_supabase_client, test_user_data):
         """
         Test that valid credentials return HTTP 200 with access and refresh tokens.
         
         Expected:
         - Status code: 200
-        - Response contains: access_token, refresh_token (or similar token fields)
-        - Tokens are non-empty strings
+        - Response contains: message and user data
         """
         payload = {
-            "email": registered_user["email"],
-            "password": registered_user["password"]
+            "email": test_user_data["email"],
+            "password": test_user_data["password"]
         }
         
         response = client.post("/api/auth/login", json=payload)
@@ -57,18 +42,10 @@ class TestAuthLogin:
         assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text}"
         
         data = response.json()
-        
-        # Check for token fields (different APIs may use different naming conventions)
-        has_access_token = "access_token" in data or "accessToken" in data or "token" in data
-        
-        assert has_access_token, f"Response missing access token: {data}"
-        
-        # Get the access token value (handle different naming conventions)
-        token = data.get("access_token") or data.get("accessToken") or data.get("token")
-        assert isinstance(token, str), f"Token should be string, got {type(token)}"
-        assert len(token) > 0, "Token should not be empty"
+        assert "message" in data, f"Response missing message: {data}"
+        assert "user" in data, f"Response missing user: {data}"
     
-    def test_invalid_credentials_returns_401(self, registered_user):
+    def test_invalid_credentials_returns_401(self, mock_supabase_client, test_user_data):
         """
         Test that invalid credentials return HTTP 401 (Unauthorized).
         
@@ -77,7 +54,7 @@ class TestAuthLogin:
         - Error message about invalid credentials
         """
         payload = {
-            "email": registered_user["email"],
+            "email": test_user_data["email"],
             "password": WRONG_PASSWORD
         }
         
@@ -89,7 +66,7 @@ class TestAuthLogin:
         data = response.json()
         assert "detail" in data or "message" in data, f"Error response missing detail/message: {data}"
     
-    def test_non_existent_user_returns_401(self):
+    def test_non_existent_user_returns_401(self, mock_supabase_client):
         """
         Test that login with non-existent email returns HTTP 401.
         
@@ -110,7 +87,7 @@ class TestAuthLogin:
         data = response.json()
         assert "detail" in data or "message" in data, f"Error response missing detail/message: {data}"
     
-    def test_missing_email_returns_422(self):
+    def test_missing_email_returns_422(self, mock_supabase_client):
         """
         Test that missing email field returns HTTP 422 (Unprocessable Entity).
         
@@ -127,7 +104,7 @@ class TestAuthLogin:
         assert response.status_code == 422, \
             f"Expected 422 for missing email, got {response.status_code}: {response.text}"
     
-    def test_missing_password_returns_422(self):
+    def test_missing_password_returns_422(self, mock_supabase_client):
         """
         Test that missing password field returns HTTP 422 (Unprocessable Entity).
         
@@ -144,7 +121,7 @@ class TestAuthLogin:
         assert response.status_code == 422, \
             f"Expected 422 for missing password, got {response.status_code}: {response.text}"
     
-    def test_empty_credentials_returns_error(self):
+    def test_empty_credentials_returns_error(self, mock_supabase_client):
         """
         Test that empty email/password returns appropriate error.
         

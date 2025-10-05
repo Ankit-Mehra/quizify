@@ -9,44 +9,16 @@ Tests the authentication logout functionality including:
 import pytest
 from fastapi.testclient import TestClient
 from main import app
-import os
+from dependencies.auth_dependencies import get_current_user_id
 
 client = TestClient(app)
 
-TEST_EMAIL = f"test_logout_{os.urandom(4).hex()}@example.com"
-TEST_PASSWORD = "SecurePass123!"
 
-
-@pytest.fixture(scope="module")
-def authenticated_user():
-    """Create and login a test user."""
-    # Signup
-    signup_payload = {
-        "email": TEST_EMAIL,
-        "password": TEST_PASSWORD,
-        "name": "Logout Test User"
-    }
-    signup_response = client.post("/api/auth/signup", json=signup_payload)
-    assert signup_response.status_code == 201
-    
-    # Login
-    login_payload = {
-        "email": TEST_EMAIL,
-        "password": TEST_PASSWORD
-    }
-    login_response = client.post("/api/auth/login", json=login_payload)
-    assert login_response.status_code == 200
-    
-    data = login_response.json()
-    token = data.get("access_token") or data.get("accessToken") or data.get("token")
-    
-    return {"email": TEST_EMAIL, "token": token}
-
-
+@pytest.mark.contract
 class TestAuthLogout:
     """Contract tests for user logout endpoint."""
     
-    def test_successful_logout_returns_200(self, authenticated_user):
+    def test_successful_logout_returns_200(self, mock_supabase_client, auth_headers):
         """
         Test that logout with valid token returns HTTP 200.
         
@@ -54,49 +26,57 @@ class TestAuthLogout:
         - Status code: 200
         - Success message
         """
-        headers = {"Authorization": f"Bearer {authenticated_user['token']}"}
+        # Override auth dependency
+        def override_get_current_user_id():
+            return "mock_user_123"
         
-        response = client.post("/api/auth/logout", headers=headers)
+        app.dependency_overrides[get_current_user_id] = override_get_current_user_id
         
-        assert response.status_code == 200, \
-            f"Expected 200 for successful logout, got {response.status_code}: {response.text}"
-        
-        data = response.json()
-        # Check for success message or confirmation
-        assert "message" in data or "detail" in data or "status" in data, \
-            f"Response should contain confirmation: {data}"
+        try:
+            response = client.post("/api/auth/logout", headers=auth_headers)
+            
+            assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text}"
+            
+            data = response.json()
+            assert "message" in data, f"Response missing message: {data}"
+            assert data["message"] == "Successfully logged out", f"Unexpected message: {data['message']}"
+        finally:
+            app.dependency_overrides.clear()
     
-    def test_logout_without_auth_returns_401(self):
+    def test_logout_without_auth_returns_401(self, mock_supabase_client):
         """
         Test that logout without authentication returns HTTP 401.
         
         Expected:
         - Status code: 401
-        - Error message about missing/invalid authentication
+        - Error message about missing authentication
         """
+        # No headers provided - should fail auth
         response = client.post("/api/auth/logout")
         
         assert response.status_code == 401, \
-            f"Expected 401 for logout without auth, got {response.status_code}: {response.text}"
+            f"Expected 401 without auth, got {response.status_code}: {response.text}"
         
         data = response.json()
-        assert "detail" in data or "message" in data, \
-            f"Error response missing detail/message: {data}"
+        assert "detail" in data or "message" in data, f"Error response missing detail/message: {data}"
     
-    def test_logout_with_invalid_token_returns_401(self):
+    def test_logout_with_invalid_token_returns_401(self, mock_supabase_client):
         """
-        Test that logout with invalid/expired token returns HTTP 401.
+        Test that logout with invalid token returns HTTP 401.
         
         Expected:
         - Status code: 401
         - Error message about invalid token
         """
-        headers = {"Authorization": "Bearer invalid_token_xyz123"}
+        headers = {"Authorization": "Bearer invalid_token_123"}
         
         response = client.post("/api/auth/logout", headers=headers)
         
         assert response.status_code == 401, \
-            f"Expected 401 for invalid token, got {response.status_code}: {response.text}"
+            f"Expected 401 with invalid token, got {response.status_code}: {response.text}"
+        
+        data = response.json()
+        assert "detail" in data or "message" in data, f"Error response missing detail/message: {data}"
 
 
 if __name__ == "__main__":

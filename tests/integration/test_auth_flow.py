@@ -17,6 +17,7 @@ import os
 client = TestClient(app)
 
 
+@pytest.mark.integration
 class TestAuthFlow:
     """Integration test for complete authentication flow."""
     

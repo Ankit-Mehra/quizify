@@ -21,6 +21,7 @@ TEST_EMAIL = f"test_quiz_flow_{os.urandom(4).hex()}@example.com"
 TEST_PASSWORD = "SecurePass123!"
 
 
+@pytest.mark.integration
 def create_test_docx(content: str) -> bytes:
     """Create a test DOCX file."""
     doc = Document()
@@ -58,6 +59,7 @@ def auth_token():
     return token
 
 
+@pytest.mark.integration
 class TestQuizGenerationFlow:
     """Integration tests for complete quiz generation workflow."""
     
@@ -175,7 +177,7 @@ class TestQuizGenerationFlow:
         
         # Step 1: Generate quiz from text
         text_payload = {
-            "text": """
+            "content": """
             Blockchain Technology
             
             Blockchain is a distributed ledger technology that maintains a secure and decentralized record of transactions.
@@ -186,12 +188,12 @@ class TestQuizGenerationFlow:
             """,
             "title": "Blockchain Basics Quiz",
             "num_questions": 5,
-            "question_types": ["multiple_choice", "true_false"]
+            "question_type": ["multiple_choice", "true_false"]
         }
         
         quiz_response = client.post("/api/quiz/generate/text", headers=headers, json=text_payload)
         
-        assert quiz_response.status_code == 201, \
+        assert quiz_response.status_code == 200, \
             f"Text quiz generation failed: {quiz_response.text}"
         
         quiz_data = quiz_response.json()
@@ -221,17 +223,17 @@ class TestQuizGenerationFlow:
         
         # Generate quiz
         payload = {
-            "text": "Database Management Systems store, organize, and manage data efficiently.",
+            "content": "Database Management Systems store, organize, and manage data efficiently.",
             "title": "DBMS Persistence Test",
             "num_questions": 3,
-            "question_types": ["multiple_choice"]
+            "question_type": ["multiple_choice"]
         }
         
         gen_response = client.post("/api/quiz/generate/text", headers=headers, json=payload)
-        assert gen_response.status_code == 201
+        assert gen_response.status_code == 200
         
         quiz_id = gen_response.json().get("quiz_id") or gen_response.json().get("id")
-        original_questions = gen_response.json().get("questions", [])
+        expected_question_count = 3  # We requested 3 questions
         
         # Retrieve quiz multiple times
         for _ in range(3):
@@ -239,7 +241,7 @@ class TestQuizGenerationFlow:
             assert detail_response.status_code == 200
             
             questions = detail_response.json().get("questions", [])
-            assert len(questions) == len(original_questions), "Question count should remain consistent"
+            assert len(questions) == expected_question_count, "Question count should remain consistent"
 
 
 if __name__ == "__main__":

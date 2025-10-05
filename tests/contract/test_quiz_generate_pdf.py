@@ -43,9 +43,9 @@ def create_corrupted_pdf() -> bytes:
     return b"This is not a valid PDF file"
 
 
-@pytest.fixture(scope="module")
-def auth_token():
-    """Create a test user and return auth token."""
+@pytest.fixture
+def auth_token(mock_supabase_client, auth_bypass):
+    """Create a test user and return auth token - requires auth_bypass for actual quiz requests."""
     signup_payload = {
         "email": TEST_EMAIL,
         "password": TEST_PASSWORD,

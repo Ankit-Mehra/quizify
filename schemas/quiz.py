@@ -101,6 +101,8 @@ class FileQuizRequest(BaseModel):
     model_config = ConfigDict(strict=True, validate_assignment=True)
     title: str = Field(..., description="Title of the quiz")
     num_questions: Optional[int] = Field(10, gt=0, le=50, description="Number of questions to generate")
+    question_type: List[Literal[
+        "multiple_choice", "true_false", "fill_blank","matching","mixed"]] = ["mixed"]
 
 class WebQuizRequest(BaseModel):
     """Request to generate quiz from web URL (basic/educator tiers only)"""
@@ -126,7 +128,7 @@ class WebQuizRequest(BaseModel):
         return self
     
 class QuizGenerationResponse(BaseModel):
-    model_config = ConfigDict(strict=True)
+    model_config = ConfigDict(strict=False, extra='allow')
     quiz_id: str
     title: str
     message: str

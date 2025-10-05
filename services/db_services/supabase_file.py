@@ -13,11 +13,15 @@ logger = logging.getLogger(__name__)
 STORAGE_NAME = os.getenv("SUPABASE_STORAGE_NAME")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+TESTING = os.getenv("TESTING", "false").lower() == "true"
 
-supabase: Client = create_client(
-    supabase_url=SUPABASE_URL,
-    supabase_key=SUPABASE_KEY
-)
+if not TESTING:
+    supabase: Client = create_client(
+        supabase_url=SUPABASE_URL,
+        supabase_key=SUPABASE_KEY
+    )
+else:
+    supabase = None
 
 def save_file_to_supabase(user_id: str, file_bytes: bytes, original_filename: str, token: str, file_type: str):
     try:

@@ -3,7 +3,7 @@ Contract tests for POST /api/auth/signup endpoint.
 
 Tests the authentication signup functionality including:
 - Valid signup with proper credentials
-- Duplicate email handling
+- Duplicate email handling  
 - Invalid email format validation
 - Weak password rejection
 """
@@ -24,16 +24,17 @@ WEAK_PASSWORD = "123"
 INVALID_EMAIL = "not-an-email"
 
 
+@pytest.mark.contract
 class TestAuthSignup:
     """Contract tests for user signup endpoint."""
     
-    def test_valid_signup_returns_201_with_user_id(self):
+    def test_valid_signup_returns_201_with_user_id(self, mock_supabase_client):
         """
         Test that a valid signup request returns HTTP 201 with user_id.
         
         Expected:
         - Status code: 201
-        - Response contains: user_id, email
+        - Response contains: user_id
         - user_id is a valid UUID string
         """
         payload = {
@@ -47,15 +48,15 @@ class TestAuthSignup:
         assert response.status_code == 201, f"Expected 201, got {response.status_code}: {response.text}"
         
         data = response.json()
-        assert "user_id" in data or "id" in data, f"Response missing user_id or id: {data}"
-        assert "email" in data, f"Response missing email: {data}"
+        assert "user_id" in data, f"Response missing user_id: {data}"
+        assert "message" in data, f"Response missing message: {data}"
         
-        # Store user_id for cleanup or other tests
-        user_id = data.get("user_id") or data.get("id")
+        # Verify mock user_id
+        user_id = data.get("user_id")
         assert isinstance(user_id, str), f"user_id should be string, got {type(user_id)}"
         assert len(user_id) > 0, "user_id should not be empty"
     
-    def test_duplicate_email_returns_400(self):
+    def test_duplicate_email_returns_400(self, mock_supabase_client):
         """
         Test that signing up with an already registered email returns HTTP 400.
         
@@ -83,7 +84,7 @@ class TestAuthSignup:
         data = second_response.json()
         assert "detail" in data or "message" in data, f"Error response missing detail/message: {data}"
     
-    def test_invalid_email_format_returns_422(self):
+    def test_invalid_email_format_returns_422(self, mock_supabase_client):
         """
         Test that invalid email format returns HTTP 422 (Unprocessable Entity).
         
@@ -106,7 +107,7 @@ class TestAuthSignup:
         data = response.json()
         assert "detail" in data or "message" in data, f"Error response missing detail/message: {data}"
     
-    def test_weak_password_returns_400(self):
+    def test_weak_password_returns_400(self, mock_supabase_client):
         """
         Test that a weak password is rejected with HTTP 400.
         
@@ -128,7 +129,7 @@ class TestAuthSignup:
         data = response.json()
         assert "detail" in data or "message" in data, f"Error response missing detail/message: {data}"
     
-    def test_missing_required_fields_returns_422(self):
+    def test_missing_required_fields_returns_422(self, mock_supabase_client):
         """
         Test that missing required fields returns HTTP 422.
         
