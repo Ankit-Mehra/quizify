@@ -1,15 +1,64 @@
-venv
-__pycache__
+# Python virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# Python cache and compiled files
+__pycache__/
 *.pyc
 *.pyo
 *.pyd
+*.so
+*.egg-info/
+*.egg
+dist/
+build/
+
+# Database files
 *.db
 *.sqlite3
-*.log
+
+# Environment variables
 *.env
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# OS-specific files
 *.DS_Store
-*.egg-info
-*.egg
+.DS_Store
+Thumbs.db
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# Testing and coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Archives
 *.zip
 *.tar.gz
 *.tar.bz2
@@ -18,4 +67,17 @@ __pycache__
 *.rar
 *.7z
 *.gz
-logs
+
+# Development documentation
+# Note: analysis/ and specs/ are tracked in git for team reference
+# Uncomment below if you want to exclude them:
+# planning/
+htmlcov/
+
+# Build artifacts
+.dockerignore
+uv.lock
+
+# Tool-specific (optional - keep if needed for team)
+# .specify/
+# .github/
