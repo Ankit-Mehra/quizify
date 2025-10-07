@@ -20,6 +20,8 @@ BEGIN
 END $$;
 
 -- Ensure account_tier column exists in profiles (should already be there)
+-- IMPORTANT: These values MUST match schemas/user.py -> Literal["free", "basic", "educator"]
+-- If you modify tier options, update BOTH this migration AND the schema file
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
@@ -39,6 +41,8 @@ END $$;
 -- ============================================================================
 
 -- Track whether quiz was generated from file or web URL
+-- IMPORTANT: These values MUST match schemas/quiz.py -> Literal["file", "url", "text"]
+-- If you modify source types, update BOTH this migration AND the schema file
 ALTER TABLE quizzes 
 ADD COLUMN IF NOT EXISTS content_source_type TEXT DEFAULT 'file'
 CHECK (content_source_type IN ('file', 'url', 'text'));

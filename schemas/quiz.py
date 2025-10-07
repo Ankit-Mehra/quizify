@@ -2,6 +2,12 @@
 from pydantic import BaseModel, Field, model_validator, ConfigDict
 from typing import List, Optional, Literal, Union
 from uuid import UUID
+
+# Content source type options
+# IMPORTANT: These values MUST match migrations/001_add_missing_features.sql CHECK constraint
+# Database constraint: CHECK (content_source_type IN ('file', 'url', 'text'))
+CONTENT_SOURCE_TYPES = Literal["file", "url", "text"]
+
 # === 1. Question type models ===
 class QuestionBase(BaseModel):
     id: Optional[UUID] = None
@@ -61,7 +67,7 @@ class QuizzesResponse(BaseModel):
     title: Optional[str] = None
     created_by: Optional[str] = None
     created_at: Optional[str] = None
-    content_source_type: Optional[Literal["file", "url", "text"]] = None  # NEW
+    content_source_type: Optional[CONTENT_SOURCE_TYPES] = None  # NEW
     content_source_reference: Optional[str] = None  # NEW
     questions: List[Question]
 
@@ -75,7 +81,7 @@ class QuizMetadata(BaseModel):
     id: Optional[str] = None
     quiz_id: Optional[str] = None
     content_type: str  # "text" or "file"
-    content_source_type: Optional[Literal["file", "url", "text"]] = None  # NEW: source type
+    content_source_type: Optional[CONTENT_SOURCE_TYPES] = None  # NEW: source type
     content_source_reference: Optional[str] = None  # NEW: file_id or URL
     file_name: Optional[str] = None
     file_type: Optional[str] = None
