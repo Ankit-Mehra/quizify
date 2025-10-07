@@ -9,12 +9,17 @@ from services.logger import db_logger as logger
 STORAGE_NAME = os.getenv("SUPABASE_STORAGE_NAME")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+TESTING = os.getenv("TESTING", "false").lower() == "true"
 
-supabase: Client = create_client(
-    supabase_url=SUPABASE_URL,
-    supabase_key=SUPABASE_KEY
-)
-logger.info("Supabase client initialized")
+if not TESTING:
+    supabase: Client = create_client(
+        supabase_url=SUPABASE_URL,
+        supabase_key=SUPABASE_KEY
+    )
+    logger.info("Supabase client initialized")
+else:
+    supabase = None
+    logger.info("Supabase client initialized in TEST mode")
 
 def get_authed_supabase_client(user_token: str):
     logger.debug(f"Creating authenticated Supabase client with token: {user_token[:10]}...")

@@ -9,11 +9,15 @@ from fastapi import HTTPException
 from uuid import UUID
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+TESTING = os.getenv("TESTING", "false").lower() == "true"
 
-supabase: Client = create_client(
-    supabase_url=SUPABASE_URL,
-    supabase_key=SUPABASE_KEY
-)
+if not TESTING:
+    supabase: Client = create_client(
+        supabase_url=SUPABASE_URL,
+        supabase_key=SUPABASE_KEY
+    )
+else:
+    supabase = None
 
 def get_question(question_ids: List[UUID]) -> List[Question]:
     """

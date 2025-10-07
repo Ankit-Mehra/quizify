@@ -1,0 +1,241 @@
+# .dockerignore
+# Prevents unnecessary files from being copied into Docker images
+# This reduces image size and build time significantly
+
+# ============================================
+# CRITICAL: Environment files (secrets!)
+# ============================================
+.env
+.env.*
+!.env.example
+*.env
+
+# ============================================
+# Python cache and build artifacts
+# ============================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# ============================================
+# Virtual environments (HUGE files!)
+# ============================================
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# ============================================
+# Testing (not needed in production!)
+# ============================================
+tests/
+test_*.py
+*_test.py
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.hypothesis/
+.nox/
+coverage.xml
+*.cover
+.cache
+nosetests.xml
+
+# ============================================
+# IDE and editor files
+# ============================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# ============================================
+# Documentation (keeps image lean)
+# ============================================
+# Keep only essential docs
+*.md
+!README.md
+docs/
+analysis/
+specs/
+planning/
+
+# ============================================
+# Development scripts
+# ============================================
+scripts/
+*.sh
+
+# ============================================
+# Lock files (use requirements.txt instead)
+# ============================================
+uv.lock
+poetry.lock
+Pipfile.lock
+
+# ============================================
+# Logs (should use external logging)
+# ============================================
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ============================================
+# Git files
+# ============================================
+.git/
+.gitignore
+.gitattributes
+.github/
+
+# ============================================
+# Docker files (don't copy Docker into Docker!)
+# ============================================
+Dockerfile
+Dockerfile.*
+docker-compose*.yml
+.dockerignore
+
+# ============================================
+# Deployment configs (platform-specific)
+# ============================================
+Procfile
+runtime.txt
+railway.json
+render.yaml
+fly.toml
+.railway/
+.vercel/
+
+# ============================================
+# CI/CD
+# ============================================
+.github/workflows/
+.gitlab-ci.yml
+.travis.yml
+.circleci/
+
+# ============================================
+# Monitoring and profiling
+# ============================================
+.mypy_cache/
+.ruff_cache/
+.pytype/
+.pyre/
+
+# ============================================
+# Jupyter notebooks
+# ============================================
+*.ipynb
+.ipynb_checkpoints/
+
+# ============================================
+# OS files
+# ============================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# ============================================
+# Temporary files
+# ============================================
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+*.backup
+*.old
+*~
+
+# ============================================
+# Database files (should use external DB)
+# ============================================
+*.db
+*.sqlite
+*.sqlite3
+
+# ============================================
+# Development status files
+# ============================================
+BUG_FIXES_REPORT.md
+IMPLEMENTATION_STATUS.md
+MOCKING_IMPLEMENTATION_COMPLETE.md
+TEST_CONVERSION_SUMMARY.md
+TEST_MOCK_CONVERSION_PROGRESS.md
+TESTING_WITH_MOCKS.md
+GIT_TRACKING_GUIDE.md
+GIT_CLEANUP_SUMMARY.md
+DEPLOYMENT*.md
+COST_BREAKDOWN.md
+LATENCY*.md
+MONOREPO_ANALYSIS.md
+
+# ============================================
+# Config files not needed at runtime
+# ============================================
+.pylintrc
+.flake8
+.ruff.toml
+pytest.ini
+.editorconfig
+.prettierrc
+.eslintrc
+
+# ============================================
+# Package manager files
+# ============================================
+package.json
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# ============================================
+# Specify tools
+# ============================================
+.specify/
+
+# ============================================
+# HTML coverage reports
+# ============================================
+htmlcov/
+
+# ============================================
+# Migrations (uncomment if NOT needed in container)
+# ============================================
+# migrations/

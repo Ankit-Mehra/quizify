@@ -86,6 +86,7 @@ router.add_api_route(
     methods=["POST"],
     summary="Generate Quiz from File (Gemini)",
     response_model=QuizGenerationResponse,
+    status_code=201,
     tags=["Quiz Generation"],
     dependencies=[Depends(get_current_user_id)],
     openapi_extra={

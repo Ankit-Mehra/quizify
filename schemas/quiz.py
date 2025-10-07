@@ -1,7 +1,6 @@
 # schemas/quiz.py
 from pydantic import BaseModel, Field, model_validator, ConfigDict
 from typing import List, Optional, Literal, Union
-from fastapi import UploadFile
 from uuid import UUID
 # === 1. Question type models ===
 class QuestionBase(BaseModel):
@@ -62,6 +61,8 @@ class QuizzesResponse(BaseModel):
     title: Optional[str] = None
     created_by: Optional[str] = None
     created_at: Optional[str] = None
+    content_source_type: Optional[Literal["file", "url", "text"]] = None  # NEW
+    content_source_reference: Optional[str] = None  # NEW
     questions: List[Question]
 
 class QuizMetadata(BaseModel):
@@ -69,6 +70,8 @@ class QuizMetadata(BaseModel):
     id: Optional[str] = None
     quiz_id: Optional[str] = None
     content_type: str  # "text" or "file"
+    content_source_type: Optional[Literal["file", "url", "text"]] = None  # NEW: source type
+    content_source_reference: Optional[str] = None  # NEW: file_id or URL
     file_name: Optional[str] = None
     file_type: Optional[str] = None
     word_count: Optional[int] = None
@@ -99,17 +102,33 @@ class FileQuizRequest(BaseModel):
     title: str = Field(..., description="Title of the quiz")
     num_questions: Optional[int] = Field(10, gt=0, le=50, description="Number of questions to generate")
     question_type: List[Literal[
-        "multiple_choice", "true_false", "fill_blank","matching","mixed"]] = Field(default=["mixed"], description="Type of questions to generate")
-    file: Optional[UploadFile] = None
-    
+        "multiple_choice", "true_false", "fill_blank","matching","mixed"]] = ["mixed"]
+
+class WebQuizRequest(BaseModel):
+    """Request to generate quiz from web URL (basic/educator tiers only)"""
+    model_config = ConfigDict(strict=True, validate_assignment=True)
+    title: str = Field(..., description="Title of the quiz")
+    url: str = Field(..., description="Web URL to scrape content from")
+    question_type: List[Literal[
+        "multiple_choice", "true_false", "fill_blank","matching","mixed"]] = ["mixed"]
+    num_questions: Optional[int] = Field(10, gt=0, le=50, description="Number of questions to generate")
+
     @model_validator(mode='after')
-    def validate_fields(self) -> 'FileQuizRequest':
+    def validate_web_fields(self) -> 'WebQuizRequest':
         if not self.title or not self.title.strip():
             raise ValueError('Quiz title cannot be empty')
+        
+        if not self.url or not self.url.strip():
+            raise ValueError('URL cannot be empty')
+        
+        # Basic URL validation
+        if not self.url.startswith(('http://', 'https://')):
+            raise ValueError('URL must start with http:// or https://')
+        
         return self
     
 class QuizGenerationResponse(BaseModel):
-    model_config = ConfigDict(strict=True)
+    model_config = ConfigDict(strict=False, extra='allow')
     quiz_id: str
     title: str
     message: str
