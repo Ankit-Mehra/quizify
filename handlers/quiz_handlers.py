@@ -28,15 +28,16 @@ async def generate_quiz_from_file_openai(
         raise HTTPException(status_code=400, detail="Only PDF, DOCX, or TXT files are supported.")
 
     try:
-        text = await data.file.read()
+        # Read file once and store in variable
+        file_bytes = await data.file.read()
         
         # Choose the appropriate extractor based on file type
         if data.file.content_type == "application/pdf":
-            parsed_text = extract_text_from_pdf(text)
+            parsed_text = extract_text_from_pdf(file_bytes)
         elif data.file.content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-            parsed_text = extract_text_from_docx(text)
+            parsed_text = extract_text_from_docx(file_bytes)
         else:  # text/plain
-            parsed_text = extract_text_from_plain_text(text)
+            parsed_text = extract_text_from_plain_text(file_bytes)
 
         quizzes = await generate_quizzes_single_async(
             parsed_text, 
@@ -60,8 +61,7 @@ async def generate_quiz_from_file_openai(
         save_metadata(metadata)
 
         #save file to supabase storage
-        file_bytes = await data.file.read()
-        save_file_to_supabase(current_user_id, file_bytes, data.file.filename, user_token)
+        save_file_to_supabase(current_user_id, file_bytes, data.file.filename, user_token, data.file.content_type)
 
         return {
             "quiz_id": quiz_id, 
