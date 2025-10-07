@@ -290,20 +290,22 @@ def setup_integration_mocks():
     Auto-applied fixture that sets up all mocks for integration tests.
     
     This runs once per test module and patches all external dependencies.
+    Uses context managers stacked with contextlib for cleaner setup.
     """
+    from contextlib import ExitStack
+    
     mock_supabase = MockSupabaseClient()
     
-    # Only patch handlers.auth_handlers.supabase (the only module that imports it)
-    with patch("handlers.auth_handlers.supabase", mock_supabase):
-        # Mock the requests.get call in auth_dependencies
-        with patch("dependencies.auth_dependencies.requests.get", side_effect=mock_requests_get):
-            # Patch the AI service functions
-            with patch("handlers.quiz_handlers.generate_quizzes_single_async", side_effect=mock_generate_quizzes_single_async):
-                # Patch the database service functions
-                with patch("handlers.quiz_handlers.save_quiz_to_database", side_effect=mock_save_quiz_to_database):
-                    with patch("handlers.quiz_handlers.get_user_quizzes", side_effect=mock_get_user_quizzes):
-                        with patch("handlers.quiz_handlers.get_quiz_from_database", side_effect=mock_get_quiz_from_database):
-                            with patch("handlers.quiz_handlers.save_file_to_supabase", side_effect=mock_save_file_to_supabase):
-                                with patch("handlers.quiz_handlers.save_metadata", side_effect=mock_save_metadata):
-                                    with patch("handlers.file_handlers.save_file_to_supabase", side_effect=mock_save_file_to_supabase):
-                                        yield mock_supabase
+    # Use ExitStack to manage multiple patches without deep nesting
+    with ExitStack() as stack:
+        stack.enter_context(patch("handlers.auth_handlers.supabase", mock_supabase))
+        stack.enter_context(patch("dependencies.auth_dependencies.requests.get", side_effect=mock_requests_get))
+        stack.enter_context(patch("handlers.quiz_handlers.generate_quizzes_single_async", side_effect=mock_generate_quizzes_single_async))
+        stack.enter_context(patch("handlers.quiz_handlers.save_quiz_to_database", side_effect=mock_save_quiz_to_database))
+        stack.enter_context(patch("handlers.quiz_handlers.get_user_quizzes", side_effect=mock_get_user_quizzes))
+        stack.enter_context(patch("handlers.quiz_handlers.get_quiz_from_database", side_effect=mock_get_quiz_from_database))
+        stack.enter_context(patch("handlers.quiz_handlers.save_file_to_supabase", side_effect=mock_save_file_to_supabase))
+        stack.enter_context(patch("handlers.quiz_handlers.save_metadata", side_effect=mock_save_metadata))
+        stack.enter_context(patch("handlers.file_handlers.save_file_to_supabase", side_effect=mock_save_file_to_supabase))
+        
+        yield mock_supabase

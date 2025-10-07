@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 import os
 
 os.environ["SUPABASE_URL"] = "https://test.supabase.co"
@@ -59,10 +59,14 @@ def mock_supabase():
     return MockSupabaseClient()
 
 @pytest.fixture
-def mock_supabase_client(mock_supabase):
+def mock_supabase_client(mock_supabase, mocker):
+    """
+    Mock Supabase client with all necessary service patches.
+    Uses pytest-mock's mocker fixture for cleaner test setup.
+    """
     from main import app
-    from dependencies.auth_dependencies import get_current_user_id, get_current_user_token
     
+    # Define mock implementations
     def mock_save_file_to_supabase(*args, **kwargs):
         return {"message": "File uploaded successfully"}
     
@@ -92,26 +96,16 @@ def mock_supabase_client(mock_supabase):
         """Mock saving metadata"""
         return {"success": True}
     
-    # Helper functions for tests that need to bypass auth
-    def bypass_auth_get_user_id():
-        return "mock_user_123"
+    # Apply all patches using mocker (pytest-mock)
+    mocker.patch("handlers.auth_handlers.supabase", mock_supabase)
+    mocker.patch("handlers.file_handlers.save_file_to_supabase", side_effect=mock_save_file_to_supabase)
+    mocker.patch("handlers.file_handlers.delete_file_from_supabase", side_effect=mock_delete_file_from_supabase)
+    mocker.patch("handlers.quiz_handlers.generate_quizzes_single_async", side_effect=mock_generate_quizzes_single_async)
+    mocker.patch("handlers.quiz_handlers.save_quiz_to_database", side_effect=mock_save_quiz_to_database)
+    mocker.patch("handlers.quiz_handlers.save_metadata", side_effect=mock_save_metadata)
+    mocker.patch("handlers.quiz_handlers.save_file_to_supabase", side_effect=mock_save_file_to_supabase)
     
-    def bypass_auth_get_token():
-        return "mock_access_token_abc123"
-    
-    # Provide bypass functions as attributes for tests to use
-    app.mock_bypass_auth_user_id = bypass_auth_get_user_id
-    app.mock_bypass_auth_token = bypass_auth_get_token
-    
-    with patch("handlers.auth_handlers.supabase", mock_supabase):
-        with patch("handlers.file_handlers.save_file_to_supabase", side_effect=mock_save_file_to_supabase):
-            with patch("handlers.file_handlers.delete_file_from_supabase", side_effect=mock_delete_file_from_supabase):
-                # Patch where the function is USED, not where it's defined
-                with patch("handlers.quiz_handlers.generate_quizzes_single_async", side_effect=mock_generate_quizzes_single_async):
-                    with patch("handlers.quiz_handlers.save_quiz_to_database", side_effect=mock_save_quiz_to_database):
-                        with patch("handlers.quiz_handlers.save_metadata", side_effect=mock_save_metadata):
-                            with patch("handlers.quiz_handlers.save_file_to_supabase", side_effect=mock_save_file_to_supabase):
-                                yield mock_supabase
+    yield mock_supabase
     
     # Clear dependency overrides after test
     app.dependency_overrides.clear()
