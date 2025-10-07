@@ -18,4 +18,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Run the web service on container startup
 # Railway automatically injects PORT environment variable
-CMD uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}
+CMD ["hypercorn", "main:app", "--bind", "::"]
