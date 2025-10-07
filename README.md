@@ -51,7 +51,12 @@ Important settings in the .env file:
 SUPABASE_URL=your_supabase_url
 SUPABASE_KEY=your_supabase_key
 BACKEND_CORS_ORIGINS=["http://localhost:3000","http://localhost:3001"]
+
+# Security: Keep this false in production
+EXPOSE_ACCESS_TOKEN_IN_RESPONSE=false
 ```
+
+**Security Note**: The API uses secure HttpOnly cookies for authentication. The `EXPOSE_ACCESS_TOKEN_IN_RESPONSE` environment variable should only be set to `true` in test/development environments where you need direct access to the token in the response body.
 
 5. Run the API:
 ```bash
@@ -78,21 +83,29 @@ This is a pure API service designed to work with a separate frontend application
        "password": "userpassword"
      }
      ```
-   - Store the returned token:
+   - The API returns user information and sets authentication tokens as secure HttpOnly cookies:
      ```json
      {
-       "access_token": "your-jwt-token",
-       "token_type": "bearer",
+       "message": "Successfully logged in",
        "user": {
          "id": "user-uuid",
          "email": "user@example.com"
        }
      }
      ```
-   - Include token in Authorization header for subsequent requests:
-     ```
-     Authorization: Bearer your-jwt-token
-     ```
+   - **For Cookie-Based Auth (Recommended for Web Apps)**:
+     - The access token is automatically stored in a secure HttpOnly cookie
+     - Include `credentials: 'include'` in your fetch/axios requests
+     - No manual token handling required
+   
+   - **For Token-Based Auth (e.g., Mobile Apps)**:
+     - Set `EXPOSE_ACCESS_TOKEN_IN_RESPONSE=true` in your test/development environment
+     - The response will include an `access_token` field
+     - Include token in Authorization header for subsequent requests:
+       ```
+       Authorization: Bearer your-jwt-token
+       ```
+     - **WARNING**: Only enable this in test/development. Never in production!
 
 2. **Quiz Generation**:
    - Create quizzes via `/api/quiz/generate` with a POST request containing:

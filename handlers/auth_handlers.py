@@ -18,6 +18,8 @@ ACCESS_TOKEN_EXPIRE = 3600  # 1 hour
 REFRESH_TOKEN_EXPIRE = 60 * 60 * 24 * 30  # 30 days
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+# Security: Only expose access_token in response body when explicitly enabled for testing
+EXPOSE_ACCESS_TOKEN_IN_RESPONSE = os.getenv("EXPOSE_ACCESS_TOKEN_IN_RESPONSE", "false").lower() == "true"
 
 # Define request models
 class LoginRequest(BaseModel):
@@ -83,13 +85,21 @@ async def login(request: LoginRequest, response: Response):
             max_age=REFRESH_TOKEN_EXPIRE
         )
 
-        return {
+        response_data = {
             "message": "Successfully logged in",
             "user": {
                 "id": result.user.id,
                 "email": result.user.email
             }
         }
+        
+        # Security: Only include access_token in response body when explicitly enabled for testing
+        # In production, the token should only be accessed via the secure HttpOnly cookie
+        if EXPOSE_ACCESS_TOKEN_IN_RESPONSE:
+            response_data["access_token"] = access_token
+            logger.warning("Access token included in response body (EXPOSE_ACCESS_TOKEN_IN_RESPONSE=true). This should only be enabled in test/development environments.")
+        
+        return response_data
 
     except Exception as e:
         logger.warning(f"Failed login for {request.email}: {e}")
