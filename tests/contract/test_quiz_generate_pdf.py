@@ -39,8 +39,9 @@ def create_test_pdf_with_content(content: str) -> bytes:
 
 
 def create_corrupted_pdf() -> bytes:
-    """Create an invalid/corrupted PDF."""
-    return b"This is not a valid PDF file"
+    """Create a more realistic corrupted PDF (valid header, broken content)."""
+    # Start with a valid PDF header, then add random/truncated bytes to simulate corruption
+    return b"%PDF-1.4\n%\xE2\xE3\xCF\xD3\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n" + os.urandom(32)
 
 
 @pytest.fixture
