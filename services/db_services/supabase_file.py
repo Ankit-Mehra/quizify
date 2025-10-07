@@ -1,27 +1,19 @@
-import os
 import httpx
 import uuid
 from fastapi import HTTPException, Depends
-from supabase import create_client, Client
+from supabase import Client
 from datetime import datetime
 from dependencies.auth_dependencies import get_current_user_id, get_current_user_token
 from services.ai_services.doc_service import extract_text_from_pdf, is_pdf
 import logging
+from config import config
 
 logger = logging.getLogger(__name__)
 
-STORAGE_NAME = os.getenv("SUPABASE_STORAGE_NAME")
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-TESTING = os.getenv("TESTING", "false").lower() == "true"
-
-if not TESTING:
-    supabase: Client = create_client(
-        supabase_url=SUPABASE_URL,
-        supabase_key=SUPABASE_KEY
-    )
-else:
-    supabase = None
+# Use centralized configuration - guaranteed non-null in production (fail-fast at startup)
+STORAGE_NAME = config.STORAGE_NAME
+SUPABASE_URL = config.SUPABASE_URL
+supabase: Client = config.get_supabase_client()
 
 def save_file_to_supabase(user_id: str, file_bytes: bytes, original_filename: str, token: str, file_type: str):
     try:
@@ -40,6 +32,8 @@ def save_file_to_supabase(user_id: str, file_bytes: bytes, original_filename: st
         response.raise_for_status()
 
         #save metadata to db
+        if supabase is None:
+            raise HTTPException(status_code=500, detail="Supabase client is not initialized. Check your configuration.")
         supabase.table("user_files").insert({
             "id": unique_id,
             "user_id": user_id,
@@ -55,6 +49,8 @@ def save_file_to_supabase(user_id: str, file_bytes: bytes, original_filename: st
 
 def get_file_metadata(user_id: str = Depends(get_current_user_id)):
     try:
+        if supabase is None:
+            raise HTTPException(status_code=500, detail="Supabase client is not initialized. Check your configuration.")
         metadata = supabase.table("user_files").select("*").eq("user_id", user_id).execute()
         return {
             "files": metadata.data
@@ -64,6 +60,8 @@ def get_file_metadata(user_id: str = Depends(get_current_user_id)):
 
 def get_file_record(file_id: str):
     try:
+        if supabase is None:
+            raise HTTPException(status_code=500, detail="Supabase client is not initialized. Check your configuration.")
         file_data = supabase.table("user_files").select("*").eq("id", file_id).execute()
         
         # Check if we got any results
@@ -131,7 +129,7 @@ def create_presigned_url(file_id: str, user_id: str = Depends(get_current_user_i
                     detail="The file could not be found in storage. It may have been deleted or moved."
                 )
             
-            if hasattr(e, 'response') and hasattr(e.response, 'content'):
+            if isinstance(e, httpx.HTTPStatusError) and hasattr(e.response, 'content'):
                 logger.error(f"Error response content: {e.response.content}")
             raise HTTPException(status_code=500, detail=f"Error accessing file: {str(e)}")
     
@@ -230,6 +228,8 @@ def parse_file_from_supabase(file_record: dict, user_token: str) -> str:
 
 def delete_file_from_supabase(file_id: str, token: str, user_id: str, original_filename: str):
     try:
+        if supabase is None:
+            raise HTTPException(status_code=500, detail="Supabase client is not initialized. Check your configuration.")
         supabase.table("user_files").delete().eq("id", file_id).execute()
         delete_file_from_supabase_storage(file_id, token, user_id, original_filename)
     except Exception as e:

@@ -1,35 +1,23 @@
-import os
 from fastapi import HTTPException, Body, Response, Request
-from supabase import create_client, Client
+from supabase import Client
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from services.logger import app_logger as logger
 from fastapi import Depends
 from dependencies.auth_dependencies import get_current_user_id
 from typing import Optional
+from config import config
 
-# Initialize Supabase client
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-TESTING = os.getenv("TESTING", "false").lower() == "true"
+# Use centralized configuration - guaranteed non-null in production (fail-fast at startup)
+supabase: Client = config.get_supabase_client()
 
-if not TESTING:
-    if SUPABASE_URL is None or SUPABASE_KEY is None:
-        raise RuntimeError("SUPABASE_URL and SUPABASE_KEY environment variables must be set")
-
-    supabase: Client = create_client(
-        supabase_url=SUPABASE_URL,
-        supabase_key=SUPABASE_KEY
-    )
-    logger.info("Auth handlers initialized with Supabase client")
-else:
-    supabase = None
+if config.is_testing():
     logger.info("Auth handlers initialized in TEST mode")
+else:
+    logger.info("Auth handlers initialized with Supabase client")
 
 ACCESS_TOKEN_EXPIRE = 3600  # 1 hour
 REFRESH_TOKEN_EXPIRE = 60 * 60 * 24 * 30  # 30 days
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 # Define request models
 class LoginRequest(BaseModel):

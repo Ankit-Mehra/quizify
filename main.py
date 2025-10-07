@@ -6,13 +6,20 @@ import os
 import json
 from dotenv import load_dotenv
 
-# Import modules that depend on environment variables
-from services.logger import app_logger as logger
-from api import auth_routes, quiz_routes, file_routes, submission_routes
-from middleware.auto_refresh import SupabaseAutoRefreshMiddleware
-
-# Load environment variables from .env file
+# Load environment variables from .env file FIRST
 load_dotenv()
+
+# Import configuration and validate BEFORE importing other modules
+# This ensures the app fails fast at startup if Supabase is misconfigured
+from config import config  # noqa: E402
+
+# Validate configuration at startup (will raise RuntimeError if misconfigured)
+config.validate_config()
+
+# Import modules that depend on environment variables
+from services.logger import app_logger as logger  # noqa: E402
+from api import auth_routes, quiz_routes, file_routes, submission_routes  # noqa: E402
+from middleware.auto_refresh import SupabaseAutoRefreshMiddleware  # noqa: E402
 
 # Get the CORS origins from environment variable or use default
 try:

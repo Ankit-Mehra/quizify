@@ -1,23 +1,15 @@
 ## Submission DB Services
-import os
-from supabase import create_client, Client
+from supabase import Client
 from services.logger import db_logger as logger
 from typing import List
 from schemas.submission import QuizSubmission, QuizAnswer
 from schemas.quiz import Question
 from fastapi import HTTPException
 from uuid import UUID
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-TESTING = os.getenv("TESTING", "false").lower() == "true"
+from config import config
 
-if not TESTING:
-    supabase: Client = create_client(
-        supabase_url=SUPABASE_URL,
-        supabase_key=SUPABASE_KEY
-    )
-else:
-    supabase = None
+# Use centralized configuration - guaranteed non-null in production (fail-fast at startup)
+supabase: Client = config.get_supabase_client()
 
 def get_question(question_ids: List[UUID]) -> List[Question]:
     """
