@@ -15,7 +15,16 @@ logger.info("Auth routes initialized")
 router.add_api_route("/signup", signup, methods=["POST"], response_model=Dict[str, Any])
 router.add_api_route("/login", login, methods=["POST"], response_model=Dict[str, Any])
 # router.add_api_route("/refresh-session", refresh_session, methods=["POST"], response_model=Dict[str, Any])
-router.add_api_route("/logout", logout, methods=["POST"], response_model=Dict[str, str])
+router.add_api_route(
+    "/logout",
+    logout,
+    methods=["POST"],
+    response_model=Dict[str, str],
+    dependencies=[Depends(get_current_user_id)],
+    openapi_extra={
+        "security": [{"BearerAuth": []}]
+    }
+)
 router.add_api_route("/verify-email", verify_email_token, methods=["POST"], response_model=Dict[str, str])
 router.add_api_route(
     "/change-password",

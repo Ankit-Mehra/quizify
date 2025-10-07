@@ -1,26 +1,23 @@
-import os
 from fastapi import HTTPException
-from supabase import create_client, Client
+from supabase import Client
 from schemas.quiz import Question
 from typing import List
 from services.logger import db_logger as logger
+from config import config
 
 
-STORAGE_NAME = os.getenv("SUPABASE_STORAGE_NAME")
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+# Use centralized configuration - guaranteed non-null in production (fail-fast at startup)
+STORAGE_NAME = config.STORAGE_NAME
+supabase: Client = config.get_supabase_client()
 
-supabase: Client = create_client(
-    supabase_url=SUPABASE_URL,
-    supabase_key=SUPABASE_KEY
-)
-logger.info("Supabase client initialized")
+if config.is_testing():
+    logger.info("Supabase client initialized in TEST mode")
+else:
+    logger.info("Supabase client initialized")
 
 def get_authed_supabase_client(user_token: str):
     logger.debug(f"Creating authenticated Supabase client with token: {user_token[:10]}...")
-    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-    supabase.auth.session = {'access_token': user_token}
-    return supabase
+    return config.get_authenticated_supabase_client(user_token)
 
 def save_quiz_to_database(title: str, quizzes: List[Question], created_by: str):
     try:
@@ -87,6 +84,7 @@ def save_quiz_to_database(title: str, quizzes: List[Question], created_by: str):
 def get_quiz_from_database(quiz_id: str):
     try:
         logger.info(f"Fetching quiz with ID: {quiz_id}")
+        
         # Get the quiz metadata
         quiz = supabase.table("quizzes").select("*").eq("id", quiz_id).execute()
         if not quiz.data:
@@ -116,6 +114,7 @@ def get_quiz_from_database(quiz_id: str):
 def get_user_quizzes(user_id: str):
     try:
         logger.info(f"Fetching quizzes for user: {user_id}")
+        
         # Get all quizzes for a user
         quizzes_data = supabase.table("quizzes").select("*").eq("created_by", user_id).execute()
         
@@ -127,7 +126,7 @@ def get_user_quizzes(user_id: str):
         quizzes = []
         for quiz in quizzes_data.data:
             # Count questions for this quiz
-            questions = supabase.table("questions").select("id", count="exact").eq("quiz_id", quiz["id"]).execute()
+            questions = supabase.table("questions").select("id", count="exact").eq("quiz_id", quiz["id"]).execute()  # type: ignore
             
             quizzes.append({
                 "id": quiz["id"],
@@ -147,6 +146,7 @@ def get_user_quizzes(user_id: str):
 def save_metadata(metadata: dict):
     try:
         logger.info(f"Saving metadata for quiz: {metadata.get('quiz_id', 'unknown')}")
+        
         supabase.table("quiz_metadata").insert(metadata).execute()
         logger.info("Metadata saved successfully")
     except Exception as e:
@@ -156,6 +156,7 @@ def save_metadata(metadata: dict):
 def get_metadata(user_id: str):
     try:
         logger.info(f"Fetching metadata for user: {user_id}")
+        
         metadata = supabase.table("quiz_metadata").select("*").eq("created_by", user_id).execute()
         logger.info(f"Found {len(metadata.data)} metadata records for user: {user_id}")
         return metadata.data
@@ -166,6 +167,7 @@ def get_metadata(user_id: str):
 def delete_quiz_from_database(quiz_id: str):
     try:
         logger.info(f"Deleting quiz with ID: {quiz_id}")
+        
         supabase.table("quizzes").delete().eq("id", quiz_id).execute()
         logger.info(f"Quiz deleted successfully: {quiz_id}")
     except Exception as e:

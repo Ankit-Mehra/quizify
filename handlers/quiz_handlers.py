@@ -1,4 +1,4 @@
-from fastapi import HTTPException, Depends, Path, Body
+from fastapi import HTTPException, Depends, Path, Body, UploadFile, File, Form
 from services.ai_services.doc_service import ( 
     extract_text_from_pdf,
     extract_text_from_plain_text,
@@ -13,62 +13,92 @@ from services.db_services.supabase_file import (
     parse_file_from_supabase)
 from dependencies.auth_dependencies import get_current_user_id, get_current_user_token
 from schemas.quiz import TextQuizRequest, FileQuizRequest
-from typing import Dict, Any
+from typing import Dict, Any, List, Literal, Optional
 from datetime import datetime
 from services.ai_services.chunking_service import generate_quizzes_single_async
 from services.logger import app_logger as logger
 
+# Content validation constants
+MIN_CONTENT_LENGTH = 50  # Minimum characters required for quiz generation from uploaded files
+MIN_STORED_CONTENT_LENGTH = 10  # Minimum characters required for stored file content validation
+
 # === Generate quiz from file ===
 async def generate_quiz_from_file_openai(
-    data: FileQuizRequest = Body(...),
+    file: UploadFile = File(...),
+    title: str = Form(...),
+    num_questions: int = Form(10),
+    question_type: List[str] = Form(["mixed"]),
     current_user_id: str = Depends(get_current_user_id),
     user_token: str = Depends(get_current_user_token)
 ):
-    if data.file.content_type not in ["application/pdf", "text/plain", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]:
+    if file.content_type not in ["application/pdf", "text/plain", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]:
         raise HTTPException(status_code=400, detail="Only PDF, DOCX, or TXT files are supported.")
 
     try:
-        text = await data.file.read()
+        text = await file.read()
         
         # Choose the appropriate extractor based on file type
-        if data.file.content_type == "application/pdf":
-            parsed_text = extract_text_from_pdf(text)
-        elif data.file.content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-            parsed_text = extract_text_from_docx(text)
-        else:  # text/plain
-            parsed_text = extract_text_from_plain_text(text)
+        try:
+            if file.content_type == "application/pdf":
+                parsed_text = extract_text_from_pdf(text)
+            elif file.content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+                parsed_text = extract_text_from_docx(text)
+            else:  # text/plain
+                parsed_text = extract_text_from_plain_text(text)
+        except Exception as extraction_error:
+            # Extraction errors (corrupted files, invalid format, etc.)
+            error_msg = str(extraction_error)
+            if "Failed to extract text" in error_msg or "Failed to open" in error_msg:
+                raise HTTPException(status_code=400, detail=error_msg)
+            raise  # Re-raise unexpected errors
+
+        # Validate extraction succeeded (for extractors that return error strings instead of raising)
+        if "Failed to extract text" in parsed_text:
+            raise HTTPException(status_code=400, detail=parsed_text)
+        
+        # Validate minimum content length
+        if not parsed_text or len(parsed_text.strip()) < MIN_CONTENT_LENGTH:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Insufficient content in file. Please provide a document with at least {MIN_CONTENT_LENGTH} characters of text."
+            )
 
         quizzes = await generate_quizzes_single_async(
             parsed_text, 
-            data.num_questions,
-            question_types=data.question_type
+            num_questions,
+            question_types=question_type
         )
-        quiz_id = save_quiz_to_database(data.title, quizzes, current_user_id)
+        quiz_id = save_quiz_to_database(title, quizzes, current_user_id)
 
         metadata = {
             "quiz_id": quiz_id,
             "content_type": "file",
-            "file_name": data.file.filename,
-            "file_type": data.file.content_type,
+            "file_name": file.filename,
+            "file_type": file.content_type,
             "word_count": len(parsed_text.split()),
             "created_by": current_user_id,
             "created_at": datetime.now().isoformat(),
-            "question_count": data.num_questions
+            "question_count": num_questions
         }
 
         #save metadata to database
         save_metadata(metadata)
 
         #save file to supabase storage
-        file_bytes = await data.file.read()
-        save_file_to_supabase(current_user_id, file_bytes, data.file.filename, user_token)
+        await file.seek(0)  # Reset file pointer after reading
+        file_bytes = await file.read()
+        save_file_to_supabase(current_user_id, file_bytes, file.filename, user_token, file.content_type)
 
         return {
             "quiz_id": quiz_id, 
-            "title": data.title,
-            "message": "Quiz generated successfully from file"
+            "title": title,
+            "message": "Quiz generated successfully from file",
+            "questions": quizzes
         }
     
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")
 
@@ -117,7 +147,7 @@ async def generate_quiz_from_fileid(
             raise he
         
         # Validate content
-        if not file_content or not isinstance(file_content, str) or len(file_content.strip()) < 10:
+        if not file_content or not isinstance(file_content, str) or len(file_content.strip()) < MIN_STORED_CONTENT_LENGTH:
             logger.error(f"Invalid or insufficient content extracted from file {file_id}")
             raise HTTPException(status_code=400, detail="The file content couldn't be properly extracted or is too short")
 
