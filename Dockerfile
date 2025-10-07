@@ -1,41 +1,21 @@
-# Dockerfile for containerized deployment (Fly.io, Azure, etc.)
-# For Railway/Render, this is optional - they auto-detect Python
+# Use Python 3.12 slim image (smaller than full, larger than alpine but has build tools)
+FROM python:3.12-slim
 
-FROM python:3.12-slim-bullseye
-
-# Ensure all system packages are up-to-date to reduce vulnerabilities
-RUN apt-get update && apt-get upgrade -y && apt-get dist-upgrade -y && apt-get clean
-
-# Set working directory
+# Create and change to the app directory
 WORKDIR /app
 
-# Install system dependencies needed for PDF processing and web scraping
-RUN apt-get update && apt-get upgrade -y && apt-get install -y \
-    # For PyPDF2 and python-docx
-    libpoppler-cpp-dev \
-    # For Playwright (if used)
-    wget \
-    gnupg \
+# Install system dependencies for PDF/DOCX processing
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first for better caching
-COPY requirements.txt .
-
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Install Playwright browsers (if web scraping is used)
-# RUN playwright install chromium --with-deps
-
-# Copy application code
+# Copy local code to the container image
 COPY . .
 
-# Expose port
-EXPOSE 8000
+# Install project dependencies
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "import requests; requests.get('http://localhost:8000/api/test')"
-
-# Run the application
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Run the web service on container startup
+# Railway automatically injects PORT environment variable
+CMD uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}
