@@ -66,7 +66,12 @@ class QuizzesResponse(BaseModel):
     questions: List[Question]
 
 class QuizMetadata(BaseModel):
-    model_config = ConfigDict(strict=False)
+    """
+    Metadata for quiz generation.
+    Strict validation enabled to catch data inconsistencies early.
+    """
+    model_config = ConfigDict(strict=True, validate_assignment=True)
+    
     id: Optional[str] = None
     quiz_id: Optional[str] = None
     content_type: str  # "text" or "file"
@@ -128,10 +133,16 @@ class WebQuizRequest(BaseModel):
         return self
     
 class QuizGenerationResponse(BaseModel):
-    model_config = ConfigDict(strict=False, extra='allow')
+    """
+    Response model for quiz generation endpoints.
+    Strict validation with explicit fields only - no extra fields allowed.
+    """
+    model_config = ConfigDict(strict=True, validate_assignment=True, extra='forbid')
+    
     quiz_id: str
     title: str
     message: str
+    questions: Optional[List[Question]] = None  # Include questions field explicitly
 
 class MyQuizzesResponse(BaseModel):
     model_config = ConfigDict(strict=True)

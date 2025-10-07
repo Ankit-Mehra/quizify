@@ -77,7 +77,6 @@ def mock_supabase_client(mock_supabase, mocker):
         """Mock AI quiz generation"""
         return [
             {
-                "id": f"q{i}",
                 "type": "multiple_choice",
                 "question": f"Question {i}?",
                 "options": ["A", "B", "C", "D"],
