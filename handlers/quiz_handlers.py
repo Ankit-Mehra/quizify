@@ -18,6 +18,10 @@ from datetime import datetime
 from services.ai_services.chunking_service import generate_quizzes_single_async
 from services.logger import app_logger as logger
 
+# Content validation constants
+MIN_CONTENT_LENGTH = 50  # Minimum characters required for quiz generation from uploaded files
+MIN_STORED_CONTENT_LENGTH = 10  # Minimum characters required for stored file content validation
+
 # === Generate quiz from file ===
 async def generate_quiz_from_file_openai(
     file: UploadFile = File(...),
@@ -53,8 +57,11 @@ async def generate_quiz_from_file_openai(
             raise HTTPException(status_code=400, detail=parsed_text)
         
         # Validate minimum content length
-        if not parsed_text or len(parsed_text.strip()) < 50:
-            raise HTTPException(status_code=400, detail="Insufficient content in file. Please provide a document with at least 50 characters of text.")
+        if not parsed_text or len(parsed_text.strip()) < MIN_CONTENT_LENGTH:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Insufficient content in file. Please provide a document with at least {MIN_CONTENT_LENGTH} characters of text."
+            )
 
         quizzes = await generate_quizzes_single_async(
             parsed_text, 
@@ -140,7 +147,7 @@ async def generate_quiz_from_fileid(
             raise he
         
         # Validate content
-        if not file_content or not isinstance(file_content, str) or len(file_content.strip()) < 10:
+        if not file_content or not isinstance(file_content, str) or len(file_content.strip()) < MIN_STORED_CONTENT_LENGTH:
             logger.error(f"Invalid or insufficient content extracted from file {file_id}")
             raise HTTPException(status_code=400, detail="The file content couldn't be properly extracted or is too short")
 
