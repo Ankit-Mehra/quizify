@@ -162,6 +162,82 @@ class MockSupabaseClient:
         return self._tables[table_name]
 
 
+class MockQuizStorage:
+    """
+    Mock quiz storage for integration tests.
+    
+    Thread-safe storage for quiz data that can be shared across test functions.
+    Uses a class-based approach instead of function attributes for better maintainability.
+    """
+    
+    def __init__(self):
+        self._quizzes = {}  # quiz_id -> quiz_data
+    
+    def save_quiz(self, title, quizzes, user_id):
+        """Save a quiz and return its ID."""
+        import uuid
+        quiz_id = str(uuid.uuid4())
+        self._quizzes[quiz_id] = {
+            "id": quiz_id,
+            "title": title,
+            "questions": quizzes,
+            "user_id": user_id,
+            "created_by": user_id,
+            "created_at": "2025-10-04T00:00:00"
+        }
+        return quiz_id
+    
+    def get_quiz(self, quiz_id, user_id=None):
+        """Get a quiz by ID."""
+        if quiz_id in self._quizzes:
+            quiz = self._quizzes[quiz_id]
+            # Ensure created_by is set
+            if 'created_by' not in quiz:
+                quiz['created_by'] = quiz.get('user_id', 'mock_user_123')
+            return quiz
+        
+        # Fallback to generic mock data
+        return {
+            "id": quiz_id,
+            "title": "Mock Quiz",
+            "created_by": user_id or "mock_user_123",
+            "questions": [
+                {
+                    "type": "multiple_choice",
+                    "question": f"Question {i}?",
+                    "options": ["A", "B", "C", "D"],
+                    "correct_answer": "A",
+                    "explanation": f"Explanation {i}",
+                    "source": "mock"
+                }
+                for i in range(1, 7)
+            ],
+            "created_at": "2025-10-04T00:00:00"
+        }
+    
+    def get_user_quizzes(self, user_id):
+        """Get all quizzes for a user."""
+        return [
+            {
+                "id": quiz["id"],
+                "title": quiz["title"],
+                "created_by": quiz["user_id"],
+                "created_at": quiz["created_at"],
+                "question_count": len(quiz["questions"])
+            }
+            for quiz in self._quizzes.values()
+            if quiz.get("user_id") == user_id
+        ]
+    
+    def clear(self):
+        """Clear all stored quizzes."""
+        self._quizzes.clear()
+
+
+# Module-level quiz storage instance
+_quiz_storage = MockQuizStorage()
+
+
 # Mock AI services
 async def mock_generate_quizzes_single_async(text, num_questions, question_types=None):
     """Mock OpenAI quiz generation."""
@@ -182,20 +258,7 @@ async def mock_generate_quizzes_single_async(text, num_questions, question_types
 
 def mock_save_quiz_to_database(title, quizzes, user_id):
     """Mock saving quiz to database."""
-    import uuid
-    quiz_id = str(uuid.uuid4())
-    # Store the quiz so we can retrieve it later
-    if not hasattr(mock_save_quiz_to_database, '_quizzes'):
-        mock_save_quiz_to_database._quizzes = {}
-    mock_save_quiz_to_database._quizzes[quiz_id] = {
-        "id": quiz_id,
-        "title": title,
-        "questions": quizzes,
-        "user_id": user_id,
-        "created_by": user_id,
-        "created_at": "2025-10-04T00:00:00"
-    }
-    return quiz_id
+    return _quiz_storage.save_quiz(title, quizzes, user_id)
 
 
 def mock_save_file_to_supabase(*args, **kwargs):
@@ -239,49 +302,12 @@ def mock_requests_get(url, headers=None, **kwargs):
 
 def mock_get_user_quizzes(user_id):
     """Mock getting user quizzes."""
-    # Return all quizzes stored in mock_save_quiz_to_database
-    if hasattr(mock_save_quiz_to_database, '_quizzes'):
-        return [
-            {
-                "id": quiz["id"],
-                "title": quiz["title"],
-                "created_by": quiz["user_id"],
-                "created_at": quiz["created_at"],
-                "question_count": len(quiz["questions"])
-            }
-            for quiz in mock_save_quiz_to_database._quizzes.values()
-        ]
-    return []
+    return _quiz_storage.get_user_quizzes(user_id)
 
 
 def mock_get_quiz_from_database(quiz_id, user_id=None):
     """Mock getting quiz from database."""
-    # Try to get the actual quiz if it was saved
-    if hasattr(mock_save_quiz_to_database, '_quizzes') and quiz_id in mock_save_quiz_to_database._quizzes:
-        quiz = mock_save_quiz_to_database._quizzes[quiz_id]
-        # Ensure created_by is set
-        if 'created_by' not in quiz:
-            quiz['created_by'] = quiz.get('user_id', 'mock_user_123')
-        return quiz
-    
-    # Fallback to generic mock data
-    return {
-        "id": quiz_id,
-        "title": "Mock Quiz",
-        "created_by": user_id or "mock_user_123",
-        "questions": [
-            {
-                "id": f"q{i}",
-                "type": "multiple_choice",
-                "question": f"Question {i}?",
-                "options": ["A", "B", "C", "D"],
-                "correct_answer": "A",
-                "explanation": f"Explanation {i}"
-            }
-            for i in range(1, 7)
-        ],
-        "created_at": "2025-10-04T00:00:00"
-    }
+    return _quiz_storage.get_quiz(quiz_id, user_id)
 
 
 @pytest.fixture(scope="module", autouse=True)
