@@ -101,14 +101,21 @@ async def login(request: LoginRequest, response: Response):
             max_age=REFRESH_TOKEN_EXPIRE
         )
 
-        return {
+        # Prepare response - only include access_token in test mode for testing convenience
+        response_data = {
             "message": "Successfully logged in",
-            "access_token": access_token,  # Include for testing/integration purposes
             "user": {
                 "id": result.user.id if result.user else None,
                 "email": result.user.email if result.user else None
             }
         }
+        
+        # SECURITY: Only expose token in response body during testing
+        # In production, token is only available via HttpOnly cookie
+        if config.is_testing():
+            response_data["access_token"] = access_token
+        
+        return response_data
 
     except Exception as e:
         logger.warning(f"Failed login for {request.email}: {e}")
