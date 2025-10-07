@@ -238,22 +238,127 @@ class MockQuizStorage:
 _quiz_storage = MockQuizStorage()
 
 
-# Mock AI services
-async def mock_generate_quizzes_single_async(text, num_questions, question_types=None):
-    """Mock OpenAI quiz generation."""
+# Utility function for tests to create deterministic mock responses
+def create_mock_quiz_response(num_questions, question_types=None, text="sample text"):
+    """
+    Create a deterministic mock quiz response for testing.
+    
+    Use this in tests when you need exact control over the number of questions:
+    
+    Example:
+        # Test 75% threshold failure
+        with patch("handlers.quiz_handlers.generate_quizzes_single_async", 
+                   return_value=create_mock_quiz_response(7)):  # 7/10 = 70% < 75%
+            response = client.post("/api/quizzes/generate-text", ...)
+    
+    Args:
+        num_questions: Exact number of questions to return
+        question_types: List of question types or single type
+        text: Text snippet for question content
+    
+    Returns:
+        List of mock question dictionaries
+    """
     import uuid
-    return [
-        {
+    
+    if question_types:
+        types_to_use = question_types if isinstance(question_types, list) else [question_types]
+        question_type_list = [types_to_use[i % len(types_to_use)] for i in range(num_questions)]
+    else:
+        question_type_list = ["multiple_choice"] * num_questions
+    
+    questions = []
+    for i in range(num_questions):
+        qtype = question_type_list[i]
+        question = {
             "id": str(uuid.uuid4()),
-            "type": "multiple_choice",
-            "question": f"Sample question {i} about: {text[:50]}?",
-            "options": ["Option A", "Option B", "Option C", "Option D"],
-            "correct_answer": "Option A",
-            "explanation": f"Explanation for question {i}",
+            "type": qtype,
+            "question": f"Sample question {i+1} about: {text[:50]}?",
+            "explanation": f"Explanation for question {i+1}",
             "source": "mock_ai"
         }
-        for i in range(1, min(int(num_questions) + 1, 11))
-    ]
+        
+        # Add type-specific fields
+        if qtype == "multiple_choice":
+            question["options"] = ["Option A", "Option B", "Option C", "Option D"]
+            question["correct_answer"] = "Option A"
+        elif qtype == "true_false":
+            question["options"] = None
+            question["correct_answer"] = True
+        elif qtype == "fill_blank":
+            question["options"] = ["blank1", "blank2", "blank3"]
+            question["correct_answer"] = "blank1"
+        elif qtype == "matching":
+            question["left"] = ["Item 1", "Item 2"]
+            question["right"] = ["Match A", "Match B"]
+            question["correct_answer"] = [["Item 1", "Match A"], ["Item 2", "Match B"]]
+            question["options"] = None
+        
+        questions.append(question)
+    
+    return questions
+
+
+# Mock AI services
+async def mock_generate_quizzes_single_async(text, num_questions, question_types=None):
+    """
+    Mock OpenAI quiz generation.
+    
+    Default behavior: Returns exactly min(num_questions, 10) questions for predictable tests.
+    
+    For edge case testing (e.g., 75% threshold), patch this function in your test
+    using create_mock_quiz_response() to get exact control over question count.
+    
+    Example:
+        # Test 75% threshold failure (7 out of 10 = 70%)
+        with patch("handlers.quiz_handlers.generate_quizzes_single_async",
+                   return_value=create_mock_quiz_response(7)):
+            response = client.post(...)
+    """
+    import uuid
+    
+    # Default: return exactly what was requested (up to 10)
+    requested = int(num_questions)
+    actual_count = min(requested, 10)
+    
+    # Determine question types to generate
+    if question_types:
+        # question_types is a list from FastAPI Form parameter
+        types_to_use = question_types if isinstance(question_types, list) else [question_types]
+        question_type_list = [types_to_use[i % len(types_to_use)] for i in range(actual_count)]
+    else:
+        question_type_list = ["multiple_choice"] * actual_count
+    
+    questions = []
+    for i in range(actual_count):
+        qtype = question_type_list[i]
+        question = {
+            "id": str(uuid.uuid4()),
+            "type": qtype,
+            "question": f"Sample question {i+1} about: {text[:50]}?",
+            "explanation": f"Explanation for question {i+1}",
+            "source": "mock_ai"
+        }
+        
+        # Add type-specific fields
+        if qtype == "multiple_choice":
+            question["options"] = ["Option A", "Option B", "Option C", "Option D"]
+            question["correct_answer"] = "Option A"
+        elif qtype == "true_false":
+            question["options"] = None
+            question["correct_answer"] = True  # Boolean for true/false
+        elif qtype == "fill_blank":
+            question["options"] = ["blank1", "blank2", "blank3"]
+            question["correct_answer"] = "blank1"
+        elif qtype == "matching":
+            question["left"] = ["Item 1", "Item 2"]
+            question["right"] = ["Match A", "Match B"]
+            question["correct_answer"] = [["Item 1", "Match A"], ["Item 2", "Match B"]]
+            question["options"] = None
+        
+        questions.append(question)
+    
+    return questions
 
 
 def mock_save_quiz_to_database(title, quizzes, user_id):

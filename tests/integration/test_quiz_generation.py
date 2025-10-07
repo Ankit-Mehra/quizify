@@ -111,10 +111,11 @@ class TestQuizGenerationFlow:
         quiz_files = {
             "file": ("cloud_computing.docx", io.BytesIO(docx_bytes), "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
         }
+        # For multipart form data with list parameters, provide list directly
         quiz_data = {
             "title": "Cloud Computing Quiz",
             "num_questions": "6",
-            "question_types": '["multiple_choice", "true_false"]'
+            "question_type": ["multiple_choice", "true_false"]  # Provide as list, not JSON string
         }
         
         quiz_response = client.post("/api/quiz/generate/file", headers=headers, files=quiz_files, data=quiz_data)
