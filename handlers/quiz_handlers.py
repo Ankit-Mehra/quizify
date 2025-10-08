@@ -6,8 +6,9 @@ from services.ai_services.doc_service import (
 )
 from services.db_services.supabase_quiz import ( 
     save_quiz_to_database, get_user_quizzes,
-    get_quiz_from_database,save_metadata, 
-    get_metadata, delete_quiz_from_database)
+    get_quiz_from_database, save_metadata, 
+    get_metadata, delete_quiz_from_database,
+    get_user_tier_info)
 from services.db_services.supabase_file import ( 
     get_file_record, save_file_to_supabase,
     parse_file_from_supabase)
@@ -22,6 +23,48 @@ from services.logger import app_logger as logger
 MIN_CONTENT_LENGTH = 50  # Minimum characters required for quiz generation from uploaded files
 MIN_STORED_CONTENT_LENGTH = 10  # Minimum characters required for stored file content validation
 
+def validate_user_quota(user_id: str):
+    """
+    Validate if user has available quota for quiz generation.
+    
+    Args:
+        user_id: The UUID of the user
+        
+    Raises:
+        HTTPException: 403 Forbidden if quota is exceeded with detailed error message
+    """
+    tier_info = get_user_tier_info(user_id)
+    
+    if tier_info["quota_exceeded"]:
+        current_count = tier_info["current_quiz_count"]
+        quota_limit = tier_info["quota_limit"]
+        user_tier = tier_info["account_tier"]
+        
+        # Create upgrade suggestion based on current tier
+        upgrade_suggestion = ""
+        if user_tier == "free":
+            upgrade_suggestion = "Upgrade to basic for 100 quizzes."
+        elif user_tier == "basic":
+            upgrade_suggestion = "Upgrade to educator for 500 quizzes."
+        
+        detail_message = f"Quiz quota exceeded for {user_tier} tier ({current_count}/{quota_limit}). {upgrade_suggestion}".strip()
+        
+        logger.warning(f"Quota exceeded for user {user_id}: {detail_message}")
+        
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "detail": detail_message,
+                "current_count": current_count,
+                "quota_limit": quota_limit,
+                "user_tier": user_tier
+            }
+        )
+    
+    logger.info(f"Quota check passed for user {user_id}: "
+               f"{tier_info['current_quiz_count']}/{tier_info['quota_limit']}")
+
+
 # === Generate quiz from file ===
 async def generate_quiz_from_file_openai(
     file: UploadFile = File(...),
@@ -33,6 +76,9 @@ async def generate_quiz_from_file_openai(
 ):
     if file.content_type not in ["application/pdf", "text/plain", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]:
         raise HTTPException(status_code=400, detail="Only PDF, DOCX, or TXT files are supported.")
+
+    # Validate quota BEFORE file processing and generation (don't waste AI API calls)
+    validate_user_quota(current_user_id)
 
     try:
         text = await file.read()
@@ -216,6 +262,9 @@ async def generate_quiz_from_text(
                 status_code=401, 
                 detail="Authentication required to generate quiz"
             )
+        
+        # Validate quota BEFORE generation (don't waste AI API calls)
+        validate_user_quota(current_user_id)
             
         # Generate quiz questions
         quizzes = await generate_quizzes_single_async(

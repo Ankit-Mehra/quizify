@@ -172,3 +172,41 @@ def delete_quiz_from_database(quiz_id: str):
         logger.info(f"Quiz deleted successfully: {quiz_id}")
     except Exception as e:
         logger.error(f"Error deleting quiz: {str(e)}", exc_info=True)
+
+def get_user_tier_info(user_id: str):
+    """
+    Get user tier information including quota status from user_tier_info view.
+    
+    Args:
+        user_id: The UUID of the user
+        
+    Returns:
+        dict: User tier information with keys: id, email, account_tier, 
+              current_quiz_count, quota_limit, quota_exceeded
+              
+    Raises:
+        HTTPException: If user not found or database error occurs
+    """
+    try:
+        logger.info(f"Fetching tier info for user: {user_id}")
+        
+        # Query the user_tier_info view
+        response = supabase.table("user_tier_info").select("*").eq("id", user_id).execute()
+        
+        if not response.data or len(response.data) == 0:
+            logger.warning(f"User tier info not found for user: {user_id}")
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        tier_info = response.data[0]
+        logger.info(f"User {user_id} tier info: tier={tier_info['account_tier']}, "
+                   f"count={tier_info['current_quiz_count']}/{tier_info['quota_limit']}, "
+                   f"exceeded={tier_info['quota_exceeded']}")
+        
+        return tier_info
+        
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching user tier info: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error fetching user tier information: {str(e)}")
