@@ -1,4 +1,4 @@
-# Use Python 3.12 slim image (smaller than full, larger than alpine but has build tools)
+# Use Python 3.12 slim image
 FROM python:3.12-slim
 
 # Create and change to the app directory
