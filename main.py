@@ -29,12 +29,16 @@ except json.JSONDecodeError:
     BACKEND_CORS_ORIGINS = ["http://localhost:3000", "http://localhost:3001"]
     logger.warning("Failed to parse CORS origins from env, using defaults")
 
+# Disable docs in production
+docs_url = "/docs" if os.getenv("TESTING", "false").lower() == "true" else None
+redoc_url = "/redoc" if os.getenv("TESTING", "false").lower() == "true" else None
+
 app = FastAPI(
     title="Quiz Generator API",
     description="Backend API for Quizify application",
     version="0.1.0",
-    docs_url="/docs",
-    redoc_url="/redoc"
+    docs_url=docs_url,
+    redoc_url=redoc_url
 )
 logger.info("FastAPI application initialized")
 
