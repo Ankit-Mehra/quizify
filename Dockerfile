@@ -17,5 +17,5 @@ COPY . .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Run the web service on container startup
-# Railway automatically injects PORT environment variable
-CMD ["hypercorn", "main:app", "--bind", "::"]
+# Use shell form to allow PORT variable expansion
+CMD hypercorn main:app --bind 0.0.0.0:${PORT:-8000}
