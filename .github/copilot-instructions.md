@@ -2,6 +2,9 @@
 
 Auto-generated from all feature plans. Last updated: 2025-10-04
 
+## Project Overview
+Quizify is a FastAPI-based quiz generation platform that creates educational quizzes from multiple content sources (text, files, URLs). The system uses AI (OpenAI GPT-4) to generate intelligent quiz questions with tiered user quotas managed via Supabase.
+
 ## Active Technologies
 - Python 3.12+ + FastAPI 0.1.0, Supabase (PostgreSQL + Auth + Storage), OpenAI GPT-4, Pydantic v2, PyPDF2, python-docx, playwright, trafilatura (001-comprehensive-quiz-generation)
 
@@ -30,6 +33,13 @@ psql -f migrations/001_add_missing_features.sql  # Apply migration
 
 ## Code Style
 Python 3.12+: Follow standard conventions, use type hints, async/await for I/O
+
+## Testing Guidelines
+- Write tests in `tests/` directory organized by type (unit, integration, contract)
+- Use pytest for test execution
+- Follow TDD: Write tests before implementation
+- Mock external services (OpenAI, Supabase) in unit tests
+- Integration tests should validate end-to-end flows
 
 ## Recent Changes
 - 2025-10-04: Database migrations complete - added tier management via profiles table, content source tracking, file size validation, search indexes
@@ -60,6 +70,13 @@ quiz_data = {
     "content_source_reference": "https://..."  # or file_id or None
 }
 ```
+
+## Domain-Specific Conventions
+- **Quiz Generation**: All quiz generation flows through handlers in `handlers/` which call `services/ai_service.py`
+- **Content Sources**: Support three types: text input, file upload (PDF/DOCX), and URL scraping
+- **File Size Limits**: 10MB maximum (10485760 bytes) - validate before processing
+- **Tier System**: free (5 quizzes), basic (20 quizzes), premium (unlimited)
+- **Authentication**: All quiz endpoints require Supabase JWT token in Authorization header
 
 <!-- MANUAL ADDITIONS START -->
 <!-- MANUAL ADDITIONS END -->
