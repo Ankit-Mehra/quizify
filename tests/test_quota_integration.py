@@ -5,10 +5,8 @@ Tests both /api/quiz/generate/text and /api/quiz/generate/file endpoints.
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
 from fastapi import HTTPException
-from fastapi.testclient import TestClient
-from handlers.quiz_handlers import generate_quiz_from_text, generate_quiz_from_file_openai
-from schemas.quiz import TextQuizRequest
-import io
+from handlers.quiz_handlers import generate_quiz_from_text, generate_quiz_from_file_openai, generate_quiz_from_fileid
+from schemas.quiz import TextQuizRequest, FileQuizRequest
 
 
 class TestQuotaEnforcementTextEndpoint:
@@ -412,3 +410,222 @@ class TestQuotaCheckBeforeGeneration:
         
         # Verify AI generation was NOT called (no API waste)
         mock_generate.assert_not_called()
+
+
+class TestQuotaEnforcementFileIdEndpoint:
+    """Integration tests for quota enforcement on file ID generation endpoint."""
+    
+    @pytest.mark.asyncio
+    @patch('handlers.quiz_handlers.get_user_tier_info')
+    @patch('handlers.quiz_handlers.get_file_record')
+    @patch('handlers.quiz_handlers.parse_file_from_supabase')
+    @patch('handlers.quiz_handlers.generate_quizzes_single_async')
+    @patch('handlers.quiz_handlers.save_quiz_to_database')
+    @patch('handlers.quiz_handlers.save_metadata')
+    async def test_file_id_endpoint_free_tier_under_limit_success(
+        self, mock_save_metadata, mock_save_quiz, mock_generate,
+        mock_parse, mock_get_record, mock_get_tier_info
+    ):
+        """Test file ID endpoint allows quiz generation for free tier user under limit."""
+        # Setup mocks
+        mock_get_tier_info.return_value = {
+            'id': 'test-user-id',
+            'account_tier': 'free',
+            'current_quiz_count': 2,
+            'quota_limit': 5,
+            'quota_exceeded': False
+        }
+        
+        mock_get_record.return_value = {
+            'id': 'file-123',
+            'user_id': 'test-user-id',
+            'original_filename': 'test.pdf',
+            'file_type': 'application/pdf',
+            'storage_path': 'user-files/test.pdf'
+        }
+        
+        mock_parse.return_value = "This is extracted text from the stored file with enough content to generate quizzes."
+        
+        mock_question = MagicMock()
+        mock_question.type = "multiple_choice"
+        mock_question.question = "Test question?"
+        mock_question.options = ["A", "B", "C", "D"]
+        mock_question.correct_answer = "A"
+        mock_question.explanation = "Test explanation"
+        mock_question.source = "Test source"
+        mock_generate.return_value = [mock_question]
+        mock_save_quiz.return_value = "quiz-999"
+        
+        # Create request data
+        request_data = FileQuizRequest(
+            title="Test File ID Quiz",
+            num_questions=5,
+            question_type=["multiple_choice"]
+        )
+        
+        # Call handler
+        result = await generate_quiz_from_fileid(
+            file_id='file-123',
+            data=request_data,
+            current_user_id='test-user-id',
+            user_token='test-token'
+        )
+        
+        # Assertions
+        assert result['quiz_id'] == 'quiz-999'
+        assert 'Quiz generated successfully' in result['message']
+        mock_generate.assert_called_once()
+        mock_save_quiz.assert_called_once()
+        
+    @pytest.mark.asyncio
+    @patch('handlers.quiz_handlers.get_user_tier_info')
+    @patch('handlers.quiz_handlers.get_file_record')
+    @patch('handlers.quiz_handlers.parse_file_from_supabase')
+    async def test_file_id_endpoint_free_tier_at_limit_forbidden(
+        self, mock_parse, mock_get_record, mock_get_tier_info
+    ):
+        """Test file ID endpoint returns 403 for free tier user at limit."""
+        # Setup mocks
+        mock_get_tier_info.return_value = {
+            'id': 'test-user-id',
+            'account_tier': 'free',
+            'current_quiz_count': 5,
+            'quota_limit': 5,
+            'quota_exceeded': True
+        }
+        
+        mock_get_record.return_value = {
+            'id': 'file-123',
+            'user_id': 'test-user-id',
+            'original_filename': 'test.pdf',
+            'file_type': 'application/pdf',
+            'storage_path': 'user-files/test.pdf'
+        }
+        
+        mock_parse.return_value = "This is extracted text content."
+        
+        # Create request data
+        request_data = FileQuizRequest(
+            title="Test File ID Quiz",
+            num_questions=5,
+            question_type=["multiple_choice"]
+        )
+        
+        # Call handler and expect exception
+        with pytest.raises(HTTPException) as exc_info:
+            await generate_quiz_from_fileid(
+                file_id='file-123',
+                data=request_data,
+                current_user_id='test-user-id',
+                user_token='test-token'
+            )
+        
+        # Assertions
+        assert exc_info.value.status_code == 403
+        detail = exc_info.value.detail
+        assert detail['current_count'] == 5
+        assert detail['quota_limit'] == 5
+        assert detail['user_tier'] == 'free'
+        assert 'Upgrade to basic' in detail['detail']
+        
+    @pytest.mark.asyncio
+    @patch('handlers.quiz_handlers.get_user_tier_info')
+    @patch('handlers.quiz_handlers.get_file_record')
+    @patch('handlers.quiz_handlers.parse_file_from_supabase')
+    async def test_file_id_endpoint_basic_tier_at_limit_forbidden(
+        self, mock_parse, mock_get_record, mock_get_tier_info
+    ):
+        """Test file ID endpoint returns 403 for basic tier user at limit."""
+        # Setup mocks
+        mock_get_tier_info.return_value = {
+            'id': 'test-user-id',
+            'account_tier': 'basic',
+            'current_quiz_count': 100,
+            'quota_limit': 100,
+            'quota_exceeded': True
+        }
+        
+        mock_get_record.return_value = {
+            'id': 'file-123',
+            'user_id': 'test-user-id',
+            'original_filename': 'test.pdf',
+            'file_type': 'application/pdf',
+            'storage_path': 'user-files/test.pdf'
+        }
+        
+        mock_parse.return_value = "This is extracted text content."
+        
+        # Create request data
+        request_data = FileQuizRequest(
+            title="Test File ID Quiz",
+            num_questions=5,
+            question_type=["multiple_choice"]
+        )
+        
+        # Call handler and expect exception
+        with pytest.raises(HTTPException) as exc_info:
+            await generate_quiz_from_fileid(
+                file_id='file-123',
+                data=request_data,
+                current_user_id='test-user-id',
+                user_token='test-token'
+            )
+        
+        # Assertions
+        assert exc_info.value.status_code == 403
+        detail = exc_info.value.detail
+        assert detail['current_count'] == 100
+        assert detail['quota_limit'] == 100
+        assert detail['user_tier'] == 'basic'
+        assert 'Upgrade to educator' in detail['detail']
+        
+    @pytest.mark.asyncio
+    @patch('handlers.quiz_handlers.get_user_tier_info')
+    @patch('handlers.quiz_handlers.get_file_record')
+    @patch('handlers.quiz_handlers.parse_file_from_supabase')
+    @patch('handlers.quiz_handlers.generate_quizzes_single_async')
+    async def test_file_id_endpoint_quota_check_before_ai_call(
+        self, mock_generate, mock_parse, mock_get_record, mock_get_tier_info
+    ):
+        """Test that quota check happens before AI generation for file ID endpoint."""
+        # Setup mock to indicate quota exceeded
+        mock_get_tier_info.return_value = {
+            'id': 'test-user-id',
+            'account_tier': 'free',
+            'current_quiz_count': 5,
+            'quota_limit': 5,
+            'quota_exceeded': True
+        }
+        
+        mock_get_record.return_value = {
+            'id': 'file-123',
+            'user_id': 'test-user-id',
+            'original_filename': 'test.pdf',
+            'file_type': 'application/pdf',
+            'storage_path': 'user-files/test.pdf'
+        }
+        
+        mock_parse.return_value = "This is extracted text content."
+        
+        # Create request data
+        request_data = FileQuizRequest(
+            title="Test File ID Quiz",
+            num_questions=5,
+            question_type=["multiple_choice"]
+        )
+        
+        # Call handler and expect exception
+        with pytest.raises(HTTPException) as exc_info:
+            await generate_quiz_from_fileid(
+                file_id='file-123',
+                data=request_data,
+                current_user_id='test-user-id',
+                user_token='test-token'
+            )
+        
+        # Verify quota check failed with 403
+        assert exc_info.value.status_code == 403
+        
+        # Verify AI generation was NOT called (no API waste)
+        mock_generate.assert_not_called()
+

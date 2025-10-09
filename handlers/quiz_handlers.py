@@ -204,6 +204,9 @@ async def generate_quiz_from_fileid(
         logger.error(f"Error reading file {file_id}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error reading file: {str(e)}")
 
+    # Validate quota BEFORE generation (don't waste AI API calls)
+    validate_user_quota(current_user_id)
+
     try:
         logger.info(f"Generating quiz questions from file content (length: {len(file_content)})")
         quizzes = await generate_quizzes_single_async(
