@@ -1,14 +1,16 @@
 from fastapi import HTTPException
-from supabase import Client
 from schemas.quiz import Question
 from typing import List
 from services.logger import db_logger as logger
 from config import config
 
+# Lazy load Supabase client to avoid initialization issues in tests
+def get_supabase():
+    """Get Supabase client (lazy loaded)"""
+    return config.get_supabase_client()
 
-# Use centralized configuration - guaranteed non-null in production (fail-fast at startup)
+# Use centralized configuration
 STORAGE_NAME = config.STORAGE_NAME
-supabase: Client = config.get_supabase_client()
 
 if config.is_testing():
     logger.info("Supabase client initialized in TEST mode")
@@ -21,6 +23,7 @@ def get_authed_supabase_client(user_token: str):
 
 def save_quiz_to_database(title: str, quizzes: List[Question], created_by: str):
     try:
+        supabase = get_supabase()
         logger.info(f"Saving quiz '{title}' with {len(quizzes)} questions")
         # Validate user ID to prevent UUID errors
         if not created_by or created_by == "undefined":
@@ -83,6 +86,7 @@ def save_quiz_to_database(title: str, quizzes: List[Question], created_by: str):
 
 def get_quiz_from_database(quiz_id: str):
     try:
+        supabase = get_supabase()
         logger.info(f"Fetching quiz with ID: {quiz_id}")
         
         # Get the quiz metadata
@@ -113,6 +117,7 @@ def get_quiz_from_database(quiz_id: str):
 
 def get_user_quizzes(user_id: str):
     try:
+        supabase = get_supabase()
         logger.info(f"Fetching quizzes for user: {user_id}")
         
         # Get all quizzes for a user
@@ -145,6 +150,7 @@ def get_user_quizzes(user_id: str):
 
 def save_metadata(metadata: dict):
     try:
+        supabase = get_supabase()
         logger.info(f"Saving metadata for quiz: {metadata.get('quiz_id', 'unknown')}")
         
         supabase.table("quiz_metadata").insert(metadata).execute()
@@ -155,6 +161,7 @@ def save_metadata(metadata: dict):
 
 def get_metadata(user_id: str):
     try:
+        supabase = get_supabase()
         logger.info(f"Fetching metadata for user: {user_id}")
         
         metadata = supabase.table("quiz_metadata").select("*").eq("created_by", user_id).execute()
@@ -166,6 +173,7 @@ def get_metadata(user_id: str):
 
 def delete_quiz_from_database(quiz_id: str):
     try:
+        supabase = get_supabase()
         logger.info(f"Deleting quiz with ID: {quiz_id}")
         
         supabase.table("quizzes").delete().eq("id", quiz_id).execute()
@@ -188,6 +196,7 @@ def get_user_tier_info(user_id: str):
         HTTPException: If user not found or database error occurs
     """
     try:
+        supabase = get_supabase()
         logger.info(f"Fetching tier info for user: {user_id}")
         
         # Query the user_tier_info view

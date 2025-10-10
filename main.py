@@ -18,7 +18,7 @@ config.validate_config()
 
 # Import modules that depend on environment variables
 from services.logger import app_logger as logger  # noqa: E402
-from api import auth_routes, quiz_routes, file_routes, submission_routes  # noqa: E402
+from api import auth_routes, quiz_routes, file_routes, submission_routes, admin_routes  # noqa: E402
 from middleware.auto_refresh import SupabaseAutoRefreshMiddleware  # noqa: E402
 
 # Get the CORS origins from environment variable or use default
@@ -29,9 +29,10 @@ except json.JSONDecodeError:
     BACKEND_CORS_ORIGINS = ["http://localhost:3000", "http://localhost:3001"]
     logger.warning("Failed to parse CORS origins from env, using defaults")
 
-# Disable docs in production
-docs_url = "/docs" if os.getenv("TESTING", "false").lower() == "true" else None
-redoc_url = "/redoc" if os.getenv("TESTING", "false").lower() == "true" else None
+# Enable docs in development (use ENABLE_DOCS=true in .env)
+enable_docs = os.getenv("ENABLE_DOCS", "false").lower() == "true"
+docs_url = "/docs" if enable_docs else None
+redoc_url = "/redoc" if enable_docs else None
 
 app = FastAPI(
     title="Quiz Generator API",
@@ -59,6 +60,7 @@ app.include_router(auth_routes.router, prefix="/api")
 app.include_router(quiz_routes.router, prefix="/api")
 app.include_router(file_routes.router, prefix="/api")
 app.include_router(submission_routes.router, prefix="/api")
+app.include_router(admin_routes.router, prefix="/api")
 
 
 # Include remaining routers directly

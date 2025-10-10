@@ -1,5 +1,4 @@
 from fastapi import HTTPException, Body, Response, Request
-from supabase import Client
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from services.logger import app_logger as logger
@@ -8,8 +7,10 @@ from dependencies.auth_dependencies import get_current_user_id
 from typing import Optional
 from config import config
 
-# Use centralized configuration - guaranteed non-null in production (fail-fast at startup)
-supabase: Client = config.get_supabase_client()
+# Lazy load Supabase client to avoid initialization issues in tests
+def get_supabase():
+    """Get Supabase client (lazy loaded)"""
+    return config.get_supabase_client()
 
 if config.is_testing():
     logger.info("Auth handlers initialized in TEST mode")
@@ -30,6 +31,7 @@ class LogoutRequest(BaseModel):
 # Remove template rendering functions
 async def signup(email: str = Body(...), password: str = Body(...), name: str = Body(...)):
     try:
+        supabase = get_supabase()
         logger.info(f"Attempting to sign up user with email: {email}")
         response = supabase.auth.sign_up({
             "email": email,
@@ -65,6 +67,7 @@ async def signup(email: str = Body(...), password: str = Body(...), name: str = 
 
 async def login(request: LoginRequest, response: Response):
     try:
+        supabase = get_supabase()
         logger.info(f"Login attempt for user: {request.email}")
         result = supabase.auth.sign_in_with_password({
             "email": request.email,
@@ -110,9 +113,9 @@ async def login(request: LoginRequest, response: Response):
             }
         }
         
-        # SECURITY: Only expose token in response body during testing
+        # SECURITY: Only expose token in response body during testing or development
         # In production, token is only available via HttpOnly cookie
-        if config.is_testing():
+        if config.is_testing() or config.is_development():
             response_data["access_token"] = access_token
         
         return response_data
@@ -128,6 +131,7 @@ async def refresh_session(request: Request, response: Response):
         raise HTTPException(status_code=401, detail="Missing refresh token")
 
     try:
+        supabase = get_supabase()
         session = supabase.auth.refresh_session(refresh_token)
         if session.session is None or not hasattr(session.session, "access_token"):
             raise HTTPException(status_code=401, detail="Invalid refresh token or session expired")
@@ -169,6 +173,7 @@ async def verify_email_token(request: Request):
         raise HTTPException(status_code=400, detail="Missing email address")
 
     try:
+        supabase = get_supabase()
         supabase.auth.verify_otp({
             "email": email,
             "token_hash": code,
@@ -186,6 +191,7 @@ async def change_password(email: str = Body(...),
                            new_password: str = Body(...),
                            user_id: str = Depends(get_current_user_id)):
     try:
+        supabase = get_supabase()
         logger.info(f"Password change requested for user: {email}")
         supabase.auth.admin.update_user_by_id(user_id, {"password": new_password})
         logger.info(f"Password updated successfully for user: {email}")
@@ -196,6 +202,7 @@ async def change_password(email: str = Body(...),
 
 async def delete_account(email: str = Body(...)):
     try:
+        supabase = get_supabase()
         logger.info(f"Account deletion requested for user: {email}")
         response = supabase.table("users").select("*").eq("email", email).execute()
         if not response.data:
@@ -211,6 +218,7 @@ async def delete_account(email: str = Body(...)):
 
 async def update_email(email: str = Body(...), new_email: str = Body(...)):
     try:
+        supabase = get_supabase()
         logger.info(f"Email update requested: {email} -> {new_email}")
         response = supabase.table("users").select("*").eq("email", email).execute()
         if not response.data:

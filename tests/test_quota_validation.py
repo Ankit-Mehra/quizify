@@ -12,9 +12,13 @@ from services.db_services.supabase_quiz import get_user_tier_info
 class TestGetUserTierInfo:
     """Tests for get_user_tier_info function."""
     
-    @patch('services.db_services.supabase_quiz.supabase')
-    def test_get_user_tier_info_success(self, mock_supabase):
+    @patch('services.db_services.supabase_quiz.get_supabase')
+    def test_get_user_tier_info_success(self, mock_get_supabase):
         """Test successful retrieval of user tier info."""
+        # Mock the Supabase client
+        mock_supabase = MagicMock()
+        mock_get_supabase.return_value = mock_supabase
+        
         # Mock the response
         mock_response = MagicMock()
         mock_response.data = [{
@@ -36,9 +40,13 @@ class TestGetUserTierInfo:
         assert result['quota_limit'] == 5
         assert result['quota_exceeded'] is False
         
-    @patch('services.db_services.supabase_quiz.supabase')
-    def test_get_user_tier_info_user_not_found(self, mock_supabase):
+    @patch('services.db_services.supabase_quiz.get_supabase')
+    def test_get_user_tier_info_user_not_found(self, mock_get_supabase):
         """Test error handling when user is not found."""
+        # Mock the Supabase client
+        mock_supabase = MagicMock()
+        mock_get_supabase.return_value = mock_supabase
+        
         # Mock empty response
         mock_response = MagicMock()
         mock_response.data = []
