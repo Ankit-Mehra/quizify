@@ -477,6 +477,22 @@
       "name": "ERROR: Unauthorized (No Token)",
       "event": [
         {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "// Remove access_token cookie to test unauthorized access",
+              "pm.cookies.jar().unset(pm.variables.get('base_url'), 'access_token', function (error) {",
+              "    if (error) {",
+              "        console.log('Cookie unset error:', error);",
+              "    } else {",
+              "        console.log('access_token cookie removed');",
+              "    }",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        },
+        {
           "listen": "test",
           "script": {
             "exec": [

@@ -3,11 +3,12 @@ Admin Handlers
 Business logic for administrative operations.
 """
 
-from fastapi import HTTPException, status
-from typing import List, Dict, Any, Optional
+from fastapi import HTTPException, status, Depends
+from typing import List, Dict, Any
 from services.logger import app_logger as logger
 from config import config
-from schemas.user import UserTierUpdate, UserWithTier
+from schemas.user import UserTierUpdate, UserWithTier, RoleUpdate
+from dependencies.auth_dependencies import get_current_user_id
 
 # Lazy load Supabase client to avoid initialization issues in tests
 def get_supabase():
@@ -76,7 +77,7 @@ def is_admin(user_id: str) -> bool:
 
 
 async def list_all_users(
-    current_user_id: str,
+    current_user_id: str = Depends(get_current_user_id),
     limit: int = 100,
     offset: int = 0
 ) -> List[UserWithTier]:
@@ -141,8 +142,8 @@ async def list_all_users(
 
 
 async def get_user_details(
-    current_user_id: str,
-    user_id: str
+    user_id: str,
+    current_user_id: str = Depends(get_current_user_id)
 ) -> UserWithTier:
     """
     Get detailed information about a specific user.
@@ -199,9 +200,9 @@ async def get_user_details(
 
 
 async def update_user_tier(
-    current_user_id: str,
     user_id: str,
-    tier_update: UserTierUpdate
+    tier_update: UserTierUpdate,
+    current_user_id: str = Depends(get_current_user_id)
 ) -> Dict[str, Any]:
     """
     Update a user's account tier.
@@ -303,19 +304,17 @@ async def update_user_tier(
 
 
 async def update_user_role(
-    current_user_id: str,
     user_id: str,
-    new_role: str,
-    reason: Optional[str] = None
+    role_update: RoleUpdate,
+    current_user_id: str = Depends(get_current_user_id)
 ) -> Dict[str, Any]:
     """
     Update a user's role (admin promotion/demotion).
     
     Args:
-        current_user_id: UUID of the requesting user (must be admin)
         user_id: UUID of the user to update
-        new_role: New role ('user', 'admin', 'moderator')
-        reason: Optional reason for the role change
+        role_update: New role and optional reason
+        current_user_id: UUID of the requesting user (must be admin)
         
     Returns:
         Success message with updated user info and audit log
@@ -342,15 +341,15 @@ async def update_user_role(
     try:
         # Validate role value
         valid_roles = ["user", "admin", "moderator"]
-        if new_role not in valid_roles:
+        if role_update.new_role not in valid_roles:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid role. Must be one of: {', '.join(valid_roles)}"
             )
         
-        logger.info(f"Admin {current_user_id} updating user {user_id} to role {new_role}")
-        if reason:
-            logger.info(f"Reason: {reason}")
+        logger.info(f"Admin {current_user_id} updating user {user_id} to role {role_update.new_role}")
+        if role_update.reason:
+            logger.info(f"Reason: {role_update.reason}")
         
         # First, check if user exists and get current role
         check_response = (
@@ -370,19 +369,19 @@ async def update_user_role(
         old_role = check_response.data[0].get("role", "user")
         
         # Don't update if role is already the same
-        if old_role == new_role:
+        if old_role == role_update.new_role:
             return {
                 "success": True,
-                "message": f"User already has role '{new_role}'",
+                "message": f"User already has role '{role_update.new_role}'",
                 "user_id": user_id,
-                "role": new_role,
+                "role": role_update.new_role,
                 "changed": False
             }
         
         # Update the user's role in profiles table
         update_response = (
             get_supabase().table("profiles")
-            .update({"role": new_role})
+            .update({"role": role_update.new_role})
             .eq("id", user_id)
             .execute()
         )
@@ -393,7 +392,7 @@ async def update_user_role(
                 detail="Failed to update user role"
             )
         
-        logger.info(f"Successfully updated user {user_id} from role '{old_role}' to '{new_role}'")
+        logger.info(f"Successfully updated user {user_id} from role '{old_role}' to '{role_update.new_role}'")
         
         # Log the role change in audit table
         try:
@@ -402,9 +401,9 @@ async def update_user_role(
                 .insert({
                     "user_id": user_id,
                     "old_role": old_role,
-                    "new_role": new_role,
+                    "new_role": role_update.new_role,
                     "changed_by": current_user_id,
-                    "reason": reason
+                    "reason": role_update.reason
                 })
                 .execute()
             )
@@ -425,13 +424,13 @@ async def update_user_role(
         
         return {
             "success": True,
-            "message": f"User role updated from '{old_role}' to '{new_role}'",
+            "message": f"User role updated from '{old_role}' to '{role_update.new_role}'",
             "user_id": user_id,
             "old_role": old_role,
-            "new_role": new_role,
+            "new_role": role_update.new_role,
             "updated_user": updated_user,
             "updated_by": current_user_id,
-            "reason": reason,
+            "reason": role_update.reason,
             "changed": True
         }
         

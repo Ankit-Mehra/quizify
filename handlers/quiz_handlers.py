@@ -14,7 +14,7 @@ from services.db_services.supabase_file import (
     parse_file_from_supabase)
 from dependencies.auth_dependencies import get_current_user_id, get_current_user_token
 from schemas.quiz import TextQuizRequest, FileQuizRequest
-from typing import Dict, Any, List, Literal, Optional
+from typing import Dict, Any, List
 from datetime import datetime
 from services.ai_services.chunking_service import generate_quizzes_single_async
 from services.logger import app_logger as logger
@@ -133,7 +133,8 @@ async def generate_quiz_from_file_openai(
         #save file to supabase storage
         await file.seek(0)  # Reset file pointer after reading
         file_bytes = await file.read()
-        save_file_to_supabase(current_user_id, file_bytes, file.filename, user_token, file.content_type)
+        original_filename = file.filename or f"uploaded_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+        save_file_to_supabase(current_user_id, file_bytes, original_filename, user_token, file.content_type)
 
         return {
             "quiz_id": quiz_id, 
@@ -209,10 +210,11 @@ async def generate_quiz_from_fileid(
 
     try:
         logger.info(f"Generating quiz questions from file content (length: {len(file_content)})")
+        total_questions = data.num_questions if data.num_questions is not None else 10
         quizzes = await generate_quizzes_single_async(
             file_content, 
-            data.num_questions,
-            question_types=data.question_type
+            total_questions,
+            question_types=list(data.question_type)
         )
         
         if not quizzes or len(quizzes) == 0:
@@ -268,12 +270,12 @@ async def generate_quiz_from_text(
         
         # Validate quota BEFORE generation (don't waste AI API calls)
         validate_user_quota(current_user_id)
-            
         # Generate quiz questions
+        total_questions = data.num_questions if data.num_questions is not None else 10
         quizzes = await generate_quizzes_single_async(
             data.content, 
-            data.num_questions,
-            question_types=data.question_type
+            total_questions,
+            question_types=list(data.question_type)
         )
             
         # Save to database
@@ -284,8 +286,6 @@ async def generate_quiz_from_text(
         
         # Save to Supabase storage
         save_file_to_supabase(current_user_id, text_bytes, f"{data.title}.txt", user_token, "text/plain")
-        
-        #save metadata to database
         metedata = {
             "quiz_id": quiz_id,
             "content_type": "text",
@@ -294,7 +294,7 @@ async def generate_quiz_from_text(
             "word_count": len(data.content.split()),
             "created_by": current_user_id,
             "created_at": datetime.now().isoformat(),
-            "question_count": data.num_questions
+            "question_count": total_questions
         }
         save_metadata(metedata)
         

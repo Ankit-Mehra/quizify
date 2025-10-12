@@ -419,9 +419,9 @@ class TestUpdateUserTier:
         # Return different mocks for each table call
         mock_client.table.side_effect = [mock_check_table, mock_update_table, mock_tier_info_table]
         
-        tier_update = UserTierUpdate(new_tier="basic")
+        tier_update = UserTierUpdate(new_tier="basic", reason="Test tier update")
         
-        result = await update_user_tier(mock_admin_user_id, "user-1", tier_update)
+        result = await update_user_tier("user-1", tier_update, mock_admin_user_id)
         
         assert result["user_id"] == "user-1"
         assert result["new_tier"] == "basic"
@@ -441,10 +441,10 @@ class TestUpdateUserTier:
         """Non-admin user should be denied access"""
         mock_is_admin.return_value = False
         
-        tier_update = UserTierUpdate(new_tier="basic")
+        tier_update = UserTierUpdate(new_tier="basic", reason="Test unauthorized update")
         
         with pytest.raises(HTTPException) as exc_info:
-            await update_user_tier(mock_regular_user_id, "user-1", tier_update)
+            await update_user_tier("user-1", tier_update, mock_regular_user_id)
         
         assert exc_info.value.status_code == 403
     
@@ -459,8 +459,10 @@ class TestUpdateUserTier:
         mock_is_admin.return_value = True
         
         # This should fail Pydantic validation before reaching the handler
-        with pytest.raises(Exception):  # Pydantic ValidationError
-            UserTierUpdate(new_tier="invalid_tier")
+        from pydantic import ValidationError
+        with pytest.raises(ValidationError):
+            # Use type: ignore to bypass static type checking for invalid value
+            UserTierUpdate(new_tier="invalid_tier", reason="Test invalid tier")  # type: ignore
     
     @pytest.mark.asyncio
     @patch("handlers.admin_handlers.is_admin")
@@ -503,10 +505,10 @@ class TestUpdateUserTier:
         
         mock_client.table.side_effect = [mock_check_table, mock_update_table]
         
-        tier_update = UserTierUpdate(new_tier="basic")
+        tier_update = UserTierUpdate(new_tier="basic", reason="Test database error")
         
         with pytest.raises(HTTPException) as exc_info:
-            await update_user_tier(mock_admin_user_id, "user-1", tier_update)
+            await update_user_tier("user-1", tier_update, mock_admin_user_id)
         
         assert exc_info.value.status_code == 500
         assert "Failed to update user tier" in str(exc_info.value.detail)
@@ -571,8 +573,8 @@ class TestUpdateUserTier:
             
             mock_client.table.side_effect = [mock_check_table, mock_update_table, mock_tier_info_table]
             
-            tier_update = UserTierUpdate(new_tier=tier)
-            result = await update_user_tier(mock_admin_user_id, "user-1", tier_update)
+            tier_update = UserTierUpdate(new_tier=tier, reason=f"Test {tier} tier update")
+            result = await update_user_tier("user-1", tier_update, mock_admin_user_id)
             
             assert result["new_tier"] == tier
             assert result["success"] is True
@@ -696,12 +698,13 @@ class TestUpdateUserRole:
         
         # Import after mock setup
         from handlers.admin_handlers import update_user_role
+        from schemas.user import RoleUpdate
         
+        role_update = RoleUpdate(new_role="admin", reason="Promoted to help with support")
         result = await update_user_role(
-            current_user_id=mock_admin_user_id,
             user_id="user-1",
-            new_role="admin",
-            reason="Promoted to help with support"
+            role_update=role_update,
+            current_user_id=mock_admin_user_id
         )
         
         assert result["success"] is True
@@ -723,12 +726,14 @@ class TestUpdateUserRole:
         mock_is_admin.return_value = True
         
         from handlers.admin_handlers import update_user_role
+        from schemas.user import RoleUpdate
         
+        role_update = RoleUpdate(new_role="user")
         with pytest.raises(HTTPException) as exc_info:
             await update_user_role(
-                current_user_id=mock_admin_user_id,
                 user_id=mock_admin_user_id,  # Same user
-                new_role="user"
+                role_update=role_update,
+                current_user_id=mock_admin_user_id
             )
         
         assert exc_info.value.status_code == 400
@@ -745,12 +750,14 @@ class TestUpdateUserRole:
         mock_is_admin.return_value = False
         
         from handlers.admin_handlers import update_user_role
+        from schemas.user import RoleUpdate
         
+        role_update = RoleUpdate(new_role="admin")
         with pytest.raises(HTTPException) as exc_info:
             await update_user_role(
-                current_user_id=mock_regular_user_id,
                 user_id="user-1",
-                new_role="admin"
+                role_update=role_update,
+                current_user_id=mock_regular_user_id
             )
         
         assert exc_info.value.status_code == 403
@@ -769,16 +776,16 @@ class TestUpdateUserRole:
         mock_is_admin.return_value = True
         
         from handlers.admin_handlers import update_user_role
+        from schemas.user import RoleUpdate
         
-        with pytest.raises(HTTPException) as exc_info:
+        # This should fail Pydantic validation with invalid role
+        with pytest.raises(Exception):  # Pydantic ValidationError
+            role_update = RoleUpdate(new_role="superuser")  # Invalid role
             await update_user_role(
-                current_user_id=mock_admin_user_id,
                 user_id="user-1",
-                new_role="superuser"  # Invalid role
+                role_update=role_update,
+                current_user_id=mock_admin_user_id
             )
-        
-        assert exc_info.value.status_code == 400
-        assert "Invalid role" in str(exc_info.value.detail)
     
     @pytest.mark.asyncio
     @patch("handlers.admin_handlers.is_admin")
@@ -809,12 +816,14 @@ class TestUpdateUserRole:
         mock_client.table.return_value = mock_check_table
         
         from handlers.admin_handlers import update_user_role
+        from schemas.user import RoleUpdate
         
+        role_update = RoleUpdate(new_role="admin")
         with pytest.raises(HTTPException) as exc_info:
             await update_user_role(
-                current_user_id=mock_admin_user_id,
                 user_id="nonexistent-user",
-                new_role="admin"
+                role_update=role_update,
+                current_user_id=mock_admin_user_id
             )
         
         assert exc_info.value.status_code == 404
@@ -849,11 +858,13 @@ class TestUpdateUserRole:
         mock_client.table.return_value = mock_check_table
         
         from handlers.admin_handlers import update_user_role
+        from schemas.user import RoleUpdate
         
+        role_update = RoleUpdate(new_role="admin")
         result = await update_user_role(
-            current_user_id=mock_admin_user_id,
             user_id="user-1",
-            new_role="admin"  # Already admin
+            role_update=role_update,
+            current_user_id=mock_admin_user_id
         )
         
         assert result["success"] is True
@@ -929,12 +940,13 @@ class TestUpdateUserRole:
         ]
         
         from handlers.admin_handlers import update_user_role
+        from schemas.user import RoleUpdate
         
+        role_update = RoleUpdate(new_role="user", reason="Admin privileges no longer needed")
         result = await update_user_role(
-            current_user_id=mock_admin_user_id,
             user_id="user-2",
-            new_role="user",
-            reason="Admin privileges no longer needed"
+            role_update=role_update,
+            current_user_id=mock_admin_user_id
         )
         
         assert result["success"] is True
@@ -1011,12 +1023,13 @@ class TestUpdateUserRole:
         ]
         
         from handlers.admin_handlers import update_user_role
+        from schemas.user import RoleUpdate
         
+        role_update = RoleUpdate(new_role="moderator", reason="Moderating quiz content")
         result = await update_user_role(
-            current_user_id=mock_admin_user_id,
             user_id="user-3",
-            new_role="moderator",
-            reason="Moderating quiz content"
+            role_update=role_update,
+            current_user_id=mock_admin_user_id
         )
         
         assert result["success"] is True
@@ -1065,12 +1078,14 @@ class TestUpdateUserRole:
         mock_client.table.side_effect = [mock_check_table, mock_update_table]
         
         from handlers.admin_handlers import update_user_role
+        from schemas.user import RoleUpdate
         
+        role_update = RoleUpdate(new_role="admin")
         with pytest.raises(HTTPException) as exc_info:
             await update_user_role(
-                current_user_id=mock_admin_user_id,
                 user_id="user-1",
-                new_role="admin"
+                role_update=role_update,
+                current_user_id=mock_admin_user_id
             )
         
         assert exc_info.value.status_code == 500

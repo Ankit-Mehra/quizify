@@ -3,9 +3,8 @@ Admin API Routes
 Endpoints for administrative tasks like user tier management and role-based access control.
 """
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 from typing import Dict, Any, List
-from dependencies.auth_dependencies import get_current_user_id
 from handlers.admin_handlers import (
     list_all_users,
     update_user_tier,
@@ -35,7 +34,6 @@ router.add_api_route(
     description="List all users with their tier information. Admin only endpoint.",
     response_model=List[UserWithTier],
     tags=["Admin"],
-    dependencies=[Depends(get_current_user_id)],
     openapi_extra={"security": [{"BearerAuth": []}]}
 )
 
@@ -48,7 +46,6 @@ router.add_api_route(
     description="Get detailed information about a specific user. Admin only endpoint.",
     response_model=UserWithTier,
     tags=["Admin"],
-    dependencies=[Depends(get_current_user_id)],
     openapi_extra={"security": [{"BearerAuth": []}]}
 )
 
@@ -61,7 +58,6 @@ router.add_api_route(
     description="Update a user's account tier. Admin only endpoint.",
     response_model=Dict[str, Any],
     tags=["Admin"],
-    dependencies=[Depends(get_current_user_id)],
     openapi_extra={
         "security": [{"BearerAuth": []}],
         "requestBody": {
@@ -83,7 +79,6 @@ router.add_api_route(
     description="Update a user's role (promote/demote to admin). Admin only endpoint with audit logging.",
     response_model=Dict[str, Any],
     tags=["Admin"],
-    dependencies=[Depends(get_current_user_id)],
     openapi_extra={
         "security": [{"BearerAuth": []}],
         "requestBody": {

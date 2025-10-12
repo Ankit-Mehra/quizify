@@ -5,8 +5,6 @@ from handlers.auth_handlers import (
 )
 from typing import Dict, Any
 from services.logger import app_logger as logger
-from fastapi import Depends
-from dependencies.auth_dependencies import get_current_user_id
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 logger.info("Auth routes initialized")
@@ -30,11 +28,7 @@ router.add_api_route(
     "/logout",
     logout,
     methods=["POST"],
-    response_model=Dict[str, str],
-    dependencies=[Depends(get_current_user_id)],
-    openapi_extra={
-        "security": [{"BearerAuth": []}]
-    }
+    response_model=Dict[str, str]
 )
 
 router.add_api_route(
@@ -42,10 +36,6 @@ router.add_api_route(
     change_password,
     methods=["POST"],
     response_model=Dict[str, str],
-    dependencies=[Depends(get_current_user_id)],
-    openapi_extra={
-        "security": [{"BearerAuth": []}]
-    },
     tags=["Auth"]
 )
 router.add_api_route(
@@ -53,10 +43,6 @@ router.add_api_route(
     delete_account,
     methods=["POST"],
     response_model=Dict[str, str],
-    dependencies=[Depends(get_current_user_id)],
-    openapi_extra={
-        "security": [{"BearerAuth": []}]
-    },
     tags=["Auth"]
 )
 
@@ -65,8 +51,5 @@ router.add_api_route(
     update_email,
     methods=["POST"],
     response_model=Dict[str, str],
-    openapi_extra={
-        "security": [{"BearerAuth": []}]
-    },
     tags=["Auth"]
 )

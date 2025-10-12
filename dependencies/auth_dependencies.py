@@ -49,7 +49,7 @@ def get_current_user_id(
 def get_current_user_token(
     request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(security)
-) -> str:
+) -> str | None:
     token = None
     if credentials:
         token = credentials.credentials

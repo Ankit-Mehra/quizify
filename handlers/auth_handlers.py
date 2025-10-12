@@ -176,12 +176,12 @@ async def refresh_session(request: Request, response: Response):
         raise HTTPException(status_code=401, detail="Invalid refresh token")
 
 
-async def logout(response: Response):
+async def logout(response: Response, user_id: str = Depends(get_current_user_id)):
     try:
-        logger.info("User logout requested")
+        logger.info(f"User {user_id} logout requested")
         response.delete_cookie(key="access_token", path="/", httponly=True)
         response.delete_cookie(key="refresh_token", path="/", httponly=True)
-        logger.info("User logged out successfully")
+        logger.info(f"User {user_id} logged out successfully")
         return {"message": "Successfully logged out"}
     except Exception as e:
         logger.error(f"Error during logout: {str(e)}", exc_info=True)
