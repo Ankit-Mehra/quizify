@@ -6,15 +6,17 @@ Tests admin panel functionality for user tier management
 import pytest
 from unittest.mock import Mock, patch
 from fastapi import HTTPException
+from pydantic import ValidationError
 
 # Import after conftest sets environment variables
 from handlers.admin_handlers import (
     list_all_users,
     update_user_tier,
     get_user_details,
+    update_user_role,
     is_admin
 )
-from schemas.user import UserTierUpdate
+from schemas.user import UserTierUpdate, RoleUpdate
 
 
 # ============================================
@@ -459,7 +461,6 @@ class TestUpdateUserTier:
         mock_is_admin.return_value = True
         
         # This should fail Pydantic validation before reaching the handler
-        from pydantic import ValidationError
         with pytest.raises(ValidationError):
             # Use type: ignore to bypass static type checking for invalid value
             UserTierUpdate(new_tier="invalid_tier", reason="Test invalid tier")  # type: ignore
@@ -573,7 +574,7 @@ class TestUpdateUserTier:
             
             mock_client.table.side_effect = [mock_check_table, mock_update_table, mock_tier_info_table]
             
-            tier_update = UserTierUpdate(new_tier=tier, reason=f"Test {tier} tier update")
+            tier_update = UserTierUpdate(new_tier=tier, reason=f"Test {tier} tier update")  # type: ignore
             result = await update_user_tier("user-1", tier_update, mock_admin_user_id)
             
             assert result["new_tier"] == tier
@@ -697,8 +698,6 @@ class TestUpdateUserRole:
         ]
         
         # Import after mock setup
-        from handlers.admin_handlers import update_user_role
-        from schemas.user import RoleUpdate
         
         role_update = RoleUpdate(new_role="admin", reason="Promoted to help with support")
         result = await update_user_role(
@@ -725,10 +724,8 @@ class TestUpdateUserRole:
         """Test that users cannot modify their own role (security requirement)"""
         mock_is_admin.return_value = True
         
-        from handlers.admin_handlers import update_user_role
-        from schemas.user import RoleUpdate
         
-        role_update = RoleUpdate(new_role="user")
+        role_update = RoleUpdate(new_role="user", reason="Test self-modification")
         with pytest.raises(HTTPException) as exc_info:
             await update_user_role(
                 user_id=mock_admin_user_id,  # Same user
@@ -749,10 +746,8 @@ class TestUpdateUserRole:
         """Test that non-admin users cannot promote others"""
         mock_is_admin.return_value = False
         
-        from handlers.admin_handlers import update_user_role
-        from schemas.user import RoleUpdate
         
-        role_update = RoleUpdate(new_role="admin")
+        role_update = RoleUpdate(new_role="admin", reason="Unauthorized promotion attempt")
         with pytest.raises(HTTPException) as exc_info:
             await update_user_role(
                 user_id="user-1",
@@ -775,12 +770,10 @@ class TestUpdateUserRole:
         """Test that invalid roles are rejected"""
         mock_is_admin.return_value = True
         
-        from handlers.admin_handlers import update_user_role
-        from schemas.user import RoleUpdate
         
         # This should fail Pydantic validation with invalid role
         with pytest.raises(Exception):  # Pydantic ValidationError
-            role_update = RoleUpdate(new_role="superuser")  # Invalid role
+            role_update = RoleUpdate(new_role="superuser", reason="Invalid role test")  # type: ignore
             await update_user_role(
                 user_id="user-1",
                 role_update=role_update,
@@ -815,10 +808,8 @@ class TestUpdateUserRole:
         
         mock_client.table.return_value = mock_check_table
         
-        from handlers.admin_handlers import update_user_role
-        from schemas.user import RoleUpdate
         
-        role_update = RoleUpdate(new_role="admin")
+        role_update = RoleUpdate(new_role="admin", reason="Test user not found scenario")
         with pytest.raises(HTTPException) as exc_info:
             await update_user_role(
                 user_id="nonexistent-user",
@@ -857,10 +848,8 @@ class TestUpdateUserRole:
         
         mock_client.table.return_value = mock_check_table
         
-        from handlers.admin_handlers import update_user_role
-        from schemas.user import RoleUpdate
         
-        role_update = RoleUpdate(new_role="admin")
+        role_update = RoleUpdate(new_role="admin", reason="Test no-op role change")
         result = await update_user_role(
             user_id="user-1",
             role_update=role_update,
@@ -939,8 +928,6 @@ class TestUpdateUserRole:
             mock_tier_info_table
         ]
         
-        from handlers.admin_handlers import update_user_role
-        from schemas.user import RoleUpdate
         
         role_update = RoleUpdate(new_role="user", reason="Admin privileges no longer needed")
         result = await update_user_role(
@@ -1022,8 +1009,6 @@ class TestUpdateUserRole:
             mock_tier_info_table
         ]
         
-        from handlers.admin_handlers import update_user_role
-        from schemas.user import RoleUpdate
         
         role_update = RoleUpdate(new_role="moderator", reason="Moderating quiz content")
         result = await update_user_role(
@@ -1077,10 +1062,8 @@ class TestUpdateUserRole:
         
         mock_client.table.side_effect = [mock_check_table, mock_update_table]
         
-        from handlers.admin_handlers import update_user_role
-        from schemas.user import RoleUpdate
         
-        role_update = RoleUpdate(new_role="admin")
+        role_update = RoleUpdate(new_role="admin", reason="Test database error scenario")
         with pytest.raises(HTTPException) as exc_info:
             await update_user_role(
                 user_id="user-1",
