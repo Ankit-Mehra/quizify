@@ -1,8 +1,7 @@
 from fastapi import APIRouter
 from handlers.auth_handlers import (
     signup, login, logout,
-    verify_email_token, change_password,
-    delete_account, update_email
+    change_password, delete_account, update_email
 )
 from typing import Dict, Any
 from services.logger import app_logger as logger
@@ -39,13 +38,6 @@ router.add_api_route(
 )
 
 router.add_api_route(
-    "/verify-email",
-    verify_email_token,
-    methods=["POST"],
-    response_model=Dict[str, str]
-)
-
-router.add_api_route(
     "/change-password",
     change_password,
     methods=["POST"],
@@ -73,7 +65,6 @@ router.add_api_route(
     update_email,
     methods=["POST"],
     response_model=Dict[str, str],
-    dependencies=[Depends(get_current_user_id)],
     openapi_extra={
         "security": [{"BearerAuth": []}]
     },

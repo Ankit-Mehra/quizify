@@ -18,13 +18,27 @@
               "",
               "pm.test(\"User created successfully\", function () {",
               "    const response = pm.response.json();",
+              "    ",
+              "    // Debug: Log the response",
+              "    console.log('Response:', JSON.stringify(response));",
+              "    ",
               "    pm.expect(response.message).to.include('successfully');",
               "    pm.expect(response).to.have.property('user_id');",
               "    ",
-              "    // Save user_id for later tests",
-              "    if (response.user_id) {",
-              "        pm.environment.set('new_user_id', response.user_id);",
+              "    // Save user_id for later tests - now with debug logging",
+              "    const userId = response.user_id;",
+              "    console.log('User ID to save:', userId);",
+              "    ",
+              "    if (userId) {",
+              "        pm.environment.set('new_user_id', userId);",
+              "        console.log('✅ Saved new_user_id to environment:', userId);",
+              "    } else {",
+              "        console.error('❌ user_id is falsy:', userId);",
               "    }",
+              "    ",
+              "    // Verify it was saved",
+              "    const saved = pm.environment.get('new_user_id');",
+              "    console.log('Verification - Retrieved from environment:', saved);",
               "});"
             ],
             "type": "text/javascript"
@@ -126,55 +140,7 @@
       "response": []
     },
     {
-      "name": "3. Verify Email",
-      "event": [
-        {
-          "listen": "test",
-          "script": {
-            "exec": [
-              "pm.test(\"Status code is 200\", function () {",
-              "    pm.response.to.have.status(200);",
-              "});",
-              "",
-              "pm.test(\"Email verified successfully\", function () {",
-              "    const response = pm.response.json();",
-              "    pm.expect(response.message).to.include('verified');",
-              "});"
-            ],
-            "type": "text/javascript"
-          }
-        }
-      ],
-      "request": {
-        "method": "POST",
-        "header": [
-          {
-            "key": "Content-Type",
-            "value": "application/json",
-            "type": "text"
-          }
-        ],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"email\": \"testuser@example.com\",\n  \"code\": \"123456\"\n}"
-        },
-        "url": {
-          "raw": "{{base_url}}/api/auth/verify-email",
-          "host": [
-            "{{base_url}}"
-          ],
-          "path": [
-            "api",
-            "auth",
-            "verify-email"
-          ]
-        },
-        "description": "Verify email address using OTP code sent to user's email. Replace 'code' with actual OTP from email."
-      },
-      "response": []
-    },
-    {
-      "name": "4. Change Password",
+      "name": "3. Change Password",
       "event": [
         {
           "listen": "test",
@@ -239,7 +205,7 @@
               "",
               "pm.test(\"Email updated successfully\", function () {",
               "    const response = pm.response.json();",
-              "    pm.expect(response.message).to.include('updated');",
+              "    pm.expect(response.message).to.include('initiated');",
               "});"
             ],
             "type": "text/javascript"
@@ -262,7 +228,7 @@
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"email\": \"testuser@example.com\",\n  \"new_email\": \"newemail@example.com\"\n}"
+          "raw": "{\n  \"new_email\": \"newemail@example.com\"\n}"
         },
         "url": {
           "raw": "{{base_url}}/api/auth/update-email",
@@ -275,7 +241,7 @@
             "update-email"
           ]
         },
-        "description": "Update user's email address. Requires authentication. New email must be unique."
+        "description": "Update user's email address. Requires authentication.\n\nIMPORTANT: Secure Email Change is enabled in Supabase.\nYou will receive TWO confirmation emails:\n1. First to your NEW email address - click to confirm\n2. Then to your CURRENT email address - click to confirm\nBoth confirmations are required to complete the email change."
       },
       "response": []
     },
@@ -362,7 +328,7 @@
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"email\": \"testuser@example.com\"\n}"
+          "raw": ""
         },
         "url": {
           "raw": "{{base_url}}/api/auth/delete-account",
@@ -572,19 +538,19 @@
       "response": []
     },
     {
-      "name": "ERROR: Verify Email - Missing Code",
+      "name": "ERROR: Delete Account - Unauthorized",
       "event": [
         {
           "listen": "test",
           "script": {
             "exec": [
-              "pm.test(\"Status code is 400\", function () {",
-              "    pm.response.to.have.status(400);",
+              "pm.test(\"Status code is 401\", function () {",
+              "    pm.response.to.have.status(401);",
               "});",
               "",
-              "pm.test(\"Missing code error\", function () {",
+              "pm.test(\"Unauthorized error\", function () {",
               "    const response = pm.response.json();",
-              "    pm.expect(response.detail).to.include('code');",
+              "    pm.expect(response.detail).to.include('authenticated');",
               "});"
             ],
             "type": "text/javascript"
@@ -602,60 +568,7 @@
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"email\": \"testuser@example.com\"\n}"
-        },
-        "url": {
-          "raw": "{{base_url}}/api/auth/verify-email",
-          "host": [
-            "{{base_url}}"
-          ],
-          "path": [
-            "api",
-            "auth",
-            "verify-email"
-          ]
-        },
-        "description": "Test that email verification without code returns 400 error."
-      },
-      "response": []
-    },
-    {
-      "name": "ERROR: Delete Account - User Not Found",
-      "event": [
-        {
-          "listen": "test",
-          "script": {
-            "exec": [
-              "pm.test(\"Status code is 400\", function () {",
-              "    pm.response.to.have.status(400);",
-              "});",
-              "",
-              "pm.test(\"User not found error\", function () {",
-              "    const response = pm.response.json();",
-              "    pm.expect(response.detail).to.include('not found');",
-              "});"
-            ],
-            "type": "text/javascript"
-          }
-        }
-      ],
-      "request": {
-        "method": "POST",
-        "header": [
-          {
-            "key": "Content-Type",
-            "value": "application/json",
-            "type": "text"
-          },
-          {
-            "key": "Authorization",
-            "value": "Bearer {{auth_token}}",
-            "type": "text"
-          }
-        ],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"email\": \"nonexistent@example.com\"\n}"
+          "raw": ""
         },
         "url": {
           "raw": "{{base_url}}/api/auth/delete-account",
@@ -668,7 +581,7 @@
             "delete-account"
           ]
         },
-        "description": "Test that deleting non-existent account returns 400 error."
+        "description": "Test that deleting account without authentication returns 401 error."
       },
       "response": []
     }

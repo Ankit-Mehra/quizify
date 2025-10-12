@@ -1,11 +1,14 @@
 from fastapi import HTTPException, Body, Response, Request
 from fastapi.responses import JSONResponse
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from services.logger import app_logger as logger
 from fastapi import Depends
 from dependencies.auth_dependencies import get_current_user_id
 from typing import Optional
 from config import config
+
+security = HTTPBearer(auto_error=False)
 
 # Lazy load Supabase client to avoid initialization issues in tests
 def get_supabase():
@@ -28,6 +31,9 @@ class LoginRequest(BaseModel):
 class LogoutRequest(BaseModel):
     token: Optional[str] = None
 
+class UpdateEmailRequest(BaseModel):
+    new_email: str
+
 # Remove template rendering functions
 async def signup(email: str = Body(...), password: str = Body(...), name: str = Body(...)):
     try:
@@ -45,7 +51,7 @@ async def signup(email: str = Body(...), password: str = Body(...), name: str = 
         logger.info(f"User created successfully with ID: {response.user.id if response.user else None}")
         return JSONResponse(
             status_code=201,
-            content={"message": "User created successfully", "user_id": response.user.id if response.user else None}
+            content={"message": "User created successfully. Please check your email for verification.", "user_id": response.user.id if response.user else None}
         )
     except Exception as e:
         logger.error(f"Error during signup: {str(e)}")
@@ -121,8 +127,28 @@ async def login(request: LoginRequest, response: Response):
         return response_data
 
     except Exception as e:
+        error_message = str(e).lower()
         logger.warning(f"Failed login for {request.email}: {e}")
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+        
+        # Provide specific error messages for common issues
+        if "email not confirmed" in error_message or "email confirmation" in error_message:
+            raise HTTPException(
+                status_code=403, 
+                detail="Please verify your email address before logging in. Check your inbox for the confirmation email."
+            )
+        elif "invalid login credentials" in error_message or "invalid credentials" in error_message:
+            raise HTTPException(
+                status_code=401, 
+                detail="Invalid email or password"
+            )
+        elif "email or phone not confirmed" in error_message:
+            raise HTTPException(
+                status_code=403, 
+                detail="Please verify your email address before logging in. Check your inbox for the confirmation email."
+            )
+        else:
+            # Generic error for other cases
+            raise HTTPException(status_code=401, detail="Invalid credentials")
 
 
 async def refresh_session(request: Request, response: Response):
@@ -161,31 +187,6 @@ async def logout(response: Response):
         logger.error(f"Error during logout: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
-async def verify_email_token(request: Request):
-    
-    body = await request.json()
-    code = body.get("code")
-    email = body.get("email")
-
-    if not code:
-        raise HTTPException(status_code=400, detail="Missing verification code")
-    if not email:
-        raise HTTPException(status_code=400, detail="Missing email address")
-
-    try:
-        supabase = get_supabase()
-        supabase.auth.verify_otp({
-            "email": email,
-            "token_hash": code,
-            "type": "email"
-        })
-
-        return {"message": "Email verified successfully"}
-
-    except Exception as e:
-        logger.error(f"Error during email verification: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
-
 
 async def change_password(email: str = Body(...),
                            new_password: str = Body(...),
@@ -200,34 +201,69 @@ async def change_password(email: str = Body(...),
         logger.error(f"Error during password change: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
-async def delete_account(email: str = Body(...)):
+async def delete_account(user_id: str = Depends(get_current_user_id)):
     try:
         supabase = get_supabase()
-        logger.info(f"Account deletion requested for user: {email}")
-        response = supabase.table("users").select("*").eq("email", email).execute()
-        if not response.data:
-            logger.warning(f"Account deletion failed: User not found - {email}")
-            raise HTTPException(status_code=400, detail="User not found")
-
-        supabase.table("users").delete().eq("email", email).execute()
-        logger.info(f"Account deleted successfully for user: {email}")
+        logger.info(f"Account deletion requested for user ID: {user_id}")
+        
+        # Use Supabase Auth API to delete the user
+        supabase.auth.admin.delete_user(user_id)
+        
+        logger.info(f"Account deleted successfully for user ID: {user_id}")
         return {"message": "Account deleted successfully"}
     except Exception as e:
         logger.error(f"Error during account deletion: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
-async def update_email(email: str = Body(...), new_email: str = Body(...)):
+async def update_email(request: UpdateEmailRequest,
+                       credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """
+    Update user email with confirmation.
+    
+    Supabase Secure Email Change Flow:
+    1. Sends confirmation email to the NEW email address
+    2. User clicks link in NEW email to confirm
+    3. Sends confirmation email to the CURRENT email address  
+    4. User clicks link in CURRENT email to confirm
+    5. Email is changed after BOTH confirmations
+    
+    This double confirmation prevents account takeover attacks.
+    """
     try:
+        # Get the user's access token from the credentials
+        token = credentials.credentials if credentials else None
+        
+        if not token:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        
+        new_email = request.new_email
+        logger.info(f"Email update requested to: {new_email}")
+        
         supabase = get_supabase()
-        logger.info(f"Email update requested: {email} -> {new_email}")
-        response = supabase.table("users").select("*").eq("email", email).execute()
-        if not response.data:
-            logger.warning(f"Email update failed: User not found - {email}")
-            raise HTTPException(status_code=400, detail="User not found")
-
-        supabase.table("users").update({"email": new_email}).eq("email", email).execute()
-        logger.info(f"Email updated successfully: {email} -> {new_email}")
-        return {"message": "Email updated successfully"}
+        
+        # Set the session with the user's token
+        supabase.auth.set_session(token, token)
+        
+        # Use the Python SDK to update email - triggers Secure Email Change flow
+        response = supabase.auth.update_user({"email": new_email})
+        
+        current_email = response.user.email if response.user else None
+        logger.info("Email change initiated. Confirmation emails being sent.")
+        logger.info(f"Update response: email={current_email}, new_email={response.user.new_email if response.user else None}")
+        
+        return {
+            "message": f"Email change initiated. Please check BOTH email addresses: (1) Confirm the change from your NEW email ({new_email}) (2) Then confirm from your CURRENT email ({current_email}). Both confirmations are required to complete the email change.",
+            "current_email": current_email,
+            "new_email": new_email,
+            "note": "Secure Email Change is enabled. You must verify both email addresses.",
+            "steps": [
+                f"Step 1: Check {new_email} and click the confirmation link",
+                f"Step 2: Check {current_email} and click the confirmation link",
+                "Step 3: Email will be changed after both confirmations"
+            ]
+        }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error during email update: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))

@@ -39,6 +39,8 @@ def get_current_user_id(
 
         return user_id
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Auth error: {e}", exc_info=True)
         raise HTTPException(status_code=401, detail="Authentication failed")
