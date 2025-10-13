@@ -10,32 +10,28 @@ CONTENT_SOURCE_TYPES = Literal["file", "url", "text"]
 
 # === 1. Question type models ===
 class QuestionBase(BaseModel):
+    """Base class for questions with database IDs (used in retrieval/submission)"""
     id: Optional[UUID] = None
     quiz_id: Optional[UUID] = None
-    explanation: str
-    source: str
+    explanation: str = ""
+    source: str = ""
+
 class MCQQuestion(QuestionBase):
     type: Literal["multiple_choice"]
     question: str
     options: List[str]
     correct_answer: str
-    explanation: str
-    source: str
 
 class TrueFalseQuestion(QuestionBase):
     type: Literal["true_false"]
     question: str
     correct_answer: bool
-    explanation: str
-    source: str
 
 class FillBlankQuestion(QuestionBase):
     type: Literal["fill_blank"]
     question: str  # use ____ or {{blank}} in question
     options: List[str]
     correct_answer: str
-    explanation: str
-    source: str
 
 class MatchingQuestion(QuestionBase):
     type: Literal["matching"]
@@ -43,8 +39,6 @@ class MatchingQuestion(QuestionBase):
     left: List[str]
     right: List[str]
     correct_answer: List[int]  # list of matching indices
-    explanation: str
-    source: str
 
 # === 2. Discriminated union ===
 
@@ -141,14 +135,13 @@ class WebQuizRequest(BaseModel):
 class QuizGenerationResponse(BaseModel):
     """
     Response model for quiz generation endpoints.
-    Strict validation with explicit fields only - no extra fields allowed.
+    Returns saved questions with database IDs for immediate use.
     """
     model_config = ConfigDict(strict=True, validate_assignment=True, extra='forbid')
-    
     quiz_id: str
     title: str
     message: str
-    questions: Optional[List[Question]] = None  # Include questions field explicitly
+    questions: Optional[List[Question]] = None  # Saved questions from database with IDs
 
 class MyQuizzesResponse(BaseModel):
     model_config = ConfigDict(strict=True)
