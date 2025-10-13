@@ -1,103 +1,146 @@
 # GitHub Issues for Missing API Features
 
-**Generated**: 2025-10-08  
-**Branch**: development  
-**Based on**: API Contract Alignment Report
+**Generated**: 2025-10-12  
+**Branch**: test/quiz-generation-and-taking-endpoints  
+**Status**: Updated after implementation review
 
 ---
 
-## 🔴 HIGH PRIORITY (Blocking Production)
+## ✅ COMPLETED FEATURES
 
-### Issue #1: Implement Quiz Quota Enforcement
+### ~~Issue #1: Implement Quiz Quota Enforcement~~ ✅ DONE
 
-**Title**: Add quota validation to quiz generation endpoints
+**Status**: **COMPLETED** - Implemented in handlers/quiz_handlers.py
 
-**Labels**: `priority: high`, `type: feature`, `area: backend`, `blocker`
+**Implementation Details**:
+- ✅ `validate_user_quota()` function created (lines 26-64)
+- ✅ Queries `user_tier_info` view via `get_user_tier_info()`
+- ✅ Returns 403 with detailed error format including current_count, quota_limit, user_tier
+- ✅ Integrated into all 3 generation endpoints:
+  - `generate_quiz_from_text()` - line 272
+  - `generate_quiz_from_file_openai()` - line 81
+  - `generate_quiz_from_fileid()` - line 209
+- ✅ 13 integration tests passing in `tests/test_quota_integration.py`
+- ✅ Quota checked BEFORE AI generation to prevent wasted API calls
+
+**Completed**: October 2025
+
+---
+
+### ~~Issue #2: Admin Tier Management~~ ✅ DONE
+
+**Status**: **COMPLETED** - Admin manual tier upgrade implemented
+
+**Implementation Details**:
+- ✅ Admin endpoint: `PUT /admin/users/{user_id}/tier` in `api/admin_routes.py`
+- ✅ Handler: `update_user_tier()` in `handlers/admin_handlers.py` (lines 202-280)
+- ✅ Admins can manually upgrade users to basic/educator tiers
+- ✅ 30 admin tests passing in `tests/test_admin_api.py`
+- ✅ RBAC role management also implemented
+
+**Note**: Self-service Stripe upgrade is planned for v1.1 (not blocking for MVP)
+
+**Completed**: October 2025
+
+---
+
+## 🟡 MEDIUM PRIORITY (Premium Features & UX)
+
+### Issue #3: Add Search and Filter to Quiz Listing
+
+**Title**: Add query parameters to GET /api/quiz/my-quizzes for search/filter
+
+**Labels**: `priority: medium`, `type: enhancement`, `area: backend`, `ux`
 
 **Description**:
 
-Currently, quiz generation endpoints (`POST /api/quiz/generate/text` and `POST /api/quiz/generate/file`) have no quota limits, allowing unlimited quiz generation. This prevents the business model from working and could lead to abuse.
+The quiz listing endpoint returns ALL quizzes without any filtering capability. This creates poor UX for users with many quizzes and forces all filtering to be done client-side.
 
 **Problem**:
-- Users can generate unlimited quizzes regardless of tier
-- Free tier supposed to be limited to 5 quizzes
-- Basic tier supposed to be limited to 100 quizzes
-- Educator tier supposed to be limited to 500 quizzes
+- Cannot search quizzes by title
+- Cannot filter by date range
+- ALL quizzes loaded at once (performance issue with 100+ quizzes)
+- Client-side filtering is inefficient
 
 **Requirements**:
-1. Query `user_tier_info` view before quiz generation
-2. Check if `quota_exceeded` is true
-3. Return 403 Forbidden if quota exceeded with proper error format:
-   ```json
-   {
-     "detail": "Quiz quota exceeded for free tier (5/5). Upgrade to basic for 100 quizzes.",
-     "current_count": 5,
-     "quota_limit": 5,
-     "user_tier": "free"
-   }
-   ```
-4. Add to BOTH endpoints:
-   - `handlers/quiz_handlers.py::generate_quiz_from_text()`
-   - `handlers/quiz_handlers.py::generate_quiz_from_file_openai()`
+1. Add optional query parameters to `GET /api/quiz/my-quizzes`:
+   - `title` (string, optional): Case-insensitive partial match
+   - `start_date` (ISO 8601 date, optional): Created on or after
+   - `end_date` (ISO 8601 date, optional): Created on or before
 
-**Database Schema**:
-✅ Already ready - `user_tier_info` view exists and calculates quota
+2. Examples:
+   ```
+   GET /api/quiz/my-quizzes?title=python
+   GET /api/quiz/my-quizzes?start_date=2025-10-01&end_date=2025-10-31
+   GET /api/quiz/my-quizzes?title=quiz&start_date=2025-10-01
+   ```
+
+3. Validation:
+   - start_date must be <= end_date (return 400 if not)
+   - Dates must be valid ISO 8601 format (YYYY-MM-DD)
+
+4. Database query changes:
+   - Use `.ilike('title', f'%{title}%')` for case-insensitive search
+   - Use `.gte('created_at', start_date)` for start date
+   - Use `.lt('created_at', end_date + 1 day)` for end date (inclusive)
+
+**Implementation Steps**:
+1. Update handler signature in `handlers/quiz_handlers.py`:
+   ```python
+   async def get_user_quizzes_handler(
+       current_user_id: str = Depends(get_current_user_id),
+       title: Optional[str] = None,
+       start_date: Optional[date] = None,
+       end_date: Optional[date] = None
+   ):
+   ```
+2. Add date validation logic
+3. Update `get_user_quizzes()` in `services/db_services/supabase_quiz.py` to accept filters
+4. Add database query filters conditionally
+
+**Performance Considerations**:
+- Add index on `LOWER(title)` for fast case-insensitive search
+- Existing index on `created_by` should help
+- Add composite index on `(created_by, created_at DESC)` for date filters
 
 **Development Workflow**:
-1. Create feature branch from `deploy/production`:
+1. Create feature branch from `test/quiz-generation-and-taking-endpoints`:
    ```bash
-   git checkout deploy/production
-   git pull origin deploy/production
-   git checkout -b feature/quota-enforcement
+   git checkout test/quiz-generation-and-taking-endpoints
+   git pull origin test/quiz-generation-and-taking-endpoints
+   git checkout -b feature/quiz-search-filter
    ```
 2. Implement the feature
 3. Write tests (see acceptance criteria below)
 4. Ensure all tests pass
-5. Create PR to `deploy/production` branch
+5. Create PR to `test/quiz-generation-and-taking-endpoints` branch
 
 **Acceptance Criteria**:
-- [ ] Free tier users cannot generate more than 5 quizzes
-- [ ] Basic tier users cannot generate more than 100 quizzes
-- [ ] Educator tier users cannot generate more than 500 quizzes
-- [ ] 403 error returned with proper format when quota exceeded
-- [ ] Error message includes current count, limit, and tier
-- [ ] Quota check happens BEFORE AI generation (don't waste API calls)
-- [ ] **Unit tests written** for quota validation logic
-- [ ] **Integration tests written** for both endpoints with quota scenarios
+- [ ] Can search by title (case-insensitive, partial match)
+- [ ] Can filter by start_date (inclusive)
+- [ ] Can filter by end_date (inclusive)
+- [ ] Can combine multiple filters
+- [ ] Returns 400 if start_date > end_date
+- [ ] Returns 400 for invalid date formats
+- [ ] Empty filters return all quizzes (backward compatible)
+- [ ] **Unit tests written** for filter logic and date validation
+- [ ] **Integration tests written** for various query parameter combinations
 - [ ] **All existing tests still pass** after implementation
-- [ ] **Test coverage**: Quota check function, error responses, tier limits
+- [ ] **Test coverage**: Title search, date filters, combined filters, validation errors
 
 **Related Files**:
-- `handlers/quiz_handlers.py`
-- `services/db_services/supabase_quiz.py` (add `get_user_tier_info()` function)
-- `schemas/user.py` (UserTierInfo model already exists)
+- `api/quiz_routes.py` (route already exists, just update)
+- `handlers/quiz_handlers.py::get_user_quizzes_handler()`
+- `services/db_services/supabase_quiz.py::get_user_quizzes()`
+- `tests/test_quiz_search.py` (NEW)
 
-**Contract Reference**: `specs/001-comprehensive-quiz-generation/contracts/generate-quiz-quota.md`
+**Contract Reference**: `specs/001-comprehensive-quiz-generation/contracts/search-quizzes.md`
 
-**Estimated Effort**: 4-6 hours
+**Estimated Effort**: 2-3 hours
 
 ---
 
-### Issue #2: Implement User Tier Upgrade Endpoint
-
-**Title**: Add POST /api/auth/upgrade-tier endpoint
-
-**Labels**: `priority: high`, `type: feature`, `area: backend`, `blocker`
-
-**Description**:
-
-Users currently have no way to upgrade from free tier to basic or educator tiers. This completely blocks the business model and revenue generation.
-
-**Problem**:
-- No endpoint exists for tier upgrades
-- Users stuck on free tier (5 quiz limit)
-- Cannot implement payment flow without this endpoint
-- Database schema is ready but unused
-
-**Requirements**:
-1. Create new endpoint: `POST /api/auth/upgrade-tier`
-2. Request body:
-   ```json
+### Issue #4: Implement Quiz Generation from Web URL
    {
      "target_tier": "basic" | "educator",
      "verification_token": "string"
@@ -329,6 +372,7 @@ Premium feature for basic and educator tier users to generate quizzes from web p
 3. Create route: `api/quiz_routes.py`
 4. Add schema: `schemas/quiz.py::WebQuizRequest`
 
+
 **Error Responses**:
 - 400: Invalid URL format
 - 403: Free tier users cannot use this feature
@@ -346,17 +390,17 @@ Premium feature for basic and educator tier users to generate quizzes from web p
 - ⚠️ **Rate Limiting**: Consider per-user rate limits (future)
 
 **Development Workflow**:
-1. Create feature branch from `deploy/production`:
+1. Create feature branch from `test/quiz-generation-and-taking-endpoints`:
    ```bash
-   git checkout deploy/production
-   git pull origin deploy/production
+   git checkout test/quiz-generation-and-taking-endpoints
+   git pull origin test/quiz-generation-and-taking-endpoints
    git checkout -b feature/web-url-quiz-generation
    ```
 2. Implement the feature
 3. Write tests (see acceptance criteria below)
 4. Ensure all tests pass
 5. Install Playwright browsers: `playwright install chromium`
-6. Create PR to `deploy/production` branch
+6. Create PR to `test/quiz-generation-and-taking-endpoints` branch
 
 **Acceptance Criteria**:
 - [ ] Endpoint exists for basic/educator tiers
@@ -382,7 +426,7 @@ Premium feature for basic and educator tier users to generate quizzes from web p
 - `services/web_scraping_service.py` (NEW)
 - `api/quiz_routes.py` (add route)
 - `handlers/quiz_handlers.py` (add handler)
-- `schemas/quiz.py` (add WebQuizRequest)
+- `schemas/quiz.py` (WebQuizRequest schema already exists)
 
 **Contract Reference**: `specs/001-comprehensive-quiz-generation/contracts/generate-quiz-from-url.md`
 
@@ -390,7 +434,7 @@ Premium feature for basic and educator tier users to generate quizzes from web p
 
 ---
 
-## 🟢 LOW PRIORITY (Polish)
+## 🟢 LOW PRIORITY (Polish & Security)
 
 ### Issue #5: Add File Size Limit to File Upload
 
@@ -440,16 +484,16 @@ metadata = {
 ```
 
 **Development Workflow**:
-1. Create feature branch from `deploy/production`:
+1. Create feature branch from `test/quiz-generation-and-taking-endpoints`:
    ```bash
-   git checkout deploy/production
-   git pull origin deploy/production
+   git checkout test/quiz-generation-and-taking-endpoints
+   git pull origin test/quiz-generation-and-taking-endpoints
    git checkout -b feature/file-size-validation
    ```
 2. Implement the feature
 3. Write tests (see acceptance criteria below)
 4. Ensure all tests pass
-5. Create PR to `deploy/production` branch
+5. Create PR to `test/quiz-generation-and-taking-endpoints` branch
 
 **Acceptance Criteria**:
 - [ ] Files > 10MB return 413 error
@@ -467,36 +511,39 @@ metadata = {
 
 **Contract Reference**: `specs/001-comprehensive-quiz-generation/contracts/file-upload-validation.md`
 
-**Estimated Effort**: 1 hour
+**Estimated Effort**: 1-2 hours
 
 ---
 
-## Issue Creation Summary
+## Issue Summary
 
-**Total Issues**: 5
+**Total Issues**: 5 (2 completed ✅, 3 remaining)
 
 **Priority Breakdown**:
-- 🔴 HIGH: 2 issues (Quota + Tier Upgrade) - **Blocking production**
-- 🟡 MEDIUM: 2 issues (Search + Web Scraping) - **UX & premium features**
-- 🟢 LOW: 1 issue (File Size) - **Polish & security**
+- ✅ HIGH: 2 issues COMPLETED (Quota + Admin Tier Management)
+- 🟡 MEDIUM: 2 issues remaining (Search + Web Scraping)
+- 🟢 LOW: 1 issue remaining (File Size Validation)
 
-**Estimated Total Effort**: 16-22 hours
+**Remaining Estimated Effort**: 9-13 hours
 
 **Recommended Implementation Order**:
-1. Issue #1 (Quota) - 4-6 hours
-2. Issue #2 (Tier Upgrade) - 3-4 hours
-3. Issue #3 (Search) - 2-3 hours
-4. Issue #4 (Web Scraping) - 6-8 hours
-5. Issue #5 (File Size) - 1 hour
+1. Issue #3 (Search/Filter) - 2-3 hours - Better UX for existing features
+2. Issue #5 (File Size) - 1-2 hours - Security & stability
+3. Issue #4 (Web Scraping) - 6-8 hours - Premium feature differentiation
 
 ---
 
-## Next Steps
+## Notes
 
-1. Copy each issue section above into GitHub Issues UI
-2. Add appropriate labels
-3. Assign to sprint/milestone
-4. Link related issues (e.g., #1 depends on #2)
-5. Update project board
+**Recent Changes (October 2025)**:
+- ✅ Quota enforcement fully implemented with 13 passing integration tests
+- ✅ Admin tier management implemented with 30 passing tests
+- ✅ All 3 quiz generation endpoints (text, file, file-id) have quota validation
+- ✅ Self-service Stripe upgrade moved to v1.1 (not blocking for MVP)
 
-**Note**: These issues are based on the API Contract Alignment Report and actual implementation analysis as of 2025-10-08.
+**Next Steps**:
+1. Test existing endpoints with Postman collections (created in `postman/` directory)
+2. Update documentation to reflect quota implementation
+3. Implement remaining medium/low priority features as time allows
+
+**Note**: These issues are based on implementation analysis as of 2025-10-12 on the `test/quiz-generation-and-taking-endpoints` branch.
