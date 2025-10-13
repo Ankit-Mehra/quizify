@@ -13,11 +13,12 @@ from services.db_services.supabase_file import (
     get_file_record, save_file_to_supabase,
     parse_file_from_supabase)
 from dependencies.auth_dependencies import get_current_user_id, get_current_user_token
-from schemas.quiz import TextQuizRequest, FileQuizRequest
+from schemas.quiz import TextQuizRequest, FileQuizRequest, WebQuizRequest
 from typing import Dict, Any, List
 from datetime import datetime
 from services.ai_services.chunking_service import generate_quizzes_single_async
 from services.logger import app_logger as logger
+from services.web_scraping_service import scrape_content
 
 # Content validation constants
 MIN_CONTENT_LENGTH = 50  # Minimum characters required for quiz generation from uploaded files
@@ -405,3 +406,79 @@ async def submit_quiz_answers(
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# === Generate quiz from URL ===
+async def generate_quiz_from_url(
+    data: WebQuizRequest,
+    current_user_id: str = Depends(get_current_user_id),
+    user_token: str = Depends(get_current_user_token)
+):
+    """Generate quiz from web URL (basic/educator tier only)."""
+    
+    # Check user tier (reject free tier)
+    tier_info = get_user_tier_info(current_user_id)
+    if tier_info["account_tier"] == "free":
+        logger.warning(f"Free tier user {current_user_id} attempted to use URL quiz generation")
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "detail": "URL-based quiz generation is a premium feature. Upgrade to basic or educator tier to access this feature.",
+                "user_tier": "free",
+                "required_tier": "basic",
+                "upgrade_url": "/api/admin/users/{user_id}/tier"
+            }
+        )
+    
+    # Validate quota BEFORE scraping and generation (don't waste resources)
+    validate_user_quota(current_user_id)
+    
+    try:
+        # Scrape content
+        logger.info(f"User {current_user_id} ({tier_info['account_tier']} tier) generating quiz from URL: {data.url}")
+        content = await scrape_content(str(data.url))
+        
+        # Generate quiz
+        total_questions = data.num_questions if data.num_questions is not None else 10
+        quizzes = await generate_quizzes_single_async(
+            content,
+            total_questions,
+            question_types=list(data.question_type)
+        )
+        
+        # Save to database
+        quiz_id = save_quiz_to_database(data.title, quizzes, current_user_id)
+        logger.info(f"Saved quiz from URL with ID: {quiz_id}")
+        
+        # Save metadata
+        metadata = {
+            "quiz_id": quiz_id,
+            "content_type": "url",
+            "content_source_type": "url",
+            "content_source_reference": str(data.url),
+            "word_count": len(content.split()),
+            "content_length": len(content),
+            "created_by": current_user_id,
+            "created_at": datetime.now().isoformat(),
+            "question_count": len(quizzes),
+            "scrape_timestamp": datetime.now().isoformat()
+        }
+        save_metadata(metadata)
+        logger.info(f"Saved metadata for URL quiz {quiz_id}")
+        
+        return {
+            "quiz_id": quiz_id,
+            "title": data.title,
+            "message": "Quiz generated successfully from URL",
+            "source_url": str(data.url)
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generating quiz from URL {data.url}: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error generating quiz from URL: {str(e)}"
+        )
+
