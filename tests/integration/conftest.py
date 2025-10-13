@@ -109,6 +109,18 @@ class MockSupabaseTable:
         self.table_name = table_name
         self._data = []
         self._query: dict = {}
+        # Default tier data for user_tier_info queries
+        if table_name == "user_tier_info":
+            self._data = [
+                {
+                    "id": "mock_user_123",
+                    "email": "test@example.com",
+                    "account_tier": "free",
+                    "current_quiz_count": 0,
+                    "quota_limit": 5,
+                    "quota_exceeded": False
+                }
+            ]
     
     def select(self, *args, **kwargs):
         """Mock select query."""
@@ -141,8 +153,18 @@ class MockSupabaseTable:
     
     def execute(self):
         """Mock execute query."""
+        # Apply filter if specified
+        result_data = self._data
+        if "filter" in self._query:
+            filter_col, filter_val = list(self._query["filter"].items())[0]
+            result_data = [row for row in self._data if row.get(filter_col) == filter_val]
+        
+        # If no data and not a specific table, return default
+        if not result_data and self.table_name not in ["user_tier_info"]:
+            result_data = [{"id": "mock_123"}]
+        
         return Mock(
-            data=self._data if self._data else [{"id": "mock_123"}],
+            data=result_data,
             error=None
         )
 
@@ -429,8 +451,16 @@ def setup_integration_mocks():
     
     # Use ExitStack to manage multiple patches without deep nesting
     with ExitStack() as stack:
-        stack.enter_context(patch("handlers.auth_handlers.supabase", mock_supabase))
+        # Patch the lazy loading functions for all modules that use Supabase
+        stack.enter_context(patch("handlers.auth_handlers.get_supabase", return_value=mock_supabase))
+        stack.enter_context(patch("services.db_services.supabase_quiz.get_supabase", return_value=mock_supabase))
+        stack.enter_context(patch("services.db_services.supabase_file.get_supabase", return_value=mock_supabase))
+        stack.enter_context(patch("services.db_services.supabase_submission.get_supabase", return_value=mock_supabase))
+        
+        # Patch external dependencies
         stack.enter_context(patch("dependencies.auth_dependencies.requests.get", side_effect=mock_requests_get))
+        
+        # Patch handler-level functions
         stack.enter_context(patch("handlers.quiz_handlers.generate_quizzes_single_async", side_effect=mock_generate_quizzes_single_async))
         stack.enter_context(patch("handlers.quiz_handlers.save_quiz_to_database", side_effect=mock_save_quiz_to_database))
         stack.enter_context(patch("handlers.quiz_handlers.get_user_quizzes", side_effect=mock_get_user_quizzes))

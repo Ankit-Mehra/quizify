@@ -1,7 +1,6 @@
 import httpx
 import uuid
 from fastapi import HTTPException, Depends
-from supabase import Client
 from datetime import datetime
 from dependencies.auth_dependencies import get_current_user_id, get_current_user_token
 from services.ai_services.doc_service import extract_text_from_pdf, is_pdf
@@ -10,13 +9,18 @@ from config import config
 
 logger = logging.getLogger(__name__)
 
-# Use centralized configuration - guaranteed non-null in production (fail-fast at startup)
+# Lazy load Supabase client to avoid initialization issues in tests
+def get_supabase():
+    """Get Supabase client (lazy loaded)"""
+    return config.get_supabase_client()
+
+# Use centralized configuration
 STORAGE_NAME = config.STORAGE_NAME
 SUPABASE_URL = config.SUPABASE_URL
-supabase: Client = config.get_supabase_client()
 
 def save_file_to_supabase(user_id: str, file_bytes: bytes, original_filename: str, token: str, file_type: str):
     try:
+        supabase = get_supabase()
         #genereate a unique ID
         unique_id = str(uuid.uuid4())
         file_name = f"{unique_id}_{original_filename}"
@@ -49,6 +53,7 @@ def save_file_to_supabase(user_id: str, file_bytes: bytes, original_filename: st
 
 def get_file_metadata(user_id: str = Depends(get_current_user_id)):
     try:
+        supabase = get_supabase()
         if supabase is None:
             raise HTTPException(status_code=500, detail="Supabase client is not initialized. Check your configuration.")
         metadata = supabase.table("user_files").select("*").eq("user_id", user_id).execute()
@@ -60,6 +65,7 @@ def get_file_metadata(user_id: str = Depends(get_current_user_id)):
 
 def get_file_record(file_id: str):
     try:
+        supabase = get_supabase()
         if supabase is None:
             raise HTTPException(status_code=500, detail="Supabase client is not initialized. Check your configuration.")
         file_data = supabase.table("user_files").select("*").eq("id", file_id).execute()
@@ -228,6 +234,7 @@ def parse_file_from_supabase(file_record: dict, user_token: str) -> str:
 
 def delete_file_from_supabase(file_id: str, token: str, user_id: str, original_filename: str):
     try:
+        supabase = get_supabase()
         if supabase is None:
             raise HTTPException(status_code=500, detail="Supabase client is not initialized. Check your configuration.")
         supabase.table("user_files").delete().eq("id", file_id).execute()

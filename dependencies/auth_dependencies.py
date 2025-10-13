@@ -39,6 +39,8 @@ def get_current_user_id(
 
         return user_id
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Auth error: {e}", exc_info=True)
         raise HTTPException(status_code=401, detail="Authentication failed")
@@ -48,16 +50,11 @@ def get_current_user_token(
     request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(security)
 ) -> str:
-    token = None
-    if credentials:
-        token = credentials.credentials
+    token = credentials.credentials if credentials else request.cookies.get("auth_token")
     
     if not token:
-        token = request.cookies.get("auth_token")
+        logger.warning("Authentication required but no token provided")
+        raise HTTPException(status_code=401, detail="Authentication token required")
     
-    if token:
-        logger.debug("Retrieved user token")
-    else:
-        logger.debug("No user token found")
-        
+    logger.debug("Retrieved user token")
     return token

@@ -1,0 +1,109 @@
+# .gitignore rules for deploy/production branch
+# Use this to keep production deploys lean
+
+# ============================================
+# DEVELOPMENT-ONLY FILES (exclude from production)
+# ============================================
+
+# Test files and test infrastructure
+tests/
+pytest.ini
+.pytest_cache/
+htmlcov/
+.coverage
+*.coverage.*
+.tox/
+
+# Specification and planning documents
+specs/
+analysis/
+.specify/
+
+# GitHub configuration (keep workflows, exclude prompts)
+.github/prompts/
+.github/copilot-instructions.md
+
+# Development scripts
+scripts/add_account_tier.py
+
+# ============================================
+# DOCUMENTATION (keep only essential)
+# ============================================
+
+# Planning documents
+*_PLAN.md
+*_STRATEGY.md
+*_STATUS.md
+*_PROGRESS.md
+*_REPORT.md
+*_SUMMARY.md
+*_ANALYSIS.md
+*_CHECKLIST.md
+*_NOTES.md
+*_TODO.md
+
+# Implementation documentation
+IMPLEMENTATION_*.md
+TEST_*.md
+BUG_*.md
+MOCKING_*.md
+HOUSEKEEPING_*.md
+API_CONTRACT_*.md
+
+# Deployment planning (keep DEPLOYMENT.md, exclude analysis)
+GITHUB_ISSUES.md
+CANADA_DEPLOYMENT.md
+COST_BREAKDOWN.md
+LATENCY_*.md
+MONOREPO_*.md
+
+# Migration documentation (keep .sql, exclude .md)
+migrations/*.md
+migrations/FINAL_*.md
+migrations/SUCCESS_*.md
+
+# ============================================
+# KEEP IN PRODUCTION
+# ============================================
+
+# Essential documentation
+!README.md
+!CHANGELOG.md
+!DEPLOYMENT.md
+!LICENSE
+
+# Core application files
+# (no need to list, git includes by default)
+# - api/
+# - handlers/
+# - services/
+# - schemas/
+# - middleware/
+# - dependencies/
+# - main.py
+# - requirements.txt
+# - pyproject.toml
+# - Dockerfile
+
+# Production migrations
+!migrations/*.sql
+
+# ============================================
+# USAGE INSTRUCTIONS
+# ============================================
+# 
+# This file is for reference only. To use it:
+# 
+# Option 1: Manual exclusion when deploying
+#   git checkout deploy/production
+#   git checkout development -- api/ handlers/ services/
+#   (exclude tests/ and docs manually)
+#
+# Option 2: Copy to .gitignore on deploy branch
+#   git checkout deploy/production
+#   cp .gitignore-deploy .gitignore
+#   git add .gitignore
+#   git commit -m "Add production .gitignore"
+#
+# Option 3: Use deployment script (recommended)
+#   ./scripts/deploy-to-production.sh

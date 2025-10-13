@@ -53,6 +53,81 @@ class MockSupabaseAuth:
 class MockSupabaseClient:
     def __init__(self):
         self.auth = MockSupabaseAuth()
+        self._mock_data = {}
+        # Pre-populate default user tier data for testing
+        self._default_tier_data = {
+            "user_tier_info": [
+                {
+                    "id": "mock_user_123",
+                    "email": "test@example.com",
+                    "account_tier": "free",
+                    "current_quiz_count": 0,
+                    "quota_limit": 5,
+                    "quota_exceeded": False
+                }
+            ],
+            "profiles": [
+                {
+                    "id": "mock_user_123",
+                    "email": "test@example.com",
+                    "account_tier": "free",
+                    "is_admin": False
+                }
+            ]
+        }
+    
+    def table(self, table_name):
+        """Return a mock table interface with realistic data."""
+        mock_table = Mock()
+        
+        # Store the table name and query context
+        mock_table._table_name = table_name
+        mock_table._filters = {}
+        
+        def mock_select(columns="*"):
+            """Mock select operation"""
+            mock_table._columns = columns
+            return mock_table
+        
+        def mock_eq(column, value):
+            """Mock equality filter"""
+            mock_table._filters[column] = value
+            return mock_table
+        
+        def mock_execute():
+            """Mock execute - returns appropriate data based on table and filters"""
+            mock_result = Mock()
+            
+            # Get data for this table (default to empty)
+            table_data = self._default_tier_data.get(table_name, [])
+            
+            # Apply filters if any
+            if mock_table._filters:
+                filtered_data = []
+                for row in table_data:
+                    match = all(
+                        row.get(col) == val 
+                        for col, val in mock_table._filters.items()
+                    )
+                    if match:
+                        filtered_data.append(row)
+                mock_result.data = filtered_data
+            else:
+                mock_result.data = table_data
+            
+            mock_result.count = len(mock_result.data)
+            return mock_result
+        
+        # Setup method chaining
+        mock_table.select = mock_select
+        mock_table.insert.return_value = mock_table
+        mock_table.update.return_value = mock_table
+        mock_table.delete.return_value = mock_table
+        mock_table.eq = mock_eq
+        mock_table.in_.return_value = mock_table
+        mock_table.execute = mock_execute
+        
+        return mock_table
 
 @pytest.fixture
 def mock_supabase():
@@ -96,7 +171,13 @@ def mock_supabase_client(mock_supabase, mocker):
         return {"success": True}
     
     # Apply all patches using mocker (pytest-mock)
-    mocker.patch("handlers.auth_handlers.supabase", mock_supabase)
+    # NEW PATTERN: Mock get_supabase() functions instead of module-level variables
+    mocker.patch("handlers.auth_handlers.get_supabase", return_value=mock_supabase)
+    mocker.patch("services.db_services.supabase_quiz.get_supabase", return_value=mock_supabase)
+    mocker.patch("services.db_services.supabase_file.get_supabase", return_value=mock_supabase)
+    mocker.patch("services.db_services.supabase_submission.get_supabase", return_value=mock_supabase)
+    
+    # Keep function-level mocks
     mocker.patch("handlers.file_handlers.save_file_to_supabase", side_effect=mock_save_file_to_supabase)
     mocker.patch("handlers.file_handlers.delete_file_from_supabase", side_effect=mock_delete_file_from_supabase)
     mocker.patch("handlers.quiz_handlers.generate_quizzes_single_async", side_effect=mock_generate_quizzes_single_async)

@@ -58,7 +58,6 @@ def auth_token():
     
     return token
 
-
 @pytest.mark.integration
 class TestQuizGenerationFlow:
     """Integration tests for complete quiz generation workflow."""
