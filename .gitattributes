@@ -1,0 +1,99 @@
+# Git Attributes for Quizify
+# This file controls which files are included in production deployments
+# Files marked with 'export-ignore' will be excluded when using 'git archive'
+
+# ==============================================================================
+# DEVELOPMENT-ONLY FILES (Excluded from Production)
+# ==============================================================================
+
+# Specification & Planning Documents
+specs/ export-ignore
+.specify/ export-ignore
+docs/BRANCHING_STRATEGY.md export-ignore
+docs/HOUSEKEEPING_PLAN.md export-ignore
+docs/TIER_MANAGEMENT_PLAN.md export-ignore
+
+# Analysis & Architecture Documents  
+analysis/ export-ignore
+
+# Testing Files (Keep tests in dev, exclude from production)
+tests/ export-ignore
+pytest.ini export-ignore
+.pytest_cache/ export-ignore
+
+# Coverage Reports
+htmlcov/ export-ignore
+.coverage export-ignore
+coverage.xml export-ignore
+
+# Documentation for Developers
+**/README_ACTUAL_vs_SPEC.md export-ignore
+IMPLEMENTATION_STATUS.md export-ignore
+BUG_FIXES_REPORT.md export-ignore
+MOCKING_IMPLEMENTATION_COMPLETE.md export-ignore
+TEST_CONVERSION_SUMMARY.md export-ignore
+TEST_MOCK_CONVERSION_PROGRESS.md export-ignore
+TESTING_WITH_MOCKS.md export-ignore
+
+# Development Scripts
+scripts/ export-ignore
+postman/ export-ignore
+
+# CI/CD Files (deployment uses different approach)
+.github/workflows/ export-ignore
+
+# IDE & Editor Files
+.vscode/ export-ignore
+.idea/ export-ignore
+*.swp export-ignore
+*.swo export-ignore
+
+# Environment Examples (keep real .env in production)
+.env.example export-ignore
+
+# Git Metadata
+.gitattributes export-ignore
+.gitignore export-ignore
+
+# Python Development
+__pycache__/ export-ignore
+*.pyc export-ignore
+*.pyo export-ignore
+*.pyd export-ignore
+.Python export-ignore
+*.egg-info/ export-ignore
+dist/ export-ignore
+build/ export-ignore
+
+# Virtual Environments
+.venv/ export-ignore
+venv/ export-ignore
+env/ export-ignore
+
+# Lock files (production uses requirements.txt)
+uv.lock export-ignore
+poetry.lock export-ignore
+Pipfile.lock export-ignore
+
+# Local Development
+.DS_Store export-ignore
+Thumbs.db export-ignore
+*.log export-ignore
+logs/ export-ignore
+
+# ==============================================================================
+# PRODUCTION FILES (Always Included)
+# ==============================================================================
+# These are NOT marked export-ignore and will be included in deployments:
+# - main.py
+# - api/
+# - handlers/
+# - services/
+# - schemas/
+# - dependencies/
+# - middleware/
+# - migrations/
+# - requirements.txt
+# - Dockerfile
+# - config.py
+# - .env (if present)
