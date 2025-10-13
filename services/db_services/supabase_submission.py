@@ -1,5 +1,4 @@
 ## Submission DB Services
-from supabase import Client
 from services.logger import db_logger as logger
 from typing import List
 from schemas.submission import QuizSubmission, QuizAnswer
@@ -8,13 +7,16 @@ from fastapi import HTTPException
 from uuid import UUID
 from config import config
 
-# Use centralized configuration - guaranteed non-null in production (fail-fast at startup)
-supabase: Client = config.get_supabase_client()
+# Lazy load Supabase client to avoid initialization issues in tests
+def get_supabase():
+    """Get Supabase client (lazy loaded)"""
+    return config.get_supabase_client()
 
 def get_question(question_ids: List[UUID]) -> List[Question]:
     """
     Get questions by their IDs using Supabase `.in_` clause
     """
+    supabase = get_supabase()
     logger.info(f"Getting questions with ids: {question_ids}")
     try:
         response = (
@@ -31,6 +33,7 @@ def get_question(question_ids: List[UUID]) -> List[Question]:
 
 
 def save_submission(submission: QuizSubmission):
+    supabase = get_supabase()
     logger.info(f"Saving submission: {submission}")
     try:
         payload = submission.model_dump(mode="json")
@@ -40,6 +43,7 @@ def save_submission(submission: QuizSubmission):
         raise HTTPException(status_code=500, detail=f"Error saving submission: {str(e)}")
 
 def save_answer(answer: QuizAnswer):
+    supabase = get_supabase()
     logger.info(f"Saving answer: {answer}")
     try:
         payload = answer.model_dump(mode="json")
@@ -49,6 +53,7 @@ def save_answer(answer: QuizAnswer):
         raise HTTPException(status_code=500, detail=f"Error saving answer: {str(e)}")
 
 def get_submission_by_id(submission_id: UUID) -> QuizSubmission:
+    supabase = get_supabase()
     logger.info(f"Getting submission with id: {submission_id}")
     try:
         response = (

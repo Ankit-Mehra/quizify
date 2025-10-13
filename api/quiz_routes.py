@@ -1,13 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, HTTPException, Response
 from schemas.quiz import (
-    TextQuizRequest, 
     QuizMetadata, 
     QuizGenerationResponse,
     QuizzesResponse,
-    MyQuizzesResponse,
-    FileQuizRequest
+    MyQuizzesResponse
 )
-from dependencies.auth_dependencies import get_current_user_id
 from handlers.quiz_handlers import (
     generate_quiz_from_file_openai,
     generate_quiz_from_text,
@@ -65,18 +62,7 @@ router.add_api_route(
     methods=["POST"],
     summary="Generate Quiz from Text",
     response_model=QuizGenerationResponse,
-    tags=["Quiz Generation"],
-    dependencies=[Depends(get_current_user_id)],
-    openapi_extra={
-        "security": [{"BearerAuth": []}],
-        "requestBody": {
-            "content": {
-                "application/json": {
-                    "schema": TextQuizRequest.model_json_schema()
-                }
-            }
-        }
-    },
+    tags=["Quiz Generation"]
 )
 
 # Generate quiz from file
@@ -87,16 +73,7 @@ router.add_api_route(
     summary="Generate Quiz from File (Gemini)",
     response_model=QuizGenerationResponse,
     status_code=201,
-    tags=["Quiz Generation"],
-    dependencies=[Depends(get_current_user_id)],
-    openapi_extra={
-        "security": [{"BearerAuth": []}],
-        "requestBody": {
-            "content": {
-                "multipart/form-data": {"schema": FileQuizRequest.model_json_schema()}
-            }
-        }
-    }
+    tags=["Quiz Generation"]
 )
 # Generate quiz from file ID
 router.add_api_route(
@@ -105,16 +82,7 @@ router.add_api_route(
     methods=["POST"],
     summary="Generate Quiz from File ID",
     response_model=QuizGenerationResponse,
-    tags=["Quiz Generation"],
-    dependencies=[Depends(get_current_user_id)],
-    openapi_extra={
-        "security": [{"BearerAuth": []}],
-        "requestBody": {
-            "content": {
-                "multipart/form-data": {"schema": FileQuizRequest.model_json_schema()}
-            }
-        }
-    }
+    tags=["Quiz Generation"]
 )
 
 # Get user quizzes
@@ -125,9 +93,7 @@ router.add_api_route(
     response_model=List[MyQuizzesResponse],
     summary="Get User Quizzes",
     description="Returns a list of all quizzes created by the current user, with metadata such as title, creation date, and question count.",
-    tags=["Quiz Management"],
-    dependencies=[Depends(get_current_user_id)],
-    openapi_extra={"security": [{"BearerAuth": []}]},
+    tags=["Quiz Management"]
 )
 
 # Handle undefined quiz ID specifically
@@ -147,9 +113,7 @@ router.add_api_route(
     response_model=List[QuizMetadata],
     summary="Get User Content Sources",
     description="Returns a list of all content sources (text and files) used to generate quizzes for the current user.",
-    tags=["Content Management"],
-    dependencies=[Depends(get_current_user_id)],
-    openapi_extra={"security": [{"BearerAuth": []}]},
+    tags=["Content Management"]
 )
 
 # Get specific quiz data (API endpoint for JSON data)
@@ -159,9 +123,7 @@ router.add_api_route(
     methods=["GET"],
     response_model=QuizzesResponse,
     summary="Get Quiz by ID",
-    tags=["Quiz Management"],
-    dependencies=[Depends(get_current_user_id)],
-    openapi_extra={"security": [{"BearerAuth": []}]},
+    tags=["Quiz Management"]
 )
 
 # Delete quiz by ID
@@ -170,9 +132,7 @@ router.add_api_route(
     endpoint=delete_quiz_by_id_handler,
     methods=["DELETE"],
     summary="Delete Quiz by ID",
-    tags=["Quiz Management"],
-    dependencies=[Depends(get_current_user_id)],
-    openapi_extra={"security": [{"BearerAuth": []}]},
+    tags=["Quiz Management"]
 )
 
 # Submit quiz answers
@@ -181,7 +141,5 @@ router.add_api_route(
     endpoint=submit_quiz_answers,
     methods=["POST"],
     summary="Submit Quiz Answers",
-    tags=["Quiz Management"],
-    dependencies=[Depends(get_current_user_id)],
-    openapi_extra={"security": [{"BearerAuth": []}]},
+    tags=["Quiz Management"]
 )

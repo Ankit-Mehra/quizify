@@ -26,6 +26,10 @@ class Config:
     # IMPORTANT: This is the single source of truth for testing mode
     TESTING: bool = os.getenv("TESTING", "false").lower() == "true"
     
+    # Development mode - returns tokens in response for API testing (Postman, etc)
+    # In production, tokens are ONLY in HttpOnly cookies (more secure)
+    DEVELOPMENT_MODE: bool = os.getenv("DEVELOPMENT_MODE", "false").lower() == "true"
+    
     # OpenAI configuration
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
     
@@ -38,6 +42,19 @@ class Config:
             bool: True if TESTING environment variable is set to 'true', False otherwise
         """
         return cls.TESTING
+    
+    @classmethod
+    def is_development(cls) -> bool:
+        """
+        Check if the application is running in development mode.
+        
+        In development mode, auth tokens are returned in response body
+        for easier API testing with tools like Postman.
+        
+        Returns:
+            bool: True if DEVELOPMENT_MODE environment variable is set to 'true', False otherwise
+        """
+        return cls.DEVELOPMENT_MODE
     
     @classmethod
     def get_supabase_client(cls) -> Client:

@@ -1,0 +1,773 @@
+{
+  "info": {
+    "name": "Quizify Admin API",
+    "description": "Admin endpoints for user tier management and RBAC (Role-Based Access Control)",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1. List All Users",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Status code is 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test(\"Response is array\", function () {",
+              "    pm.expect(pm.response.json()).to.be.an('array');",
+              "});",
+              "",
+              "pm.test(\"Users have required fields\", function () {",
+              "    const users = pm.response.json();",
+              "    if (users.length > 0) {",
+              "        const user = users[0];",
+              "        pm.expect(user).to.have.property('id');",
+              "        pm.expect(user).to.have.property('email');",
+              "        pm.expect(user).to.have.property('account_tier');",
+              "        pm.expect(user).to.have.property('role');",
+              "        pm.expect(user).to.have.property('current_quiz_count');",
+              "        pm.expect(user).to.have.property('quota_limit');",
+              "        ",
+              "        // Save first non-admin user ID for later tests",
+              "        if (user.role === 'user' && !pm.environment.get('test_user_id')) {",
+              "            pm.environment.set('test_user_id', user.id);",
+              "            console.log('Saved test_user_id:', user.id);",
+              "        }",
+              "    }",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{auth_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/admin/users?limit=10&offset=0",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "users"
+          ],
+          "query": [
+            {
+              "key": "limit",
+              "value": "10"
+            },
+            {
+              "key": "offset",
+              "value": "0"
+            }
+          ]
+        },
+        "description": "Get all users with tier and role information. Supports pagination."
+      },
+      "response": []
+    },
+    {
+      "name": "2. Get User Details",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Status code is 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test(\"Response has user data\", function () {",
+              "    const user = pm.response.json();",
+              "    pm.expect(user).to.have.property('id');",
+              "    pm.expect(user).to.have.property('email');",
+              "    pm.expect(user).to.have.property('account_tier');",
+              "    pm.expect(user).to.have.property('role');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{auth_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/admin/users/{{test_user_id}}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "users",
+            "{{test_user_id}}"
+          ]
+        },
+        "description": "Get detailed information about a specific user by ID."
+      },
+      "response": []
+    },
+    {
+      "name": "3. Update Tier: Free \u2192 Basic",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Status code is 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test(\"Tier update successful\", function () {",
+              "    const response = pm.response.json();",
+              "    pm.expect(response.success).to.be.true;",
+              "    pm.expect(response.new_tier).to.equal('basic');",
+              "    pm.expect(response.updated_user.account_tier).to.equal('basic');",
+              "    pm.expect(response.updated_user.quota_limit).to.equal(100);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{auth_token}}",
+            "type": "text"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"new_tier\": \"basic\",\n  \"reason\": \"Postman API test - upgrading to basic tier\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/admin/users/{{test_user_id}}/tier",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "users",
+            "{{test_user_id}}",
+            "tier"
+          ]
+        },
+        "description": "Update user tier from free to basic (5 \u2192 100 quiz quota)."
+      },
+      "response": []
+    },
+    {
+      "name": "4. Update Tier: Basic \u2192 Educator",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Status code is 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test(\"Tier update successful\", function () {",
+              "    const response = pm.response.json();",
+              "    pm.expect(response.success).to.be.true;",
+              "    pm.expect(response.new_tier).to.equal('educator');",
+              "    pm.expect(response.updated_user.account_tier).to.equal('educator');",
+              "    pm.expect(response.updated_user.quota_limit).to.equal(500);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{auth_token}}",
+            "type": "text"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"new_tier\": \"educator\",\n  \"reason\": \"Postman API test - upgrading to educator tier\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/admin/users/{{test_user_id}}/tier",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "users",
+            "{{test_user_id}}",
+            "tier"
+          ]
+        },
+        "description": "Update user tier from basic to educator (100 \u2192 500 quiz quota)."
+      },
+      "response": []
+    },
+    {
+      "name": "5. Promote to Moderator",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Status code is 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test(\"Role promotion successful\", function () {",
+              "    const response = pm.response.json();",
+              "    pm.expect(response.success).to.be.true;",
+              "    pm.expect(response.changed).to.be.true;",
+              "    pm.expect(response.new_role).to.equal('moderator');",
+              "    pm.expect(response.updated_user.role).to.equal('moderator');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{auth_token}}",
+            "type": "text"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"new_role\": \"moderator\",\n  \"reason\": \"Postman API test - promoting to moderator for content review\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/admin/users/{{test_user_id}}/role",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "users",
+            "{{test_user_id}}",
+            "role"
+          ]
+        },
+        "description": "Promote user from 'user' role to 'moderator' role with audit logging."
+      },
+      "response": []
+    },
+    {
+      "name": "6. Promote to Admin",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Status code is 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test(\"Role promotion successful\", function () {",
+              "    const response = pm.response.json();",
+              "    pm.expect(response.success).to.be.true;",
+              "    pm.expect(response.changed).to.be.true;",
+              "    pm.expect(response.new_role).to.equal('admin');",
+              "    pm.expect(response.updated_user.role).to.equal('admin');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{auth_token}}",
+            "type": "text"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"new_role\": \"admin\",\n  \"reason\": \"Postman API test - promoting to admin for full access\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/admin/users/{{test_user_id}}/role",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "users",
+            "{{test_user_id}}",
+            "role"
+          ]
+        },
+        "description": "Promote user to 'admin' role for full administrative access."
+      },
+      "response": []
+    },
+    {
+      "name": "7. Demote to User",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Status code is 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test(\"Role demotion successful\", function () {",
+              "    const response = pm.response.json();",
+              "    pm.expect(response.success).to.be.true;",
+              "    pm.expect(response.changed).to.be.true;",
+              "    pm.expect(response.new_role).to.equal('user');",
+              "    pm.expect(response.updated_user.role).to.equal('user');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{auth_token}}",
+            "type": "text"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"new_role\": \"user\",\n  \"reason\": \"Postman API test - demoting back to regular user\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/admin/users/{{test_user_id}}/role",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "users",
+            "{{test_user_id}}",
+            "role"
+          ]
+        },
+        "description": "Demote user back to regular 'user' role."
+      },
+      "response": []
+    },
+    {
+      "name": "8. Downgrade Tier: Educator \u2192 Free",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Status code is 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test(\"Tier downgrade successful\", function () {",
+              "    const response = pm.response.json();",
+              "    pm.expect(response.success).to.be.true;",
+              "    pm.expect(response.new_tier).to.equal('free');",
+              "    pm.expect(response.updated_user.account_tier).to.equal('free');",
+              "    pm.expect(response.updated_user.quota_limit).to.equal(5);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{auth_token}}",
+            "type": "text"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"new_tier\": \"free\",\n  \"reason\": \"Postman API test - resetting to free tier\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/admin/users/{{test_user_id}}/tier",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "users",
+            "{{test_user_id}}",
+            "tier"
+          ]
+        },
+        "description": "Downgrade user tier back to free (quota resets to 5 quizzes)."
+      },
+      "response": []
+    },
+    {
+      "name": "ERROR: Unauthorized (No Token)",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "// Remove access_token cookie to test unauthorized access",
+              "pm.cookies.jar().unset(pm.variables.get('base_url'), 'access_token', function (error) {",
+              "    if (error) {",
+              "        console.log('Cookie unset error:', error);",
+              "    } else {",
+              "        console.log('access_token cookie removed');",
+              "    }",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Status code is 401\", function () {",
+              "    pm.response.to.have.status(401);",
+              "});",
+              "",
+              "pm.test(\"Unauthorized error message\", function () {",
+              "    const response = pm.response.json();",
+              "    pm.expect(response.detail).to.include('authenticated');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/api/admin/users",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "users"
+          ]
+        },
+        "description": "Test that requests without authentication are rejected with 401."
+      },
+      "response": []
+    },
+    {
+      "name": "ERROR: Invalid Tier",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Status code is 422\", function () {",
+              "    pm.response.to.have.status(422);",
+              "});",
+              "",
+              "pm.test(\"Validation error for invalid tier\", function () {",
+              "    const response = pm.response.json();",
+              "    pm.expect(response.detail).to.be.an('array');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{auth_token}}",
+            "type": "text"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"new_tier\": \"premium\",\n  \"reason\": \"Testing invalid tier value\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/admin/users/{{test_user_id}}/tier",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "users",
+            "{{test_user_id}}",
+            "tier"
+          ]
+        },
+        "description": "Test that invalid tier values are rejected with 422 validation error."
+      },
+      "response": []
+    },
+    {
+      "name": "ERROR: Invalid Role",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Status code is 400\", function () {",
+              "    pm.response.to.have.status(400);",
+              "});",
+              "",
+              "pm.test(\"Invalid role error message\", function () {",
+              "    const response = pm.response.json();",
+              "    pm.expect(response.detail).to.include('Invalid role');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{auth_token}}",
+            "type": "text"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"new_role\": \"superuser\",\n  \"reason\": \"Testing invalid role value\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/admin/users/{{test_user_id}}/role",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "users",
+            "{{test_user_id}}",
+            "role"
+          ]
+        },
+        "description": "Test that invalid role values are rejected with 400 error."
+      },
+      "response": []
+    },
+    {
+      "name": "ERROR: Self Role Modification",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Status code is 400\", function () {",
+              "    pm.response.to.have.status(400);",
+              "});",
+              "",
+              "pm.test(\"Cannot modify own role error\", function () {",
+              "    const response = pm.response.json();",
+              "    pm.expect(response.detail).to.include('Cannot modify your own role');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{auth_token}}",
+            "type": "text"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"new_role\": \"user\",\n  \"reason\": \"Trying to demote myself (should fail)\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/admin/users/{{admin_user_id}}/role",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "users",
+            "{{admin_user_id}}",
+            "role"
+          ]
+        },
+        "description": "Test security check that prevents admins from modifying their own role."
+      },
+      "response": []
+    },
+    {
+      "name": "ERROR: User Not Found",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Status code is 404\", function () {",
+              "    pm.response.to.have.status(404);",
+              "});",
+              "",
+              "pm.test(\"User not found error message\", function () {",
+              "    const response = pm.response.json();",
+              "    pm.expect(response.detail).to.include('not found');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{auth_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/admin/users/00000000-0000-0000-0000-000000000000",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "users",
+            "00000000-0000-0000-0000-000000000000"
+          ]
+        },
+        "description": "Test that non-existent user IDs return 404 error."
+      },
+      "response": []
+    }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{auth_token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8000",
+      "type": "string"
+    },
+    {
+      "key": "auth_token",
+      "value": "YOUR_JWT_TOKEN_HERE",
+      "type": "string"
+    },
+    {
+      "key": "admin_user_id",
+      "value": "YOUR_ADMIN_USER_ID_HERE",
+      "type": "string"
+    },
+    {
+      "key": "test_user_id",
+      "value": "",
+      "type": "string"
+    }
+  ]
+}

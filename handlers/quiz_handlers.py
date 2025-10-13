@@ -6,14 +6,15 @@ from services.ai_services.doc_service import (
 )
 from services.db_services.supabase_quiz import ( 
     save_quiz_to_database, get_user_quizzes,
-    get_quiz_from_database,save_metadata, 
-    get_metadata, delete_quiz_from_database)
+    get_quiz_from_database, save_metadata, 
+    get_metadata, delete_quiz_from_database,
+    get_user_tier_info)
 from services.db_services.supabase_file import ( 
     get_file_record, save_file_to_supabase,
     parse_file_from_supabase)
 from dependencies.auth_dependencies import get_current_user_id, get_current_user_token
 from schemas.quiz import TextQuizRequest, FileQuizRequest
-from typing import Dict, Any, List, Literal, Optional
+from typing import Dict, Any, List
 from datetime import datetime
 from services.ai_services.chunking_service import generate_quizzes_single_async
 from services.logger import app_logger as logger
@@ -21,6 +22,48 @@ from services.logger import app_logger as logger
 # Content validation constants
 MIN_CONTENT_LENGTH = 50  # Minimum characters required for quiz generation from uploaded files
 MIN_STORED_CONTENT_LENGTH = 10  # Minimum characters required for stored file content validation
+
+def validate_user_quota(user_id: str):
+    """
+    Validate if user has available quota for quiz generation.
+    
+    Args:
+        user_id: The UUID of the user
+        
+    Raises:
+        HTTPException: 403 Forbidden if quota is exceeded with detailed error message
+    """
+    tier_info = get_user_tier_info(user_id)
+    
+    if tier_info["quota_exceeded"]:
+        current_count = tier_info["current_quiz_count"]
+        quota_limit = tier_info["quota_limit"]
+        user_tier = tier_info["account_tier"]
+        
+        # Create upgrade suggestion based on current tier
+        upgrade_suggestion = ""
+        if user_tier == "free":
+            upgrade_suggestion = "Upgrade to basic for 100 quizzes."
+        elif user_tier == "basic":
+            upgrade_suggestion = "Upgrade to educator for 500 quizzes."
+        
+        detail_message = f"Quiz quota exceeded for {user_tier} tier ({current_count}/{quota_limit}). {upgrade_suggestion}".strip()
+        
+        logger.warning(f"Quota exceeded for user {user_id}: {detail_message}")
+        
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "detail": detail_message,
+                "current_count": current_count,
+                "quota_limit": quota_limit,
+                "user_tier": user_tier
+            }
+        )
+    
+    logger.info(f"Quota check passed for user {user_id}: "
+               f"{tier_info['current_quiz_count']}/{tier_info['quota_limit']}")
+
 
 # === Generate quiz from file ===
 async def generate_quiz_from_file_openai(
@@ -33,6 +76,9 @@ async def generate_quiz_from_file_openai(
 ):
     if file.content_type not in ["application/pdf", "text/plain", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]:
         raise HTTPException(status_code=400, detail="Only PDF, DOCX, or TXT files are supported.")
+
+    # Validate quota BEFORE file processing and generation (don't waste AI API calls)
+    validate_user_quota(current_user_id)
 
     try:
         text = await file.read()
@@ -87,7 +133,8 @@ async def generate_quiz_from_file_openai(
         #save file to supabase storage
         await file.seek(0)  # Reset file pointer after reading
         file_bytes = await file.read()
-        save_file_to_supabase(current_user_id, file_bytes, file.filename, user_token, file.content_type)
+        original_filename = file.filename or f"uploaded_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+        save_file_to_supabase(current_user_id, file_bytes, original_filename, user_token, file.content_type)
 
         return {
             "quiz_id": quiz_id, 
@@ -158,12 +205,16 @@ async def generate_quiz_from_fileid(
         logger.error(f"Error reading file {file_id}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error reading file: {str(e)}")
 
+    # Validate quota BEFORE generation (don't waste AI API calls)
+    validate_user_quota(current_user_id)
+
     try:
         logger.info(f"Generating quiz questions from file content (length: {len(file_content)})")
+        total_questions = data.num_questions if data.num_questions is not None else 10
         quizzes = await generate_quizzes_single_async(
             file_content, 
-            data.num_questions,
-            question_types=data.question_type
+            total_questions,
+            question_types=list(data.question_type)
         )
         
         if not quizzes or len(quizzes) == 0:
@@ -216,12 +267,15 @@ async def generate_quiz_from_text(
                 status_code=401, 
                 detail="Authentication required to generate quiz"
             )
-            
+        
+        # Validate quota BEFORE generation (don't waste AI API calls)
+        validate_user_quota(current_user_id)
         # Generate quiz questions
+        total_questions = data.num_questions if data.num_questions is not None else 10
         quizzes = await generate_quizzes_single_async(
             data.content, 
-            data.num_questions,
-            question_types=data.question_type
+            total_questions,
+            question_types=list(data.question_type)
         )
             
         # Save to database
@@ -232,8 +286,6 @@ async def generate_quiz_from_text(
         
         # Save to Supabase storage
         save_file_to_supabase(current_user_id, text_bytes, f"{data.title}.txt", user_token, "text/plain")
-        
-        #save metadata to database
         metedata = {
             "quiz_id": quiz_id,
             "content_type": "text",
@@ -242,7 +294,7 @@ async def generate_quiz_from_text(
             "word_count": len(data.content.split()),
             "created_by": current_user_id,
             "created_at": datetime.now().isoformat(),
-            "question_count": data.num_questions
+            "question_count": total_questions
         }
         save_metadata(metedata)
         
