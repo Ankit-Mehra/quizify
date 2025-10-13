@@ -1,6 +1,7 @@
 from fastapi import HTTPException
 from schemas.quiz import Question
 from typing import List, Optional
+from datetime import date, datetime, time
 from services.logger import db_logger as logger
 from config import config as app_config
 from pydantic import BaseModel
@@ -328,12 +329,28 @@ async def invalidate_quiz_cache(quiz_id: str, user_id: Optional[str] = None) -> 
             logger.info(f"Invalidated {deleted_count} quiz caches for quiz {quiz_preview}...")
 
 
-def get_user_quizzes(user_id: str, user_token: Optional[str] = None):
+def get_user_quizzes(
+    user_id: str,
+    user_token: Optional[str] = None,
+    title: Optional[str] = None,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None
+):
     """
-    Get all quizzes for a user with question counts.
+    Get all quizzes for a user with question counts and optional filtering.
     
     PERFORMANCE: Uses a single query with embedded count to avoid N+1 issue.
     Previously made one query per quiz to count questions.
+    
+    Args:
+        user_id: UUID of the user
+        user_token: Optional JWT token for authenticated queries (recommended for RLS)
+        title: Optional title filter (case-insensitive partial match)
+        start_date: Optional start date filter (inclusive)
+        end_date: Optional end date filter (inclusive, end of day)
+    
+    Returns:
+        List of quiz dictionaries with question counts
     """
     try:
         # Use authenticated client if token provided, otherwise use service role
@@ -344,11 +361,30 @@ def get_user_quizzes(user_id: str, user_token: Optional[str] = None):
             supabase = get_supabase()
             logger.debug(f"Using service role to fetch quizzes for user: {user_id}")
         
+        logger.info(f"Fetching quizzes for user: {user_id} (title={title}, start_date={start_date}, end_date={end_date})")
+        
         # PERFORMANCE FIX: Get quizzes with question count in single query
         # Uses Supabase's embedded count feature to avoid N+1 queries
-        quizzes_data = supabase.table("quizzes").select(
+        query = supabase.table("quizzes").select(
             "id, title, created_at, created_by, generation_mode, content_source_type, questions(count)"
-        ).eq("created_by", user_id).execute()
+        ).eq("created_by", user_id)
+        
+        # Apply title filter (case-insensitive partial match)
+        if title:
+            query = query.ilike("title", f"%{title}%")
+        
+        # Apply start_date filter (inclusive)
+        if start_date:
+            query = query.gte("created_at", start_date.isoformat())
+        
+        # Apply end_date filter (inclusive - end of day)
+        if end_date:
+            # Make end_date inclusive by setting time to end of day
+            end_datetime = datetime.combine(end_date, time.max)
+            query = query.lte("created_at", end_datetime.isoformat())
+        
+        # Execute query with ordering
+        quizzes_data = query.order("created_at", desc=True).execute()
         
         if not quizzes_data.data:
             logger.debug(f"No quizzes found for user: {user_id}")

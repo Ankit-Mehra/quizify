@@ -1,4 +1,4 @@
-from fastapi import HTTPException, Depends, Path, Body, UploadFile, File, Form
+from fastapi import HTTPException, Depends, Path, Body, UploadFile, File, Form, Query
 import asyncio
 import random
 import re
@@ -24,11 +24,11 @@ from schemas.quiz import (
     EnhancedTextQuizRequest, EnhancedQuizGenerationResponse, EnhancedQuestion,
     BloomLevel, Difficulty, ALL_QUESTION_TYPES
 )
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from services.ai_services.ingestion_service import IngestionService
 from services.ai_services.concept_extraction_service import ConceptExtractionService
 from services.ai_services.orchestration_service import QuizOrchestrationService
-from datetime import datetime
+from datetime import datetime, date
 from services.ai_services.chunking_service import generate_quizzes_single_async
 from services.logger import app_logger as logger
 from services.web_scraping_service import scrape_content
@@ -850,12 +850,31 @@ async def generate_quiz_from_text(
 # === Get user quizzes ===
 async def get_user_quizzes_handler(
     current_user_id: str = Depends(get_current_user_id),
-    user_token: str = Depends(get_current_user_token)
+    user_token: str = Depends(get_current_user_token),
+    title: Optional[str] = Query(None, description="Search quizzes by title (case-insensitive, partial match)"),
+    start_date: Optional[date] = Query(None, description="Filter quizzes created on or after this date (YYYY-MM-DD)"),
+    end_date: Optional[date] = Query(None, description="Filter quizzes created on or before this date (YYYY-MM-DD)")
 ):
-    """Get all quizzes created by the current user."""
+    """Get all quizzes created by the current user with optional filtering."""
     try:
-        quizzes = get_user_quizzes(current_user_id, user_token)
+        # Validate date range
+        if start_date and end_date and start_date > end_date:
+            raise HTTPException(
+                status_code=400,
+                detail="start_date must be less than or equal to end_date"
+            )
+        
+        quizzes = get_user_quizzes(
+            current_user_id,
+            user_token=user_token,
+            title=title,
+            start_date=start_date,
+            end_date=end_date
+        )
         return quizzes
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
