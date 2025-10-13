@@ -22,6 +22,7 @@ from services.logger import app_logger as logger
 # Content validation constants
 MIN_CONTENT_LENGTH = 50  # Minimum characters required for quiz generation from uploaded files
 MIN_STORED_CONTENT_LENGTH = 10  # Minimum characters required for stored file content validation
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB = 10,485,760 bytes
 
 def validate_user_quota(user_id: str):
     """
@@ -82,6 +83,14 @@ async def generate_quiz_from_file_openai(
 
     try:
         text = await file.read()
+        file_size = len(text)
+        
+        # Validate file size (10MB limit)
+        if file_size > MAX_FILE_SIZE:
+            raise HTTPException(
+                status_code=413,
+                detail=f"File too large. Maximum file size is 10MB ({MAX_FILE_SIZE} bytes). Your file is {file_size} bytes."
+            )
         
         # Choose the appropriate extractor based on file type
         try:
@@ -121,6 +130,7 @@ async def generate_quiz_from_file_openai(
             "content_type": "file",
             "file_name": file.filename,
             "file_type": file.content_type,
+            "file_size_bytes": file_size,
             "word_count": len(parsed_text.split()),
             "created_by": current_user_id,
             "created_at": datetime.now().isoformat(),
