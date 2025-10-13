@@ -1,0 +1,641 @@
+{
+	"info": {
+		"_postman_id": "quiz-gen-001",
+		"name": "Quizify - Quiz Generation & Management",
+		"description": "Complete test suite for quiz generation endpoints including text, file, and file-id generation with quota validation.\n\n**Setup Instructions:**\n1. Set `{{base_url}}` variable (e.g., http://localhost:8000)\n2. Set `{{auth_token}}` variable with your JWT token\n3. Run endpoints in order (some depend on previous responses)\n\n**Last Updated:** 2025-10-12",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "1. Health Check",
+			"item": [
+				{
+					"name": "Test API",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"API is working\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.status).to.eql(\"ok\");",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/test",
+							"host": ["{{base_url}}"],
+							"path": ["api", "test"]
+						},
+						"description": "Verify API is running and accessible"
+					},
+					"response": []
+				}
+			],
+			"description": "Basic health check endpoints"
+		},
+		{
+			"name": "2. Quiz Generation - Text",
+			"item": [
+				{
+					"name": "Generate Quiz from Text (Success)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response has quiz_id\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('quiz_id');",
+									"    pm.environment.set(\"quiz_id\", jsonData.quiz_id);",
+									"});",
+									"",
+									"pm.test(\"Response has title\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.title).to.eql(\"Python Basics Quiz\");",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"title\": \"Python Basics Quiz\",\n  \"content\": \"Python is a high-level, interpreted programming language known for its simplicity and readability. It was created by Guido van Rossum and first released in 1991. Python supports multiple programming paradigms including procedural, object-oriented, and functional programming. The language uses indentation to define code blocks instead of braces or keywords. Python has a large standard library and an extensive ecosystem of third-party packages available through PyPI (Python Package Index). It is widely used in web development, data science, artificial intelligence, scientific computing, and automation.\",\n  \"num_questions\": 5,\n  \"question_type\": [\"mixed\"]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/quiz/generate/text",
+							"host": ["{{base_url}}"],
+							"path": ["api", "quiz", "generate", "text"]
+						},
+						"description": "Generate a quiz from text content. Validates quota before generation.\n\n**Quota Limits:**\n- Free: 5 quizzes\n- Basic: 100 quizzes\n- Educator: 500 quizzes"
+					},
+					"response": []
+				},
+				{
+					"name": "Generate Quiz from Text (Quota Exceeded)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 403\", function () {",
+									"    pm.response.to.have.status(403);",
+									"});",
+									"",
+									"pm.test(\"Error details present\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.detail).to.have.property('current_count');",
+									"    pm.expect(jsonData.detail).to.have.property('quota_limit');",
+									"    pm.expect(jsonData.detail).to.have.property('user_tier');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"title\": \"Test Quota Limit\",\n  \"content\": \"This request should fail if user has reached quota limit.\",\n  \"num_questions\": 5,\n  \"question_type\": [\"mixed\"]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/quiz/generate/text",
+							"host": ["{{base_url}}"],
+							"path": ["api", "quiz", "generate", "text"]
+						},
+						"description": "Test quota exceeded error (403). Run this after reaching your tier limit."
+					},
+					"response": []
+				},
+				{
+					"name": "Generate Quiz - Invalid Content (Too Short)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 422\", function () {",
+									"    pm.response.to.have.status(422);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"title\": \"Invalid Quiz\",\n  \"content\": \"Short\",\n  \"num_questions\": 5,\n  \"question_type\": [\"mixed\"]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/quiz/generate/text",
+							"host": ["{{base_url}}"],
+							"path": ["api", "quiz", "generate", "text"]
+						},
+						"description": "Test validation error - content too short (< 10 characters)"
+					},
+					"response": []
+				}
+			],
+			"description": "Quiz generation from text content"
+		},
+		{
+			"name": "3. Quiz Generation - File",
+			"item": [
+				{
+					"name": "Generate Quiz from File (PDF/DOCX/TXT)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 201\", function () {",
+									"    pm.response.to.have.status(201);",
+									"});",
+									"",
+									"pm.test(\"Response has quiz_id\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('quiz_id');",
+									"    pm.environment.set(\"file_quiz_id\", jsonData.quiz_id);",
+									"});",
+									"",
+									"pm.test(\"Response has questions array\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('questions');",
+									"    pm.expect(jsonData.questions).to.be.an('array');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "formdata",
+							"formdata": [
+								{
+									"key": "file",
+									"type": "file",
+									"src": [],
+									"description": "PDF, DOCX, or TXT file (select a file with substantial content)"
+								},
+								{
+									"key": "title",
+									"value": "Quiz from Document",
+									"type": "text"
+								},
+								{
+									"key": "num_questions",
+									"value": "10",
+									"type": "text"
+								},
+								{
+									"key": "question_type",
+									"value": "mixed",
+									"type": "text"
+								}
+							]
+						},
+						"url": {
+							"raw": "{{base_url}}/api/quiz/generate/file",
+							"host": ["{{base_url}}"],
+							"path": ["api", "quiz", "generate", "file"]
+						},
+						"description": "Upload a file and generate quiz. Supports PDF, DOCX, TXT.\n\n**Important:**\n- Quota checked BEFORE file processing\n- File must have at least 50 characters of extractable text\n- Returns questions array in response (unlike text endpoint)"
+					},
+					"response": []
+				},
+				{
+					"name": "Generate Quiz - Unsupported File Type",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 400\", function () {",
+									"    pm.response.to.have.status(400);",
+									"});",
+									"",
+									"pm.test(\"Error message about file type\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.detail).to.include(\"PDF, DOCX, or TXT\");",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "formdata",
+							"formdata": [
+								{
+									"key": "file",
+									"type": "file",
+									"src": [],
+									"description": "Try uploading a .jpg, .png, or other unsupported format"
+								},
+								{
+									"key": "title",
+									"value": "Invalid File Test",
+									"type": "text"
+								},
+								{
+									"key": "num_questions",
+									"value": "5",
+									"type": "text"
+								}
+							]
+						},
+						"url": {
+							"raw": "{{base_url}}/api/quiz/generate/file",
+							"host": ["{{base_url}}"],
+							"path": ["api", "quiz", "generate", "file"]
+						},
+						"description": "Test unsupported file type error"
+					},
+					"response": []
+				}
+			],
+			"description": "Quiz generation from uploaded files"
+		},
+		{
+			"name": "4. Quiz Generation - File ID",
+			"item": [
+				{
+					"name": "Generate Quiz from File ID",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response has quiz_id\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('quiz_id');",
+									"    pm.environment.set(\"fileid_quiz_id\", jsonData.quiz_id);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"title\": \"Quiz from Stored File\",\n  \"num_questions\": 8,\n  \"question_type\": [\"multiple_choice\", \"true_false\"]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/quiz/generate/{{file_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["api", "quiz", "generate", "{{file_id}}"]
+						},
+						"description": "Generate quiz from a previously uploaded file using its file_id.\n\n**Prerequisites:**\n1. Upload a file first (use file upload endpoint)\n2. Get the file_id from upload response\n3. Set {{file_id}} variable in Postman\n\n**Benefits:**\n- Don't need to re-upload file\n- Faster processing\n- Can generate multiple quizzes from same file"
+					},
+					"response": []
+				},
+				{
+					"name": "Generate Quiz - File Not Found",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 404\", function () {",
+									"    pm.response.to.have.status(404);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"title\": \"Test Not Found\",\n  \"num_questions\": 5\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/quiz/generate/00000000-0000-0000-0000-000000000000",
+							"host": ["{{base_url}}"],
+							"path": ["api", "quiz", "generate", "00000000-0000-0000-0000-000000000000"]
+						},
+						"description": "Test file not found error (404)"
+					},
+					"response": []
+				}
+			],
+			"description": "Quiz generation from previously uploaded files"
+		},
+		{
+			"name": "5. Quiz Management",
+			"item": [
+				{
+					"name": "Get My Quizzes",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response is array\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.be.an('array');",
+									"});",
+									"",
+									"pm.test(\"Quiz objects have required fields\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    if (jsonData.length > 0) {",
+									"        pm.expect(jsonData[0]).to.have.property('id');",
+									"        pm.expect(jsonData[0]).to.have.property('title');",
+									"        pm.expect(jsonData[0]).to.have.property('created_at');",
+									"    }",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/quiz/my-quizzes",
+							"host": ["{{base_url}}"],
+							"path": ["api", "quiz", "my-quizzes"]
+						},
+						"description": "Get all quizzes created by the authenticated user.\n\n**Note:** Currently returns ALL quizzes (no search/filter). Future versions will support:\n- ?title=python (search by title)\n- ?start_date=2025-01-01 (filter by date)\n- ?limit=10&offset=0 (pagination)"
+					},
+					"response": []
+				},
+				{
+					"name": "Get Quiz by ID",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Quiz has questions\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('questions');",
+									"    pm.expect(jsonData.questions).to.be.an('array');",
+									"    pm.expect(jsonData.questions.length).to.be.greaterThan(0);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/quiz/{{quiz_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["api", "quiz", "{{quiz_id}}"]
+						},
+						"description": "Get a specific quiz with all its questions.\n\n**Authorization:** User must own the quiz or have access to it."
+					},
+					"response": []
+				},
+				{
+					"name": "Get Quiz Metadata",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response is array\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.be.an('array');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/quiz/metadata",
+							"host": ["{{base_url}}"],
+							"path": ["api", "quiz", "metadata"]
+						},
+						"description": "Get metadata for all content sources used to generate quizzes."
+					},
+					"response": []
+				},
+				{
+					"name": "Delete Quiz by ID",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/quiz/{{quiz_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["api", "quiz", "{{quiz_id}}"]
+						},
+						"description": "Delete a quiz permanently.\n\n**Note:** This will also delete all associated questions and submissions."
+					},
+					"response": []
+				}
+			],
+			"description": "Quiz CRUD operations"
+		}
+	],
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "http://localhost:8000",
+			"type": "string"
+		},
+		{
+			"key": "auth_token",
+			"value": "your_jwt_token_here",
+			"type": "string"
+		},
+		{
+			"key": "quiz_id",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "file_id",
+			"value": "",
+			"type": "string"
+		}
+	]
+}
