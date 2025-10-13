@@ -49,17 +49,12 @@ def get_current_user_id(
 def get_current_user_token(
     request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(security)
-) -> str | None:
-    token = None
-    if credentials:
-        token = credentials.credentials
+) -> str:
+    token = credentials.credentials if credentials else request.cookies.get("auth_token")
     
     if not token:
-        token = request.cookies.get("auth_token")
+        logger.warning("Authentication required but no token provided")
+        raise HTTPException(status_code=401, detail="Authentication token required")
     
-    if token:
-        logger.debug("Retrieved user token")
-    else:
-        logger.debug("No user token found")
-        
+    logger.debug("Retrieved user token")
     return token
