@@ -1,5 +1,5 @@
 """
-Contract tests for POST /api/submission/submit endpoint.
+Contract tests for POST /api/quiz/{quiz_id}/submit endpoint.
 
 Tests quiz submission functionality including:
 - Valid submission with answers
@@ -9,7 +9,7 @@ Tests quiz submission functionality including:
 import pytest
 from fastapi.testclient import TestClient
 from main import app
-from dependencies.auth_dependencies import get_current_user_id
+from uuid import uuid4
 
 client = TestClient(app)
 
@@ -35,14 +35,19 @@ class TestSubmissionCreate:
         - Status code: 401
         - Error message about authentication
         """
+        quiz_id = str(uuid4())
         submission_payload = {
-            "quiz_id": "mock_quiz_123",
-            "answers": {
-                "q1": "answer1"
-            }
+            "quiz_id": quiz_id,
+            "total_questions": 5,
+            "answers": [
+                {
+                    "question_id": str(uuid4()),
+                    "user_answer": "answer1"
+                }
+            ]
         }
         
-        response = client.post("/api/submission/submit", json=submission_payload)
+        response = client.post(f"/api/quiz/{quiz_id}/submit", json=submission_payload)
         
         assert response.status_code == 401, \
             f"Expected 401 without auth, got {response.status_code}: {response.text}"
@@ -59,14 +64,19 @@ class TestSubmissionCreate:
         - Error message about invalid token
         """
         headers = {"Authorization": "Bearer invalid_token_xyz"}
+        quiz_id = str(uuid4())
         submission_payload = {
-            "quiz_id": "mock_quiz_123",
-            "answers": {
-                "q1": "answer1"
-            }
+            "quiz_id": quiz_id,
+            "total_questions": 5,
+            "answers": [
+                {
+                    "question_id": str(uuid4()),
+                    "user_answer": "answer1"
+                }
+            ]
         }
         
-        response = client.post("/api/submission/submit", headers=headers, json=submission_payload)
+        response = client.post(f"/api/quiz/{quiz_id}/submit", headers=headers, json=submission_payload)
         
         assert response.status_code == 401, \
             f"Expected 401 with invalid token, got {response.status_code}: {response.text}"
