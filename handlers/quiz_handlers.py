@@ -15,7 +15,7 @@ from services.db_services.supabase_file import (
     parse_file_from_supabase)
 from dependencies.auth_dependencies import get_current_user_id, get_current_user_token
 from schemas.quiz import TextQuizRequest, FileQuizRequest
-from typing import Dict, Any, List
+from typing import List
 from datetime import datetime
 from services.ai_services.chunking_service import generate_quizzes_single_async
 from services.logger import app_logger as logger
@@ -435,29 +435,3 @@ async def get_metadata_handler(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# === Submit quiz answers ===
-async def submit_quiz_answers(
-    quiz_id: str,
-    answers: Dict[str, Any],
-    current_user_id: str = Depends(get_current_user_id)
-):
-    """Submit answers for a quiz and get score"""
-    try:
-        # For now, just return the submitted data and a mock score
-        # In a real implementation, you would validate answers against correct ones
-        correct_count = len(answers.get("answers", [])) // 2  # Mock calculation
-        total_count = len(answers.get("answers", []))
-        
-        return {
-            "quiz_id": quiz_id,
-            "user_id": current_user_id,
-            "score": {
-                "correct": correct_count,
-                "total": total_count,
-                "percentage": int((correct_count / total_count) * 100) if total_count > 0 else 0
-            },
-            "submitted_at": datetime.now().isoformat(),
-            "status": "completed"
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))

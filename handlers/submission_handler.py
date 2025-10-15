@@ -1,5 +1,5 @@
 ## Submission Handler
-from typing import List, Dict, Any
+from typing import List, Any
 from schemas.quiz import MCQQuestion, TrueFalseQuestion, FillBlankQuestion, MatchingQuestion, Question
 from schemas.submission import QuizSubmission, QuizAnswer, QuizSubmissionRequest
 from pydantic import ValidationError
@@ -7,6 +7,7 @@ from fastapi import HTTPException, Depends
 from uuid import UUID, uuid4
 from datetime import datetime
 from services.db_services.supabase_submission import get_question, save_submission, save_answer, get_submission_by_id
+from services.db_services.supabase_quiz import get_quiz_from_database
 from dependencies.auth_dependencies import get_current_user_id
 from services.logger import app_logger as logger
 
@@ -18,14 +19,15 @@ TYPE_TO_MODEL = {
     "matching": MatchingQuestion,
 }
 
-def parse_question_models(raw_questions: List[Dict[str, Any]]) -> List[Question]:
+def parse_question_models(raw_questions: List[Any]) -> List[Question]:
     """
     Converts list of raw dicts (from Supabase) into strongly-typed Pydantic question models.
     """
     parsed_questions = []
 
     for q in raw_questions:
-        model_cls = TYPE_TO_MODEL.get(q.get("type"))
+        question_type = q.get("type", "")
+        model_cls = TYPE_TO_MODEL.get(question_type) if question_type else None
         if not model_cls:
             logger.warning(f"Unknown question type: {q.get('type')}")
             continue
@@ -39,9 +41,26 @@ def parse_question_models(raw_questions: List[Dict[str, Any]]) -> List[Question]
 
 
 async def submit_quiz(
+    quiz_id: UUID,
     submission: QuizSubmissionRequest,
-    user_id: UUID = Depends(get_current_user_id)
+    user_id: str = Depends(get_current_user_id)
 ):
+    """Submit answers for a quiz and get detailed results with score"""
+    # Validate that quiz_id in path matches quiz_id in body
+    if submission.quiz_id != quiz_id:
+        raise HTTPException(
+            status_code=400, 
+            detail="Quiz ID in URL does not match quiz ID in request body"
+        )
+    
+    # Validate that the quiz exists before processing submission
+    try:
+        get_quiz_from_database(str(quiz_id))
+    except HTTPException as e:
+        if e.status_code == 404:
+            raise HTTPException(status_code=404, detail="Quiz not found. Please verify the quiz ID.")
+        raise
+    
     correct = 0
     wrong = 0
     detailed_results = []
@@ -76,11 +95,12 @@ async def submit_quiz(
             "is_correct": is_correct,
         })
 
-    score = round((correct / submission.total_questions) * 100, 2)
+    # Calculate score as integer (database expects INTEGER type)
+    score = int(round((correct / submission.total_questions) * 100))
 
     new_submission = QuizSubmission(
         id=uuid4(),
-        user_id=user_id,
+        user_id=UUID(user_id),  # Convert string user_id to UUID
         quiz_id=submission.quiz_id,
         correct_count=correct,
         wrong_count=wrong,
@@ -111,8 +131,21 @@ async def submit_quiz(
     }
 
 
-async def get_submission(submission_id: UUID, user_id: UUID = Depends(get_current_user_id)):
-    submission = get_submission_by_id(submission_id)
-    if submission["user_id"] != user_id:
-        raise HTTPException(status_code=403, detail="You are not authorized to access this submission")
-    return submission
+async def get_submission(submission_id: UUID, user_id: str = Depends(get_current_user_id)):
+    """Retrieve a submission by ID with authorization check"""
+    try:
+        submission = get_submission_by_id(submission_id)
+        
+        # Authorization check: user can only access their own submissions
+        # Convert both to strings for comparison (user_id is string from auth, submission.user_id is UUID)
+        if str(submission.user_id) != str(user_id):
+            logger.warning(f"User {user_id} attempted to access submission {submission_id} owned by {submission.user_id}")
+            raise HTTPException(status_code=403, detail="You are not authorized to access this submission")
+        
+        logger.info(f"User {user_id} successfully accessed their submission {submission_id}")
+        return submission
+    except HTTPException:
+        raise  # Re-raise HTTP exceptions (404, 403, etc.)
+    except Exception as e:
+        logger.error(f"Unexpected error retrieving submission {submission_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve submission. Please try again.")

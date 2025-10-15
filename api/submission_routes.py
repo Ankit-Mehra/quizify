@@ -1,25 +1,42 @@
 ## Submission Routes
-from fastapi import APIRouter
+from fastapi import APIRouter, Response
 from services.logger import app_logger as logger
 from schemas.submission import SubmissionResponse, QuizSubmission
 from handlers.submission_handler import submit_quiz, get_submission
 
-router = APIRouter(prefix="/submission", tags=["Submission"])
+router = APIRouter(tags=["Quiz Submissions"])
 logger.info("Submission routes initialized")
 
+# OPTIONS handler for quiz submissions
+@router.options("/quiz/{quiz_id}/submit")
+async def quiz_submit_options(quiz_id: str):
+    logger.debug(f"OPTIONS request for /quiz/{quiz_id}/submit")
+    return Response(
+        content="",
+        status_code=200,
+        headers={
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type, Authorization, Accept",
+            "Access-Control-Max-Age": "3600",
+        },
+    )
 
+# Submit quiz answers - RESTful endpoint
 router.add_api_route(
-    path="/submit",
+    path="/quiz/{quiz_id}/submit",
     endpoint=submit_quiz,
     methods=["POST"],
-    summary="Submit a submission",
+    summary="Submit Quiz Answers",
+    description="Submit answers for a quiz and receive detailed scoring results",
     response_model=SubmissionResponse
 )
 
+# Get submission by ID
 router.add_api_route(
-    path="/{submission_id}",
+    path="/submission/{submission_id}",
     endpoint=get_submission,
     methods=["GET"],
-    summary="Get a submission",
+    summary="Get Submission Details",
+    description="Retrieve details of a previously submitted quiz",
     response_model=QuizSubmission
 )

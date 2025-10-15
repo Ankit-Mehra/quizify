@@ -50,7 +50,7 @@ def get_current_user_token(
     request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(security)
 ) -> str:
-    token = credentials.credentials if credentials else request.cookies.get("auth_token")
+    token = credentials.credentials if credentials else request.cookies.get("access_token")
     
     if not token:
         logger.warning("Authentication required but no token provided")
