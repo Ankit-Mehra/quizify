@@ -1,4 +1,5 @@
 from fastapi import HTTPException, Depends, Path, Body, UploadFile, File, Form
+import re
 from services.ai_services.doc_service import ( 
     extract_text_from_pdf,
     extract_text_from_plain_text,
@@ -23,6 +24,31 @@ from services.web_scraping_service import scrape_content
 # Content validation constants
 MIN_CONTENT_LENGTH = 50  # Minimum characters required for quiz generation from uploaded files
 MIN_STORED_CONTENT_LENGTH = 10  # Minimum characters required for stored file content validation
+
+def sanitize_filename(filename: str) -> str:
+    """
+    Sanitize filename to make it safe for storage URLs.
+    Removes special characters, replaces spaces with underscores, and limits length.
+    """
+    # Remove file extension if present
+    name_without_ext = filename.rsplit('.', 1)[0] if '.' in filename else filename
+    
+    # Replace spaces and special characters with underscores
+    # Keep only alphanumeric, underscores, and hyphens
+    sanitized = re.sub(r'[^\w\s-]', '', name_without_ext)
+    sanitized = re.sub(r'[-\s]+', '_', sanitized)
+    
+    # Limit length to 50 characters
+    sanitized = sanitized[:50]
+    
+    # Remove leading/trailing underscores
+    sanitized = sanitized.strip('_')
+    
+    # If empty after sanitization, use a default name
+    if not sanitized:
+        sanitized = "quiz_content"
+    
+    return sanitized
 
 def validate_user_quota(user_id: str):
     """
@@ -115,7 +141,7 @@ async def generate_quiz_from_file_openai(
             num_questions,
             question_types=question_type
         )
-        quiz_id = save_quiz_to_database(title, quizzes, current_user_id)
+        quiz_id, saved_questions = save_quiz_to_database(title, quizzes, current_user_id)
 
         metadata = {
             "quiz_id": quiz_id,
@@ -141,7 +167,7 @@ async def generate_quiz_from_file_openai(
             "quiz_id": quiz_id, 
             "title": title,
             "message": "Quiz generated successfully from file",
-            "questions": quizzes
+            "questions": saved_questions  # Return saved questions with IDs
         }
     
     except HTTPException:
@@ -226,7 +252,7 @@ async def generate_quiz_from_fileid(
         for i, q in enumerate(quizzes):
             logger.info(f"Question {i+1}: type={q.type}, correct_answer={q.correct_answer}")
         
-        quiz_id = save_quiz_to_database(data.title, quizzes, current_user_id)
+        quiz_id, saved_questions = save_quiz_to_database(data.title, quizzes, current_user_id)
         logger.info(f"Saved quiz with ID: {quiz_id}")
 
         metadata = {
@@ -245,7 +271,8 @@ async def generate_quiz_from_fileid(
         return {
             "quiz_id": quiz_id, 
             "title": data.title,
-            "message": "Quiz generated successfully from file"
+            "message": "Quiz generated successfully from file",
+            "questions": saved_questions  # Return saved questions with IDs
         }
     except HTTPException as he:
         # Re-raise HTTP exceptions
@@ -278,19 +305,47 @@ async def generate_quiz_from_text(
             total_questions,
             question_types=list(data.question_type)
         )
-            
-        # Save to database
-        quiz_id = save_quiz_to_database(data.title, quizzes, current_user_id)
-
-        # Convert text content to bytes
-        text_bytes = data.content.encode('utf-8')
         
-        # Save to Supabase storage
-        save_file_to_supabase(current_user_id, text_bytes, f"{data.title}.txt", user_token, "text/plain")
+        # Save text as a file in Supabase Storage FIRST (for consistent user experience)
+        # This allows users to access their text content later, same as uploaded files
+        text_bytes = data.content.encode('utf-8')
+        file_size = len(text_bytes)
+        
+        # Validate text size (same 10MB limit as file uploads)
+        MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+        if file_size > MAX_FILE_SIZE:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Text content too large. Maximum size is 10MB ({MAX_FILE_SIZE} bytes). Your text is {file_size} bytes."
+            )
+        
+        # Create safe filename (remove spaces and special characters)
+        safe_title = sanitize_filename(data.title)
+        filename = f"{safe_title}.txt"
+        
+        file_result = save_file_to_supabase(
+            current_user_id, 
+            text_bytes, 
+            filename, 
+            user_token, 
+            "text/plain"
+        )
+        file_id = file_result.get('file_id')
+            
+        # Save quiz to database with file reference
+        quiz_id, saved_questions = save_quiz_to_database(
+            title=data.title,
+            quizzes=quizzes,
+            created_by=current_user_id,
+            content_source_type="text",
+            content_source_reference=file_id  # Link to the saved text file
+        )
+
+        # Save metadata for analytics/tracking
         metedata = {
             "quiz_id": quiz_id,
             "content_type": "text",
-            "file_name": f"{data.title}.txt",
+            "file_name": filename,
             "file_type": "text/plain",
             "word_count": len(data.content.split()),
             "created_by": current_user_id,
@@ -299,11 +354,12 @@ async def generate_quiz_from_text(
         }
         save_metadata(metedata)
         
-        # Return response
+        # Return response with questions for immediate display
         return {
             "quiz_id": quiz_id, 
             "title": data.title,
-            "message": "Quiz generated successfully from text"
+            "message": "Quiz generated successfully from text",
+            "questions": saved_questions  # Return saved questions with IDs
         }
     
     except HTTPException as he:

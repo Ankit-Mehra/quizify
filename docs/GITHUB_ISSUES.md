@@ -758,16 +758,4 @@ pytest
 **Document Version**: 2.0  
 **Last Updated**: October 12, 2025  
 **Maintained By**: Development Team
-- [ ] **Integration tests written** with files at boundary (9MB, 10MB, 11MB)
-- [ ] **All existing tests still pass** after implementation
-- [ ] **Test coverage**: Size validation, error messages, metadata storage
-
-
-**Related Files**:
-- `handlers/quiz_handlers.py::generate_quiz_from_file_openai()`
-- `tests/test_file_upload_validation.py` (NEW)
-
-**Contract Reference**: `specs/001-comprehensive-quiz-generation/contracts/file-upload-validation.md`
-
-**Estimated Effort**: 1-2 hours
 

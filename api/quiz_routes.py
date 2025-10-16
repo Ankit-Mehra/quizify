@@ -14,7 +14,6 @@ from handlers.quiz_handlers import (
     get_user_quizzes_handler,
     get_quiz_by_id_handler,
     get_metadata_handler,
-    submit_quiz_answers,
     delete_quiz_by_id_handler
 )
 from typing import List
@@ -33,20 +32,6 @@ async def test_api():
 @router.options("/quiz/generate", tags=["Quiz Generation"])
 async def quiz_generate_options():
     logger.debug("OPTIONS request for /quiz/generate")
-    return Response(
-        content="",
-        status_code=200,
-        headers={
-            "Access-Control-Allow-Methods": "POST, OPTIONS",
-            "Access-Control-Allow-Headers": "Content-Type, Authorization, Accept",
-            "Access-Control-Max-Age": "3600",
-        },
-    )
-
-# OPTIONS handler for quiz submissions
-@router.options("/quiz/{quiz_id}/submit", tags=["Quiz Management"])
-async def quiz_submit_options(quiz_id: str):
-    logger.debug(f"OPTIONS request for /quiz/{quiz_id}/submit")
     return Response(
         content="",
         status_code=200,
@@ -146,14 +131,5 @@ router.add_api_route(
     endpoint=delete_quiz_by_id_handler,
     methods=["DELETE"],
     summary="Delete Quiz by ID",
-    tags=["Quiz Management"]
-)
-
-# Submit quiz answers
-router.add_api_route(
-    path="/quiz/{quiz_id}/submit",
-    endpoint=submit_quiz_answers,
-    methods=["POST"],
-    summary="Submit Quiz Answers",
     tags=["Quiz Management"]
 )
