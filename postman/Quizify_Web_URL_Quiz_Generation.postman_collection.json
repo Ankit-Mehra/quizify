@@ -1,0 +1,1405 @@
+{
+	"info": {
+		"_postman_id": "web-url-quiz-gen-001",
+		"name": "Quizify - Web URL Quiz Generation (Premium Feature)",
+		"description": "Comprehensive test suite for Web URL quiz generation feature (Issue #4).\n\n**Feature Overview:**\n- Generate quizzes from web page URLs using Playwright + Trafilatura\n- Premium feature for Basic and Educator tiers only (Free tier blocked)\n- SSRF protection (blocks private IPs, localhost)\n- 30-second timeout, min 100 chars, max 500KB content\n- Quota enforcement still applies\n\n**Setup Instructions:**\n1. Set `{{base_url}}` variable (e.g., http://localhost:8000 or https://api.quizify.app)\n2. Set `{{auth_token}}` variable with your JWT token\n3. Set `{{user_tier}}` to test different scenarios (free/basic/educator)\n4. Run \"Setup\" folder first to configure test environment\n5. Test scenarios are organized by tier and error conditions\n\n**Test Coverage:**\n- ✅ Free tier rejection (403)\n- ✅ Basic tier success\n- ✅ Educator tier success\n- ✅ Quota enforcement\n- ✅ SSRF protection (localhost, private IPs)\n- ✅ URL validation\n- ✅ Content extraction validation\n- ✅ Timeout handling\n- ✅ Error responses\n\n**Last Updated:** 2025-10-13\n**Related Issue:** #4 - Web URL Quiz Generation\n**Implementation:** services/web_scraping_service.py, handlers/quiz_handlers.py",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "Setup",
+			"item": [
+				{
+					"name": "Health Check",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"API is running\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.status).to.eql(\"ok\");",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/test",
+							"host": ["{{base_url}}"],
+							"path": ["api", "test"]
+						},
+						"description": "Verify API is accessible and running"
+					},
+					"response": []
+				},
+				{
+					"name": "Verify Authentication",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"User is authenticated\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('user_id');",
+									"    pm.environment.set('user_id', jsonData.user_id);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/auth/me",
+							"host": ["{{base_url}}"],
+							"path": ["api", "auth", "me"]
+						},
+						"description": "Verify JWT token is valid and get user info"
+					},
+					"response": []
+				},
+				{
+					"name": "Get User Tier Info",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"User has tier information\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('account_tier');",
+									"    pm.expect(jsonData).to.have.property('current_quiz_count');",
+									"    pm.expect(jsonData).to.have.property('quota_limit');",
+									"    pm.environment.set('user_tier', jsonData.account_tier);",
+									"    pm.environment.set('current_quiz_count', jsonData.current_quiz_count);",
+									"    pm.environment.set('quota_limit', jsonData.quota_limit);",
+									"});",
+									"",
+									"pm.test(\"Quota information available\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    console.log('User Tier: ' + jsonData.account_tier);",
+									"    console.log('Quiz Count: ' + jsonData.current_quiz_count + '/' + jsonData.quota_limit);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/users/tier-info",
+							"host": ["{{base_url}}"],
+							"path": ["api", "users", "tier-info"]
+						},
+						"description": "Get user's tier and quota information"
+					},
+					"response": []
+				}
+			],
+			"description": "Setup requests to verify environment and authentication"
+		},
+		{
+			"name": "1. Success Scenarios - Basic Tier",
+			"item": [
+				{
+					"name": "Generate Quiz from Wikipedia URL",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 201 (Created)\", function () {",
+									"    pm.response.to.have.status(201);",
+									"});",
+									"",
+									"pm.test(\"Response has quiz_id\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('quiz_id');",
+									"    pm.environment.set('url_quiz_id', jsonData.quiz_id);",
+									"});",
+									"",
+									"pm.test(\"Response has correct title\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.title).to.eql('Machine Learning Quiz');",
+									"});",
+									"",
+									"pm.test(\"Response has success message\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.message).to.include('successfully');",
+									"});",
+									"",
+									"pm.test(\"Response has source URL\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('source_url');",
+									"    pm.expect(jsonData.source_url).to.include('wikipedia.org');",
+									"});",
+									"",
+									"pm.test(\"Response time is acceptable\", function () {",
+									"    pm.expect(pm.response.responseTime).to.be.below(35000); // 35 seconds max (30s timeout + buffer)",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"url\": \"https://en.wikipedia.org/wiki/Machine_learning\",\n  \"title\": \"Machine Learning Quiz\",\n  \"num_questions\": 10,\n  \"question_type\": [\"multiple_choice\", \"true_false\"]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/quiz/generate/url",
+							"host": ["{{base_url}}"],
+							"path": ["api", "quiz", "generate", "url"]
+						},
+						"description": "Generate quiz from a Wikipedia article about Machine Learning.\n\n**Expected:**\n- Status: 201 Created\n- Playwright scrapes JavaScript-rendered content\n- Trafilatura extracts clean text\n- Quiz generated with 10 questions\n- Metadata saved with content_source_type='url'"
+					},
+					"response": []
+				},
+				{
+					"name": "Generate Quiz from Blog Post",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 201\", function () {",
+									"    pm.response.to.have.status(201);",
+									"});",
+									"",
+									"pm.test(\"Quiz generated successfully\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('quiz_id');",
+									"    pm.expect(jsonData.message).to.include('successfully');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"url\": \"https://www.python.org/about/gettingstarted/\",\n  \"title\": \"Python Getting Started Quiz\",\n  \"num_questions\": 5,\n  \"question_type\": [\"multiple_choice\"]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/quiz/generate/url",
+							"host": ["{{base_url}}"],
+							"path": ["api", "quiz", "generate", "url"]
+						},
+						"description": "Generate quiz from Python.org documentation page"
+					},
+					"response": []
+				},
+				{
+					"name": "Generate Quiz from News Article",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 201\", function () {",
+									"    pm.response.to.have.status(201);",
+									"});",
+									"",
+									"pm.test(\"Content extracted without ads/navigation\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('quiz_id');",
+									"    // Trafilatura should have removed ads and navigation",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"url\": \"https://www.bbc.com/news/technology\",\n  \"title\": \"Technology News Quiz\",\n  \"num_questions\": 8,\n  \"question_type\": [\"mixed\"]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/quiz/generate/url",
+							"host": ["{{base_url}}"],
+							"path": ["api", "quiz", "generate", "url"]
+						},
+						"description": "Test content extraction from news site with ads and navigation"
+					},
+					"response": []
+				},
+				{
+					"name": "Verify Quiz Saved in Database",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Quiz exists in database\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('id');",
+									"    pm.expect(jsonData).to.have.property('title');",
+									"});",
+									"",
+									"pm.test(\"Quiz has correct metadata\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.metadata).to.have.property('content_source_type');",
+									"    pm.expect(jsonData.metadata.content_source_type).to.eql('url');",
+									"    pm.expect(jsonData.metadata).to.have.property('content_source_reference');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/quiz/{{url_quiz_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["api", "quiz", "{{url_quiz_id}}"]
+						},
+						"description": "Verify quiz was saved with correct metadata"
+					},
+					"response": []
+				}
+			],
+			"description": "Test successful quiz generation for Basic tier users"
+		},
+		{
+			"name": "2. Success Scenarios - Educator Tier",
+			"item": [
+				{
+					"name": "Generate Quiz (Educator Tier)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 201\", function () {",
+									"    pm.response.to.have.status(201);",
+									"});",
+									"",
+									"pm.test(\"Educator tier can access premium feature\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('quiz_id');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"url\": \"https://en.wikipedia.org/wiki/Artificial_intelligence\",\n  \"title\": \"AI Quiz for Educators\",\n  \"num_questions\": 15,\n  \"question_type\": [\"multiple_choice\", \"true_false\"]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/quiz/generate/url",
+							"host": ["{{base_url}}"],
+							"path": ["api", "quiz", "generate", "url"]
+						},
+						"description": "Verify educator tier users can access URL quiz generation"
+					},
+					"response": []
+				}
+			],
+			"description": "Test URL quiz generation for Educator tier users"
+		},
+		{
+			"name": "3. Tier Enforcement - Free Tier Rejection",
+			"item": [
+				{
+					"name": "Free Tier User Rejected (403)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 403 (Forbidden)\", function () {",
+									"    pm.response.to.have.status(403);",
+									"});",
+									"",
+									"pm.test(\"Error message mentions premium feature\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.detail.detail).to.include('premium feature');",
+									"});",
+									"",
+									"pm.test(\"Response includes tier information\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.detail).to.have.property('user_tier');",
+									"    pm.expect(jsonData.detail.user_tier).to.eql('free');",
+									"    pm.expect(jsonData.detail).to.have.property('required_tier');",
+									"    pm.expect(jsonData.detail.required_tier).to.eql('basic');",
+									"});",
+									"",
+									"pm.test(\"Response includes upgrade URL\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.detail).to.have.property('upgrade_url');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text",
+								"description": "Use token for FREE tier user"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"url\": \"https://en.wikipedia.org/wiki/Python_(programming_language)\",\n  \"title\": \"Python Quiz\",\n  \"num_questions\": 5,\n  \"question_type\": [\"multiple_choice\"]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/quiz/generate/url",
+							"host": ["{{base_url}}"],
+							"path": ["api", "quiz", "generate", "url"]
+						},
+						"description": "Test that free tier users are rejected with clear upgrade message.\n\n**Note:** Replace auth_token with a FREE tier user's token to test this."
+					},
+					"response": []
+				}
+			],
+			"description": "Test that free tier users cannot access URL quiz generation"
+		},
+		{
+			"name": "4. Quota Enforcement",
+			"item": [
+				{
+					"name": "Quota Exceeded (403)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 403\", function () {",
+									"    pm.response.to.have.status(403);",
+									"});",
+									"",
+									"pm.test(\"Error message mentions quota\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.detail.detail).to.include('quota exceeded');",
+									"});",
+									"",
+									"pm.test(\"Response includes quota details\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.detail).to.have.property('current_count');",
+									"    pm.expect(jsonData.detail).to.have.property('quota_limit');",
+									"    pm.expect(jsonData.detail.current_count).to.be.at.least(jsonData.detail.quota_limit);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text",
+								"description": "Use token for user who has reached quota"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"url\": \"https://en.wikipedia.org/wiki/Software_engineering\",\n  \"title\": \"Software Engineering Quiz\",\n  \"num_questions\": 5,\n  \"question_type\": [\"multiple_choice\"]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/quiz/generate/url",
+							"host": ["{{base_url}}"],
+							"path": ["api", "quiz", "generate", "url"]
+						},
+						"description": "Test quota enforcement for basic tier (20 quizzes max).\n\n**Note:** Use a token for a user who has already created 20 quizzes."
+					},
+					"response": []
+				}
+			],
+			"description": "Test quota enforcement for URL quiz generation"
+		},
+		{
+			"name": "5. SSRF Protection Tests",
+			"item": [
+				{
+					"name": "Reject Localhost URL",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 400 (Bad Request)\", function () {",
+									"    pm.response.to.have.status(400);",
+									"});",
+									"",
+									"pm.test(\"Error message mentions localhost\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.detail).to.include('localhost');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"url\": \"http://localhost:8000/api/test\",\n  \"title\": \"Localhost Test\",\n  \"num_questions\": 5,\n  \"question_type\": [\"multiple_choice\"]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/quiz/generate/url",
+							"host": ["{{base_url}}"],
+							"path": ["api", "quiz", "generate", "url"]
+						},
+						"description": "Test SSRF protection - reject localhost URLs"
+					},
+					"response": []
+				},
+				{
+					"name": "Reject 127.0.0.1 URL",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 400\", function () {",
+									"    pm.response.to.have.status(400);",
+									"});",
+									"",
+									"pm.test(\"Error mentions localhost/private IP\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.detail).to.match(/localhost|private/i);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"url\": \"http://127.0.0.1:8000/api/test\",\n  \"title\": \"Loopback Test\",\n  \"num_questions\": 5,\n  \"question_type\": [\"multiple_choice\"]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/quiz/generate/url",
+							"host": ["{{base_url}}"],
+							"path": ["api", "quiz", "generate", "url"]
+						},
+						"description": "Test SSRF protection - reject 127.0.0.1 (loopback)"
+					},
+					"response": []
+				},
+				{
+					"name": "Reject Private IP 192.168.x.x",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 400\", function () {",
+									"    pm.response.to.have.status(400);",
+									"});",
+									"",
+									"pm.test(\"Error mentions private IP\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.detail).to.include('private');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"url\": \"http://192.168.1.1/admin\",\n  \"title\": \"Private IP Test\",\n  \"num_questions\": 5,\n  \"question_type\": [\"multiple_choice\"]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/quiz/generate/url",
+							"host": ["{{base_url}}"],
+							"path": ["api", "quiz", "generate", "url"]
+						},
+						"description": "Test SSRF protection - reject 192.168.x.x private IPs"
+					},
+					"response": []
+				},
+				{
+					"name": "Reject Private IP 10.x.x.x",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 400\", function () {",
+									"    pm.response.to.have.status(400);",
+									"});",
+									"",
+									"pm.test(\"Error mentions private IP\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.detail).to.include('private');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"url\": \"http://10.0.0.1/internal\",\n  \"title\": \"Private Network Test\",\n  \"num_questions\": 5,\n  \"question_type\": [\"multiple_choice\"]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/quiz/generate/url",
+							"host": ["{{base_url}}"],
+							"path": ["api", "quiz", "generate", "url"]
+						},
+						"description": "Test SSRF protection - reject 10.x.x.x private IPs"
+					},
+					"response": []
+				},
+				{
+					"name": "Reject Private IP 172.16.x.x",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 400\", function () {",
+									"    pm.response.to.have.status(400);",
+									"});",
+									"",
+									"pm.test(\"Error mentions private IP\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.detail).to.include('private');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"url\": \"http://172.16.0.1/internal\",\n  \"title\": \"Private Network Test\",\n  \"num_questions\": 5,\n  \"question_type\": [\"multiple_choice\"]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/quiz/generate/url",
+							"host": ["{{base_url}}"],
+							"path": ["api", "quiz", "generate", "url"]
+						},
+						"description": "Test SSRF protection - reject 172.16-31.x.x private IPs"
+					},
+					"response": []
+				},
+				{
+					"name": "Reject File Protocol",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 400\", function () {",
+									"    pm.response.to.have.status(400);",
+									"});",
+									"",
+									"pm.test(\"Error mentions invalid protocol\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.detail).to.include('protocol');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"url\": \"file:///etc/passwd\",\n  \"title\": \"File Protocol Test\",\n  \"num_questions\": 5,\n  \"question_type\": [\"multiple_choice\"]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/quiz/generate/url",
+							"host": ["{{base_url}}"],
+							"path": ["api", "quiz", "generate", "url"]
+						},
+						"description": "Test SSRF protection - reject file:// protocol"
+					},
+					"response": []
+				}
+			],
+			"description": "Test SSRF (Server-Side Request Forgery) protection"
+		},
+		{
+			"name": "6. URL Validation Tests",
+			"item": [
+				{
+					"name": "Invalid URL Format",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 422 (Unprocessable Entity)\", function () {",
+									"    pm.response.to.have.status(422);",
+									"});",
+									"",
+									"pm.test(\"Validation error returned\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('detail');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"url\": \"not-a-valid-url\",\n  \"title\": \"Invalid URL Test\",\n  \"num_questions\": 5,\n  \"question_type\": [\"multiple_choice\"]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/quiz/generate/url",
+							"host": ["{{base_url}}"],
+							"path": ["api", "quiz", "generate", "url"]
+						},
+						"description": "Test Pydantic URL validation"
+					},
+					"response": []
+				},
+				{
+					"name": "Missing Required Fields",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 422\", function () {",
+									"    pm.response.to.have.status(422);",
+									"});",
+									"",
+									"pm.test(\"Validation error for missing fields\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.detail).to.be.an('array');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"url\": \"https://example.com\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/quiz/generate/url",
+							"host": ["{{base_url}}"],
+							"path": ["api", "quiz", "generate", "url"]
+						},
+						"description": "Test validation when required fields are missing"
+					},
+					"response": []
+				},
+				{
+					"name": "Invalid Question Count (Too High)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 422\", function () {",
+									"    pm.response.to.have.status(422);",
+									"});",
+									"",
+									"pm.test(\"Validation error for num_questions\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(JSON.stringify(jsonData)).to.include('num_questions');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"url\": \"https://en.wikipedia.org/wiki/Python\",\n  \"title\": \"Python Quiz\",\n  \"num_questions\": 100,\n  \"question_type\": [\"multiple_choice\"]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/quiz/generate/url",
+							"host": ["{{base_url}}"],
+							"path": ["api", "quiz", "generate", "url"]
+						},
+						"description": "Test validation for num_questions > 50"
+					},
+					"response": []
+				}
+			],
+			"description": "Test URL and request validation"
+		},
+		{
+			"name": "7. Error Handling Tests",
+			"item": [
+				{
+					"name": "URL Not Found (404)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 404 or 500\", function () {",
+									"    pm.expect(pm.response.code).to.be.oneOf([404, 500]);",
+									"});",
+									"",
+									"pm.test(\"Error message returned\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('detail');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"url\": \"https://en.wikipedia.org/wiki/ThisPageDoesNotExist123456\",\n  \"title\": \"404 Test\",\n  \"num_questions\": 5,\n  \"question_type\": [\"multiple_choice\"]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/quiz/generate/url",
+							"host": ["{{base_url}}"],
+							"path": ["api", "quiz", "generate", "url"]
+						},
+						"description": "Test handling of non-existent URLs"
+					},
+					"response": []
+				},
+				{
+					"name": "Insufficient Content (422)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 422\", function () {",
+									"    pm.response.to.have.status(422);",
+									"});",
+									"",
+									"pm.test(\"Error mentions content length\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.detail).to.match(/content|short|minimum/i);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"url\": \"https://example.com\",\n  \"title\": \"Minimal Content Test\",\n  \"num_questions\": 5,\n  \"question_type\": [\"multiple_choice\"]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/quiz/generate/url",
+							"host": ["{{base_url}}"],
+							"path": ["api", "quiz", "generate", "url"]
+						},
+						"description": "Test handling of pages with insufficient content (< 100 chars)"
+					},
+					"response": []
+				}
+			],
+			"description": "Test error handling for various failure scenarios"
+		},
+		{
+			"name": "8. Performance Tests",
+			"item": [
+				{
+					"name": "Timeout Test (Should Complete < 35s)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Request completes within timeout\", function () {",
+									"    pm.expect(pm.response.responseTime).to.be.below(35000);",
+									"});",
+									"",
+									"pm.test(\"Status is either success or timeout\", function () {",
+									"    pm.expect(pm.response.code).to.be.oneOf([201, 408]);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"url\": \"https://en.wikipedia.org/wiki/List_of_computing_and_IT_abbreviations\",\n  \"title\": \"Large Page Test\",\n  \"num_questions\": 10,\n  \"question_type\": [\"multiple_choice\"]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/quiz/generate/url",
+							"host": ["{{base_url}}"],
+							"path": ["api", "quiz", "generate", "url"]
+						},
+						"description": "Test performance with large Wikipedia page"
+					},
+					"response": []
+				},
+				{
+					"name": "Content Truncation Test (Max 500KB)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 201\", function () {",
+									"    pm.response.to.have.status(201);",
+									"});",
+									"",
+									"pm.test(\"Quiz generated despite large content\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('quiz_id');",
+									"    // Content should be truncated to 500KB max",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"url\": \"https://en.wikipedia.org/wiki/Computer_science\",\n  \"title\": \"Computer Science Quiz\",\n  \"num_questions\": 15,\n  \"question_type\": [\"multiple_choice\", \"true_false\"]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/quiz/generate/url",
+							"host": ["{{base_url}}"],
+							"path": ["api", "quiz", "generate", "url"]
+						},
+						"description": "Test that very large content is truncated to 500KB"
+					},
+					"response": []
+				}
+			],
+			"description": "Test performance and resource limits"
+		},
+		{
+			"name": "9. Cleanup",
+			"item": [
+				{
+					"name": "List My Quizzes",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Quizzes list includes URL-generated quizzes\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.be.an('array');",
+									"    ",
+									"    // Find quizzes with content_source_type='url'",
+									"    var urlQuizzes = jsonData.filter(q => ",
+									"        q.metadata && q.metadata.content_source_type === 'url'",
+									"    );",
+									"    ",
+									"    console.log('URL-generated quizzes: ' + urlQuizzes.length);",
+									"    pm.expect(urlQuizzes.length).to.be.at.least(1);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/quiz/my-quizzes",
+							"host": ["{{base_url}}"],
+							"path": ["api", "quiz", "my-quizzes"]
+						},
+						"description": "Verify URL-generated quizzes appear in user's quiz list"
+					},
+					"response": []
+				},
+				{
+					"name": "Delete Test Quiz",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200 or 204\", function () {",
+									"    pm.expect(pm.response.code).to.be.oneOf([200, 204]);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/quiz/{{url_quiz_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["api", "quiz", "{{url_quiz_id}}"]
+						},
+						"description": "Delete test quiz created during testing"
+					},
+					"response": []
+				}
+			],
+			"description": "Cleanup and verification after testing"
+		}
+	],
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "http://localhost:8000",
+			"type": "string"
+		},
+		{
+			"key": "auth_token",
+			"value": "your_jwt_token_here",
+			"type": "string"
+		},
+		{
+			"key": "user_id",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "user_tier",
+			"value": "basic",
+			"type": "string"
+		},
+		{
+			"key": "url_quiz_id",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "current_quiz_count",
+			"value": "0",
+			"type": "string"
+		},
+		{
+			"key": "quota_limit",
+			"value": "20",
+			"type": "string"
+		}
+	]
+}

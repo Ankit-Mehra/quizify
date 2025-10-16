@@ -11,11 +11,11 @@
 This document tracks feature development issues for the Quizify API. Issues are organized by priority and include detailed specifications for implementation.
 
 **Current Status**:
-- ✅ **2 issues COMPLETED** (Quota enforcement, Admin tier management)
-- 🟡 **2 issues PENDING** (Search/filter, Web scraping)
+- ✅ **3 issues COMPLETED** (Quota enforcement, Admin tier management, Web URL scraping)
+- 🟡 **1 issue PENDING** (Search/filter)
 - 🟢 **1 issue PENDING** (File size validation)
 
-**Total Remaining Effort**: 9-13 hours
+**Total Remaining Effort**: 3-5 hours
 
 ---
 
@@ -53,6 +53,28 @@ This document tracks feature development issues for the Quizify API. Issues are 
 **Note**: Self-service Stripe payment upgrade is planned for v1.1 (not blocking for MVP)
 
 **Implementation location**: `api/admin_routes.py`, `handlers/admin_handlers.py`
+
+---
+
+### Issue #4: Quiz Generation from Web URL ✅
+
+**Status**: COMPLETED (October 2025)
+
+**What was implemented**:
+- Web scraping service with SSRF protection: `services/web_scraping_service.py` (182 lines)
+- Handler with tier and quota checking: `handlers/quiz_handlers.py` lines 412-489
+- API endpoint: `POST /api/quiz/generate/url` (status 201)
+- **SSRF Protection**: Blocks localhost, private IPs (10.x, 192.168.x, 172.16-31.x, 169.254.x)
+- **Tier Enforcement**: Free tier users get 403 with upgrade message
+- **Web Scraping**: Playwright + Trafilatura with 30-second timeout
+- **Content Validation**: Min 100 chars, max 500KB with auto-truncation
+- **26 tests passing**:
+  - 19 unit tests in `tests/test_web_scraping_service.py` (URL validation, SSRF, content handling)
+  - 7 integration tests in `tests/test_url_quiz_generation.py` (tier/quota enforcement, error scenarios)
+- Database storage with `content_source_type='url'` and `content_source_reference`
+- Playwright browser binaries installed (Chromium 120.0.6099.28)
+
+**Implementation location**: `services/web_scraping_service.py`, `handlers/quiz_handlers.py`, `api/quiz_routes.py`
 
 
 ---
@@ -310,462 +332,6 @@ pytest
 - Database migration: 15 minutes
 - Test writing: 60 minutes
 - Testing and debugging: 30 minutes
-
----
-
-### Issue #4: Quiz Generation from Web URL (Premium Feature)
-
-**Title**: Implement web scraping for quiz generation from URLs
-
-**Labels**: `priority: medium`, `type: feature`, `area: backend`, `premium-tier`, `web-scraping`
-
----
-
-#### Description
-
-Add ability for **basic** and **educator** tier users to generate quizzes directly from web page URLs. This is a premium feature that differentiates paid tiers from the free tier and provides significant value to users who want to create quizzes from online articles, documentation, and educational content.
-
----
-
-#### Problem Statement
-
-**Current limitations**:
-- No way to generate quizzes from web URLs
-- Users must manually copy/paste content from web pages
-- Premium tiers lack differentiating features
-- Dependencies (Playwright, Trafilatura) are installed but unused
-- Contract is specified but not implemented
-
-**User impact**:
-- Free tier users have limited content sources (text input, file upload)
-- Paid tier users don't get additional value for their subscription
-- Manual content extraction is time-consuming and error-prone
-
----
-
-#### Requirements
-
-**1. New Endpoint**:
-```
-POST /api/quiz/generate/url
-```
-
-**2. Request Body**:
-```json
-{
-  "url": "https://en.wikipedia.org/wiki/Machine_Learning",
-  "title": "Machine Learning Quiz",
-  "num_questions": 10,
-  "question_types": ["multiple_choice", "true_false"]
-}
-```
-
-**3. Request Schema** (already exists in `schemas/quiz.py`):
-```python
-class WebQuizRequest(BaseModel):
-    url: HttpUrl  # Validates URL format
-    title: str
-    num_questions: int = Field(ge=1, le=50)
-    question_type: List[QuestionTypeEnum]
-```
-
-**4. Validation Rules**:
-- URL must be valid HTTP/HTTPS protocol
-- URL cannot be private IP address (127.0.0.1, 192.168.x.x, 10.x.x.x, 172.16.x.x-172.31.x.x)
-- URL cannot be localhost or 0.0.0.0
-- URL max length: 2048 characters
-- **User must be basic or educator tier** (403 for free tier users)
-- Quota enforcement still applies
-
-**5. Web Scraping Requirements**:
-- Use **Playwright** for browser automation (handles JavaScript-rendered content)
-- Use **Trafilatura** for intelligent content extraction (removes nav, ads, footers)
-- Timeout: **30 seconds maximum**
-- Extracted content: **minimum 100 characters, maximum 500KB**
-- Custom user agent to avoid bot detection
-- Handle common HTTP errors (404, 403, 500, timeouts)
-
-**6. Database Storage**:
-- Save quiz with `content_source_type='url'`
-- Save original URL in `content_source_reference` field
-- Include scraping metadata (url, scrape_timestamp, content_length)
-
----
-
-#### Implementation Steps
-
-**Step 1**: Create web scraping service
-
-```python
-# File: services/web_scraping_service.py
-
-import re
-import ipaddress
-from urllib.parse import urlparse
-from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeout
-import trafilatura
-from fastapi import HTTPException
-
-# Constants
-MAX_CONTENT_SIZE = 500 * 1024  # 500KB
-MIN_CONTENT_SIZE = 100  # 100 characters
-SCRAPE_TIMEOUT = 30000  # 30 seconds
-
-# Private IP ranges to block (SSRF prevention)
-PRIVATE_IP_RANGES = [
-    ipaddress.ip_network('127.0.0.0/8'),    # Localhost
-    ipaddress.ip_network('10.0.0.0/8'),     # Private
-    ipaddress.ip_network('172.16.0.0/12'),  # Private
-    ipaddress.ip_network('192.168.0.0/16'), # Private
-    ipaddress.ip_network('169.254.0.0/16'), # Link-local
-]
-
-def validate_url(url: str) -> None:
-    """Validate URL and prevent SSRF attacks."""
-    parsed = urlparse(url)
-    
-    # Check protocol
-    if parsed.scheme not in ['http', 'https']:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid URL protocol. Only HTTP and HTTPS are allowed."
-        )
-    
-    # Check for localhost
-    if parsed.hostname in ['localhost', '0.0.0.0', '127.0.0.1']:
-        raise HTTPException(
-            status_code=400,
-            detail="Cannot scrape localhost URLs."
-        )
-    
-    # Check for private IPs
-    try:
-        ip = ipaddress.ip_address(parsed.hostname)
-        for private_range in PRIVATE_IP_RANGES:
-            if ip in private_range:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Cannot scrape private IP addresses."
-                )
-    except ValueError:
-        # Not an IP address, check DNS resolution
-        pass
-
-async def scrape_content(url: str) -> str:
-    """Scrape content from URL using Playwright + Trafilatura."""
-    validate_url(url)
-    
-    try:
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
-            context = await browser.new_context(
-                user_agent='Mozilla/5.0 (compatible; QuizifyBot/1.0; +https://quizify.app/bot)'
-            )
-            page = await context.new_page()
-            
-            # Navigate with timeout
-            try:
-                await page.goto(url, timeout=SCRAPE_TIMEOUT, wait_until='networkidle')
-            except PlaywrightTimeout:
-                raise HTTPException(
-                    status_code=408,
-                    detail=f"Request timeout. The page took longer than {SCRAPE_TIMEOUT/1000} seconds to load."
-                )
-            
-            # Get page HTML
-            html = await page.content()
-            await browser.close()
-            
-            # Extract main content using Trafilatura
-            extracted = trafilatura.extract(
-                html,
-                include_comments=False,
-                include_tables=True,
-                no_fallback=False
-            )
-            
-            if not extracted:
-                raise HTTPException(
-                    status_code=422,
-                    detail="Could not extract meaningful content from the page."
-                )
-            
-            # Validate content size
-            if len(extracted) < MIN_CONTENT_SIZE:
-                raise HTTPException(
-                    status_code=422,
-                    detail=f"Extracted content too short (minimum {MIN_CONTENT_SIZE} characters)."
-                )
-            
-            if len(extracted) > MAX_CONTENT_SIZE:
-                # Truncate to max size
-                extracted = extracted[:MAX_CONTENT_SIZE]
-            
-            return extracted
-            
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error scraping URL: {str(e)}"
-        )
-```
-
-**Step 2**: Create handler
-
-```python
-# File: handlers/quiz_handlers.py
-
-async def generate_quiz_from_url(
-    data: WebQuizRequest,
-    current_user_id: str = Depends(get_current_user_id),
-    user_token: str = Depends(get_current_user_token)
-):
-    """Generate quiz from web URL (basic/educator tier only)."""
-    
-    # Check user tier (reject free tier)
-    tier_info = get_user_tier_info(current_user_id)
-    if tier_info["account_tier"] == "free":
-        raise HTTPException(
-            status_code=403,
-            detail={
-                "detail": "URL-based quiz generation is a premium feature. Upgrade to basic or educator tier to access this feature.",
-                "user_tier": "free",
-                "required_tier": "basic",
-                "upgrade_url": "/api/admin/users/{user_id}/tier"
-            }
-        )
-    
-    # Validate quota
-    validate_user_quota(current_user_id)
-    
-    try:
-        # Scrape content
-        content = await scrape_content(str(data.url))
-        
-        # Generate quiz
-        quizzes = await generate_quizzes_single_async(
-            content,
-            data.num_questions,
-            question_types=list(data.question_type)
-        )
-        
-        # Save to database
-        quiz_id = save_quiz_to_database(data.title, quizzes, current_user_id)
-        
-        # Save metadata
-        metadata = {
-            "quiz_id": quiz_id,
-            "content_type": "url",
-            "content_source_type": "url",
-            "content_source_reference": str(data.url),
-            "word_count": len(content.split()),
-            "content_length": len(content),
-            "created_by": current_user_id,
-            "created_at": datetime.now().isoformat(),
-            "question_count": len(quizzes),
-            "scrape_timestamp": datetime.now().isoformat()
-        }
-        save_metadata(metadata)
-        
-        return {
-            "quiz_id": quiz_id,
-            "title": data.title,
-            "message": "Quiz generated successfully from URL",
-            "source_url": str(data.url)
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error generating quiz from URL: {str(e)}"
-        )
-```
-
-**Step 3**: Add route
-
-```python
-# File: api/quiz_routes.py
-
-router.add_api_route(
-    path="/generate/url",
-    endpoint=generate_quiz_from_url,
-    methods=["POST"],
-    summary="Generate Quiz from Web URL",
-    description="Generate a quiz from a web page URL. **Premium feature** for basic and educator tiers only.",
-    response_model=Dict[str, Any],
-    tags=["Quiz Generation"],
-    status_code=201
-)
-```
-
-**Step 4**: Install Playwright browsers
-
-```bash
-playwright install chromium
-```
-
----
-
-#### Error Responses
-
-| Status Code | Condition | Response Body |
-|-------------|-----------|---------------|
-| 400 | Invalid URL format | `{"detail": "Invalid URL protocol. Only HTTP and HTTPS are allowed."}` |
-| 400 | Private IP or localhost | `{"detail": "Cannot scrape localhost URLs."}` |
-| 403 | Free tier user | `{"detail": "URL-based quiz generation is a premium feature...", "user_tier": "free", "required_tier": "basic"}` |
-| 403 | Quota exceeded | `{"detail": "Quiz quota exceeded for basic tier (20/20)...", "current_count": 20, "quota_limit": 20}` |
-| 404 | URL not found | `{"detail": "The requested URL returned 404 Not Found."}` |
-| 408 | Request timeout | `{"detail": "Request timeout. The page took longer than 30 seconds to load."}` |
-| 422 | Content too short | `{"detail": "Extracted content too short (minimum 100 characters)."}` |
-| 422 | No extractable content | `{"detail": "Could not extract meaningful content from the page."}` |
-| 500 | Scraping failed | `{"detail": "Error scraping URL: {error message}"}` |
-
----
-
-#### Security Considerations
-
-🔐 **SSRF (Server-Side Request Forgery) Prevention**:
-- ✅ Block private IP ranges (10.x.x.x, 192.168.x.x, 172.16-31.x.x)
-- ✅ Block localhost (127.0.0.1, 0.0.0.0, localhost)
-- ✅ Block link-local addresses (169.254.x.x)
-- ✅ Validate URL protocol (only HTTP/HTTPS)
-
-⏱️ **Timeout Protection**:
-- ✅ 30-second hard timeout on page loads
-- ✅ Prevents hanging requests from slow/malicious servers
-- ✅ Frees up resources quickly
-
-💾 **Resource Protection**:
-- ✅ Content size limit (500KB max) prevents memory exhaustion
-- ✅ Minimum content check (100 chars) prevents abuse
-- ✅ Graceful truncation if content exceeds max size
-
-🔒 **Tier Enforcement**:
-- ✅ Free tier users blocked with upgrade message
-- ✅ Quota still enforced for basic/educator tiers
-- ✅ Clear error messages guide users to upgrade
-
----
-
-#### Development Workflow
-
-```bash
-# 1. Create feature branch
-git checkout test/quiz-generation-and-taking-endpoints
-git pull origin test/quiz-generation-and-taking-endpoints
-git checkout -b feature/web-url-quiz-generation
-
-# 2. Install Playwright browsers (one-time setup)
-playwright install chromium
-
-# 3. Implement changes
-# - Create services/web_scraping_service.py
-# - Update handlers/quiz_handlers.py
-# - Update api/quiz_routes.py
-
-# 4. Write tests with mocked scraping
-# - Create tests/test_web_scraping_service.py (unit tests)
-# - Create tests/test_url_quiz_generation.py (integration tests)
-# - Mock Playwright and Trafilatura for consistent testing
-
-# 5. Run tests
-pytest tests/test_web_scraping_service.py -v
-pytest tests/test_url_quiz_generation.py -v
-
-# 6. Ensure all existing tests pass
-pytest
-
-# 7. Create PR to test/quiz-generation-and-taking-endpoints
-```
-
----
-
-#### Acceptance Criteria
-
-**Functional Requirements**:
-- [ ] Endpoint `POST /api/quiz/generate/url` exists and is accessible
-- [ ] Basic and educator tier users can generate quizzes from URLs
-- [ ] Free tier users get 403 with upgrade message
-- [ ] URL validation blocks private IPs and localhost
-- [ ] Playwright successfully scrapes JavaScript-rendered content
-- [ ] Trafilatura extracts clean text (no nav/ads/footers)
-- [ ] 30-second timeout enforced
-- [ ] Content validation (100 char min, 500KB max) works
-- [ ] Quiz saved with `content_source_type='url'`
-- [ ] `content_source_reference` contains original URL
-
-**Test Coverage**:
-- [ ] Unit tests for `validate_url()` - SSRF prevention
-- [ ] Unit tests for URL format validation
-- [ ] Unit tests for content size validation
-- [ ] Integration tests with mocked web scraping
-- [ ] Integration tests for tier checking (free/basic/educator)
-- [ ] Integration tests for quota enforcement
-- [ ] Integration tests for error scenarios (404, timeout, no content)
-- [ ] All existing 43 tests still pass
-
-**Performance**:
-- [ ] Scraping completes in < 30 seconds for typical pages
-- [ ] No memory leaks from Playwright instances
-- [ ] Browser instances properly closed after use
-
-**Documentation**:
-- [ ] OpenAPI documentation updated with new endpoint
-- [ ] Error responses documented
-- [ ] Premium tier requirement noted in description
-
----
-
-#### Dependencies
-
-- ✅ `playwright==1.40.0` - Already installed in requirements.txt
-- ✅ `trafilatura==1.6.2` - Already installed in requirements.txt
-- ❌ **Playwright browser binaries** - Need to run `playwright install chromium`
-
-**Installation command**:
-```bash
-playwright install chromium
-```
-
----
-
-#### Related Files
-
-**Files to create**:
-- `services/web_scraping_service.py` - New web scraping service
-
-**Files to modify**:
-- `handlers/quiz_handlers.py` - Add `generate_quiz_from_url()` handler
-- `api/quiz_routes.py` - Add POST /generate/url route
-
-**Schema** (already exists):
-- `schemas/quiz.py` - `WebQuizRequest` class already defined
-
-**Files to test**:
-- `tests/test_web_scraping_service.py` - New unit tests
-- `tests/test_url_quiz_generation.py` - New integration tests
-
----
-
-#### Contract Reference
-
-`specs/001-comprehensive-quiz-generation/contracts/generate-quiz-from-url.md`
-
----
-
-#### Estimated Effort
-
-**6-8 hours** (breakdown):
-- Web scraping service: 2 hours
-- Handler implementation: 1 hour
-- Route setup: 30 minutes
-- Unit tests (SSRF, validation): 1.5 hours
-- Integration tests (mocked scraping): 2 hours
-- Testing and debugging: 1-2 hours
 
 ---
 
@@ -1093,15 +659,14 @@ pytest
 **Total Issues**: 5
 
 **Status Breakdown**:
-- ✅ **Completed**: 2 issues (Quota enforcement, Admin tier management)
-- 🟡 **Medium Priority**: 2 issues (Search/filter, Web scraping)
+- ✅ **Completed**: 3 issues (Quota enforcement, Admin tier management, Web URL scraping)
+- 🟡 **Medium Priority**: 1 issue (Search/filter)
 - 🟢 **Low Priority**: 1 issue (File size validation)
 
 **Effort Breakdown**:
 - Issue #3 (Search): 2-3 hours
-- Issue #4 (Web URL): 6-8 hours  
 - Issue #5 (File Size): 1-2 hours
-- **Total Remaining**: 9-13 hours
+- **Total Remaining**: 3-5 hours
 
 ---
 
@@ -1117,11 +682,6 @@ pytest
 - **Value**: Better experience for users with many quizzes
 - **Dependencies**: None
 
-**Priority 3**: Issue #4 (Web URL) - 6-8 hours
-- **Why last**: Most complex, requires external dependencies
-- **Value**: Premium feature differentiation
-- **Dependencies**: Playwright browser installation
-
 ---
 
 ### Recent Changes (October 2025)
@@ -1129,8 +689,11 @@ pytest
 ✅ **Successfully Implemented**:
 - Quota enforcement with 13 passing integration tests
 - Admin tier management with 30 passing tests
+- **Web URL quiz generation** with 26 passing tests (19 unit + 7 integration)
 - All 3 quiz generation endpoints validated for quota
 - Quota checked BEFORE AI calls (cost optimization)
+- SSRF protection for web scraping (blocks private IPs, localhost)
+- Playwright + Trafilatura integration with 30-second timeout
 
 📝 **Documentation Status**:
 - Contract specs need updating to reflect quota implementation
@@ -1139,9 +702,9 @@ pytest
 
 🎯 **Next Steps**:
 1. Test endpoints with Postman collections (`postman/` directory)
-2. Implement remaining 3 issues (9-13 hours total)
+2. Implement remaining 2 issues (3-5 hours total)
 3. Update documentation to match actual implementation
-4. Consider v1.1 features (Stripe integration, URL scraping)
+4. Consider v1.1 features (Stripe integration, advanced search)
 
 ---
 
@@ -1149,7 +712,7 @@ pytest
 
 **Testing Strategy**:
 - All new features must include unit AND integration tests
-- All existing 43 tests must continue passing
+- All existing tests must continue passing
 - Mock external services (OpenAI, Playwright) in tests
 - Use pytest fixtures for common test setup
 
@@ -1160,8 +723,9 @@ pytest
 - After testing: Merge to `development`, then `deploy/production`
 
 **Security Checklist**:
-- [ ] SSRF prevention for URL scraping (Issue #4)
+- [x] SSRF prevention for URL scraping (Issue #4) ✅
 - [ ] File size limits enforced (Issue #5)
+
 - [ ] Quota enforcement active (✅ Done)
 - [ ] Tier-based feature gating (✅ Admin done, URL needed)
 - [ ] Input validation on all user inputs

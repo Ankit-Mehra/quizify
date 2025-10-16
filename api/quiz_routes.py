@@ -3,12 +3,14 @@ from schemas.quiz import (
     QuizMetadata, 
     QuizGenerationResponse,
     QuizzesResponse,
-    MyQuizzesResponse
+    MyQuizzesResponse,
+    WebQuizRequest
 )
 from handlers.quiz_handlers import (
     generate_quiz_from_file_openai,
     generate_quiz_from_text,
     generate_quiz_from_fileid,
+    generate_quiz_from_url,
     get_user_quizzes_handler,
     get_quiz_by_id_handler,
     get_metadata_handler,
@@ -67,6 +69,18 @@ router.add_api_route(
     methods=["POST"],
     summary="Generate Quiz from File ID",
     response_model=QuizGenerationResponse,
+    tags=["Quiz Generation"]
+)
+
+# Generate quiz from URL
+router.add_api_route(
+    path="/quiz/generate/url",
+    endpoint=generate_quiz_from_url,
+    methods=["POST"],
+    summary="Generate Quiz from Web URL",
+    description="Generate a quiz from a web page URL. **Premium feature** for basic and educator tiers only.",
+    response_model=QuizGenerationResponse,
+    status_code=201,
     tags=["Quiz Generation"]
 )
 
