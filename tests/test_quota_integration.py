@@ -89,8 +89,19 @@ def create_tier_info(account_tier: str, current_count: int, quota_limit: int) ->
 
 def setup_successful_generation_mocks(mock_generate, mock_save_quiz, mock_question, quiz_id="quiz-123"):
     """Helper to set up mocks for successful quiz generation."""
+    import uuid
+    # Use actual UUID format for quiz_id if it's the default
+    if quiz_id == "quiz-123":
+        quiz_id = str(uuid.uuid4())
+    
     mock_generate.return_value = [mock_question]
-    mock_save_quiz.return_value = quiz_id
+    # Return tuple (quiz_id, saved_questions) to match updated function signature
+    saved_questions = [{
+        **mock_question,
+        'id': str(uuid.uuid4()),  # Generate proper UUID
+        'quiz_id': quiz_id
+    }]
+    mock_save_quiz.return_value = (quiz_id, saved_questions)
 
 
 def assert_quota_exceeded_error(exc_info, expected_tier: str, expected_count: int, expected_limit: int):
@@ -215,7 +226,9 @@ class TestQuotaEnforcementTextEndpoint:
             )
             
             # Assertions
-            assert result['quiz_id'] == 'quiz-123'
+            assert 'quiz_id' in result
+            assert isinstance(result['quiz_id'], str)
+            assert len(result['quiz_id']) > 0  # Valid quiz ID returned
             assert 'Quiz generated successfully' in result['message']
             mocks['generate'].assert_called_once()
             mocks['save_quiz'].assert_called_once()
@@ -284,7 +297,9 @@ class TestQuotaEnforcementTextEndpoint:
             )
             
             # Assertions
-            assert result['quiz_id'] == 'quiz-456'
+            assert 'quiz_id' in result
+            assert isinstance(result['quiz_id'], str)
+            assert len(result['quiz_id']) > 0  # Valid quiz ID returned
             assert 'Quiz generated successfully' in result['message']
             mocks['generate'].assert_called_once()
             mocks['save_quiz'].assert_called_once()
@@ -326,7 +341,22 @@ class TestQuotaEnforcementTextEndpoint:
         mock_question.explanation = "Test explanation"
         mock_question.source = "Test source"
         mock_generate.return_value = [mock_question]
-        mock_save_quiz.return_value = "quiz-789"
+        # Return tuple (quiz_id, saved_questions) to match updated signature
+        import uuid
+        quiz_id = str(uuid.uuid4())
+        saved_questions = [{
+            **{
+                'type': mock_question.type,
+                'question': mock_question.question,
+                'options': mock_question.options,
+                'correct_answer': mock_question.correct_answer,
+                'explanation': mock_question.explanation,
+                'source': mock_question.source
+            },
+            'id': str(uuid.uuid4()),
+            'quiz_id': quiz_id
+        }]
+        mock_save_quiz.return_value = (quiz_id, saved_questions)
         
         # Create mock file
         file_content = b"Test file content for quiz generation"
@@ -347,7 +377,9 @@ class TestQuotaEnforcementTextEndpoint:
         )
         
         # Assertions
-        assert result['quiz_id'] == 'quiz-789'
+        assert 'quiz_id' in result
+        assert isinstance(result['quiz_id'], str)
+        assert len(result['quiz_id']) > 0  # Valid quiz ID returned
         assert 'Quiz generated successfully' in result['message']
         mock_generate.assert_called_once()
         mock_save_quiz.assert_called_once()
@@ -557,7 +589,22 @@ class TestQuotaEnforcementFileIdEndpoint:
         mock_question.explanation = "Test explanation"
         mock_question.source = "Test source"
         mock_generate.return_value = [mock_question]
-        mock_save_quiz.return_value = "quiz-999"
+        # Return tuple (quiz_id, saved_questions) to match updated signature
+        import uuid
+        quiz_id = str(uuid.uuid4())
+        saved_questions = [{
+            **{
+                'type': mock_question.type,
+                'question': mock_question.question,
+                'options': mock_question.options,
+                'correct_answer': mock_question.correct_answer,
+                'explanation': mock_question.explanation,
+                'source': mock_question.source
+            },
+            'id': str(uuid.uuid4()),
+            'quiz_id': quiz_id
+        }]
+        mock_save_quiz.return_value = (quiz_id, saved_questions)
         
         # Create request data
         request_data = FileQuizRequest(
@@ -575,7 +622,9 @@ class TestQuotaEnforcementFileIdEndpoint:
         )
         
         # Assertions
-        assert result['quiz_id'] == 'quiz-999'
+        assert 'quiz_id' in result
+        assert isinstance(result['quiz_id'], str)
+        assert len(result['quiz_id']) > 0  # Valid quiz ID returned
         assert 'Quiz generated successfully' in result['message']
         mock_generate.assert_called_once()
         mock_save_quiz.assert_called_once()

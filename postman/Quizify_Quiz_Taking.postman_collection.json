@@ -1,0 +1,495 @@
+{
+	"info": {
+		"_postman_id": "quiz-taking-001",
+		"name": "Quizify - Quiz Taking & Submissions",
+		"description": "Complete test suite for quiz taking flow including submission and grading.\n\n**Workflow:**\n1. Get quiz by ID (to see questions)\n2. Submit answers\n3. View submission results\n4. Get detailed submission\n\n**Setup Instructions:**\n1. Set `{{base_url}}` variable (e.g., http://localhost:8000)\n2. Set `{{auth_token}}` variable with your JWT token\n3. Generate a quiz first using Quiz Generation collection\n4. Set `{{quiz_id}}` from generated quiz\n\n**Last Updated:** 2025-10-12",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "1. Get Quiz to Take",
+			"item": [
+				{
+					"name": "Get Quiz with Questions",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Quiz has questions\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('questions');",
+									"    pm.expect(jsonData.questions).to.be.an('array');",
+									"    pm.expect(jsonData.questions.length).to.be.greaterThan(0);",
+									"    ",
+									"    // Save first question ID for submission test",
+									"    if (jsonData.questions.length > 0) {",
+									"        pm.environment.set(\"question_id_1\", jsonData.questions[0].id);",
+									"        pm.environment.set(\"total_questions\", jsonData.questions.length);",
+									"        ",
+									"        // Save all question IDs",
+									"        let questionIds = jsonData.questions.map(q => q.id);",
+									"        pm.environment.set(\"all_question_ids\", JSON.stringify(questionIds));",
+									"    }",
+									"});",
+									"",
+									"pm.test(\"Questions have required fields\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    let firstQ = jsonData.questions[0];",
+									"    pm.expect(firstQ).to.have.property('id');",
+									"    pm.expect(firstQ).to.have.property('type');",
+									"    pm.expect(firstQ).to.have.property('question');",
+									"    pm.expect(firstQ).to.have.property('correct_answer');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/quiz/{{quiz_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["api", "quiz", "{{quiz_id}}"]
+						},
+						"description": "Fetch quiz with all questions before taking it.\n\n**Use this to:**\n- Display quiz questions to user\n- Get question IDs for submission\n- See question types and options"
+					},
+					"response": []
+				}
+			],
+			"description": "Retrieve quiz details before taking"
+		},
+		{
+			"name": "2. Submit Quiz Answers",
+			"item": [
+				{
+					"name": "Submit Quiz (Multiple Choice Example)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response has submission ID\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('id');",
+									"    pm.environment.set(\"submission_id\", jsonData.id);",
+									"});",
+									"",
+									"pm.test(\"Response has score and counts\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('score');",
+									"    pm.expect(jsonData).to.have.property('correct_count');",
+									"    pm.expect(jsonData).to.have.property('wrong_count');",
+									"    pm.expect(jsonData).to.have.property('total_questions');",
+									"});",
+									"",
+									"pm.test(\"Response has detailed results\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('detailed_results');",
+									"    pm.expect(jsonData.detailed_results).to.be.an('array');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"quiz_id\": \"{{quiz_id}}\",\n  \"total_questions\": 5,\n  \"answers\": [\n    {\n      \"question_id\": \"550e8400-e29b-41d4-a716-446655440001\",\n      \"user_answer\": \"A programming language\"\n    },\n    {\n      \"question_id\": \"550e8400-e29b-41d4-a716-446655440002\",\n      \"user_answer\": \"Guido van Rossum\"\n    },\n    {\n      \"question_id\": \"550e8400-e29b-41d4-a716-446655440003\",\n      \"user_answer\": true\n    },\n    {\n      \"question_id\": \"550e8400-e29b-41d4-a716-446655440004\",\n      \"user_answer\": \"Readability and simplicity\"\n    },\n    {\n      \"question_id\": \"550e8400-e29b-41d4-a716-446655440005\",\n      \"user_answer\": \"1991\"\n    }\n  ]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/quiz/{{quiz_id}}/submit",
+							"host": ["{{base_url}}"],
+							"path": ["api", "quiz", "{{quiz_id}}", "submit"]
+						},
+						"description": "Submit answers for a quiz and get immediate results.\n\n**Answer Types:**\n- **Multiple Choice**: `\"user_answer\": \"The answer text\"`\n- **True/False**: `\"user_answer\": true` or `false`\n- **Fill in Blank**: `\"user_answer\": \"answer text\"`\n- **Matching**: `\"user_answer\": [0, 1, 2]` (array of indices)\n\n**Important:**\n1. Replace question_id values with actual IDs from GET quiz request\n2. Match total_questions with actual quiz length\n3. All answers are graded immediately\n\n**Response includes:**\n- Overall score (percentage)\n- Correct/wrong counts\n- Detailed results per question"
+					},
+					"response": []
+				},
+				{
+					"name": "Submit Quiz (Mixed Types Example)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Score is calculated\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.score).to.be.a('number');",
+									"    pm.expect(jsonData.score).to.be.at.least(0);",
+									"    pm.expect(jsonData.score).to.be.at.most(100);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"quiz_id\": \"{{quiz_id}}\",\n  \"total_questions\": 4,\n  \"answers\": [\n    {\n      \"question_id\": \"550e8400-e29b-41d4-a716-446655440001\",\n      \"user_answer\": \"Python\"\n    },\n    {\n      \"question_id\": \"550e8400-e29b-41d4-a716-446655440002\",\n      \"user_answer\": true\n    },\n    {\n      \"question_id\": \"550e8400-e29b-41d4-a716-446655440003\",\n      \"user_answer\": [0, 1, 2]\n    },\n    {\n      \"question_id\": \"550e8400-e29b-41d4-a716-446655440004\",\n      \"user_answer\": \"High-level programming language\"\n    }\n  ]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/quiz/{{quiz_id}}/submit",
+							"host": ["{{base_url}}"],
+							"path": ["api", "quiz", "{{quiz_id}}", "submit"]
+						},
+						"description": "Example showing different answer types in one submission:\n1. Fill in blank (string)\n2. True/False (boolean)\n3. Matching (array of integers)\n4. Multiple choice (string)"
+					},
+					"response": []
+				},
+				{
+					"name": "Submit Quiz - Invalid Quiz ID",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 404 or 400\", function () {",
+									"    pm.expect([404, 400]).to.include(pm.response.code);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"quiz_id\": \"00000000-0000-0000-0000-000000000000\",\n  \"total_questions\": 1,\n  \"answers\": [\n    {\n      \"question_id\": \"00000000-0000-0000-0000-000000000001\",\n      \"user_answer\": \"test\"\n    }\n  ]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/quiz/00000000-0000-0000-0000-000000000000/submit",
+							"host": ["{{base_url}}"],
+							"path": ["api", "quiz", "00000000-0000-0000-0000-000000000000", "submit"]
+						},
+						"description": "Test error handling for non-existent quiz"
+					},
+					"response": []
+				}
+			],
+			"description": "Submit quiz answers and get graded results"
+		},
+		{
+			"name": "3. View Submission Results",
+			"item": [
+				{
+					"name": "Get Submission by ID",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Submission has all details\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('id');",
+									"    pm.expect(jsonData).to.have.property('quiz_id');",
+									"    pm.expect(jsonData).to.have.property('user_id');",
+									"    pm.expect(jsonData).to.have.property('score');",
+									"    pm.expect(jsonData).to.have.property('submitted_at');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/submission/{{submission_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["api", "submission", "{{submission_id}}"]
+						},
+						"description": "Retrieve detailed submission information.\n\n**Use Cases:**\n- View submission history\n- Check score after quiz\n- Review answers\n\n**Authorization:** User must own the submission"
+					},
+					"response": []
+				},
+				{
+					"name": "Get Submission - Unauthorized Access",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 403\", function () {",
+									"    pm.response.to.have.status(403);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/submission/00000000-0000-0000-0000-000000000000",
+							"host": ["{{base_url}}"],
+							"path": ["api", "submission", "00000000-0000-0000-0000-000000000000"]
+						},
+						"description": "Test authorization check - user can only view their own submissions"
+					},
+					"response": []
+				}
+			],
+			"description": "Retrieve submission details and results"
+		},
+		{
+			"name": "4. Complete Quiz Flow Example",
+			"item": [
+				{
+					"name": "Step 1 - Get Quiz",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/quiz/{{quiz_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["api", "quiz", "{{quiz_id}}"]
+						},
+						"description": "**Step 1:** Fetch quiz with questions"
+					},
+					"response": []
+				},
+				{
+					"name": "Step 2 - Submit Answers",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"quiz_id\": \"{{quiz_id}}\",\n  \"total_questions\": 5,\n  \"answers\": [\n    {\n      \"question_id\": \"{{question_id_1}}\",\n      \"user_answer\": \"Your answer here\"\n    }\n  ]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/quiz/{{quiz_id}}/submit",
+							"host": ["{{base_url}}"],
+							"path": ["api", "quiz", "{{quiz_id}}", "submit"]
+						},
+						"description": "**Step 2:** Submit answers and get immediate results"
+					},
+					"response": []
+				},
+				{
+					"name": "Step 3 - View Submission",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/submission/{{submission_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["api", "submission", "{{submission_id}}"]
+						},
+						"description": "**Step 3:** Retrieve full submission details"
+					},
+					"response": []
+				}
+			],
+			"description": "Complete end-to-end quiz taking flow example"
+		},
+		{
+			"name": "5. Alternative: Legacy Submit Endpoint",
+			"item": [
+				{
+					"name": "Submit via Legacy Endpoint",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"quiz_id\": \"{{quiz_id}}\",\n  \"total_questions\": 5,\n  \"answers\": [\n    {\n      \"question_id\": \"550e8400-e29b-41d4-a716-446655440001\",\n      \"user_answer\": \"Python\"\n    }\n  ]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/submission/submit",
+							"host": ["{{base_url}}"],
+							"path": ["api", "submission", "submit"]
+						},
+						"description": "Alternative submission endpoint at /api/submission/submit\n\n**Note:** Both endpoints work identically:\n- POST /api/quiz/{quiz_id}/submit\n- POST /api/submission/submit"
+					},
+					"response": []
+				}
+			],
+			"description": "Alternative submission endpoint (legacy)"
+		}
+	],
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "http://localhost:8000",
+			"type": "string"
+		},
+		{
+			"key": "auth_token",
+			"value": "your_jwt_token_here",
+			"type": "string"
+		},
+		{
+			"key": "quiz_id",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "submission_id",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "question_id_1",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "total_questions",
+			"value": "5",
+			"type": "string"
+		}
+	]
+}

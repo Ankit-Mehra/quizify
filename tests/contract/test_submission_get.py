@@ -1,15 +1,15 @@
 """
-Contract tests for GET /api/submission/{quiz_id} endpoint.
+Contract tests for GET /api/submission/{submission_id} endpoint.
 
 Tests quiz submission retrieval functionality including:
-- Get submission by quiz_id
+- Get submission by submission_id
 - Authorization requirements
 """
 
 import pytest
 from fastapi.testclient import TestClient
 from main import app
-from dependencies.auth_dependencies import get_current_user_id
+from uuid import uuid4
 
 client = TestClient(app)
 
@@ -35,9 +35,9 @@ class TestSubmissionGet:
         - Status code: 401
         - Error message about authentication
         """
-        quiz_id = "mock_quiz_123"
+        submission_id = str(uuid4())
         
-        response = client.get(f"/api/submission/{quiz_id}")
+        response = client.get(f"/api/submission/{submission_id}")
         
         assert response.status_code == 401, \
             f"Expected 401 without auth, got {response.status_code}: {response.text}"
@@ -54,9 +54,9 @@ class TestSubmissionGet:
         - Error message about invalid token
         """
         headers = {"Authorization": "Bearer invalid_token_xyz"}
-        quiz_id = "mock_quiz_123"
+        submission_id = str(uuid4())
         
-        response = client.get(f"/api/submission/{quiz_id}", headers=headers)
+        response = client.get(f"/api/submission/{submission_id}", headers=headers)
         
         assert response.status_code == 401, \
             f"Expected 401 with invalid token, got {response.status_code}: {response.text}"

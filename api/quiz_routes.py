@@ -9,10 +9,10 @@ from handlers.quiz_handlers import (
     generate_quiz_from_file_openai,
     generate_quiz_from_text,
     generate_quiz_from_fileid,
+    generate_quiz_from_url,
     get_user_quizzes_handler,
     get_quiz_by_id_handler,
     get_metadata_handler,
-    submit_quiz_answers,
     delete_quiz_by_id_handler
 )
 from typing import List
@@ -31,20 +31,6 @@ async def test_api():
 @router.options("/quiz/generate", tags=["Quiz Generation"])
 async def quiz_generate_options():
     logger.debug("OPTIONS request for /quiz/generate")
-    return Response(
-        content="",
-        status_code=200,
-        headers={
-            "Access-Control-Allow-Methods": "POST, OPTIONS",
-            "Access-Control-Allow-Headers": "Content-Type, Authorization, Accept",
-            "Access-Control-Max-Age": "3600",
-        },
-    )
-
-# OPTIONS handler for quiz submissions
-@router.options("/quiz/{quiz_id}/submit", tags=["Quiz Management"])
-async def quiz_submit_options(quiz_id: str):
-    logger.debug(f"OPTIONS request for /quiz/{quiz_id}/submit")
     return Response(
         content="",
         status_code=200,
@@ -75,7 +61,20 @@ router.add_api_route(
     status_code=201,
     tags=["Quiz Generation"]
 )
-# Generate quiz from file ID
+
+# Generate quiz from URL (must come BEFORE /quiz/generate/{file_id} to avoid route conflict)
+router.add_api_route(
+    path="/quiz/generate/url",
+    endpoint=generate_quiz_from_url,
+    methods=["POST"],
+    summary="Generate Quiz from Web URL",
+    description="Generate a quiz from a web page URL. Available for all tiers with quota limits (Free: 5, Basic: 20, Educator: 500).",
+    response_model=QuizGenerationResponse,
+    status_code=201,
+    tags=["Quiz Generation"]
+)
+
+# Generate quiz from file ID (must come AFTER specific routes like /url to avoid capturing them)
 router.add_api_route(
     path="/quiz/generate/{file_id}",
     endpoint=generate_quiz_from_fileid,
@@ -132,14 +131,5 @@ router.add_api_route(
     endpoint=delete_quiz_by_id_handler,
     methods=["DELETE"],
     summary="Delete Quiz by ID",
-    tags=["Quiz Management"]
-)
-
-# Submit quiz answers
-router.add_api_route(
-    path="/quiz/{quiz_id}/submit",
-    endpoint=submit_quiz_answers,
-    methods=["POST"],
-    summary="Submit Quiz Answers",
     tags=["Quiz Management"]
 )

@@ -26,27 +26,38 @@ def save_file_to_supabase(user_id: str, file_bytes: bytes, original_filename: st
         file_name = f"{unique_id}_{original_filename}"
         path = f"{user_id}/{file_name}"
 
-        url = f"{SUPABASE_URL}/storage/v1/object/{STORAGE_NAME}/{path}"
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/octet-stream"
-        }
-
-        response = httpx.post(url, content=file_bytes, headers=headers)
-        response.raise_for_status()
+        # Use Supabase SDK instead of raw HTTP request
+        # This properly handles authentication and bucket permissions
+        try:
+            supabase.storage.from_(STORAGE_NAME).upload(
+                path=path,
+                file=file_bytes,
+                file_options={"content-type": file_type}
+            )
+        except Exception as storage_error:
+            logger.error(f"Storage upload error: {str(storage_error)}")
+            raise HTTPException(
+                status_code=500, 
+                detail=f"Failed to upload file to storage: {str(storage_error)}"
+            )
 
         #save metadata to db
         if supabase is None:
             raise HTTPException(status_code=500, detail="Supabase client is not initialized. Check your configuration.")
+        
+        file_size = len(file_bytes)
         supabase.table("user_files").insert({
             "id": unique_id,
             "user_id": user_id,
             "original_filename": original_filename,
             "file_type": file_type,
+            "file_size_bytes": file_size,  # Add file size
             "storage_path": path,
             "uploaded_at": datetime.now().isoformat()
         }).execute()
-        return response.json()
+        
+        # Return the file_id so caller can link it to quiz
+        return {"file_id": unique_id, "storage_path": path}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

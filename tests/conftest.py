@@ -162,9 +162,20 @@ def mock_supabase_client(mock_supabase, mocker):
             for i in range(1, min(int(num_questions) + 1, 6))
         ]
     
-    def mock_save_quiz_to_database(title, quizzes, user_id):
-        """Mock saving quiz to database"""
-        return "mock_quiz_123"
+    def mock_save_quiz_to_database(title, quizzes, created_by, content_source_type=None, content_source_reference=None):
+        """Mock saving quiz to database - returns (quiz_id, saved_questions) tuple"""
+        import uuid
+        # Generate a proper UUID for quiz_id
+        quiz_id = str(uuid.uuid4())
+        
+        # Add IDs to questions to match real database behavior
+        saved_questions = []
+        for i, q in enumerate(quizzes):
+            question_with_id = q.copy() if isinstance(q, dict) else q.model_dump()
+            question_with_id['id'] = str(uuid.uuid4())  # Generate proper UUID
+            question_with_id['quiz_id'] = quiz_id
+            saved_questions.append(question_with_id)
+        return quiz_id, saved_questions
     
     def mock_save_metadata(metadata):
         """Mock saving metadata"""
