@@ -492,7 +492,7 @@ async def generate_quiz_from_url(
         )
         
         # Save to database
-        quiz_id = save_quiz_to_database(data.title, quizzes, current_user_id)
+        quiz_id, saved_questions = save_quiz_to_database(data.title, quizzes, current_user_id)
         logger.info(f"Saved quiz from URL with ID: {quiz_id}")
         
         # Save metadata

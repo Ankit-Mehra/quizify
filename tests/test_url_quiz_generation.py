@@ -39,18 +39,18 @@ class TestGenerateQuizFromUrl:
         mock_scrape.return_value = "This is a long article about machine learning with many interesting concepts that would make great quiz questions. Machine learning is a subset of artificial intelligence."
         
         # Mock quiz generation
-        mock_question = type('MockQuestion', (), {
+        mock_question = {
             'type': 'multiple_choice',
             'question': 'What is machine learning?',
             'options': ['AI subset', 'Database', 'Network', 'OS'],
             'correct_answer': 'AI subset',
             'explanation': 'ML is a subset of AI',
             'source': 'content'
-        })()
+        }
         mock_generate.return_value = [mock_question]
         
-        # Mock database save
-        mock_save_quiz.return_value = 'quiz-id-123'
+        # Mock database save - returns (quiz_id, saved_questions) tuple
+        mock_save_quiz.return_value = ('quiz-id-123', [mock_question])
         
         request = WebQuizRequest(
             url="https://example.com/article",
@@ -108,18 +108,18 @@ class TestGenerateQuizFromUrl:
         mock_scrape.return_value = "This is a long article about machine learning with many interesting concepts that would make great quiz questions. Machine learning is a subset of artificial intelligence."
         
         # Mock quiz generation
-        mock_question = type('MockQuestion', (), {
+        mock_question = {
             'type': 'multiple_choice',
             'question': 'What is machine learning?',
             'options': ['AI subset', 'Database', 'Network', 'OS'],
             'correct_answer': 'AI subset',
             'explanation': 'ML is a subset of AI',
             'source': 'content'
-        })()
+        }
         mock_generate.return_value = [mock_question]
         
-        # Mock database save
-        mock_save_quiz.return_value = 'quiz-id-123'
+        # Mock database save - returns (quiz_id, saved_questions) tuple
+        mock_save_quiz.return_value = ('quiz-id-123', [mock_question])
         
         request = WebQuizRequest(
             url="https://example.com/article",
@@ -177,17 +177,17 @@ class TestGenerateQuizFromUrl:
         mock_scrape.return_value = "Educational content about photosynthesis and how plants convert light energy into chemical energy."
         
         # Mock quiz generation
-        mock_question = type('MockQuestion', (), {
+        mock_question = {
             'type': 'true_false',
             'question': 'Plants use photosynthesis?',
             'correct_answer': True,
             'explanation': 'Yes, plants convert light to chemical energy',
             'source': 'content'
-        })()
+        }
         mock_generate.return_value = [mock_question]
         
-        # Mock database save
-        mock_save_quiz.return_value = 'quiz-id-456'
+        # Mock database save - returns (quiz_id, saved_questions) tuple
+        mock_save_quiz.return_value = ('quiz-id-456', [mock_question])
         
         request = WebQuizRequest(
             url="https://en.wikipedia.org/wiki/Photosynthesis",

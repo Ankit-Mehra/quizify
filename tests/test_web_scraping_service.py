@@ -3,7 +3,8 @@ Unit tests for web scraping service.
 Tests URL validation, SSRF protection, and error handling.
 """
 import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
+from playwright.async_api import TimeoutError as PlaywrightTimeout
+from unittest.mock import patch, AsyncMock
 from fastapi import HTTPException
 from services.web_scraping_service import validate_url, scrape_content
 
@@ -51,7 +52,8 @@ class TestValidateUrl:
             validate_url("http://192.168.1.1/admin")
         
         assert exc_info.value.status_code == 400
-        assert "private ip" in exc_info.value.detail.lower()
+        assert "private" in exc_info.value.detail.lower()
+        assert "reserved" in exc_info.value.detail.lower()
     
     def test_validate_url_rejects_private_ip_10(self):
         """Test that private IP 10.x.x.x URLs are rejected."""
@@ -59,7 +61,8 @@ class TestValidateUrl:
             validate_url("http://10.0.0.1/data")
         
         assert exc_info.value.status_code == 400
-        assert "private ip" in exc_info.value.detail.lower()
+        assert "private" in exc_info.value.detail.lower()
+        assert "reserved" in exc_info.value.detail.lower()
     
     def test_validate_url_rejects_private_ip_172(self):
         """Test that private IP 172.16-31.x.x URLs are rejected."""
@@ -67,7 +70,8 @@ class TestValidateUrl:
             validate_url("http://172.16.0.1/data")
         
         assert exc_info.value.status_code == 400
-        assert "private ip" in exc_info.value.detail.lower()
+        assert "private" in exc_info.value.detail.lower()
+        assert "reserved" in exc_info.value.detail.lower()
     
     def test_validate_url_rejects_link_local(self):
         """Test that link-local IP 169.254.x.x URLs are rejected."""
@@ -75,7 +79,8 @@ class TestValidateUrl:
             validate_url("http://169.254.1.1/data")
         
         assert exc_info.value.status_code == 400
-        assert "private ip" in exc_info.value.detail.lower()
+        assert "private" in exc_info.value.detail.lower()
+        assert "reserved" in exc_info.value.detail.lower()
     
     def test_validate_url_rejects_invalid_protocol(self):
         """Test that non-HTTP/HTTPS protocols are rejected."""
@@ -102,8 +107,12 @@ class TestValidateUrl:
         assert exc_info.value.status_code == 400
         assert "too long" in exc_info.value.detail.lower()
     
-    def test_validate_url_accepts_valid_domain(self):
+    @patch('services.web_scraping_service.resolve_hostname_to_ips')
+    def test_validate_url_accepts_valid_domain(self, mock_resolve):
         """Test that valid domain names pass validation."""
+        # Mock DNS resolution to return public IPs
+        mock_resolve.return_value = ['93.184.216.34']  # example.com IP
+        
         # Should not raise exception
         validate_url("https://en.wikipedia.org/wiki/Machine_Learning")
         validate_url("https://www.example.com/path/to/page")
@@ -150,14 +159,17 @@ class TestScrapeContent:
         assert exc_info.value.status_code == 400
     
     @pytest.mark.asyncio
+    @patch('services.web_scraping_service.resolve_hostname_to_ips')
     @patch('services.web_scraping_service.async_playwright')
-    async def test_scrape_content_handles_timeout(self, mock_playwright):
+    async def test_scrape_content_handles_timeout(self, mock_playwright, mock_resolve):
         """Test that scraping handles page load timeouts."""
+        # Mock DNS resolution to pass validation
+        mock_resolve.return_value = ['93.184.216.34']
+        
         # Mock Playwright with timeout
         mock_browser = AsyncMock()
         mock_context = AsyncMock()
         mock_page = AsyncMock()
-        from playwright.async_api import TimeoutError as PlaywrightTimeout
         mock_page.goto = AsyncMock(side_effect=PlaywrightTimeout("Timeout"))
         mock_context.new_page = AsyncMock(return_value=mock_page)
         mock_browser.new_context = AsyncMock(return_value=mock_context)

@@ -54,6 +54,7 @@ async def submit_quiz(
         )
     
     # Validate that the quiz exists before processing submission
+    # Note: total_questions > 0 is already validated by Pydantic schema (gt=0)
     try:
         get_quiz_from_database(str(quiz_id))
     except HTTPException as e:

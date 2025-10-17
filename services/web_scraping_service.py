@@ -2,8 +2,8 @@
 Web scraping service for extracting content from URLs.
 Implements SSRF protection and uses Playwright + Trafilatura for robust extraction.
 """
-import re
 import ipaddress
+import socket
 from urllib.parse import urlparse
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeout
 import trafilatura
@@ -15,19 +15,92 @@ MAX_CONTENT_SIZE = 500 * 1024  # 500KB
 MIN_CONTENT_SIZE = 100  # 100 characters
 SCRAPE_TIMEOUT = 30000  # 30 seconds in milliseconds
 
-# Private IP ranges to block (SSRF prevention)
+# Private IP ranges to block (SSRF prevention) - IPv4 and IPv6
 PRIVATE_IP_RANGES = [
+    # IPv4 private ranges
     ipaddress.ip_network('127.0.0.0/8'),    # Localhost
     ipaddress.ip_network('10.0.0.0/8'),     # Private
     ipaddress.ip_network('172.16.0.0/12'),  # Private
     ipaddress.ip_network('192.168.0.0/16'), # Private
     ipaddress.ip_network('169.254.0.0/16'), # Link-local
+    ipaddress.ip_network('0.0.0.0/8'),      # Current network
+    ipaddress.ip_network('100.64.0.0/10'),  # Shared address space (Carrier-grade NAT)
+    ipaddress.ip_network('192.0.0.0/24'),   # IETF Protocol assignments
+    ipaddress.ip_network('192.0.2.0/24'),   # Documentation (TEST-NET-1)
+    ipaddress.ip_network('198.51.100.0/24'),# Documentation (TEST-NET-2)
+    ipaddress.ip_network('203.0.113.0/24'), # Documentation (TEST-NET-3)
+    ipaddress.ip_network('224.0.0.0/4'),    # Multicast
+    ipaddress.ip_network('240.0.0.0/4'),    # Reserved
+    ipaddress.ip_network('255.255.255.255/32'), # Broadcast
+    
+    # IPv6 private ranges
+    ipaddress.ip_network('::1/128'),        # Loopback
+    ipaddress.ip_network('::/128'),         # Unspecified address
+    ipaddress.ip_network('::ffff:0:0/96'),  # IPv4-mapped IPv6 addresses
+    ipaddress.ip_network('fe80::/10'),      # Link-local
+    ipaddress.ip_network('fc00::/7'),       # Unique local addresses
+    ipaddress.ip_network('ff00::/8'),       # Multicast
 ]
+
+
+def is_private_ip(ip: str) -> bool:
+    """
+    Check if an IP address (IPv4 or IPv6) is private/reserved.
+    
+    Args:
+        ip: IP address string
+        
+    Returns:
+        True if IP is private/reserved, False otherwise
+    """
+    try:
+        ip_obj = ipaddress.ip_address(ip)
+        for private_range in PRIVATE_IP_RANGES:
+            if ip_obj in private_range:
+                return True
+        return False
+    except ValueError:
+        # Invalid IP format
+        return False
+
+
+def resolve_hostname_to_ips(hostname: str) -> list:
+    """
+    Resolve hostname to IP addresses (IPv4 and IPv6) to prevent DNS rebinding.
+    
+    Args:
+        hostname: The hostname to resolve
+        
+    Returns:
+        List of IP addresses (both IPv4 and IPv6)
+        
+    Raises:
+        HTTPException: If hostname cannot be resolved
+    """
+    try:
+        # Get all IP addresses for the hostname (both IPv4 and IPv6)
+        addr_info = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+        ips = list(set([str(addr[4][0]) for addr in addr_info]))
+        logger.debug(f"Resolved {hostname} to IPs: {ips}")
+        return ips
+    except socket.gaierror as e:
+        logger.error(f"Failed to resolve hostname {hostname}: {str(e)}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Could not resolve hostname: {hostname}"
+        )
+    except Exception as e:
+        logger.error(f"Error resolving hostname {hostname}: {str(e)}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Error resolving hostname: {str(e)}"
+        )
 
 
 def validate_url(url: str) -> None:
     """
     Validate URL and prevent SSRF attacks.
+    Enhanced with IPv6 support and DNS rebinding protection.
     
     Args:
         url: The URL to validate
@@ -57,25 +130,55 @@ def validate_url(url: str) -> None:
             detail="Invalid URL protocol. Only HTTP and HTTPS are allowed."
         )
     
-    # Check for localhost
-    if parsed.hostname in ['localhost', '0.0.0.0', '127.0.0.1']:
+    # Validate hostname exists
+    if not parsed.hostname:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid URL: Missing hostname."
+        )
+    
+    hostname = parsed.hostname.lower()
+    
+    # Check for localhost variants (IPv4 and IPv6)
+    localhost_variants = [
+        'localhost', '0.0.0.0', '127.0.0.1',
+        '::1', '0:0:0:0:0:0:0:1', '::ffff:127.0.0.1'
+    ]
+    if hostname in localhost_variants:
         raise HTTPException(
             status_code=400,
             detail="Cannot scrape localhost URLs."
         )
     
-    # Check for private IPs
+    # Check if hostname is an IP address (IPv4 or IPv6)
     try:
-        ip = ipaddress.ip_address(parsed.hostname)
-        for private_range in PRIVATE_IP_RANGES:
-            if ip in private_range:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Cannot scrape private IP addresses."
-                )
+        # Try to parse as IP address
+        ipaddress.ip_address(hostname)
+        # It's a direct IP address - check if it's private
+        if is_private_ip(hostname):
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot scrape private or reserved IP addresses."
+            )
+        logger.info(f"URL uses direct IP address: {hostname}")
     except ValueError:
-        # Not an IP address (it's a hostname), this is okay
-        pass
+        # Not an IP address - it's a hostname
+        # Resolve hostname to IP addresses to prevent DNS rebinding attacks
+        try:
+            resolved_ips = resolve_hostname_to_ips(hostname)
+            
+            # Check if ANY resolved IP is private/reserved
+            for ip in resolved_ips:
+                if is_private_ip(ip):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Cannot scrape URL: Hostname resolves to private/reserved IP address ({ip})."
+                    )
+            
+            logger.info(f"Hostname {hostname} validated - resolves to public IPs: {resolved_ips}")
+        except HTTPException:
+            # Re-raise HTTP exceptions (from is_private_ip or resolve_hostname_to_ips)
+            raise
 
 
 async def scrape_content(url: str) -> str:
@@ -140,7 +243,7 @@ async def scrape_content(url: str) -> str:
             await browser.close()
             
             # Extract main content using Trafilatura
-            logger.info(f"Extracting text content using Trafilatura")
+            logger.info("Extracting text content using Trafilatura")
             extracted = trafilatura.extract(
                 html,
                 include_comments=False,

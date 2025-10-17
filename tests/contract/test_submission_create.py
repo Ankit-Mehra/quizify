@@ -83,6 +83,63 @@ class TestSubmissionCreate:
         
         data = response.json()
         assert "detail" in data or "message" in data, f"Error response missing detail/message: {data}"
+    
+    def test_submit_with_zero_total_questions_returns_400(self, mock_supabase_client, auth_bypass, auth_headers):
+        """
+        Test that submission with total_questions=0 returns HTTP 422 (Pydantic validation error).
+        This prevents division by zero when calculating score.
+        Schema validation ensures total_questions > 0.
+        
+        Expected:
+        - Status code: 422 (Pydantic validation error)
+        - Error message about total_questions validation
+        """
+        quiz_id = str(uuid4())
+        submission_payload = {
+            "quiz_id": quiz_id,
+            "total_questions": 0,  # Invalid: should cause 422 (Pydantic validation)
+            "answers": []
+        }
+        
+        response = client.post(f"/api/quiz/{quiz_id}/submit", headers=auth_headers, json=submission_payload)
+        
+        assert response.status_code == 422, \
+            f"Expected 422 for zero total_questions (Pydantic validation), got {response.status_code}: {response.text}"
+        
+        data = response.json()
+        assert "detail" in data, f"Error response missing detail: {data}"
+        # Pydantic returns a list of validation errors
+        assert isinstance(data["detail"], list), f"Expected list of validation errors: {data}"
+        assert any("total_questions" in str(err.get("loc", [])) for err in data["detail"]), \
+            f"Error should reference total_questions field: {data}"
+    
+    def test_submit_with_negative_total_questions_returns_400(self, mock_supabase_client, auth_bypass, auth_headers):
+        """
+        Test that submission with negative total_questions returns HTTP 422 (Pydantic validation error).
+        Schema validation ensures total_questions > 0.
+        
+        Expected:
+        - Status code: 422 (Pydantic validation error)
+        - Error message about total_questions validation
+        """
+        quiz_id = str(uuid4())
+        submission_payload = {
+            "quiz_id": quiz_id,
+            "total_questions": -5,  # Invalid: should cause 422 (Pydantic validation)
+            "answers": []
+        }
+        
+        response = client.post(f"/api/quiz/{quiz_id}/submit", headers=auth_headers, json=submission_payload)
+        
+        assert response.status_code == 422, \
+            f"Expected 422 for negative total_questions (Pydantic validation), got {response.status_code}: {response.text}"
+        
+        data = response.json()
+        assert "detail" in data, f"Error response missing detail: {data}"
+        # Pydantic returns a list of validation errors
+        assert isinstance(data["detail"], list), f"Expected list of validation errors: {data}"
+        assert any("total_questions" in str(err.get("loc", [])) for err in data["detail"]), \
+            f"Error should reference total_questions field: {data}"
 
 
 if __name__ == "__main__":
