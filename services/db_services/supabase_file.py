@@ -20,7 +20,11 @@ SUPABASE_URL = config.SUPABASE_URL
 
 def save_file_to_supabase(user_id: str, file_bytes: bytes, original_filename: str, token: str, file_type: str):
     try:
-        supabase = get_supabase()
+        # Use authenticated client for RLS enforcement
+        from config import config as app_config
+        supabase = app_config.get_authenticated_supabase_client(token)
+        logger.info(f"Using authenticated client to save file for user {user_id}")
+        
         #genereate a unique ID
         unique_id = str(uuid.uuid4())
         file_name = f"{unique_id}_{original_filename}"

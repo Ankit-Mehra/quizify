@@ -528,7 +528,6 @@ async def generate_quiz_from_url(
             "content_source_type": "url",
             "content_source_reference": str(data.url),
             "word_count": len(content.split()),
-            "content_length": len(content),
             "created_by": current_user_id,
             "created_at": datetime.now().isoformat(),
             "question_count": len(quizzes),
