@@ -141,7 +141,12 @@ async def generate_quiz_from_file_openai(
             num_questions,
             question_types=question_type
         )
-        quiz_id, saved_questions = save_quiz_to_database(title, quizzes, current_user_id)
+        quiz_id, saved_questions = save_quiz_to_database(
+            title, 
+            quizzes, 
+            current_user_id,
+            user_token=user_token
+        )
 
         metadata = {
             "quiz_id": quiz_id,
@@ -252,7 +257,12 @@ async def generate_quiz_from_fileid(
         for i, q in enumerate(quizzes):
             logger.info(f"Question {i+1}: type={q.type}, correct_answer={q.correct_answer}")
         
-        quiz_id, saved_questions = save_quiz_to_database(data.title, quizzes, current_user_id)
+        quiz_id, saved_questions = save_quiz_to_database(
+            data.title, 
+            quizzes, 
+            current_user_id,
+            user_token=user_token
+        )
         logger.info(f"Saved quiz with ID: {quiz_id}")
 
         metadata = {
@@ -338,7 +348,8 @@ async def generate_quiz_from_text(
             quizzes=quizzes,
             created_by=current_user_id,
             content_source_type="text",
-            content_source_reference=file_id  # Link to the saved text file
+            content_source_reference=file_id,  # Link to the saved text file
+            user_token=user_token
         )
 
         # Save metadata for analytics/tracking
@@ -492,7 +503,14 @@ async def generate_quiz_from_url(
         )
         
         # Save to database
-        quiz_id, saved_questions = save_quiz_to_database(data.title, quizzes, current_user_id)
+        quiz_id, saved_questions = save_quiz_to_database(
+            data.title, 
+            quizzes, 
+            current_user_id,
+            content_source_type="url",
+            content_source_reference=str(data.url),
+            user_token=user_token
+        )
         logger.info(f"Saved quiz from URL with ID: {quiz_id}")
         
         # Save metadata

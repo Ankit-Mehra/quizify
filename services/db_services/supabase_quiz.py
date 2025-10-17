@@ -26,10 +26,18 @@ def save_quiz_to_database(
     quizzes: List[Question], 
     created_by: str,
     content_source_type: Optional[str] = None,
-    content_source_reference: Optional[str] = None
+    content_source_reference: Optional[str] = None,
+    user_token: Optional[str] = None
 ):
     try:
-        supabase = get_supabase()
+        # Use authenticated client if token provided, otherwise use service role
+        if user_token:
+            supabase = get_authed_supabase_client(user_token)
+            logger.info(f"Using authenticated client for user {created_by}")
+        else:
+            supabase = get_supabase()
+            logger.info("Using service role client")
+            
         logger.info(f"Saving quiz '{title}' with {len(quizzes)} questions")
         # Validate user ID to prevent UUID errors
         if not created_by or created_by == "undefined":
