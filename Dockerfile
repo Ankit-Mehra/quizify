@@ -38,8 +38,8 @@ COPY . .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Install Playwright browsers (Chromium only for web scraping)
+# Note: We already installed system dependencies above, so we only need to install the browser
 RUN playwright install chromium
-RUN playwright install-deps chromium
 
 # Run the web service on container startup
 # Use shell form to allow PORT variable expansion
