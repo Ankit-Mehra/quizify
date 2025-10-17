@@ -34,6 +34,7 @@ def save_quiz_to_database(
         if user_token:
             supabase = get_authed_supabase_client(user_token)
             logger.info(f"Using authenticated client for user {created_by}")
+            logger.debug(f"Token being used: {user_token[:20]}...")
         else:
             supabase = get_supabase()
             logger.info("Using service role client")

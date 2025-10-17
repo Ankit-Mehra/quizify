@@ -95,11 +95,14 @@ class Config:
         """
         Get an authenticated Supabase client with a user token.
         
+        This creates a client that uses the user's JWT token instead of the service role key,
+        which ensures Row Level Security (RLS) policies are properly enforced.
+        
         Args:
             user_token: JWT token for user authentication
             
         Returns:
-            Client: Authenticated Supabase client
+            Client: Authenticated Supabase client with user token
             
         Raises:
             RuntimeError: If Supabase credentials are not configured
@@ -110,8 +113,17 @@ class Config:
                 "Application cannot start without database configuration."
             )
         
-        client = create_client(cls.SUPABASE_URL, cls.SUPABASE_KEY)
-        client.auth.session = {'access_token': user_token}  # type: ignore
+        # Create a new client and set the user's access token
+        # This makes all operations run under the user's auth context, enforcing RLS
+        client = create_client(
+            supabase_url=cls.SUPABASE_URL,
+            supabase_key=cls.SUPABASE_KEY
+        )
+        
+        # Set the auth token for this specific client instance
+        # This ensures RLS policies see auth.uid() correctly
+        client.postgrest.auth(user_token)
+        
         return client
     
     @classmethod
