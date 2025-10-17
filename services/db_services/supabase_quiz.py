@@ -173,10 +173,15 @@ def get_user_quizzes(user_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-def save_metadata(metadata: dict):
+def save_metadata(metadata: dict, user_token: Optional[str] = None):
     try:
-        supabase = get_supabase()
-        logger.info(f"Saving metadata for quiz: {metadata.get('quiz_id', 'unknown')}")
+        # Use authenticated client if token provided, otherwise use service role
+        if user_token:
+            supabase = get_authed_supabase_client(user_token)
+            logger.info(f"Using authenticated client to save metadata for quiz: {metadata.get('quiz_id', 'unknown')}")
+        else:
+            supabase = get_supabase()
+            logger.info(f"Using service role to save metadata for quiz: {metadata.get('quiz_id', 'unknown')}")
         
         supabase.table("quiz_metadata").insert(metadata).execute()
         logger.info("Metadata saved successfully")
