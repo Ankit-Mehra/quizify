@@ -11,7 +11,7 @@ class AnswerSubmission(BaseModel):
 
 class QuizSubmissionRequest(BaseModel):
     """Request payload for submitting quiz answers"""
-    quiz_id: UUID = Field(..., description="ID of the quiz being submitted (must match URL parameter)")
+    quiz_id: UUID = Field(..., description="ID of the quiz being submitted")
     total_questions: int = Field(..., description="Total number of questions in the quiz", gt=0)
     answers: List[AnswerSubmission] = Field(..., description="List of all answers submitted")
 

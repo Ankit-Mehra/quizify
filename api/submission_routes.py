@@ -27,7 +27,20 @@ router.add_api_route(
     endpoint=submit_quiz,
     methods=["POST"],
     summary="Submit Quiz Answers",
-    description="Submit answers for a quiz and receive detailed scoring results",
+    description=(
+        "Submit answers for a quiz and receive detailed scoring results.\n\n"
+        "**Important:** The `quiz_id` in the request body must match the `quiz_id` in the URL path. "
+        "This is validated by the API and will return HTTP 400 if they don't match.\n\n"
+        "**Request Body:**\n"
+        "- `quiz_id`: Must match the URL parameter\n"
+        "- `total_questions`: Total number of questions (must be > 0)\n"
+        "- `answers`: List of answer submissions\n\n"
+        "**Response:**\n"
+        "- Submission ID for future reference\n"
+        "- Score (0-100 percentage)\n"
+        "- Correct/wrong counts\n"
+        "- Detailed results for each question"
+    ),
     response_model=SubmissionResponse
 )
 

@@ -9,6 +9,7 @@ from playwright.async_api import async_playwright, TimeoutError as PlaywrightTim
 import trafilatura
 from fastapi import HTTPException
 from services.logger import app_logger as logger
+from config import config
 
 # Constants
 MAX_CONTENT_SIZE = 500 * 1024  # 500KB
@@ -202,7 +203,7 @@ async def scrape_content(url: str) -> str:
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
             context = await browser.new_context(
-                user_agent='Mozilla/5.0 (compatible; QuizifyBot/1.0; +https://quizify.app/bot)'
+                user_agent=config.SCRAPER_USER_AGENT
             )
             page = await context.new_page()
             

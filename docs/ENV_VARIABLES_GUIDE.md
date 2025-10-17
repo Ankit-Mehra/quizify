@@ -109,6 +109,34 @@ ADMIN_USER_IDS=uuid-1,uuid-2,uuid-3
 
 ---
 
+## 🌐 Web Scraping Configuration
+
+### 8. Scraper User Agent (Optional)
+```bash
+SCRAPER_USER_AGENT=Mozilla/5.0 (compatible; QuizifyBot/1.0; +https://quizify.app/bot)
+```
+**Used by:**
+- `services/web_scraping_service.py` - User agent for Playwright browser
+- URL quiz generation feature
+
+**Default value:** `Mozilla/5.0 (compatible; QuizifyBot/1.0; +https://quizify.app/bot)`
+
+**When to customize:**
+- ✅ When deploying to your own domain (change URL in user agent)
+- ✅ When you want to identify your bot with a different name
+- ✅ For compliance with website robots.txt policies
+
+**Examples:**
+```bash
+# For your custom domain
+SCRAPER_USER_AGENT=Mozilla/5.0 (compatible; MyQuizBot/1.0; +https://myschool.edu/bot)
+
+# For development/staging environment
+SCRAPER_USER_AGENT=Mozilla/5.0 (compatible; QuizifyBot-Dev/1.0; +https://dev.quizify.app/bot)
+```
+
+---
+
 ## ❌ REMOVED / NO LONGER NEEDED
 
 ### Variables from old architecture:

@@ -25,17 +25,20 @@ Analyzed 5 API contracts from `specs/001-comprehensive-quiz-generation/contracts
 ## Detailed Findings
 
 ### 1. ❌ Quiz Generation with Quota Enforcement
+
 **Contract**: `generate-quiz-quota.md`  
 **Endpoint**: `POST /api/quiz/generate/text`  
 **Status**: Endpoint exists but missing quota logic
 
 #### What's Missing:
+
 - ❌ Quota check before generation (should return 403 if exceeded)
 - ❌ Tier-based quota limits (free: 5, basic: 100, educator: 500)
 - ❌ 75% generation threshold validation
 - ❌ Proper error responses for quota exceeded
 
 #### Current Implementation:
+
 ```python
 # handlers/quiz_handlers.py - generate_quiz_from_text()
 # ❌ No quota validation
@@ -44,6 +47,7 @@ Analyzed 5 API contracts from `specs/001-comprehensive-quiz-generation/contracts
 ```
 
 #### Required Changes:
+
 1. Add `check_user_quota()` before quiz generation
 2. Query `user_tier_info` view to get current count and limit
 3. Return 403 with proper error structure if quota exceeded
@@ -51,6 +55,7 @@ Analyzed 5 API contracts from `specs/001-comprehensive-quiz-generation/contracts
 5. Add error responses matching contract
 
 #### Contract Error Response (Missing):
+
 ```json
 {
   "detail": "Quiz quota exceeded for free tier (5/5). Upgrade to basic for 100 quizzes.",
@@ -63,17 +68,20 @@ Analyzed 5 API contracts from `specs/001-comprehensive-quiz-generation/contracts
 ---
 
 ### 2. ❌ User Tier Management
+
 **Contract**: `upgrade-tier.md`  
 **Endpoint**: `POST /api/auth/upgrade-tier`  
 **Status**: Endpoint does NOT exist
 
 #### What's Missing:
+
 - ❌ Entire endpoint not implemented
 - ❌ Tier upgrade logic
 - ❌ Verification token validation
 - ❌ Database update to profiles table
 
 #### Current Implementation:
+
 ```bash
 # api/auth_routes.py
 grep "upgrade" api/auth_routes.py
@@ -173,7 +181,7 @@ async def get_user_quizzes_handler(
 - URL length: max 2048 chars
 - Content length: 100 char min, 500KB max
 - Timeout: 30 seconds
-- User agent: Custom (avoid blocking)
+- User agent: Configurable via `SCRAPER_USER_AGENT` environment variable (default: QuizifyBot/1.0)
 
 ---
 

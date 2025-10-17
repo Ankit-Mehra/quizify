@@ -140,6 +140,39 @@ class TestSubmissionCreate:
         assert isinstance(data["detail"], list), f"Expected list of validation errors: {data}"
         assert any("total_questions" in str(err.get("loc", [])) for err in data["detail"]), \
             f"Error should reference total_questions field: {data}"
+    
+    def test_submit_with_mismatched_quiz_id_returns_400(self, mock_supabase_client, auth_bypass, auth_headers):
+        """
+        Test that submission with quiz_id in body not matching URL parameter returns HTTP 400.
+        This is an API-level constraint enforced by the handler, not the schema.
+        
+        Expected:
+        - Status code: 400 (Bad Request)
+        - Error message about quiz_id mismatch
+        """
+        url_quiz_id = str(uuid4())
+        body_quiz_id = str(uuid4())  # Different from URL
+        
+        submission_payload = {
+            "quiz_id": body_quiz_id,  # Doesn't match URL parameter
+            "total_questions": 5,
+            "answers": [
+                {
+                    "question_id": str(uuid4()),
+                    "user_answer": "answer1"
+                }
+            ]
+        }
+        
+        response = client.post(f"/api/quiz/{url_quiz_id}/submit", headers=auth_headers, json=submission_payload)
+        
+        assert response.status_code == 400, \
+            f"Expected 400 for quiz_id mismatch, got {response.status_code}: {response.text}"
+        
+        data = response.json()
+        assert "detail" in data, f"Error response missing detail: {data}"
+        assert "quiz id" in data["detail"].lower() or "match" in data["detail"].lower(), \
+            f"Error message should mention quiz_id mismatch: {data['detail']}"
 
 
 if __name__ == "__main__":
