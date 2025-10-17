@@ -172,7 +172,7 @@ async def generate_quiz_from_file_openai(
         }
 
         #save metadata to database
-        save_metadata(metadata)
+        save_metadata(metadata, user_token=user_token)
 
         return {
             "quiz_id": quiz_id, 
@@ -283,7 +283,7 @@ async def generate_quiz_from_fileid(
             "created_at": datetime.now().isoformat(),
             "question_count": len(quizzes)
         }
-        save_metadata(metadata)
+        save_metadata(metadata, user_token=user_token)
         logger.info(f"Saved metadata for quiz {quiz_id}")
 
         return {
@@ -371,7 +371,7 @@ async def generate_quiz_from_text(
             "created_at": datetime.now().isoformat(),
             "question_count": total_questions
         }
-        save_metadata(metedata)
+        save_metadata(metedata, user_token=user_token)
         
         # Return response with questions for immediate display
         return {
@@ -532,7 +532,7 @@ async def generate_quiz_from_url(
             "created_at": datetime.now().isoformat(),
             "question_count": len(quizzes)
         }
-        save_metadata(metadata)
+        save_metadata(metadata, user_token=user_token)
         logger.info(f"Saved metadata for URL quiz {quiz_id}")
         
         return {
