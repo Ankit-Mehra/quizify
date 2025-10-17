@@ -120,9 +120,12 @@ class Config:
             supabase_key=cls.SUPABASE_KEY
         )
         
-        # Set the auth token for this specific client instance
+        # Set the auth token for PostgREST (database) operations
         # This ensures RLS policies see auth.uid() correctly
         client.postgrest.auth(user_token)
+        
+        # Note: For storage operations, use httpx directly with Authorization header
+        # The storage SDK doesn't expose a simple way to set the user token globally
         
         return client
     
