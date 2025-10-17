@@ -470,26 +470,15 @@ async def generate_quiz_from_url(
     current_user_id: str = Depends(get_current_user_id),
     user_token: str = Depends(get_current_user_token)
 ):
-    """Generate quiz from web URL (basic/educator tier only)."""
-    
-    # Check user tier (reject free tier)
-    tier_info = get_user_tier_info(current_user_id)
-    if tier_info["account_tier"] == "free":
-        logger.warning(f"Free tier user {current_user_id} attempted to use URL quiz generation")
-        raise HTTPException(
-            status_code=403,
-            detail={
-                "detail": "URL-based quiz generation is a premium feature. Upgrade to basic or educator tier to access this feature.",
-                "user_tier": "free",
-                "required_tier": "basic",
-                "upgrade_url": "/api/admin/users/{user_id}/tier"
-            }
-        )
+    """Generate quiz from web URL (available for all tiers with quota limits)."""
     
     # Validate quota BEFORE scraping and generation (don't waste resources)
     validate_user_quota(current_user_id)
     
     try:
+        # Get user tier info for logging
+        tier_info = get_user_tier_info(current_user_id)
+        
         # Scrape content
         logger.info(f"User {current_user_id} ({tier_info['account_tier']} tier) generating quiz from URL: {data.url}")
         content = await scrape_content(str(data.url))

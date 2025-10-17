@@ -1,8 +1,8 @@
 {
 	"info": {
 		"_postman_id": "web-url-quiz-gen-001",
-		"name": "Quizify - Web URL Quiz Generation (Premium Feature)",
-		"description": "Comprehensive test suite for Web URL quiz generation feature (Issue #4).\n\n**Feature Overview:**\n- Generate quizzes from web page URLs using Playwright + Trafilatura\n- Premium feature for Basic and Educator tiers only (Free tier blocked)\n- SSRF protection (blocks private IPs, localhost)\n- 30-second timeout, min 100 chars, max 500KB content\n- Quota enforcement still applies\n\n**Setup Instructions:**\n1. Set `{{base_url}}` variable (e.g., http://localhost:8000 or https://api.quizify.app)\n2. Set `{{auth_token}}` variable with your JWT token\n3. Set `{{user_tier}}` to test different scenarios (free/basic/educator)\n4. Run \"Setup\" folder first to configure test environment\n5. Test scenarios are organized by tier and error conditions\n\n**Test Coverage:**\n- ✅ Free tier rejection (403)\n- ✅ Basic tier success\n- ✅ Educator tier success\n- ✅ Quota enforcement\n- ✅ SSRF protection (localhost, private IPs)\n- ✅ URL validation\n- ✅ Content extraction validation\n- ✅ Timeout handling\n- ✅ Error responses\n\n**Last Updated:** 2025-10-13\n**Related Issue:** #4 - Web URL Quiz Generation\n**Implementation:** services/web_scraping_service.py, handlers/quiz_handlers.py",
+		"name": "Quizify - Web URL Quiz Generation",
+		"description": "Comprehensive test suite for Web URL quiz generation feature (Issue #4).\n\n**Feature Overview:**\n- Generate quizzes from web page URLs using Playwright + Trafilatura\n- Available for all tiers (Free: 5 quizzes, Basic: 20, Educator: 500)\n- SSRF protection (blocks private IPs, localhost)\n- 30-second timeout, min 100 chars, max 500KB content\n- Quota enforcement applies to all tiers\n\n**Setup Instructions:**\n1. Set `{{base_url}}` variable (e.g., http://localhost:8000 or https://api.quizify.app)\n2. Set `{{auth_token}}` variable with your JWT token\n3. Set `{{user_tier}}` to test different scenarios (free/basic/educator)\n4. Run \"Setup\" folder first to configure test environment\n5. Test scenarios are organized by tier and error conditions\n\n**Test Coverage:**\n- ✅ Free tier with quota limits\n- ✅ Basic tier success\n- ✅ Educator tier success\n- ✅ Quota enforcement for all tiers\n- ✅ SSRF protection (localhost, private IPs)\n- ✅ URL validation\n- ✅ Content extraction validation\n- ✅ Timeout handling\n- ✅ Error responses\n\n**Last Updated:** 2025-10-15\n**Related Issue:** #4 - Web URL Quiz Generation\n**Implementation:** services/web_scraping_service.py, handlers/quiz_handlers.py",
 		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
 	},
 	"item": [
@@ -422,35 +422,30 @@
 			"description": "Test URL quiz generation for Educator tier users"
 		},
 		{
-			"name": "3. Tier Enforcement - Free Tier Rejection",
+			"name": "3. Free Tier - Quota Limited Access",
 			"item": [
 				{
-					"name": "Free Tier User Rejected (403)",
+					"name": "Free Tier User - Success (within quota)",
 					"event": [
 						{
 							"listen": "test",
 							"script": {
 								"exec": [
-									"pm.test(\"Status code is 403 (Forbidden)\", function () {",
-									"    pm.response.to.have.status(403);",
+									"pm.test(\"Status code is 201 (Created)\", function () {",
+									"    pm.response.to.have.status(201);",
 									"});",
 									"",
-									"pm.test(\"Error message mentions premium feature\", function () {",
+									"pm.test(\"Quiz generated successfully\", function () {",
 									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData.detail.detail).to.include('premium feature');",
+									"    pm.expect(jsonData).to.have.property('quiz_id');",
+									"    pm.expect(jsonData).to.have.property('title');",
+									"    pm.expect(jsonData.title).to.eql('Python Quiz');",
 									"});",
 									"",
-									"pm.test(\"Response includes tier information\", function () {",
+									"pm.test(\"Source URL is returned\", function () {",
 									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData.detail).to.have.property('user_tier');",
-									"    pm.expect(jsonData.detail.user_tier).to.eql('free');",
-									"    pm.expect(jsonData.detail).to.have.property('required_tier');",
-									"    pm.expect(jsonData.detail.required_tier).to.eql('basic');",
-									"});",
-									"",
-									"pm.test(\"Response includes upgrade URL\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData.detail).to.have.property('upgrade_url');",
+									"    pm.expect(jsonData).to.have.property('source_url');",
+									"    pm.expect(jsonData.source_url).to.include('wikipedia.org');",
 									"});"
 								],
 								"type": "text/javascript"
@@ -464,7 +459,7 @@
 								"key": "Authorization",
 								"value": "Bearer {{auth_token}}",
 								"type": "text",
-								"description": "Use token for FREE tier user"
+								"description": "Use token for FREE tier user (within quota)"
 							},
 							{
 								"key": "Content-Type",
@@ -486,12 +481,12 @@
 							"host": ["{{base_url}}"],
 							"path": ["api", "quiz", "generate", "url"]
 						},
-						"description": "Test that free tier users are rejected with clear upgrade message.\n\n**Note:** Replace auth_token with a FREE tier user's token to test this."
+						"description": "Test that free tier users CAN generate quizzes from URLs within their quota (5 quizzes max).\n\n**Note:** Ensure the FREE tier user hasn't exceeded their quota."
 					},
 					"response": []
 				}
 			],
-			"description": "Test that free tier users cannot access URL quiz generation"
+			"description": "Test that free tier users can access URL quiz generation within their quota limits (5 quizzes max)"
 		},
 		{
 			"name": "4. Quota Enforcement",

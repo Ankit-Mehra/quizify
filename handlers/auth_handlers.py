@@ -5,7 +5,8 @@ from pydantic import BaseModel
 from services.logger import app_logger as logger
 from fastapi import Depends
 from dependencies.auth_dependencies import get_current_user_id
-from typing import Optional
+from services.db_services.supabase_quiz import get_user_tier_info
+from typing import Optional, Dict, Any
 from config import config
 
 security = HTTPBearer(auto_error=False)
@@ -267,3 +268,30 @@ async def update_email(request: UpdateEmailRequest,
     except Exception as e:
         logger.error(f"Error during email update: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+async def get_current_user_info(user_id: str = Depends(get_current_user_id)) -> Dict[str, Any]:
+    """
+    Get current authenticated user's information including tier and quota.
+    
+    Returns:
+        User profile with tier, role, quota information
+    """
+    try:
+        logger.info(f"Fetching user info for user ID: {user_id}")
+        tier_info = get_user_tier_info(user_id)
+        
+        return {
+            "user_id": str(tier_info["id"]),
+            "email": tier_info["email"],
+            "account_tier": tier_info["account_tier"],
+            "role": tier_info.get("role", "user"),
+            "current_quiz_count": tier_info["current_quiz_count"],
+            "quota_limit": tier_info["quota_limit"],
+            "quota_exceeded": tier_info["quota_exceeded"],
+            "created_at": tier_info.get("created_at")
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching user info: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to retrieve user information")

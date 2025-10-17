@@ -3,8 +3,7 @@ from schemas.quiz import (
     QuizMetadata, 
     QuizGenerationResponse,
     QuizzesResponse,
-    MyQuizzesResponse,
-    WebQuizRequest
+    MyQuizzesResponse
 )
 from handlers.quiz_handlers import (
     generate_quiz_from_file_openai,
@@ -62,25 +61,26 @@ router.add_api_route(
     status_code=201,
     tags=["Quiz Generation"]
 )
-# Generate quiz from file ID
+
+# Generate quiz from URL (must come BEFORE /quiz/generate/{file_id} to avoid route conflict)
+router.add_api_route(
+    path="/quiz/generate/url",
+    endpoint=generate_quiz_from_url,
+    methods=["POST"],
+    summary="Generate Quiz from Web URL",
+    description="Generate a quiz from a web page URL. Available for all tiers with quota limits (Free: 5, Basic: 20, Educator: 500).",
+    response_model=QuizGenerationResponse,
+    status_code=201,
+    tags=["Quiz Generation"]
+)
+
+# Generate quiz from file ID (must come AFTER specific routes like /url to avoid capturing them)
 router.add_api_route(
     path="/quiz/generate/{file_id}",
     endpoint=generate_quiz_from_fileid,
     methods=["POST"],
     summary="Generate Quiz from File ID",
     response_model=QuizGenerationResponse,
-    tags=["Quiz Generation"]
-)
-
-# Generate quiz from URL
-router.add_api_route(
-    path="/quiz/generate/url",
-    endpoint=generate_quiz_from_url,
-    methods=["POST"],
-    summary="Generate Quiz from Web URL",
-    description="Generate a quiz from a web page URL. **Premium feature** for basic and educator tiers only.",
-    response_model=QuizGenerationResponse,
-    status_code=201,
     tags=["Quiz Generation"]
 )
 

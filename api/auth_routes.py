@@ -1,7 +1,8 @@
 from fastapi import APIRouter
 from handlers.auth_handlers import (
     signup, login, logout,
-    change_password, delete_account, update_email
+    change_password, delete_account, update_email,
+    get_current_user_info
 )
 from typing import Dict, Any
 from services.logger import app_logger as logger
@@ -51,5 +52,15 @@ router.add_api_route(
     update_email,
     methods=["POST"],
     response_model=Dict[str, str],
+    tags=["Auth"]
+)
+
+router.add_api_route(
+    "/me",
+    get_current_user_info,
+    methods=["GET"],
+    response_model=Dict[str, Any],
+    summary="Get Current User Info",
+    description="Get authenticated user's profile, tier, role, and quota information",
     tags=["Auth"]
 )
