@@ -136,12 +136,29 @@ async def generate_quiz_from_file_openai(
                 detail=f"Insufficient content in file. Please provide a document with at least {MIN_CONTENT_LENGTH} characters of text."
             )
 
+        # Save file to supabase storage FIRST to get file_id
+        await file.seek(0)  # Reset file pointer after reading
+        file_bytes = await file.read()
+        original_filename = file.filename or f"uploaded_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+        file_result = save_file_to_supabase(current_user_id, file_bytes, original_filename, user_token, file.content_type)
+        file_id = file_result.get('file_id')
+        
+        # Generate quiz questions
         quizzes = await generate_quizzes_single_async(
             parsed_text, 
             num_questions,
             question_types=question_type
         )
-        quiz_id, saved_questions = save_quiz_to_database(title, quizzes, current_user_id)
+        
+        # Save quiz to database with file reference
+        quiz_id, saved_questions = save_quiz_to_database(
+            title, 
+            quizzes, 
+            current_user_id,
+            content_source_type="file",
+            content_source_reference=file_id,
+            user_token=user_token
+        )
 
         metadata = {
             "quiz_id": quiz_id,
@@ -156,12 +173,6 @@ async def generate_quiz_from_file_openai(
 
         #save metadata to database
         save_metadata(metadata)
-
-        #save file to supabase storage
-        await file.seek(0)  # Reset file pointer after reading
-        file_bytes = await file.read()
-        original_filename = file.filename or f"uploaded_{datetime.now().strftime('%Y%m%d%H%M%S')}"
-        save_file_to_supabase(current_user_id, file_bytes, original_filename, user_token, file.content_type)
 
         return {
             "quiz_id": quiz_id, 
@@ -252,7 +263,14 @@ async def generate_quiz_from_fileid(
         for i, q in enumerate(quizzes):
             logger.info(f"Question {i+1}: type={q.type}, correct_answer={q.correct_answer}")
         
-        quiz_id, saved_questions = save_quiz_to_database(data.title, quizzes, current_user_id)
+        quiz_id, saved_questions = save_quiz_to_database(
+            data.title, 
+            quizzes, 
+            current_user_id,
+            content_source_type="file",
+            content_source_reference=file_id,
+            user_token=user_token
+        )
         logger.info(f"Saved quiz with ID: {quiz_id}")
 
         metadata = {
@@ -338,7 +356,8 @@ async def generate_quiz_from_text(
             quizzes=quizzes,
             created_by=current_user_id,
             content_source_type="text",
-            content_source_reference=file_id  # Link to the saved text file
+            content_source_reference=file_id,  # Link to the saved text file
+            user_token=user_token
         )
 
         # Save metadata for analytics/tracking
@@ -492,7 +511,14 @@ async def generate_quiz_from_url(
         )
         
         # Save to database
-        quiz_id, saved_questions = save_quiz_to_database(data.title, quizzes, current_user_id)
+        quiz_id, saved_questions = save_quiz_to_database(
+            data.title, 
+            quizzes, 
+            current_user_id,
+            content_source_type="url",
+            content_source_reference=str(data.url),
+            user_token=user_token
+        )
         logger.info(f"Saved quiz from URL with ID: {quiz_id}")
         
         # Save metadata
