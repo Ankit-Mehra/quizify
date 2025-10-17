@@ -525,13 +525,12 @@ async def generate_quiz_from_url(
         metadata = {
             "quiz_id": quiz_id,
             "content_type": "url",
-            "content_source_type": "url",
-            "content_source_reference": str(data.url),
+            "file_name": str(data.url),
+            "file_type": "text/html",
             "word_count": len(content.split()),
             "created_by": current_user_id,
             "created_at": datetime.now().isoformat(),
-            "question_count": len(quizzes),
-            "scrape_timestamp": datetime.now().isoformat()
+            "question_count": len(quizzes)
         }
         save_metadata(metadata)
         logger.info(f"Saved metadata for URL quiz {quiz_id}")
