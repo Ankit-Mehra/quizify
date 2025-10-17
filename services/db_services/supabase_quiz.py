@@ -1,6 +1,6 @@
 from fastapi import HTTPException
 from schemas.quiz import Question
-from typing import List
+from typing import List, Optional
 from services.logger import db_logger as logger
 from config import config
 
@@ -21,7 +21,13 @@ def get_authed_supabase_client(user_token: str):
     logger.debug(f"Creating authenticated Supabase client with token: {user_token[:10]}...")
     return config.get_authenticated_supabase_client(user_token)
 
-def save_quiz_to_database(title: str, quizzes: List[Question], created_by: str):
+def save_quiz_to_database(
+    title: str, 
+    quizzes: List[Question], 
+    created_by: str,
+    content_source_type: Optional[str] = None,
+    content_source_reference: Optional[str] = None
+):
     try:
         supabase = get_supabase()
         logger.info(f"Saving quiz '{title}' with {len(quizzes)} questions")
@@ -36,10 +42,19 @@ def save_quiz_to_database(title: str, quizzes: List[Question], created_by: str):
             logger.error("No questions were generated")
             raise HTTPException(status_code=500, detail="No questions were generated.")
         
-        quiz_response = supabase.table("quizzes").insert({
+        # Build quiz insert payload
+        quiz_data = {
             "title": title,
             "created_by": created_by
-        }).execute()
+        }
+        
+        # Add optional fields if provided
+        if content_source_type:
+            quiz_data["content_source_type"] = content_source_type
+        if content_source_reference:
+            quiz_data["content_source_reference"] = content_source_reference
+        
+        quiz_response = supabase.table("quizzes").insert(quiz_data).execute()
         quiz_id = quiz_response.data[0]["id"]
         logger.info(f"Created quiz with ID: {quiz_id}")
 
@@ -73,11 +88,12 @@ def save_quiz_to_database(title: str, quizzes: List[Question], created_by: str):
 
             question_payload.append(base)
 
-        # Insert into questions table
-        supabase.table("questions").insert(question_payload).execute()
+        # Insert into questions table and get back the saved questions with IDs
+        questions_response = supabase.table("questions").insert(question_payload).execute()
+        saved_questions = questions_response.data
         logger.info(f"Added {len(question_payload)} questions to quiz {quiz_id}")
 
-        return quiz_id
+        return quiz_id, saved_questions  # Return both quiz_id and saved questions with IDs
 
     except Exception as e:
         logger.error(f"Error saving quiz to database: {str(e)}", exc_info=True)

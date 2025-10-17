@@ -1,4 +1,5 @@
 from fastapi import HTTPException, Depends, Path, Body, UploadFile, File, Form
+import re
 from services.ai_services.doc_service import ( 
     extract_text_from_pdf,
     extract_text_from_plain_text,
@@ -13,15 +14,41 @@ from services.db_services.supabase_file import (
     get_file_record, save_file_to_supabase,
     parse_file_from_supabase)
 from dependencies.auth_dependencies import get_current_user_id, get_current_user_token
-from schemas.quiz import TextQuizRequest, FileQuizRequest
+from schemas.quiz import TextQuizRequest, FileQuizRequest, WebQuizRequest
 from typing import Dict, Any, List
 from datetime import datetime
 from services.ai_services.chunking_service import generate_quizzes_single_async
 from services.logger import app_logger as logger
+from services.web_scraping_service import scrape_content
 
 # Content validation constants
 MIN_CONTENT_LENGTH = 50  # Minimum characters required for quiz generation from uploaded files
 MIN_STORED_CONTENT_LENGTH = 10  # Minimum characters required for stored file content validation
+
+def sanitize_filename(filename: str) -> str:
+    """
+    Sanitize filename to make it safe for storage URLs.
+    Removes special characters, replaces spaces with underscores, and limits length.
+    """
+    # Remove file extension if present
+    name_without_ext = filename.rsplit('.', 1)[0] if '.' in filename else filename
+    
+    # Replace spaces and special characters with underscores
+    # Keep only alphanumeric, underscores, and hyphens
+    sanitized = re.sub(r'[^\w\s-]', '', name_without_ext)
+    sanitized = re.sub(r'[-\s]+', '_', sanitized)
+    
+    # Limit length to 50 characters
+    sanitized = sanitized[:50]
+    
+    # Remove leading/trailing underscores
+    sanitized = sanitized.strip('_')
+    
+    # If empty after sanitization, use a default name
+    if not sanitized:
+        sanitized = "quiz_content"
+    
+    return sanitized
 
 def validate_user_quota(user_id: str):
     """
@@ -114,7 +141,7 @@ async def generate_quiz_from_file_openai(
             num_questions,
             question_types=question_type
         )
-        quiz_id = save_quiz_to_database(title, quizzes, current_user_id)
+        quiz_id, saved_questions = save_quiz_to_database(title, quizzes, current_user_id)
 
         metadata = {
             "quiz_id": quiz_id,
@@ -140,7 +167,7 @@ async def generate_quiz_from_file_openai(
             "quiz_id": quiz_id, 
             "title": title,
             "message": "Quiz generated successfully from file",
-            "questions": quizzes
+            "questions": saved_questions  # Return saved questions with IDs
         }
     
     except HTTPException:
@@ -225,7 +252,7 @@ async def generate_quiz_from_fileid(
         for i, q in enumerate(quizzes):
             logger.info(f"Question {i+1}: type={q.type}, correct_answer={q.correct_answer}")
         
-        quiz_id = save_quiz_to_database(data.title, quizzes, current_user_id)
+        quiz_id, saved_questions = save_quiz_to_database(data.title, quizzes, current_user_id)
         logger.info(f"Saved quiz with ID: {quiz_id}")
 
         metadata = {
@@ -244,7 +271,8 @@ async def generate_quiz_from_fileid(
         return {
             "quiz_id": quiz_id, 
             "title": data.title,
-            "message": "Quiz generated successfully from file"
+            "message": "Quiz generated successfully from file",
+            "questions": saved_questions  # Return saved questions with IDs
         }
     except HTTPException as he:
         # Re-raise HTTP exceptions
@@ -277,19 +305,47 @@ async def generate_quiz_from_text(
             total_questions,
             question_types=list(data.question_type)
         )
-            
-        # Save to database
-        quiz_id = save_quiz_to_database(data.title, quizzes, current_user_id)
-
-        # Convert text content to bytes
-        text_bytes = data.content.encode('utf-8')
         
-        # Save to Supabase storage
-        save_file_to_supabase(current_user_id, text_bytes, f"{data.title}.txt", user_token, "text/plain")
+        # Save text as a file in Supabase Storage FIRST (for consistent user experience)
+        # This allows users to access their text content later, same as uploaded files
+        text_bytes = data.content.encode('utf-8')
+        file_size = len(text_bytes)
+        
+        # Validate text size (same 10MB limit as file uploads)
+        MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+        if file_size > MAX_FILE_SIZE:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Text content too large. Maximum size is 10MB ({MAX_FILE_SIZE} bytes). Your text is {file_size} bytes."
+            )
+        
+        # Create safe filename (remove spaces and special characters)
+        safe_title = sanitize_filename(data.title)
+        filename = f"{safe_title}.txt"
+        
+        file_result = save_file_to_supabase(
+            current_user_id, 
+            text_bytes, 
+            filename, 
+            user_token, 
+            "text/plain"
+        )
+        file_id = file_result.get('file_id')
+            
+        # Save quiz to database with file reference
+        quiz_id, saved_questions = save_quiz_to_database(
+            title=data.title,
+            quizzes=quizzes,
+            created_by=current_user_id,
+            content_source_type="text",
+            content_source_reference=file_id  # Link to the saved text file
+        )
+
+        # Save metadata for analytics/tracking
         metedata = {
             "quiz_id": quiz_id,
             "content_type": "text",
-            "file_name": f"{data.title}.txt",
+            "file_name": filename,
             "file_type": "text/plain",
             "word_count": len(data.content.split()),
             "created_by": current_user_id,
@@ -298,11 +354,12 @@ async def generate_quiz_from_text(
         }
         save_metadata(metedata)
         
-        # Return response
+        # Return response with questions for immediate display
         return {
             "quiz_id": quiz_id, 
             "title": data.title,
-            "message": "Quiz generated successfully from text"
+            "message": "Quiz generated successfully from text",
+            "questions": saved_questions  # Return saved questions with IDs
         }
     
     except HTTPException as he:
@@ -405,3 +462,68 @@ async def submit_quiz_answers(
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# === Generate quiz from URL ===
+async def generate_quiz_from_url(
+    data: WebQuizRequest,
+    current_user_id: str = Depends(get_current_user_id),
+    user_token: str = Depends(get_current_user_token)
+):
+    """Generate quiz from web URL (available for all tiers with quota limits)."""
+    
+    # Validate quota BEFORE scraping and generation (don't waste resources)
+    validate_user_quota(current_user_id)
+    
+    try:
+        # Get user tier info for logging
+        tier_info = get_user_tier_info(current_user_id)
+        
+        # Scrape content
+        logger.info(f"User {current_user_id} ({tier_info['account_tier']} tier) generating quiz from URL: {data.url}")
+        content = await scrape_content(str(data.url))
+        
+        # Generate quiz
+        total_questions = data.num_questions if data.num_questions is not None else 10
+        quizzes = await generate_quizzes_single_async(
+            content,
+            total_questions,
+            question_types=list(data.question_type)
+        )
+        
+        # Save to database
+        quiz_id, saved_questions = save_quiz_to_database(data.title, quizzes, current_user_id)
+        logger.info(f"Saved quiz from URL with ID: {quiz_id}")
+        
+        # Save metadata
+        metadata = {
+            "quiz_id": quiz_id,
+            "content_type": "url",
+            "content_source_type": "url",
+            "content_source_reference": str(data.url),
+            "word_count": len(content.split()),
+            "content_length": len(content),
+            "created_by": current_user_id,
+            "created_at": datetime.now().isoformat(),
+            "question_count": len(quizzes),
+            "scrape_timestamp": datetime.now().isoformat()
+        }
+        save_metadata(metadata)
+        logger.info(f"Saved metadata for URL quiz {quiz_id}")
+        
+        return {
+            "quiz_id": quiz_id,
+            "title": data.title,
+            "message": "Quiz generated successfully from URL",
+            "source_url": str(data.url)
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generating quiz from URL {data.url}: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error generating quiz from URL: {str(e)}"
+        )
+

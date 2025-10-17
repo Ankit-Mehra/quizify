@@ -33,6 +33,12 @@ class Config:
     # OpenAI configuration
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
     
+    # Web scraping configuration
+    SCRAPER_USER_AGENT: str = os.getenv(
+        "SCRAPER_USER_AGENT",
+        "Mozilla/5.0 (compatible; QuizifyBot/1.0; +https://quizify.app/bot)"
+    )
+    
     @classmethod
     def is_testing(cls) -> bool:
         """

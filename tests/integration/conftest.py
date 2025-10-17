@@ -195,19 +195,30 @@ class MockQuizStorage:
     def __init__(self):
         self._quizzes = {}  # quiz_id -> quiz_data
     
-    def save_quiz(self, title, quizzes, user_id):
-        """Save a quiz and return its ID."""
+    def save_quiz(self, title, quizzes, created_by, content_source_type=None, content_source_reference=None):
+        """Save a quiz and return tuple of (quiz_id, saved_questions)."""
         import uuid
         quiz_id = str(uuid.uuid4())
+        
+        # Add IDs to questions to match real database behavior
+        saved_questions = []
+        for i, q in enumerate(quizzes):
+            question_with_id = q.copy() if isinstance(q, dict) else q.model_dump()
+            question_with_id['id'] = str(uuid.uuid4())  # Generate proper UUID
+            question_with_id['quiz_id'] = quiz_id
+            saved_questions.append(question_with_id)
+        
         self._quizzes[quiz_id] = {
             "id": quiz_id,
             "title": title,
-            "questions": quizzes,
-            "user_id": user_id,
-            "created_by": user_id,
-            "created_at": "2025-10-04T00:00:00"
+            "questions": saved_questions,
+            "user_id": created_by,
+            "created_by": created_by,
+            "created_at": "2025-10-04T00:00:00",
+            "content_source_type": content_source_type,
+            "content_source_reference": content_source_reference
         }
-        return quiz_id
+        return quiz_id, saved_questions
     
     def get_quiz(self, quiz_id, user_id=None):
         """Get a quiz by ID."""
@@ -383,9 +394,9 @@ async def mock_generate_quizzes_single_async(text, num_questions, question_types
     return questions
 
 
-def mock_save_quiz_to_database(title, quizzes, user_id):
-    """Mock saving quiz to database."""
-    return _quiz_storage.save_quiz(title, quizzes, user_id)
+def mock_save_quiz_to_database(title, quizzes, created_by, content_source_type=None, content_source_reference=None):
+    """Mock saving quiz to database - returns (quiz_id, saved_questions) tuple."""
+    return _quiz_storage.save_quiz(title, quizzes, created_by, content_source_type, content_source_reference)
 
 
 def mock_save_file_to_supabase(*args, **kwargs):

@@ -1,48 +1,55 @@
 ## Submission Schemas
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from uuid import UUID
 from typing import Union, List
 from datetime import datetime
 
 class AnswerSubmission(BaseModel):
-    question_id: UUID
-    user_answer: Union[str,bool,List[int]]
+    """Represents a single answer submission for a question"""
+    question_id: UUID = Field(..., description="ID of the question being answered")
+    user_answer: Union[str, bool, List[int]] = Field(..., description="User's answer (format depends on question type)")
 
 class QuizSubmissionRequest(BaseModel):
-    quiz_id: UUID
-    total_questions: int
-    answers: List[AnswerSubmission]
+    """Request payload for submitting quiz answers"""
+    quiz_id: UUID = Field(..., description="ID of the quiz being submitted")
+    total_questions: int = Field(..., description="Total number of questions in the quiz", gt=0)
+    answers: List[AnswerSubmission] = Field(..., description="List of all answers submitted")
 
 class QuizSubmission(BaseModel):
-    id: UUID
-    quiz_id: UUID
-    user_id: UUID
-    score: int
-    correct_count: int
-    wrong_count: int
-    total_questions: int
-    submitted_at: datetime
+    """Complete submission record stored in database"""
+    id: UUID = Field(..., description="Unique submission ID")
+    quiz_id: UUID = Field(..., description="ID of the quiz that was submitted")
+    user_id: UUID = Field(..., description="ID of the user who submitted")
+    score: int = Field(..., description="Calculated score percentage (0-100, rounded to nearest integer)", ge=0, le=100)
+    correct_count: int = Field(..., description="Number of correct answers", ge=0)
+    wrong_count: int = Field(..., description="Number of wrong answers", ge=0)
+    total_questions: int = Field(..., description="Total questions answered", gt=0)
+    submitted_at: datetime = Field(..., description="Timestamp of submission")
 
 class QuizAnswer(BaseModel):
-    id: UUID
-    submission_id: UUID
-    question_id: UUID
-    user_answer: Union[str,bool,List[int]]
-    correct_answer: Union[str,bool,List[int]]
-    is_correct: bool
+    """Individual answer record with correctness evaluation"""
+    id: UUID = Field(..., description="Unique answer record ID")
+    submission_id: UUID = Field(..., description="ID of the parent submission")
+    question_id: UUID = Field(..., description="ID of the question answered")
+    user_answer: Union[str, bool, List[int]] = Field(..., description="User's submitted answer")
+    correct_answer: Union[str, bool, List[int]] = Field(..., description="Correct answer for comparison")
+    is_correct: bool = Field(..., description="Whether the answer was correct")
 
 class DetailedResult(BaseModel):
-    question_id: UUID
-    question: str
-    your_answer: Union[str,bool,List[int]]
-    correct_answer: Union[str,bool,List[int]]
-    is_correct: bool
+    """Detailed result for a single question in the submission response"""
+    question_id: UUID = Field(..., description="ID of the question")
+    question: str = Field(..., description="The question text")
+    your_answer: Union[str, bool, List[int]] = Field(..., description="User's submitted answer")
+    correct_answer: Union[str, bool, List[int]] = Field(..., description="The correct answer")
+    is_correct: bool = Field(..., description="Whether the answer was correct")
 
 class SubmissionResponse(BaseModel):
-    id: UUID
-    total_questions: int
-    correct_count: int
-    wrong_count: int
-    score: int
-    detailed_results: List[DetailedResult]
+    """Response returned after submitting a quiz with detailed results"""
+    id: UUID = Field(..., description="Unique submission ID for future reference")
+    total_questions: int = Field(..., description="Total number of questions", gt=0)
+    correct_count: int = Field(..., description="Number of correct answers", ge=0)
+    wrong_count: int = Field(..., description="Number of wrong answers", ge=0)
+    score: int = Field(..., description="Calculated percentage score (0-100, rounded to nearest integer)", ge=0, le=100)
+    detailed_results: List[DetailedResult] = Field(..., description="Detailed results for each question")
+
 
