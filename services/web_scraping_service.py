@@ -14,7 +14,8 @@ from config import config
 # Constants
 MAX_CONTENT_SIZE = 500 * 1024  # 500KB
 MIN_CONTENT_SIZE = 100  # 100 characters
-SCRAPE_TIMEOUT = 30000  # 30 seconds in milliseconds
+SCRAPE_TIMEOUT = 60000  # 60 seconds in milliseconds (increased from 30s)
+FALLBACK_TIMEOUT = 30000  # 30 seconds fallback for faster retry
 
 # Private IP ranges to block (SSRF prevention) - IPv4 and IPv6
 PRIVATE_IP_RANGES = [
@@ -185,6 +186,7 @@ def validate_url(url: str) -> None:
 async def scrape_content(url: str) -> str:
     """
     Scrape content from URL using Playwright + Trafilatura.
+    Implements retry logic with different timeout strategies for problematic sites.
     
     Args:
         url: The URL to scrape
@@ -199,87 +201,118 @@ async def scrape_content(url: str) -> str:
     
     logger.info(f"Starting web scraping for URL: {url}")
     
-    try:
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
-            context = await browser.new_context(
-                user_agent=config.SCRAPER_USER_AGENT
-            )
-            page = await context.new_page()
+    # Try with longer timeout first, then fallback to shorter timeout with different strategy
+    timeouts_and_strategies = [
+        (SCRAPE_TIMEOUT, 'networkidle', 'First attempt with full timeout and networkidle'),
+        (FALLBACK_TIMEOUT, 'domcontentloaded', 'Fallback with shorter timeout and domcontentloaded')
+    ]
+    
+    last_error = None
+    
+    for timeout, wait_strategy, description in timeouts_and_strategies:
+        try:
+            logger.info(f"Attempting scrape: {description} (timeout: {timeout/1000}s)")
             
-            # Navigate with timeout
-            try:
-                logger.info(f"Navigating to URL: {url}")
-                await page.goto(url, timeout=SCRAPE_TIMEOUT, wait_until='networkidle')
-            except PlaywrightTimeout:
-                await browser.close()
-                logger.error(f"Timeout while loading URL: {url}")
-                raise HTTPException(
-                    status_code=408,
-                    detail=f"Request timeout. The page took longer than {SCRAPE_TIMEOUT/1000} seconds to load."
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(headless=True)
+                context = await browser.new_context(
+                    user_agent=config.SCRAPER_USER_AGENT
                 )
-            except Exception as e:
-                await browser.close()
-                logger.error(f"Error navigating to URL {url}: {str(e)}")
-                # Check for common HTTP errors
-                error_str = str(e).lower()
-                if '404' in error_str or 'not found' in error_str:
-                    raise HTTPException(
-                        status_code=404,
-                        detail="The requested URL returned 404 Not Found."
+                page = await context.new_page()
+                
+                # Navigate with current timeout strategy
+                try:
+                    logger.info(f"Navigating to URL: {url}")
+                    await page.goto(url, timeout=timeout, wait_until=wait_strategy)
+                except PlaywrightTimeout:
+                    await browser.close()
+                    error_msg = f"Timeout while loading URL: {url} (strategy: {wait_strategy}, timeout: {timeout/1000}s)"
+                    logger.warning(error_msg)
+                    last_error = HTTPException(
+                        status_code=408,
+                        detail=f"Request timeout. The page took longer than {timeout/1000} seconds to load."
                     )
-                elif '403' in error_str or 'forbidden' in error_str:
-                    raise HTTPException(
-                        status_code=403,
-                        detail="The requested URL returned 403 Forbidden. The site may be blocking automated access."
+                    continue  # Try next strategy
+                except Exception as e:
+                    await browser.close()
+                    logger.error(f"Error navigating to URL {url}: {str(e)}")
+                    # Check for common HTTP errors
+                    error_str = str(e).lower()
+                    if '404' in error_str or 'not found' in error_str:
+                        raise HTTPException(
+                            status_code=404,
+                            detail="The requested URL returned 404 Not Found."
+                        )
+                    elif '403' in error_str or 'forbidden' in error_str:
+                        raise HTTPException(
+                            status_code=403,
+                            detail="The requested URL returned 403 Forbidden. The site may be blocking automated access."
+                        )
+                    last_error = HTTPException(
+                        status_code=500,
+                        detail=f"Error accessing URL: {str(e)}"
                     )
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Error accessing URL: {str(e)}"
+                    continue  # Try next strategy
+                
+                # Get page HTML
+                logger.info(f"Extracting HTML content from: {url}")
+                html = await page.content()
+                await browser.close()
+                
+                # Extract main content using Trafilatura
+                logger.info("Extracting text content using Trafilatura")
+                extracted = trafilatura.extract(
+                    html,
+                    include_comments=False,
+                    include_tables=True,
+                    no_fallback=False
                 )
-            
-            # Get page HTML
-            logger.info(f"Extracting HTML content from: {url}")
-            html = await page.content()
-            await browser.close()
-            
-            # Extract main content using Trafilatura
-            logger.info("Extracting text content using Trafilatura")
-            extracted = trafilatura.extract(
-                html,
-                include_comments=False,
-                include_tables=True,
-                no_fallback=False
+                
+                if not extracted:
+                    logger.error(f"Could not extract content from URL: {url}")
+                    last_error = HTTPException(
+                        status_code=422,
+                        detail="Could not extract meaningful content from the page."
+                    )
+                    continue  # Try next strategy
+                
+                # Validate content size
+                if len(extracted) < MIN_CONTENT_SIZE:
+                    logger.error(f"Extracted content too short from URL {url}: {len(extracted)} characters")
+                    last_error = HTTPException(
+                        status_code=422,
+                        detail=f"Extracted content too short (minimum {MIN_CONTENT_SIZE} characters)."
+                    )
+                    continue  # Try next strategy
+                
+                if len(extracted) > MAX_CONTENT_SIZE:
+                    logger.warning(f"Content exceeds max size, truncating: {len(extracted)} -> {MAX_CONTENT_SIZE} bytes")
+                    # Truncate to max size
+                    extracted = extracted[:MAX_CONTENT_SIZE]
+                
+                logger.info(f"Successfully extracted {len(extracted)} characters from URL: {url} using strategy: {wait_strategy}")
+                return extracted
+                
+        except HTTPException as he:
+            # HTTP exceptions should be raised immediately (don't retry)
+            if he.status_code in [404, 403]:
+                raise he
+            last_error = he
+            continue
+        except Exception as e:
+            logger.error(f"Unexpected error scraping URL {url} with strategy {wait_strategy}: {str(e)}")
+            last_error = HTTPException(
+                status_code=500,
+                detail=f"Error scraping URL: {str(e)}"
             )
-            
-            if not extracted:
-                logger.error(f"Could not extract content from URL: {url}")
-                raise HTTPException(
-                    status_code=422,
-                    detail="Could not extract meaningful content from the page."
-                )
-            
-            # Validate content size
-            if len(extracted) < MIN_CONTENT_SIZE:
-                logger.error(f"Extracted content too short from URL {url}: {len(extracted)} characters")
-                raise HTTPException(
-                    status_code=422,
-                    detail=f"Extracted content too short (minimum {MIN_CONTENT_SIZE} characters)."
-                )
-            
-            if len(extracted) > MAX_CONTENT_SIZE:
-                logger.warning(f"Content exceeds max size, truncating: {len(extracted)} -> {MAX_CONTENT_SIZE} bytes")
-                # Truncate to max size
-                extracted = extracted[:MAX_CONTENT_SIZE]
-            
-            logger.info(f"Successfully extracted {len(extracted)} characters from URL: {url}")
-            return extracted
-            
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Unexpected error scraping URL {url}: {str(e)}", exc_info=True)
+            continue
+    
+    # If we get here, all strategies failed
+    logger.error(f"All scraping strategies failed for URL: {url}")
+    if last_error:
+        raise last_error
+    else:
         raise HTTPException(
             status_code=500,
-            detail=f"Error scraping URL: {str(e)}"
+            detail="All scraping attempts failed"
         )
