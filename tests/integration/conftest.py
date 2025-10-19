@@ -404,8 +404,8 @@ def mock_save_file_to_supabase(*args, **kwargs):
     return {"message": "File uploaded successfully", "file_id": "mock_file_123"}
 
 
-def mock_save_metadata(metadata):
-    """Mock saving quiz metadata."""
+def mock_save_metadata(metadata, user_token=None):
+    """Mock saving quiz metadata - now accepts optional user_token parameter."""
     return {"success": True, "quiz_id": "mock_quiz_123"}
 
 
