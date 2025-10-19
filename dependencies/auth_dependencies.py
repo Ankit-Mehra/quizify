@@ -34,9 +34,21 @@ def get_current_user_id(
             raise HTTPException(status_code=401, detail="Invalid or expired token")
 
         user_info = response.json()
-        user_id = user_info.get("id") or user_info.get("email")
-        logger.debug(f"Authenticated user: {user_id}")
-
+        
+        # DEBUG: Log more details about the user authentication
+        logger.debug(f"Full user info: {user_info}")
+        
+        # Always prefer UUID over email for consistency
+        user_id = user_info.get("id")
+        if not user_id:
+            logger.error(f"No UUID found in user info, falling back to email: {user_info.get('email')}")
+            user_id = user_info.get("email")
+        
+        if not user_id:
+            logger.error("No valid user identifier found in token")
+            raise HTTPException(status_code=401, detail="Invalid user token - no identifier found")
+        
+        logger.debug(f"Using user ID: {user_id}")
         return user_id
 
     except HTTPException:

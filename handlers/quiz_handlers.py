@@ -76,7 +76,9 @@ def validate_user_quota(user_id: str):
         
         detail_message = f"Quiz quota exceeded for {user_tier} tier ({current_count}/{quota_limit}). {upgrade_suggestion}".strip()
         
-        logger.warning(f"Quota exceeded for user {user_id}: {detail_message}")
+        # Log with truncated user ID for security (server-side only)
+        user_id_truncated = user_id[:8] + "..." if len(user_id) > 8 else user_id
+        logger.warning(f"Quota exceeded for user {user_id_truncated}: {detail_message}")
         
         raise HTTPException(
             status_code=403,
@@ -88,7 +90,9 @@ def validate_user_quota(user_id: str):
             }
         )
     
-    logger.info(f"Quota check passed for user {user_id}: "
+    # Log successful quota check with truncated user ID (server-side only)
+    user_id_truncated = user_id[:8] + "..." if len(user_id) > 8 else user_id
+    logger.info(f"Quota check passed for user {user_id_truncated}: "
                f"{tier_info['current_quiz_count']}/{tier_info['quota_limit']}")
 
 
@@ -195,7 +199,6 @@ async def generate_quiz_from_fileid(
     user_token: str = Depends(get_current_user_token)
 ):
     logger.info(f"Generating quiz from file ID: {file_id}")
-    logger.info(f"User ID: {current_user_id}")
     logger.info(f"Quiz parameters: title={data.title}, num_questions={data.num_questions}, question_types={data.question_type}")
     
     file_content = None
@@ -210,7 +213,7 @@ async def generate_quiz_from_fileid(
         
         # Check user authorization
         if file_record["user_id"] != current_user_id:
-            logger.error(f"Unauthorized access to file {file_id} by user {current_user_id}")
+            logger.warning(f"Unauthorized file access attempt for file {file_id}")
             raise HTTPException(status_code=403, detail="You don't have permission to access this file")
             
         storage_path = file_record.get("storage_path")
@@ -417,12 +420,25 @@ async def get_quiz_by_id_handler(
                 detail="Invalid quiz ID. Please provide a valid quiz ID."
             )
             
-        # Get quiz data from database
-        quiz_data = get_quiz_from_database(quiz_id)
+        # Get quiz data from database (this will raise 404 if not found)
+        try:
+            quiz_data = get_quiz_from_database(quiz_id)
+        except HTTPException as e:
+            if e.status_code == 404:
+                # Quiz truly doesn't exist
+                raise HTTPException(status_code=404, detail="Quiz not found")
+            raise
+        
+        # Log quiz access attempt (without exposing user IDs)
+        logger.info(f"Quiz access check for quiz ID: {quiz_id}")
         
         # Verify that the user has access to this quiz
         if quiz_data["created_by"] != current_user_id:
-            raise HTTPException(status_code=403, detail="You do not have permission to access this quiz.")
+            logger.warning(f"Access denied - User {current_user_id} trying to access quiz {quiz_id} created by {quiz_data['created_by']}")
+            raise HTTPException(
+                status_code=403, 
+                detail="Access denied. You don't have permission to view this quiz."
+            )
         
         return quiz_data
     
@@ -498,9 +514,9 @@ async def generate_quiz_from_url(
         # Get user tier info for logging
         tier_info = get_user_tier_info(current_user_id)
         
-        # Scrape content
+        # Scrape content with user ID for resource tracking
         logger.info(f"User {current_user_id} ({tier_info['account_tier']} tier) generating quiz from URL: {data.url}")
-        content = await scrape_content(str(data.url))
+        content = await scrape_content(str(data.url), current_user_id)
         
         # Generate quiz
         total_questions = data.num_questions if data.num_questions is not None else 10

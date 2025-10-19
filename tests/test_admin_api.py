@@ -642,16 +642,17 @@ class TestUpdateUserRole:
         mock_client = Mock()
         mock_supabase.return_value = mock_client
         
-        # Mock check if user exists
+        # Mock check profiles (for admin validation)
         mock_check_table = Mock()
         mock_check_select = Mock()
-        mock_check_eq = Mock()
         check_response = Mock()
-        check_response.data = [{"id": "user-1", "role": "user"}]
+        check_response.data = [
+            {"id": "admin-user-123", "role": "admin"},  # Current admin
+            {"id": "user-1", "role": "user"}  # User to be promoted
+        ]
         check_response.error = None
-        mock_check_eq.execute.return_value = check_response
+        mock_check_select.execute.return_value = check_response
         mock_check_table.select.return_value = mock_check_select
-        mock_check_select.eq.return_value = mock_check_eq
         
         # Mock update role
         mock_update_table = Mock()
@@ -795,16 +796,16 @@ class TestUpdateUserRole:
         mock_client = Mock()
         mock_supabase.return_value = mock_client
         
-        # Mock check user doesn't exist
+        # Mock check profiles - admin exists but target user doesn't
         mock_check_table = Mock()
         mock_check_select = Mock()
-        mock_check_eq = Mock()
         check_response = Mock()
-        check_response.data = []  # Empty - user not found
+        check_response.data = [
+            {"id": "admin-user-123", "role": "admin"}  # Only admin exists, target user missing
+        ]
         check_response.error = None
-        mock_check_eq.execute.return_value = check_response
+        mock_check_select.execute.return_value = check_response
         mock_check_table.select.return_value = mock_check_select
-        mock_check_select.eq.return_value = mock_check_eq
         
         mock_client.table.return_value = mock_check_table
         
@@ -835,16 +836,17 @@ class TestUpdateUserRole:
         mock_client = Mock()
         mock_supabase.return_value = mock_client
         
-        # Mock check user exists with role 'admin'
+        # Mock check profiles - both admin and target user exist
         mock_check_table = Mock()
         mock_check_select = Mock()
-        mock_check_eq = Mock()
         check_response = Mock()
-        check_response.data = [{"id": "user-1", "role": "admin"}]
+        check_response.data = [
+            {"id": "admin-user-123", "role": "admin"},  # Current admin
+            {"id": "user-1", "role": "admin"}  # User already has admin role
+        ]
         check_response.error = None
-        mock_check_eq.execute.return_value = check_response
+        mock_check_select.execute.return_value = check_response
         mock_check_table.select.return_value = mock_check_select
-        mock_check_select.eq.return_value = mock_check_eq
         
         mock_client.table.return_value = mock_check_table
         
@@ -876,16 +878,18 @@ class TestUpdateUserRole:
         mock_client = Mock()
         mock_supabase.return_value = mock_client
         
-        # Mock check user exists with role 'admin'
+        # Mock check profiles - multiple admins exist so demotion is allowed
         mock_check_table = Mock()
         mock_check_select = Mock()
-        mock_check_eq = Mock()
         check_response = Mock()
-        check_response.data = [{"id": "user-2", "role": "admin"}]
+        check_response.data = [
+            {"id": "admin-user-123", "role": "admin"},  # Current admin
+            {"id": "user-2", "role": "admin"},  # Another admin to be demoted
+            {"id": "user-3", "role": "admin"}   # Third admin (ensures not last admin)
+        ]
         check_response.error = None
-        mock_check_eq.execute.return_value = check_response
+        mock_check_select.execute.return_value = check_response
         mock_check_table.select.return_value = mock_check_select
-        mock_check_select.eq.return_value = mock_check_eq
         
         # Mock update role to 'user'
         mock_update_table = Mock()
@@ -957,16 +961,17 @@ class TestUpdateUserRole:
         mock_client = Mock()
         mock_supabase.return_value = mock_client
         
-        # Mock check user exists
+        # Mock check profiles - admin and regular user exist
         mock_check_table = Mock()
         mock_check_select = Mock()
-        mock_check_eq = Mock()
         check_response = Mock()
-        check_response.data = [{"id": "user-3", "role": "user"}]
+        check_response.data = [
+            {"id": "admin-user-123", "role": "admin"},  # Current admin
+            {"id": "user-3", "role": "user"}  # User to be promoted to moderator
+        ]
         check_response.error = None
-        mock_check_eq.execute.return_value = check_response
+        mock_check_select.execute.return_value = check_response
         mock_check_table.select.return_value = mock_check_select
-        mock_check_select.eq.return_value = mock_check_eq
         
         # Mock update role to 'moderator'
         mock_update_table = Mock()
@@ -1038,16 +1043,17 @@ class TestUpdateUserRole:
         mock_client = Mock()
         mock_supabase.return_value = mock_client
         
-        # Mock check succeeds
+        # Mock check profiles succeeds
         mock_check_table = Mock()
         mock_check_select = Mock()
-        mock_check_eq = Mock()
         check_response = Mock()
-        check_response.data = [{"id": "user-1", "role": "user"}]
+        check_response.data = [
+            {"id": "admin-user-123", "role": "admin"},  # Current admin
+            {"id": "user-1", "role": "user"}  # User to be updated
+        ]
         check_response.error = None
-        mock_check_eq.execute.return_value = check_response
+        mock_check_select.execute.return_value = check_response
         mock_check_table.select.return_value = mock_check_select
-        mock_check_select.eq.return_value = mock_check_eq
         
         # Mock update fails
         mock_update_table = Mock()
