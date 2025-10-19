@@ -140,10 +140,15 @@ def get_quiz_from_database(quiz_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-def get_user_quizzes(user_id: str):
+def get_user_quizzes(user_id: str, user_token: Optional[str] = None):
     try:
-        supabase = get_supabase()
-        logger.info(f"Fetching quizzes for user: {user_id}")
+        # Use authenticated client if token provided, otherwise use service role
+        if user_token:
+            supabase = get_authed_supabase_client(user_token)
+            logger.info(f"Using authenticated client to fetch quizzes for user: {user_id}")
+        else:
+            supabase = get_supabase()
+            logger.info(f"Using service role to fetch quizzes for user: {user_id}")
         
         # Get all quizzes for a user
         quizzes_data = supabase.table("quizzes").select("*").eq("created_by", user_id).execute()

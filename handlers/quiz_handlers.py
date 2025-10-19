@@ -397,11 +397,12 @@ async def generate_quiz_from_text(
 
 # === Get user quizzes ===
 async def get_user_quizzes_handler(
-    current_user_id: str = Depends(get_current_user_id)
+    current_user_id: str = Depends(get_current_user_id),
+    user_token: str = Depends(get_current_user_token)
 ):
     """Get all quizzes created by the current user."""
     try:
-        quizzes = get_user_quizzes(current_user_id)
+        quizzes = get_user_quizzes(current_user_id, user_token)
         return quizzes
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
