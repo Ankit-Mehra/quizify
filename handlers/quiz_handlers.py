@@ -539,6 +539,7 @@ async def generate_quiz_from_url(
             "quiz_id": quiz_id,
             "title": data.title,
             "message": "Quiz generated successfully from URL",
+            "questions": saved_questions,  # Return saved questions with IDs
             "source_url": str(data.url)
         }
         
