@@ -4,6 +4,7 @@ Implements SSRF protection and uses Playwright + Trafilatura for robust extracti
 """
 import ipaddress
 import socket
+import os
 from urllib.parse import urlparse
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeout
 import trafilatura
@@ -24,6 +25,63 @@ MAX_MEMORY_MB = 256  # Maximum memory per browser instance
 MAX_CONCURRENT_BROWSERS = 3  # Maximum concurrent browsers per user
 JS_EXECUTION_TIMEOUT = 10000  # JavaScript execution timeout (10s)
 PAGE_LOAD_TIMEOUT = 5000  # Additional page load timeout (5s)
+
+# Security Note: We avoid --single-process and --no-sandbox flags when possible
+# as they disable Chrome's security sandbox. These flags should only be used
+# in containerized environments where the container provides isolation.
+
+
+def _is_running_in_container() -> bool:
+    """
+    Detect if we're running in a containerized environment.
+    
+    Returns:
+        True if running in a container, False otherwise
+    """
+    # Check for common container indicators
+    container_indicators = [
+        os.path.exists('/.dockerenv'),  # Docker
+        os.path.exists('/proc/1/cgroup') and 'docker' in open('/proc/1/cgroup', 'r').read(),
+        os.environ.get('RAILWAY_ENVIRONMENT') is not None,  # Railway
+        os.environ.get('HEROKU_DYNO_ID') is not None,  # Heroku
+        os.environ.get('KUBERNETES_SERVICE_HOST') is not None,  # Kubernetes
+        os.environ.get('CONTAINER') == 'true',  # Generic container flag
+    ]
+    
+    return any(container_indicators)
+
+
+def _get_chrome_args() -> list:
+    """
+    Get Chrome launch arguments with security considerations.
+    
+    Returns:
+        List of Chrome arguments optimized for security and environment
+    """
+    # Base secure arguments
+    args = [
+        f'--max-old-space-size={MAX_MEMORY_MB}',  # Limit V8 memory
+        '--disable-dev-shm-usage',  # Prevent shared memory issues in containers
+        '--disable-gpu',  # Disable GPU rendering for headless mode
+        '--disable-features=TranslateUI',  # Disable translation popups
+        '--disable-renderer-backgrounding',  # Keep renderer active
+        '--disable-backgrounding-occluded-windows',  # Prevent backgrounding
+        '--disable-background-timer-throttling',  # Prevent timer throttling
+        '--memory-pressure-off',  # Disable memory pressure notifications
+        f'--max_old_space_size={MAX_MEMORY_MB}',  # Alternative memory limit syntax
+        '--disable-extensions',  # Disable extensions for security
+        '--disable-plugins',  # Disable plugins for security
+        '--disable-web-security',  # Only for scraping - allows CORS bypass
+    ]
+    
+    # Add container-specific arguments if running in a container
+    if _is_running_in_container():
+        logger.info("Container environment detected - adding --no-sandbox for compatibility")
+        args.append('--no-sandbox')  # Required for containerized environments
+    else:
+        logger.info("Native environment detected - maintaining sandbox security")
+    
+    return args
 
 # Global browser tracking for resource management
 # Key: user_id or 'anonymous', Value: count of active browsers
@@ -303,22 +361,13 @@ async def scrape_content(url: str, user_id: str = "anonymous") -> str:
                         )
                 
                 async with async_playwright() as p:
-                    # Launch browser with resource constraints to prevent DoS attacks
+                    # Launch browser with security-optimized arguments
+                    chrome_args = _get_chrome_args()
+                    logger.debug(f"Launching Chrome with args: {chrome_args}")
+                    
                     browser = await p.chromium.launch(
                         headless=True,
-                        args=[
-                            f'--max-old-space-size={MAX_MEMORY_MB}',  # Limit V8 memory
-                            '--disable-dev-shm-usage',  # Prevent shared memory issues
-                            '--no-sandbox',  # Required for some containerized environments
-                            '--disable-gpu',  # Disable GPU rendering
-                            '--disable-web-security',  # Disable web security for scraping
-                            '--disable-features=TranslateUI',  # Disable translation popups
-                            '--disable-ipc-flooding-protection',  # Prevent IPC issues
-                            '--disable-renderer-backgrounding',  # Keep renderer active
-                            '--disable-backgrounding-occluded-windows',  # Prevent backgrounding
-                            '--disable-background-timer-throttling',  # Prevent timer throttling
-                            '--single-process',  # Use single process for lower memory usage
-                        ]
+                        args=chrome_args
                     )
                     
                     # Set up context with security and resource constraints
