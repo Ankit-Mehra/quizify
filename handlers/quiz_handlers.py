@@ -417,12 +417,28 @@ async def get_quiz_by_id_handler(
                 detail="Invalid quiz ID. Please provide a valid quiz ID."
             )
             
-        # Get quiz data from database
-        quiz_data = get_quiz_from_database(quiz_id)
+        # Get quiz data from database (this will raise 404 if not found)
+        try:
+            quiz_data = get_quiz_from_database(quiz_id)
+        except HTTPException as e:
+            if e.status_code == 404:
+                # Quiz truly doesn't exist
+                raise HTTPException(status_code=404, detail="Quiz not found")
+            raise
+        
+        # DEBUG: Log the comparison for troubleshooting
+        logger.info(f"Quiz access check - Quiz ID: {quiz_id}")
+        logger.info(f"Quiz created_by: '{quiz_data['created_by']}'")
+        logger.info(f"Current user_id: '{current_user_id}'")
+        logger.info(f"Match: {quiz_data['created_by'] == current_user_id}")
         
         # Verify that the user has access to this quiz
         if quiz_data["created_by"] != current_user_id:
-            raise HTTPException(status_code=403, detail="You do not have permission to access this quiz.")
+            logger.warning(f"Access denied - User {current_user_id} trying to access quiz created by {quiz_data['created_by']}")
+            raise HTTPException(
+                status_code=403, 
+                detail=f"Access denied. Quiz exists but belongs to a different user. Your ID: {current_user_id[:8]}..., Quiz owner: {quiz_data['created_by'][:8]}..."
+            )
         
         return quiz_data
     
@@ -498,9 +514,9 @@ async def generate_quiz_from_url(
         # Get user tier info for logging
         tier_info = get_user_tier_info(current_user_id)
         
-        # Scrape content
+        # Scrape content with user ID for resource tracking
         logger.info(f"User {current_user_id} ({tier_info['account_tier']} tier) generating quiz from URL: {data.url}")
-        content = await scrape_content(str(data.url))
+        content = await scrape_content(str(data.url), current_user_id)
         
         # Generate quiz
         total_questions = data.num_questions if data.num_questions is not None else 10
