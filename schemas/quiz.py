@@ -142,6 +142,7 @@ class QuizGenerationResponse(BaseModel):
     title: str
     message: str
     questions: Optional[List[Question]] = None  # Saved questions from database with IDs
+    source_url: Optional[str] = None  # URL source for web-based quizzes
 
 class MyQuizzesResponse(BaseModel):
     model_config = ConfigDict(strict=True)
