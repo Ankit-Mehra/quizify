@@ -26,10 +26,19 @@ def save_quiz_to_database(
     quizzes: List[Question], 
     created_by: str,
     content_source_type: Optional[str] = None,
-    content_source_reference: Optional[str] = None
+    content_source_reference: Optional[str] = None,
+    user_token: Optional[str] = None
 ):
     try:
-        supabase = get_supabase()
+        # Use authenticated client if token provided, otherwise use service role
+        if user_token:
+            supabase = get_authed_supabase_client(user_token)
+            logger.info(f"Using authenticated client for user {created_by}")
+            logger.debug(f"Token being used: {user_token[:20]}...")
+        else:
+            supabase = get_supabase()
+            logger.info("Using service role client")
+            
         logger.info(f"Saving quiz '{title}' with {len(quizzes)} questions")
         # Validate user ID to prevent UUID errors
         if not created_by or created_by == "undefined":
@@ -131,10 +140,15 @@ def get_quiz_from_database(quiz_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-def get_user_quizzes(user_id: str):
+def get_user_quizzes(user_id: str, user_token: Optional[str] = None):
     try:
-        supabase = get_supabase()
-        logger.info(f"Fetching quizzes for user: {user_id}")
+        # Use authenticated client if token provided, otherwise use service role
+        if user_token:
+            supabase = get_authed_supabase_client(user_token)
+            logger.info(f"Using authenticated client to fetch quizzes for user: {user_id}")
+        else:
+            supabase = get_supabase()
+            logger.info(f"Using service role to fetch quizzes for user: {user_id}")
         
         # Get all quizzes for a user
         quizzes_data = supabase.table("quizzes").select("*").eq("created_by", user_id).execute()
@@ -164,10 +178,15 @@ def get_user_quizzes(user_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-def save_metadata(metadata: dict):
+def save_metadata(metadata: dict, user_token: Optional[str] = None):
     try:
-        supabase = get_supabase()
-        logger.info(f"Saving metadata for quiz: {metadata.get('quiz_id', 'unknown')}")
+        # Use authenticated client if token provided, otherwise use service role
+        if user_token:
+            supabase = get_authed_supabase_client(user_token)
+            logger.info(f"Using authenticated client to save metadata for quiz: {metadata.get('quiz_id', 'unknown')}")
+        else:
+            supabase = get_supabase()
+            logger.info(f"Using service role to save metadata for quiz: {metadata.get('quiz_id', 'unknown')}")
         
         supabase.table("quiz_metadata").insert(metadata).execute()
         logger.info("Metadata saved successfully")

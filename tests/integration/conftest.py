@@ -394,7 +394,7 @@ async def mock_generate_quizzes_single_async(text, num_questions, question_types
     return questions
 
 
-def mock_save_quiz_to_database(title, quizzes, created_by, content_source_type=None, content_source_reference=None):
+def mock_save_quiz_to_database(title, quizzes, created_by, content_source_type=None, content_source_reference=None, user_token=None):
     """Mock saving quiz to database - returns (quiz_id, saved_questions) tuple."""
     return _quiz_storage.save_quiz(title, quizzes, created_by, content_source_type, content_source_reference)
 
@@ -404,8 +404,8 @@ def mock_save_file_to_supabase(*args, **kwargs):
     return {"message": "File uploaded successfully", "file_id": "mock_file_123"}
 
 
-def mock_save_metadata(metadata):
-    """Mock saving quiz metadata."""
+def mock_save_metadata(metadata, user_token=None):
+    """Mock saving quiz metadata - now accepts optional user_token parameter."""
     return {"success": True, "quiz_id": "mock_quiz_123"}
 
 

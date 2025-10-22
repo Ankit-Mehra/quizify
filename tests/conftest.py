@@ -162,7 +162,7 @@ def mock_supabase_client(mock_supabase, mocker):
             for i in range(1, min(int(num_questions) + 1, 6))
         ]
     
-    def mock_save_quiz_to_database(title, quizzes, created_by, content_source_type=None, content_source_reference=None):
+    def mock_save_quiz_to_database(title, quizzes, created_by, content_source_type=None, content_source_reference=None, user_token=None):
         """Mock saving quiz to database - returns (quiz_id, saved_questions) tuple"""
         import uuid
         # Generate a proper UUID for quiz_id
@@ -177,8 +177,8 @@ def mock_supabase_client(mock_supabase, mocker):
             saved_questions.append(question_with_id)
         return quiz_id, saved_questions
     
-    def mock_save_metadata(metadata):
-        """Mock saving metadata"""
+    def mock_save_metadata(metadata, user_token=None):
+        """Mock saving metadata - now accepts optional user_token parameter"""
         return {"success": True}
     
     # Apply all patches using mocker (pytest-mock)

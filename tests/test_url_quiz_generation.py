@@ -77,10 +77,10 @@ class TestGenerateQuizFromUrl:
         mock_save_quiz.assert_called_once()
         mock_save_metadata.assert_called_once()
         
-        # Verify metadata includes URL info
-        metadata_call = mock_save_metadata.call_args[0][0]
-        assert metadata_call['content_source_type'] == 'url'
-        assert metadata_call['content_source_reference'] == 'https://example.com/article'
+        # Verify save_quiz_to_database was called with URL source info (stored in quizzes table, NOT metadata)
+        quiz_call = mock_save_quiz.call_args
+        assert quiz_call.kwargs['content_source_type'] == 'url'
+        assert quiz_call.kwargs['content_source_reference'] == 'https://example.com/article'
     
     @pytest.mark.asyncio
     @patch('handlers.quiz_handlers.save_metadata')
@@ -146,10 +146,10 @@ class TestGenerateQuizFromUrl:
         mock_save_quiz.assert_called_once()
         mock_save_metadata.assert_called_once()
         
-        # Verify metadata includes URL info
-        metadata_call = mock_save_metadata.call_args[0][0]
-        assert metadata_call['content_source_type'] == 'url'
-        assert metadata_call['content_source_reference'] == 'https://example.com/article'
+        # Verify save_quiz_to_database was called with URL source info (stored in quizzes table, NOT metadata)
+        quiz_call = mock_save_quiz.call_args
+        assert quiz_call.kwargs['content_source_type'] == 'url'
+        assert quiz_call.kwargs['content_source_reference'] == 'https://example.com/article'
     
     @pytest.mark.asyncio
     @patch('handlers.quiz_handlers.save_metadata')

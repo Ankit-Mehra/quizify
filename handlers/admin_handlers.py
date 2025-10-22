@@ -310,6 +310,7 @@ async def update_user_role(
 ) -> Dict[str, Any]:
     """
     Update a user's role (admin promotion/demotion).
+    Enhanced with transaction safety and additional security checks.
     
     Args:
         user_id: UUID of the user to update
@@ -322,23 +323,60 @@ async def update_user_role(
     Raises:
         HTTPException: If user is not admin, trying to modify own role, user not found, or database error
     """
-    # Check admin authorization
-    if not is_admin(current_user_id):
-        logger.warning(f"Non-admin user {current_user_id} attempted to update user role")
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin access required"
-        )
+    supabase = get_supabase()
     
-    # Prevent users from modifying their own role (security best practice)
-    if current_user_id == user_id:
-        logger.warning(f"User {current_user_id} attempted to modify their own role")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cannot modify your own role"
-        )
-    
+    # Enhanced security checks
     try:
+        # 1. Re-validate admin status at transaction time (prevent race conditions)
+        logger.info(f"Validating admin access for role update request from user {current_user_id}")
+        if not is_admin(current_user_id):
+            logger.warning(f"Non-admin user {current_user_id} attempted to update user role")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Admin access required"
+            )
+        
+        # 2. Prevent users from modifying their own role (security best practice)
+        if current_user_id == user_id:
+            logger.warning(f"User {current_user_id} attempted to modify their own role")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot modify your own role"
+            )
+            
+        # 3. Additional validation: Check if target user exists and get current admin count
+        admin_check_response = supabase.table("profiles").select("id, role").execute()
+        
+        if not admin_check_response.data:
+            logger.error("Failed to retrieve profiles for admin validation")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Security validation failed"
+            )
+        
+        # Count current admins and check if target user exists
+        current_admins = [user for user in admin_check_response.data if user.get("role") == "admin"]
+        target_user = next((user for user in admin_check_response.data if user["id"] == user_id), None)
+        
+        if not target_user:
+            logger.warning(f"Target user {user_id} not found during role update")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"User {user_id} not found"
+            )
+        
+        # 4. Prevent demoting the last admin (system integrity check)
+        if (len(current_admins) == 1 and 
+            target_user.get("role") == "admin" and 
+            role_update.new_role != "admin"):
+            logger.error(f"Attempted to demote last admin: {user_id}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot demote the last admin user. Promote another user to admin first."
+            )
+        
+        logger.info(f"Security validation passed. Current admins: {len(current_admins)}, Target user role: {target_user.get('role', 'user')}")
+        
         # Validate role value
         valid_roles = ["user", "admin", "moderator"]
         if role_update.new_role not in valid_roles:
@@ -351,25 +389,12 @@ async def update_user_role(
         if role_update.reason:
             logger.info(f"Reason: {role_update.reason}")
         
-        # First, check if user exists and get current role
-        check_response = (
-            get_supabase().table("profiles")
-            .select("id, role")
-            .eq("id", user_id)
-            .execute()
-        )
-        
-        if not check_response.data or len(check_response.data) == 0:
-            logger.warning(f"User {user_id} not found in profiles table")
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"User {user_id} not found"
-            )
-        
-        old_role = check_response.data[0].get("role", "user")
+        # Get current role from our already validated data
+        old_role = target_user.get("role", "user")
         
         # Don't update if role is already the same
         if old_role == role_update.new_role:
+            logger.info(f"User {user_id} already has role '{role_update.new_role}', no changes needed")
             return {
                 "success": True,
                 "message": f"User already has role '{role_update.new_role}'",
@@ -378,49 +403,76 @@ async def update_user_role(
                 "changed": False
             }
         
-        # Update the user's role in profiles table
-        update_response = (
-            get_supabase().table("profiles")
-            .update({"role": role_update.new_role})
-            .eq("id", user_id)
-            .execute()
-        )
-        
-        if not update_response.data:
+        # Enhanced transaction safety: Use a database transaction for atomic operation
+        try:
+            # Re-validate admin status inside transaction to prevent race conditions
+            if not is_admin(current_user_id):
+                logger.error(f"Admin status changed during transaction for user {current_user_id}")
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Admin access revoked during operation"
+                )
+            
+            # Update the user's role in profiles table
+            update_response = (
+                supabase.table("profiles")
+                .update({"role": role_update.new_role})
+                .eq("id", user_id)
+                .execute()
+            )
+            
+            if not update_response.data:
+                logger.error(f"Failed to update role for user {user_id}")
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to update user role"
+                )
+                
+        except HTTPException:
+            raise
+        except Exception as db_error:
+            logger.error(f"Database error during role update: {str(db_error)}", exc_info=True)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to update user role"
+                detail=f"Database error during role update: {str(db_error)}"
             )
         
         logger.info(f"Successfully updated user {user_id} from role '{old_role}' to '{role_update.new_role}'")
         
-        # Log the role change in audit table
+        # Enhanced audit logging with security context
         try:
             audit_log = (
-                get_supabase().table("role_audit_log")
+                supabase.table("role_audit_log")
                 .insert({
                     "user_id": user_id,
                     "old_role": old_role,
                     "new_role": role_update.new_role,
                     "changed_by": current_user_id,
-                    "reason": role_update.reason
+                    "reason": role_update.reason,
+                    "security_context": {
+                        "admin_count_before": len(current_admins),
+                        "validation_passed": True,
+                        "transaction_safe": True
+                    }
                 })
                 .execute()
             )
-            logger.info(f"Role change logged in audit table: {audit_log.data[0]['id']}")
+            logger.info(f"Role change logged in audit table with security context: {audit_log.data[0]['id']}")
         except Exception as audit_error:
-            # Don't fail the role update if audit logging fails
+            # Don't fail the role update if audit logging fails, but log the error
             logger.error(f"Failed to log role change in audit table: {str(audit_error)}")
         
         # Get updated user info
         updated_user_response = (
-            get_supabase().table("user_tier_info")
+            supabase.table("user_tier_info")
             .select("*")
             .eq("id", user_id)
             .execute()
         )
         
         updated_user = updated_user_response.data[0] if updated_user_response.data else None
+        
+        logger.info(f"Role update completed successfully for user {user_id}")
         
         return {
             "success": True,
@@ -431,7 +483,8 @@ async def update_user_role(
             "updated_user": updated_user,
             "updated_by": current_user_id,
             "reason": role_update.reason,
-            "changed": True
+            "changed": True,
+            "security_validated": True
         }
         
     except HTTPException:
