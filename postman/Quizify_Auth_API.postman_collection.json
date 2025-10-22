@@ -193,6 +193,67 @@
       "response": []
     },
     {
+      "name": "4. Get Current User Info",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Status code is 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test(\"User info has all required fields\", function () {",
+              "    const response = pm.response.json();",
+              "    pm.expect(response).to.have.property('user_id');",
+              "    pm.expect(response).to.have.property('email');",
+              "    pm.expect(response).to.have.property('account_tier');",
+              "    pm.expect(response).to.have.property('role');",
+              "    pm.expect(response).to.have.property('current_quiz_count');",
+              "    pm.expect(response).to.have.property('quota_limit');",
+              "    pm.expect(response).to.have.property('quota_exceeded');",
+              "});",
+              "",
+              "pm.test(\"Tier and quota information present\", function () {",
+              "    const response = pm.response.json();",
+              "    pm.expect(['free', 'basic', 'educator']).to.include(response.account_tier);",
+              "    pm.expect(response.quota_limit).to.be.a('number');",
+              "    pm.expect(response.current_quiz_count).to.be.a('number');",
+              "    pm.expect(response.quota_exceeded).to.be.a('boolean');",
+              "    ",
+              "    console.log('User Tier: ' + response.account_tier);",
+              "    console.log('Quiz Quota: ' + response.current_quiz_count + '/' + response.quota_limit);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{auth_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/auth/me",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "auth",
+            "me"
+          ]
+        },
+        "description": "Get current authenticated user's information including tier, role, and quota.\n\n**Returns:**\n- user_id: UUID of the user\n- email: User's email address\n- account_tier: free/basic/educator\n- role: user/moderator/admin\n- current_quiz_count: Number of quizzes created\n- quota_limit: Maximum quizzes allowed for tier\n- quota_exceeded: Boolean if quota is exceeded\n- created_at: Account creation timestamp\n\n**Quota Limits by Tier:**\n- Free: 5 quizzes\n- Basic: 100 quizzes\n- Educator: 500 quizzes"
+      },
+      "response": []
+    },
+    {
       "name": "5. Update Email",
       "event": [
         {

@@ -101,7 +101,7 @@
 							"host": ["{{base_url}}"],
 							"path": ["api", "quiz", "generate", "text"]
 						},
-						"description": "Generate a quiz from text content. Validates quota before generation.\n\n**Quota Limits:**\n- Free: 5 quizzes\n- Basic: 100 quizzes\n- Educator: 500 quizzes"
+						"description": "Generate a quiz from text content. Validates quota before generation.\n\n**Authentication Required:** Bearer token in Authorization header\n\n**Quota Validation:**\n- Checked BEFORE quiz generation (avoids wasting AI API calls)\n- Returns 403 if quota exceeded\n- Quota limits: Free (5), Basic (100), Educator (500)\n\n**Request Body:**\n- title: Quiz title (string, required)\n- content: Text content to generate quiz from (min 10 chars, required)\n- num_questions: Number of questions (1-50, default: 5)\n- question_type: Array of types: [\"multiple_choice\", \"true_false\", \"fill_blank\", \"matching\", \"mixed\"]\n\n**Success Response (200):**\n```json\n{\n  \"quiz_id\": \"uuid\",\n  \"title\": \"Quiz Title\",\n  \"message\": \"Quiz generated successfully\"\n}\n```\n\n**Error Responses:**\n- 401: Unauthorized (missing/invalid token)\n- 403: Quota exceeded\n- 422: Validation error (content too short, invalid question type)"
 					},
 					"response": []
 				},
@@ -118,9 +118,20 @@
 									"",
 									"pm.test(\"Error details present\", function () {",
 									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.detail).to.have.property('detail');",
 									"    pm.expect(jsonData.detail).to.have.property('current_count');",
 									"    pm.expect(jsonData.detail).to.have.property('quota_limit');",
 									"    pm.expect(jsonData.detail).to.have.property('user_tier');",
+									"});",
+									"",
+									"pm.test(\"Quota limit reached\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.detail.current_count).to.be.at.least(jsonData.detail.quota_limit);",
+									"});",
+									"",
+									"pm.test(\"Error message includes upgrade suggestion\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.detail.detail).to.include('quota exceeded');",
 									"});"
 								],
 								"type": "text/javascript"
@@ -155,7 +166,7 @@
 							"host": ["{{base_url}}"],
 							"path": ["api", "quiz", "generate", "text"]
 						},
-						"description": "Test quota exceeded error (403). Run this after reaching your tier limit."
+						"description": "Test quota exceeded error (403). Run this after reaching your tier limit.\n\n**Quota Limits:**\n- Free: 5 quizzes\n- Basic: 100 quizzes\n- Educator: 500 quizzes\n\n**Response Format:**\n```json\n{\n  \"detail\": {\n    \"detail\": \"Quiz quota exceeded for free tier (5/5). Upgrade to basic for 100 quizzes.\",\n    \"current_count\": 5,\n    \"quota_limit\": 5,\n    \"user_tier\": \"free\"\n  }\n}\n```\n\n**Note:** Quota is checked BEFORE quiz generation to avoid wasting AI API calls."
 					},
 					"response": []
 				},
@@ -279,7 +290,7 @@
 							"host": ["{{base_url}}"],
 							"path": ["api", "quiz", "generate", "file"]
 						},
-						"description": "Upload a file and generate quiz. Supports PDF, DOCX, TXT.\n\n**Important:**\n- Quota checked BEFORE file processing\n- File must have at least 50 characters of extractable text\n- Returns questions array in response (unlike text endpoint)"
+						"description": "Upload a file and generate quiz. Supports PDF, DOCX, TXT.\n\n**Authentication Required:** Bearer token in Authorization header\n\n**Quota Validation:**\n- Checked BEFORE file processing (prevents wasting resources)\n- Returns 403 if quota exceeded\n- Quota limits: Free (5), Basic (100), Educator (500)\n\n**File Requirements:**\n- Supported formats: PDF (.pdf), Word (.docx), Text (.txt)\n- Maximum size: 10MB (10485760 bytes)\n- Minimum extractable text: 50 characters\n\n**Form Data Fields:**\n- file: File upload (required)\n- title: Quiz title (required)\n- num_questions: Number of questions (1-50, default: 10)\n- question_type: Comma-separated types or \"mixed\"\n\n**Success Response (201):**\n```json\n{\n  \"quiz_id\": \"uuid\",\n  \"title\": \"Quiz Title\",\n  \"message\": \"Quiz generated successfully from file\",\n  \"questions\": [...]\n}\n```\n\n**Error Responses:**\n- 400: Unsupported file type or insufficient content\n- 401: Unauthorized\n- 403: Quota exceeded\n- 413: File too large (>10MB)\n- 422: Validation error\n\n**Note:** Unlike text endpoint, this returns questions array in response"
 					},
 					"response": []
 				},
