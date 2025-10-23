@@ -111,7 +111,7 @@ def save_quiz_to_database(
 
 def get_quiz_from_database(quiz_id: str, user_token: str):
     try:
-        if not user_token or user_token == "undefined":
+        if not user_token or not user_token.strip():
             logger.error("User token required to fetch quiz data")
             raise HTTPException(status_code=401, detail="User authentication required to fetch quiz")
 
