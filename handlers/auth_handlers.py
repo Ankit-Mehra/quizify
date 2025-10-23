@@ -29,6 +29,8 @@ async def signup(request: SignupRequest):
     try:
         supabase = get_supabase()
         logger.info(f"Attempting to sign up user with email: {request.email}")
+        
+        # Sign up user - name goes to raw_user_meta_data
         response = supabase.auth.sign_up({
             "email": request.email,
             "password": request.password,
@@ -81,22 +83,26 @@ async def login(request: LoginRequest, response: Response):
         
         logger.info(f"User logged in: {result.user.id if result.user else 'Unknown'}")
         
-        # Set access token
+        # Set access token cookie
+        # Domain allows cookie to be shared across all subdomains (www, api, etc.)
+        # Without Domain attribute, cookie would be host-only (locked to api.quizify.ca)
         response.set_cookie(
             key="access_token",
             value=access_token,
             httponly=True,
             secure=True,
             samesite="lax",
+            domain=config.COOKIE_DOMAIN if not config.is_testing() else None,
             max_age=ACCESS_TOKEN_EXPIRE
         )
-        # Set refresh token
+        # Set refresh token cookie
         response.set_cookie(
             key="refresh_token",
             value=refresh_token,
             httponly=True,
             secure=True,
             samesite="lax",
+            domain=config.COOKIE_DOMAIN if not config.is_testing() else None,
             max_age=REFRESH_TOKEN_EXPIRE
         )
 
@@ -159,6 +165,7 @@ async def refresh_session(request: Request, response: Response):
             httponly=True,
             secure=True,
             samesite="lax",
+            domain=config.COOKIE_DOMAIN if not config.is_testing() else None,
             max_age=ACCESS_TOKEN_EXPIRE
         )
         return {"message": "Session refreshed"}
@@ -169,8 +176,10 @@ async def refresh_session(request: Request, response: Response):
 async def logout(response: Response, user_id: str = Depends(get_current_user_id)):
     try:
         logger.info(f"User {user_id} logout requested")
-        response.delete_cookie(key="access_token", path="/", httponly=True)
-        response.delete_cookie(key="refresh_token", path="/", httponly=True)
+        # Must match domain used when setting cookies
+        domain = config.COOKIE_DOMAIN if not config.is_testing() else None
+        response.delete_cookie(key="access_token", path="/", domain=domain, httponly=True)
+        response.delete_cookie(key="refresh_token", path="/", domain=domain, httponly=True)
         logger.info(f"User {user_id} logged out successfully")
         return {"message": "Successfully logged out"}
     except Exception as e:
@@ -180,14 +189,18 @@ async def logout(response: Response, user_id: str = Depends(get_current_user_id)
 
 async def change_password(request: ChangePasswordRequest,
                            user_id: str = Depends(get_current_user_id)):
+    """
+    Change password for authenticated user.
+    User is identified by JWT token (user_id), not by email in request body.
+    """
     try:
         supabase = get_supabase()
-        logger.info(f"Password change requested for user: {request.email}")
+        logger.info(f"Password change requested for user ID: {user_id}")
         supabase.auth.admin.update_user_by_id(user_id, {"password": request.new_password})
-        logger.info(f"Password updated successfully for user: {request.email}")
+        logger.info(f"Password updated successfully for user ID: {user_id}")
         return {"message": "Password updated successfully"}
     except Exception as e:
-        logger.error(f"Error during password change: {str(e)}", exc_info=True)
+        logger.error(f"Error during password change for user {user_id}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 async def delete_account(user_id: str = Depends(get_current_user_id)):

@@ -30,6 +30,10 @@ class Config:
     # In production, tokens are ONLY in HttpOnly cookies (more secure)
     DEVELOPMENT_MODE: bool = os.getenv("DEVELOPMENT_MODE", "false").lower() == "true"
     
+    # Cookie domain for cross-subdomain authentication
+    # Domain must start with '.' to work across subdomains (www, api, etc.)
+    COOKIE_DOMAIN: str = os.getenv("COOKIE_DOMAIN", ".quizify.ca")
+    
     # OpenAI configuration
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
     

@@ -21,6 +21,7 @@ class UserProfile(BaseModel):
     """User profile with account tier and role information from profiles table"""
     id: UUID
     email: str
+    display_name: Optional[str] = None  # User's display name from signup
     account_tier: ACCOUNT_TIERS = "free"
     role: USER_ROLES = "user"
     created_at: Optional[datetime] = None
@@ -29,6 +30,7 @@ class UserTierInfo(BaseModel):
     """User tier information with quota details and role"""
     id: UUID
     email: str
+    display_name: Optional[str] = None  # User's display name
     account_tier: ACCOUNT_TIERS
     role: USER_ROLES = "user"
     current_quiz_count: int
@@ -57,6 +59,7 @@ class UserWithTier(BaseModel):
     """User information with tier, role, and quota details"""
     id: str
     email: str
+    display_name: Optional[str] = None  # User's display name
     account_tier: ACCOUNT_TIERS
     role: USER_ROLES = "user"
     current_quiz_count: int
