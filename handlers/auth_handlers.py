@@ -6,7 +6,7 @@ from fastapi import Depends
 from dependencies.auth_dependencies import get_current_user_id
 from services.db_services.supabase_quiz import get_user_tier_info
 from typing import Dict, Any
-from config import config
+from config import config as app_config
 from schemas.auth import SignupRequest, LoginRequest, LogoutRequest, UpdateEmailRequest, ChangePasswordRequest
 
 security = HTTPBearer(auto_error=False)
@@ -14,9 +14,9 @@ security = HTTPBearer(auto_error=False)
 # Lazy load Supabase client to avoid initialization issues in tests
 def get_supabase():
     """Get Supabase client (lazy loaded)"""
-    return config.get_supabase_client()
+    return app_config.get_supabase_client()
 
-if config.is_testing():
+if app_config.is_testing():
     logger.info("Auth handlers initialized in TEST mode")
 else:
     logger.info("Auth handlers initialized with Supabase client")
@@ -92,7 +92,7 @@ async def login(request: LoginRequest, response: Response):
             httponly=True,
             secure=True,
             samesite="lax",
-            domain=config.COOKIE_DOMAIN if not config.is_testing() else None,
+            domain=app_config.COOKIE_DOMAIN if not app_config.is_testing() else None,
             max_age=ACCESS_TOKEN_EXPIRE
         )
         # Set refresh token cookie
@@ -102,7 +102,7 @@ async def login(request: LoginRequest, response: Response):
             httponly=True,
             secure=True,
             samesite="lax",
-            domain=config.COOKIE_DOMAIN if not config.is_testing() else None,
+            domain=app_config.COOKIE_DOMAIN if not app_config.is_testing() else None,
             max_age=REFRESH_TOKEN_EXPIRE
         )
 
@@ -117,7 +117,7 @@ async def login(request: LoginRequest, response: Response):
         
         # SECURITY: Only expose token in response body during testing or development
         # In production, token is only available via HttpOnly cookie
-        if config.is_testing() or config.is_development():
+        if app_config.is_testing() or app_config.is_development():
             response_data["access_token"] = access_token
         
         return response_data
@@ -165,7 +165,7 @@ async def refresh_session(request: Request, response: Response):
             httponly=True,
             secure=True,
             samesite="lax",
-            domain=config.COOKIE_DOMAIN if not config.is_testing() else None,
+            domain=app_config.COOKIE_DOMAIN if not app_config.is_testing() else None,
             max_age=ACCESS_TOKEN_EXPIRE
         )
         return {"message": "Session refreshed"}
@@ -177,7 +177,7 @@ async def logout(response: Response, user_id: str = Depends(get_current_user_id)
     try:
         logger.info(f"User {user_id} logout requested")
         # Must match domain used when setting cookies
-        domain = config.COOKIE_DOMAIN if not config.is_testing() else None
+        domain = app_config.COOKIE_DOMAIN if not app_config.is_testing() else None
         response.delete_cookie(key="access_token", path="/", domain=domain, httponly=True)
         response.delete_cookie(key="refresh_token", path="/", domain=domain, httponly=True)
         logger.info(f"User {user_id} logged out successfully")

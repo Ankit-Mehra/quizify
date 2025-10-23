@@ -16,7 +16,7 @@ from services.logger import ai_logger as logger
 from uuid import uuid4
 from schemas.conversion import convert_parsed_to_quizzes
 
-logger.info("OpenAI service initialized")
+logger.debug("OpenAI service initialized")
 load_dotenv()
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -31,7 +31,7 @@ QUESTION_TYPE_PROMPTS = {
 }
 
 async def generate_quiz_for_type(qtype: str, text: str, num_questions: int) -> List[Question]:
-    logger.info(f"Generating {num_questions} questions of type: {qtype}")
+    logger.debug("Generating %s questions of type %s", num_questions, qtype)
     prompt_builder = QUESTION_TYPE_PROMPTS[qtype]
     prompt = prompt_builder(text, num_questions)
 
@@ -55,7 +55,7 @@ async def generate_quiz_for_type(qtype: str, text: str, num_questions: int) -> L
 async def generate_quiz_async(text: str, num_questions: int, question_types: List[str]) -> Quizzes:
     prompt = build_quiz_prompt_mixed(text, num_questions, question_types)
     
-    logger.info(f"Generating quiz with prompt: {prompt}")
+    logger.debug("Generating quiz with %s questions for types %s", num_questions, question_types)
     response = await client.beta.chat.completions.parse(
         model="gpt-4o-mini",
         messages=[{"role": "user", "content": prompt}],
