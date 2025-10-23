@@ -109,10 +109,14 @@ def save_quiz_to_database(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-def get_quiz_from_database(quiz_id: str):
+def get_quiz_from_database(quiz_id: str, user_token: str):
     try:
-        supabase = get_supabase()
-        logger.debug(f"Fetching quiz with ID: {quiz_id}")
+        if not user_token or user_token == "undefined":
+            logger.error("User token required to fetch quiz data")
+            raise HTTPException(status_code=401, detail="User authentication required to fetch quiz")
+
+        supabase = get_authed_supabase_client(user_token)
+        logger.debug(f"Using authenticated client to fetch quiz: {quiz_id}")
 
         # Get the quiz metadata
         quiz = supabase.table("quizzes").select("*").eq("id", quiz_id).execute()
@@ -135,6 +139,8 @@ def get_quiz_from_database(quiz_id: str):
             "created_at": quiz_data["created_at"],
             "questions": questions_data
         }
+    except HTTPException as http_exc:
+        raise http_exc
     except Exception as e:
         logger.error(f"Error retrieving quiz from database: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))

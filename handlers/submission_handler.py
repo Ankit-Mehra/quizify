@@ -8,7 +8,7 @@ from uuid import UUID, uuid4
 from datetime import datetime
 from services.db_services.supabase_submission import get_question, save_submission, save_answer, get_submission_by_id
 from services.db_services.supabase_quiz import get_quiz_from_database
-from dependencies.auth_dependencies import get_current_user_id
+from dependencies.auth_dependencies import get_current_user_id, get_current_user_token
 from services.logger import app_logger as logger
 
 
@@ -43,7 +43,8 @@ def parse_question_models(raw_questions: List[Any]) -> List[Question]:
 async def submit_quiz(
     quiz_id: UUID,
     submission: QuizSubmissionRequest,
-    user_id: str = Depends(get_current_user_id)
+    user_id: str = Depends(get_current_user_id),
+    user_token: str = Depends(get_current_user_token)
 ):
     """Submit answers for a quiz and get detailed results with score"""
     # Validate that quiz_id in path matches quiz_id in body
@@ -56,7 +57,7 @@ async def submit_quiz(
     # Validate that the quiz exists before processing submission
     # Note: total_questions > 0 is already validated by Pydantic schema (gt=0)
     try:
-        get_quiz_from_database(str(quiz_id))
+        get_quiz_from_database(str(quiz_id), user_token)
     except HTTPException as e:
         if e.status_code == 404:
             raise HTTPException(status_code=404, detail="Quiz not found. Please verify the quiz ID.")
