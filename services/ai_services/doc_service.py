@@ -22,7 +22,7 @@ def extract_text_from_pdf(contents):
         return text
     except Exception as e:
         logger.exception("Error extracting text from PDF")
-        raise Exception(f"Failed to extract text from PDF: {str(e)}")
+        raise Exception("Failed to extract text from PDF")
     finally:
         # Clean up the temporary file
         if os.path.exists(temp_path):

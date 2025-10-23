@@ -199,6 +199,7 @@ def get_metadata(user_id: str):
         logger.debug(f"Fetching metadata for user: {user_id}")
 
         metadata = supabase.table("quiz_metadata").select("*").eq("created_by", user_id).execute()
+        logger.debug("Found %s metadata records for user: %s", len(metadata.data or []), user_id)
         return metadata.data
     except Exception as e:
         logger.error(f"Error retrieving metadata: {str(e)}", exc_info=True)
