@@ -83,22 +83,26 @@ async def login(request: LoginRequest, response: Response):
         
         logger.info(f"User logged in: {result.user.id if result.user else 'Unknown'}")
         
-        # Set access token
+        # Set access token cookie
+        # SameSite="none" required for cross-site cookies (www.quizify.ca -> api.quizify.ca)
+        # domain=".quizify.ca" allows cookie sharing across subdomains
         response.set_cookie(
             key="access_token",
             value=access_token,
             httponly=True,
-            secure=True,
-            samesite="lax",
+            secure=True,  # Required when SameSite="none"
+            samesite="none",  # Changed from "lax" to allow cross-site cookies
+            domain=".quizify.ca" if not config.is_testing() else None,  # Share across subdomains in production
             max_age=ACCESS_TOKEN_EXPIRE
         )
-        # Set refresh token
+        # Set refresh token cookie
         response.set_cookie(
             key="refresh_token",
             value=refresh_token,
             httponly=True,
-            secure=True,
-            samesite="lax",
+            secure=True,  # Required when SameSite="none"
+            samesite="none",  # Changed from "lax" to allow cross-site cookies
+            domain=".quizify.ca" if not config.is_testing() else None,  # Share across subdomains in production
             max_age=REFRESH_TOKEN_EXPIRE
         )
 
@@ -159,8 +163,9 @@ async def refresh_session(request: Request, response: Response):
             key="access_token",
             value=new_access_token,
             httponly=True,
-            secure=True,
-            samesite="lax",
+            secure=True,  # Required when SameSite="none"
+            samesite="none",  # Changed from "lax" to allow cross-site cookies
+            domain=".quizify.ca" if not config.is_testing() else None,  # Share across subdomains in production
             max_age=ACCESS_TOKEN_EXPIRE
         )
         return {"message": "Session refreshed"}
