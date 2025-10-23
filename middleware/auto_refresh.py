@@ -4,6 +4,7 @@ from fastapi.responses import JSONResponse
 from starlette.status import HTTP_401_UNAUTHORIZED
 import os
 import requests
+from config import config
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
@@ -67,6 +68,7 @@ class SupabaseAutoRefreshMiddleware(BaseHTTPMiddleware):
                         httponly=True,
                         secure=True,
                         samesite="lax",
+                        domain=config.COOKIE_DOMAIN if not config.is_testing() else None,
                         max_age=ACCESS_TOKEN_EXPIRE
                     )
                     return response
