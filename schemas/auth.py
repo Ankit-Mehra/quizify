@@ -29,4 +29,3 @@ class UpdateEmailRequest(BaseModel):
 class ChangePasswordRequest(BaseModel):
     """Request model for changing user password - user identified by JWT token"""
     new_password: str = Field(..., min_length=8, description="Password must be at least 8 characters")
-    # Note: email field removed - user identified by JWT token (user_id from Depends(get_current_user_id))

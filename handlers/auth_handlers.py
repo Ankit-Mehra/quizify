@@ -84,7 +84,7 @@ async def login(request: LoginRequest, response: Response):
         logger.info(f"User logged in: {result.user.id if result.user else 'Unknown'}")
         
         # Set access token cookie
-        # Domain=.quizify.ca allows cookie to be shared across all subdomains (www, api, etc.)
+        # Domain allows cookie to be shared across all subdomains (www, api, etc.)
         # Without Domain attribute, cookie would be host-only (locked to api.quizify.ca)
         response.set_cookie(
             key="access_token",
@@ -92,7 +92,7 @@ async def login(request: LoginRequest, response: Response):
             httponly=True,
             secure=True,
             samesite="lax",
-            domain=".quizify.ca" if not config.is_testing() else None,
+            domain=config.COOKIE_DOMAIN if not config.is_testing() else None,
             max_age=ACCESS_TOKEN_EXPIRE
         )
         # Set refresh token cookie
@@ -102,7 +102,7 @@ async def login(request: LoginRequest, response: Response):
             httponly=True,
             secure=True,
             samesite="lax",
-            domain=".quizify.ca" if not config.is_testing() else None,
+            domain=config.COOKIE_DOMAIN if not config.is_testing() else None,
             max_age=REFRESH_TOKEN_EXPIRE
         )
 
@@ -165,7 +165,7 @@ async def refresh_session(request: Request, response: Response):
             httponly=True,
             secure=True,
             samesite="lax",
-            domain=".quizify.ca" if not config.is_testing() else None,
+            domain=config.COOKIE_DOMAIN if not config.is_testing() else None,
             max_age=ACCESS_TOKEN_EXPIRE
         )
         return {"message": "Session refreshed"}
@@ -177,7 +177,7 @@ async def logout(response: Response, user_id: str = Depends(get_current_user_id)
     try:
         logger.info(f"User {user_id} logout requested")
         # Must match domain used when setting cookies
-        domain = ".quizify.ca" if not config.is_testing() else None
+        domain = config.COOKIE_DOMAIN if not config.is_testing() else None
         response.delete_cookie(key="access_token", path="/", domain=domain, httponly=True)
         response.delete_cookie(key="refresh_token", path="/", domain=domain, httponly=True)
         logger.info(f"User {user_id} logged out successfully")
@@ -195,12 +195,12 @@ async def change_password(request: ChangePasswordRequest,
     """
     try:
         supabase = get_supabase()
-        logger.info(f"Password change requested for user ID: {user_id[:8]}...")  # Truncated for security
+        logger.info(f"Password change requested for user ID: {user_id}")
         supabase.auth.admin.update_user_by_id(user_id, {"password": request.new_password})
-        logger.info(f"Password updated successfully for user ID: {user_id[:8]}...")
+        logger.info(f"Password updated successfully for user ID: {user_id}")
         return {"message": "Password updated successfully"}
     except Exception as e:
-        logger.error(f"Error during password change for user {user_id[:8]}...: {str(e)}", exc_info=True)
+        logger.error(f"Error during password change for user {user_id}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 async def delete_account(user_id: str = Depends(get_current_user_id)):
