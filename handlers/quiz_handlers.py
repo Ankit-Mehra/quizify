@@ -410,7 +410,8 @@ async def get_user_quizzes_handler(
 # === Get quiz by ID ===
 async def get_quiz_by_id_handler(
     quiz_id: str = Path(...),
-    current_user_id: str = Depends(get_current_user_id)
+    current_user_id: str = Depends(get_current_user_id),
+    user_token: str = Depends(get_current_user_token)
 ):
     """Get a specific quiz by ID."""
     try:
@@ -423,7 +424,7 @@ async def get_quiz_by_id_handler(
             
         # Get quiz data from database (this will raise 404 if not found)
         try:
-            quiz_data = get_quiz_from_database(quiz_id)
+            quiz_data = get_quiz_from_database(quiz_id, user_token)
         except HTTPException as e:
             if e.status_code == 404:
                 # Quiz truly doesn't exist
