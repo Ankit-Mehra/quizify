@@ -1,13 +1,13 @@
 from fastapi import HTTPException, Body, Response, Request
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from pydantic import BaseModel
 from services.logger import app_logger as logger
 from fastapi import Depends
 from dependencies.auth_dependencies import get_current_user_id
 from services.db_services.supabase_quiz import get_user_tier_info
-from typing import Optional, Dict, Any
+from typing import Dict, Any
 from config import config
+from schemas.auth import SignupRequest, LoginRequest, LogoutRequest, UpdateEmailRequest, ChangePasswordRequest
 
 security = HTTPBearer(auto_error=False)
 
@@ -24,28 +24,17 @@ else:
 ACCESS_TOKEN_EXPIRE = 3600  # 1 hour
 REFRESH_TOKEN_EXPIRE = 60 * 60 * 24 * 30  # 30 days
 
-# Define request models
-class LoginRequest(BaseModel):
-    email: str
-    password: str
-
-class LogoutRequest(BaseModel):
-    token: Optional[str] = None
-
-class UpdateEmailRequest(BaseModel):
-    new_email: str
-
 # Remove template rendering functions
-async def signup(email: str = Body(...), password: str = Body(...), name: str = Body(...)):
+async def signup(request: SignupRequest):
     try:
         supabase = get_supabase()
-        logger.info(f"Attempting to sign up user with email: {email}")
+        logger.info(f"Attempting to sign up user with email: {request.email}")
         response = supabase.auth.sign_up({
-            "email": email,
-            "password": password,
+            "email": request.email,
+            "password": request.password,
             "options": {
                 "data": {
-                    "name": name
+                    "name": request.name
                 }
             }
         })
@@ -55,7 +44,7 @@ async def signup(email: str = Body(...), password: str = Body(...), name: str = 
             content={"message": "User created successfully. Please check your email for verification.", "user_id": response.user.id if response.user else None}
         )
     except Exception as e:
-        logger.error(f"Error during signup: {str(e)}")
+        logger.error(f"Error during signup for {request.email}: {str(e)}")
         error_message = str(e)
         
         # Handle specific Supabase errors with appropriate status codes
@@ -189,14 +178,13 @@ async def logout(response: Response, user_id: str = Depends(get_current_user_id)
         raise HTTPException(status_code=500, detail=str(e))
 
 
-async def change_password(email: str = Body(...),
-                           new_password: str = Body(...),
+async def change_password(request: ChangePasswordRequest,
                            user_id: str = Depends(get_current_user_id)):
     try:
         supabase = get_supabase()
-        logger.info(f"Password change requested for user: {email}")
-        supabase.auth.admin.update_user_by_id(user_id, {"password": new_password})
-        logger.info(f"Password updated successfully for user: {email}")
+        logger.info(f"Password change requested for user: {request.email}")
+        supabase.auth.admin.update_user_by_id(user_id, {"password": request.new_password})
+        logger.info(f"Password updated successfully for user: {request.email}")
         return {"message": "Password updated successfully"}
     except Exception as e:
         logger.error(f"Error during password change: {str(e)}", exc_info=True)
