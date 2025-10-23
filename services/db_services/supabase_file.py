@@ -5,25 +5,24 @@ from datetime import datetime
 from dependencies.auth_dependencies import get_current_user_id, get_current_user_token
 from services.ai_services.doc_service import extract_text_from_pdf, is_pdf
 import logging
-from config import config
+from config import config as app_config
 
 logger = logging.getLogger(__name__)
 
 # Lazy load Supabase client to avoid initialization issues in tests
 def get_supabase():
     """Get Supabase client (lazy loaded)"""
-    return config.get_supabase_client()
+    return app_config.get_supabase_client()
 
 # Use centralized configuration
-STORAGE_NAME = config.STORAGE_NAME
-SUPABASE_URL = config.SUPABASE_URL
+STORAGE_NAME = app_config.STORAGE_NAME
+SUPABASE_URL = app_config.SUPABASE_URL
 
 def save_file_to_supabase(user_id: str, file_bytes: bytes, original_filename: str, token: str, file_type: str):
     try:
         # Use authenticated client for RLS enforcement on database operations
-        from config import config as app_config
         supabase = app_config.get_authenticated_supabase_client(token)
-        logger.info(f"Using authenticated client to save file for user {user_id}")
+        logger.debug(f"Using authenticated client to save file for user {user_id}")
         
         #genereate a unique ID
         unique_id = str(uuid.uuid4())
@@ -39,7 +38,7 @@ def save_file_to_supabase(user_id: str, file_bytes: bytes, original_filename: st
                 "Content-Type": file_type
             }
             
-            logger.info(f"Uploading file to storage: {upload_url}")
+            logger.debug(f"Uploading file to storage: {upload_url}")
             response = httpx.post(upload_url, headers=headers, content=file_bytes)
             
             if response.status_code != 200:
@@ -49,7 +48,7 @@ def save_file_to_supabase(user_id: str, file_bytes: bytes, original_filename: st
                     detail=f"Failed to upload file to storage: {response.text}"
                 )
             
-            logger.info(f"File uploaded successfully to storage: {path}")
+            logger.debug(f"File uploaded successfully to storage: {path}")
             
         except HTTPException:
             raise
@@ -65,7 +64,7 @@ def save_file_to_supabase(user_id: str, file_bytes: bytes, original_filename: st
             raise HTTPException(status_code=500, detail="Supabase client is not initialized. Check your configuration.")
         
         file_size = len(file_bytes)
-        logger.info(f"Saving file metadata to database for file {unique_id}")
+        logger.debug(f"Saving file metadata to database for file {unique_id}")
         supabase.table("user_files").insert({
             "id": unique_id,
             "user_id": user_id,
@@ -76,7 +75,7 @@ def save_file_to_supabase(user_id: str, file_bytes: bytes, original_filename: st
             "uploaded_at": datetime.now().isoformat()
         }).execute()
         
-        logger.info("File metadata saved successfully")
+        logger.debug("File metadata saved successfully")
         
         # Return the file_id so caller can link it to quiz
         return {"file_id": unique_id, "storage_path": path}
@@ -119,11 +118,11 @@ def get_file_record(file_id: str):
     
 def create_presigned_url(file_id: str, user_id: str = Depends(get_current_user_id), token: str = Depends(get_current_user_token)):
     try:
-        logger.info(f"Creating presigned URL for file {file_id}")
-        logger.info(f"User ID: {user_id}")
+        logger.debug(f"Creating presigned URL for file {file_id}")
+        logger.debug(f"User ID: {user_id}")
 
         file_record = get_file_record(file_id)
-        logger.info(f"File data: {file_record}")
+        logger.debug(f"File data: {file_record}")
         
         if not file_record:
             logger.error("File record not found in database")
@@ -136,8 +135,8 @@ def create_presigned_url(file_id: str, user_id: str = Depends(get_current_user_i
 
         # Get storage path
         storage_path = file_record["storage_path"]
-        logger.info(f"Storage path: {storage_path}")
-        
+        logger.debug(f"Storage path: {storage_path}")
+
         try:
             headers = {
                 "Authorization": f"Bearer {token}",

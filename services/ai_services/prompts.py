@@ -2,7 +2,7 @@ from typing import List
 from services.logger import ai_logger as logger
 
 def build_quiz_prompt_mixed(text: str, num_questions: int, types: List[str]) -> str:
-    logger.info(f"Building mixed quiz prompt with {num_questions} questions, types: {types}")
+    logger.debug("Building mixed quiz prompt with %s questions for types %s", num_questions, types)
     
     all_types = ["multiple_choice", "true_false", "fill_blank", "matching"]
     final_types = all_types if "mixed" in types else types

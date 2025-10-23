@@ -2,24 +2,24 @@ from fastapi import HTTPException
 from schemas.quiz import Question
 from typing import List, Optional
 from services.logger import db_logger as logger
-from config import config
+from config import config as app_config
 
 # Lazy load Supabase client to avoid initialization issues in tests
 def get_supabase():
     """Get Supabase client (lazy loaded)"""
-    return config.get_supabase_client()
+    return app_config.get_supabase_client()
 
 # Use centralized configuration
-STORAGE_NAME = config.STORAGE_NAME
+STORAGE_NAME = app_config.STORAGE_NAME
 
-if config.is_testing():
-    logger.info("Supabase client initialized in TEST mode")
+if app_config.is_testing():
+    logger.debug("Supabase client initialized in TEST mode")
 else:
-    logger.info("Supabase client initialized")
+    logger.debug("Supabase client initialized")
 
 def get_authed_supabase_client(user_token: str):
     logger.debug(f"Creating authenticated Supabase client with token: {user_token[:10]}...")
-    return config.get_authenticated_supabase_client(user_token)
+    return app_config.get_authenticated_supabase_client(user_token)
 
 def save_quiz_to_database(
     title: str, 
@@ -33,13 +33,13 @@ def save_quiz_to_database(
         # Use authenticated client if token provided, otherwise use service role
         if user_token:
             supabase = get_authed_supabase_client(user_token)
-            logger.info(f"Using authenticated client for user {created_by}")
+            logger.debug(f"Using authenticated client for user {created_by}")
             logger.debug(f"Token being used: {user_token[:20]}...")
         else:
             supabase = get_supabase()
-            logger.info("Using service role client")
-            
-        logger.info(f"Saving quiz '{title}' with {len(quizzes)} questions")
+            logger.debug("Using service role client")
+        
+        logger.debug(f"Saving quiz '{title}' with {len(quizzes)} questions")
         # Validate user ID to prevent UUID errors
         if not created_by or created_by == "undefined":
             logger.error("User authentication required to save quiz")
@@ -65,7 +65,7 @@ def save_quiz_to_database(
         
         quiz_response = supabase.table("quizzes").insert(quiz_data).execute()
         quiz_id = quiz_response.data[0]["id"]
-        logger.info(f"Created quiz with ID: {quiz_id}")
+        logger.debug(f"Created quiz with ID: {quiz_id}")
 
         # Build question payload based on type
         question_payload = []
@@ -100,7 +100,7 @@ def save_quiz_to_database(
         # Insert into questions table and get back the saved questions with IDs
         questions_response = supabase.table("questions").insert(question_payload).execute()
         saved_questions = questions_response.data
-        logger.info(f"Added {len(question_payload)} questions to quiz {quiz_id}")
+        logger.debug(f"Added {len(question_payload)} questions to quiz {quiz_id}")
 
         return quiz_id, saved_questions  # Return both quiz_id and saved questions with IDs
 
@@ -112,8 +112,8 @@ def save_quiz_to_database(
 def get_quiz_from_database(quiz_id: str):
     try:
         supabase = get_supabase()
-        logger.info(f"Fetching quiz with ID: {quiz_id}")
-        
+        logger.debug(f"Fetching quiz with ID: {quiz_id}")
+
         # Get the quiz metadata
         quiz = supabase.table("quizzes").select("*").eq("id", quiz_id).execute()
         if not quiz.data:
@@ -122,10 +122,10 @@ def get_quiz_from_database(quiz_id: str):
         
         # Get the questions for the quiz
         questions = supabase.table("questions").select("*").eq("quiz_id", quiz_id).execute()
-        
+
         quiz_data = quiz.data[0]
         questions_data = questions.data
-        logger.info(f"Found quiz '{quiz_data['title']}' with {len(questions_data)} questions")
+        logger.debug(f"Found quiz '{quiz_data['title']}' with {len(questions_data)} questions")
         
         # Format the response
         return {
@@ -145,33 +145,32 @@ def get_user_quizzes(user_id: str, user_token: Optional[str] = None):
         # Use authenticated client if token provided, otherwise use service role
         if user_token:
             supabase = get_authed_supabase_client(user_token)
-            logger.info(f"Using authenticated client to fetch quizzes for user: {user_id}")
+            logger.debug(f"Using authenticated client to fetch quizzes for user: {user_id}")
         else:
             supabase = get_supabase()
-            logger.info(f"Using service role to fetch quizzes for user: {user_id}")
+            logger.debug(f"Using service role to fetch quizzes for user: {user_id}")
         
         # Get all quizzes for a user
         quizzes_data = supabase.table("quizzes").select("*").eq("created_by", user_id).execute()
         
         if not quizzes_data.data:
-            logger.info(f"No quizzes found for user: {user_id}")
+            logger.debug(f"No quizzes found for user: {user_id}")
             return []
         
         # Process the results and add question_count
         quizzes = []
         for quiz in quizzes_data.data:
-            # Count questions for this quiz
             questions = supabase.table("questions").select("id", count="exact").eq("quiz_id", quiz["id"]).execute()  # type: ignore
-            
+
             quizzes.append({
                 "id": quiz["id"],
                 "title": quiz["title"],
                 "created_at": quiz["created_at"],
                 "created_by": quiz["created_by"],
-                "question_count": questions.count or 0  # Add question count
+                "question_count": questions.count or 0
             })
-        
-        logger.info(f"Found {len(quizzes)} quizzes for user: {user_id}")
+
+        logger.debug(f"Found {len(quizzes)} quizzes for user: {user_id}")
         return quizzes
     except Exception as e:
         logger.error(f"Error retrieving user quizzes: {str(e)}", exc_info=True)
@@ -183,13 +182,13 @@ def save_metadata(metadata: dict, user_token: Optional[str] = None):
         # Use authenticated client if token provided, otherwise use service role
         if user_token:
             supabase = get_authed_supabase_client(user_token)
-            logger.info(f"Using authenticated client to save metadata for quiz: {metadata.get('quiz_id', 'unknown')}")
+            logger.debug(f"Using authenticated client to save metadata for quiz: {metadata.get('quiz_id', 'unknown')}")
         else:
             supabase = get_supabase()
-            logger.info(f"Using service role to save metadata for quiz: {metadata.get('quiz_id', 'unknown')}")
+            logger.debug(f"Using service role to save metadata for quiz: {metadata.get('quiz_id', 'unknown')}")
         
         supabase.table("quiz_metadata").insert(metadata).execute()
-        logger.info("Metadata saved successfully")
+        logger.debug("Metadata saved successfully")
     except Exception as e:
         logger.error(f"Error saving metadata: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
@@ -197,10 +196,9 @@ def save_metadata(metadata: dict, user_token: Optional[str] = None):
 def get_metadata(user_id: str):
     try:
         supabase = get_supabase()
-        logger.info(f"Fetching metadata for user: {user_id}")
-        
+        logger.debug(f"Fetching metadata for user: {user_id}")
+
         metadata = supabase.table("quiz_metadata").select("*").eq("created_by", user_id).execute()
-        logger.info(f"Found {len(metadata.data)} metadata records for user: {user_id}")
         return metadata.data
     except Exception as e:
         logger.error(f"Error retrieving metadata: {str(e)}", exc_info=True)
@@ -209,10 +207,10 @@ def get_metadata(user_id: str):
 def delete_quiz_from_database(quiz_id: str):
     try:
         supabase = get_supabase()
-        logger.info(f"Deleting quiz with ID: {quiz_id}")
-        
+        logger.debug(f"Deleting quiz with ID: {quiz_id}")
+
         supabase.table("quizzes").delete().eq("id", quiz_id).execute()
-        logger.info(f"Quiz deleted successfully: {quiz_id}")
+        logger.debug(f"Quiz deleted successfully: {quiz_id}")
     except Exception as e:
         logger.error(f"Error deleting quiz: {str(e)}", exc_info=True)
 
@@ -232,7 +230,7 @@ def get_user_tier_info(user_id: str):
     """
     try:
         supabase = get_supabase()
-        logger.info(f"Fetching tier info for user: {user_id}")
+        logger.debug(f"Fetching tier info for user: {user_id}")
         
         # Query the user_tier_info view
         response = supabase.table("user_tier_info").select("*").eq("id", user_id).execute()
@@ -242,9 +240,11 @@ def get_user_tier_info(user_id: str):
             raise HTTPException(status_code=404, detail="User not found")
         
         tier_info = response.data[0]
-        logger.info(f"User {user_id} tier info: tier={tier_info['account_tier']}, "
-                   f"count={tier_info['current_quiz_count']}/{tier_info['quota_limit']}, "
-                   f"exceeded={tier_info['quota_exceeded']}")
+        logger.debug(
+            f"User {user_id} tier info: tier={tier_info['account_tier']}, "
+            f"count={tier_info['current_quiz_count']}/{tier_info['quota_limit']}, "
+            f"exceeded={tier_info['quota_exceeded']}"
+        )
         
         return tier_info
         

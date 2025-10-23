@@ -12,7 +12,7 @@ import asyncio
 from collections import defaultdict
 from fastapi import HTTPException
 from services.logger import app_logger as logger
-from config import config
+from config import config as app_config
 
 # Constants
 MAX_CONTENT_SIZE = 500 * 1024  # 500KB
@@ -372,7 +372,7 @@ async def scrape_content(url: str, user_id: str = "anonymous") -> str:
                     
                     # Set up context with security and resource constraints
                     context = await browser.new_context(
-                        user_agent=config.SCRAPER_USER_AGENT,
+                        user_agent=app_config.SCRAPER_USER_AGENT,
                         viewport={'width': 1024, 'height': 768},  # Fixed viewport for consistency
                         java_script_enabled=True,  # Allow JS but with timeout controls
                         ignore_https_errors=False,  # Maintain HTTPS validation

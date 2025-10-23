@@ -5,19 +5,19 @@ from schemas.submission import QuizSubmission, QuizAnswer
 from schemas.quiz import Question
 from fastapi import HTTPException
 from uuid import UUID
-from config import config
+from config import config as app_config
 
 # Lazy load Supabase client to avoid initialization issues in tests
 def get_supabase():
     """Get Supabase client (lazy loaded)"""
-    return config.get_supabase_client()
+    return app_config.get_supabase_client()
 
 def get_question(question_ids: List[UUID]) -> List[Question]:
     """
     Get questions by their IDs using Supabase `.in_` clause
     """
     supabase = get_supabase()
-    logger.info(f"Fetching {len(question_ids)} questions")
+    logger.debug(f"Fetching {len(question_ids)} questions")
     try:
         response = (
             supabase
@@ -30,8 +30,8 @@ def get_question(question_ids: List[UUID]) -> List[Question]:
         if not response.data:
             logger.warning("No questions found for provided IDs")
             raise HTTPException(status_code=404, detail="Questions not found. The quiz may have been deleted.")
-        
-        logger.info(f"Successfully retrieved {len(response.data)} questions")
+
+        logger.debug(f"Successfully retrieved {len(response.data)} questions")
         return response.data
     except HTTPException:
         raise  # Re-raise HTTP exceptions as-is
@@ -43,11 +43,11 @@ def get_question(question_ids: List[UUID]) -> List[Question]:
 
 def save_submission(submission: QuizSubmission):
     supabase = get_supabase()
-    logger.info(f"Saving submission for quiz_id: {submission.quiz_id}, user_id: {submission.user_id}")
+    logger.debug(f"Saving submission for quiz_id: {submission.quiz_id}, user_id: {submission.user_id}")
     try:
         payload = submission.model_dump(mode="json")
         supabase.table("submissions").insert(payload).execute()
-        logger.info(f"Successfully saved submission: {submission.id}")
+        logger.debug(f"Successfully saved submission: {submission.id}")
     except Exception as e:
         # Log full error details for debugging
         logger.error(f"Database error saving submission: {str(e)}")
@@ -65,7 +65,7 @@ def save_submission(submission: QuizSubmission):
 
 def save_answer(answer: QuizAnswer):
     supabase = get_supabase()
-    logger.info(f"Saving answer for question_id: {answer.question_id}")
+    logger.debug(f"Saving answer for question_id: {answer.question_id}")
     try:
         payload = answer.model_dump(mode="json")
         supabase.table("answers").insert(payload).execute()
@@ -84,7 +84,7 @@ def save_answer(answer: QuizAnswer):
 
 def get_submission_by_id(submission_id: UUID) -> QuizSubmission:
     supabase = get_supabase()
-    logger.info(f"Fetching submission with id: {submission_id}")
+    logger.debug(f"Fetching submission with id: {submission_id}")
     try:
         response = (
             supabase
@@ -96,9 +96,8 @@ def get_submission_by_id(submission_id: UUID) -> QuizSubmission:
         if not response.data:
             logger.warning(f"Submission not found: {submission_id}")
             raise HTTPException(status_code=404, detail="Submission not found.")
-        
-        logger.info(f"Successfully retrieved submission: {submission_id}")
-        # Convert dict to Pydantic model
+
+        logger.debug(f"Successfully retrieved submission: {submission_id}")
         return QuizSubmission(**response.data[0])
     except HTTPException:
         raise  # Re-raise HTTP exceptions as-is

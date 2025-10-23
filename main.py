@@ -11,10 +11,10 @@ load_dotenv()
 
 # Import configuration and validate BEFORE importing other modules
 # This ensures the app fails fast at startup if Supabase is misconfigured
-from config import config  # noqa: E402
+from config import config as app_config  # noqa: E402
 
 # Validate configuration at startup (will raise RuntimeError if misconfigured)
-config.validate_config()
+app_config.validate_config()
 
 # Import modules that depend on environment variables
 from services.logger import app_logger as logger  # noqa: E402
