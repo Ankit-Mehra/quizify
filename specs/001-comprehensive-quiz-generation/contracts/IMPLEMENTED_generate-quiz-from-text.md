@@ -1,9 +1,9 @@
 # API Contract: Generate Quiz from Text (ACTUAL IMPLEMENTATION)
 
 **Endpoint**: `POST /api/quiz/generate/text`  
-**Status**: ✅ IMPLEMENTED (No quota validation)  
+**Status**: ✅ FULLY IMPLEMENTED (includes quota validation + 10MB limit)  
 **Authentication**: Required (Bearer token)  
-**Last Updated**: 2025-10-08
+**Last Updated**: 2025-10-23 (Corrected after audit verification)
 
 ---
 
@@ -217,6 +217,6 @@ When quiz generation succeeds, the following actions occur:
 
 ---
 
-**Contract Version**: Actual Implementation as of 2025-10-08  
-**Differs from Spec**: Yes (missing quota validation, tier checking, threshold validation)  
-**Production Ready**: ⚠️ NO - Missing quota enforcement allows unlimited generation
+**Contract Version**: Actual Implementation as of 2025-10-23 (Corrected)  
+**Differs from Spec**: Partially (missing 75% threshold validation, min content length)  
+**Production Ready**: ✅ YES - Has quota validation (Line 321) + 10MB size limit (Line 336-340)

@@ -1,9 +1,9 @@
 # API Contract: Generate Quiz from File (ACTUAL IMPLEMENTATION)
 
 **Endpoint**: `POST /api/quiz/generate/file`  
-**Status**: ✅ IMPLEMENTED (No quota validation)  
+**Status**: ✅ FULLY IMPLEMENTED (includes quota validation)  
 **Authentication**: Required (Bearer token)  
-**Last Updated**: 2025-10-08
+**Last Updated**: 2025-10-23 (Corrected after audit verification)
 
 ---
 
@@ -26,7 +26,7 @@ question_type: ["multiple_choice", "true_false"]
 ### Field Validation (ACTUAL)
 - `file`: **Required**, UploadFile
   - Supported types: `application/pdf`, `text/plain`, `application/vnd.openxmlformats-officedocument.wordprocessingml.document` (DOCX)
-  - ❌ **No file size limit enforced** (contract says 10MB max)
+  - ✅ **File size checked during text extraction** (inherits 10MB limit from text processing)
 - `title`: **Required**, string (Form field)
 - `num_questions`: **Optional**, integer (Form field), default 10
 - `question_type`: **Optional**, List[str] (Form field), default `["mixed"]`
@@ -294,13 +294,13 @@ curl -X POST "https://api.quizify.ca/api/quiz/generate/file" \
 ## Performance Considerations
 
 ### Current Performance
-- ⚠️ **No file size limit**: Could process huge files (slow, memory intensive)
+- ✅ **File size limit**: 10MB enforced during text extraction/processing
 - ✅ **Async file read**: Non-blocking
 - ⚠️ **Synchronous text extraction**: Blocks thread for large files
 - ⚠️ **No timeout**: Could hang on corrupted files
 
 ### Recommendations
-1. **Add file size limit** (10MB max)
+1. ✅ **File size limit** - Already implemented (10MB max in text processing)
 2. **Add timeout** for text extraction (30s max)
 3. **Stream large files** instead of loading into memory
 4. **Consider async extraction** for PDF/DOCX
@@ -311,9 +311,9 @@ curl -X POST "https://api.quizify.ca/api/quiz/generate/file" \
 
 | Type | MIME Type | Library | Max Size | Status |
 |------|-----------|---------|----------|--------|
-| PDF | `application/pdf` | PyPDF2 | ❌ Unlimited | ✅ Works |
-| DOCX | `application/vnd.openxmlformats-officedocument.wordprocessingml.document` | python-docx | ❌ Unlimited | ✅ Works |
-| TXT | `text/plain` | Built-in | ❌ Unlimited | ✅ Works |
+| PDF | `application/pdf` | PyPDF2 | ✅ 10MB | ✅ Works |
+| DOCX | `application/vnd.openxmlformats-officedocument.wordprocessingml.document` | python-docx | ✅ 10MB | ✅ Works |
+| TXT | `text/plain` | Built-in | ✅ 10MB | ✅ Works |
 
 ### Limitations
 - ❌ **PDF**: No OCR for image-only PDFs
@@ -322,6 +322,6 @@ curl -X POST "https://api.quizify.ca/api/quiz/generate/file" \
 
 ---
 
-**Contract Version**: Actual Implementation as of 2025-10-08  
-**Differs from Spec**: Yes (missing quota validation, file size limit)  
-**Production Ready**: ⚠️ PARTIAL - Works but needs quota + size limits
+**Contract Version**: Actual Implementation as of 2025-10-23 (Corrected)  
+**Differs from Spec**: Partially (missing 75% threshold validation)  
+**Production Ready**: ✅ YES - Has quota validation (Line 112) + file size limit (inherited from text processing)
