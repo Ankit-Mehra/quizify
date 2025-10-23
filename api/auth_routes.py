@@ -35,14 +35,14 @@ router.add_api_route(
 router.add_api_route(
     "/change-password",
     change_password,
-    methods=["POST"],
+    methods=["PATCH"],  # Changed from POST to PATCH (partial update - modifying password field only)
     response_model=Dict[str, str],
     tags=["Auth"]
 )
 router.add_api_route(
     "/delete-account",
     delete_account,
-    methods=["POST"],
+    methods=["DELETE"],  # Changed from POST to DELETE (more RESTful for resource deletion)
     response_model=Dict[str, str],
     tags=["Auth"]
 )
@@ -50,7 +50,7 @@ router.add_api_route(
 router.add_api_route(
     "/update-email",
     update_email,
-    methods=["POST"],
+    methods=["PATCH"],  # Changed from POST to PATCH (partial update - modifying email field only)
     response_model=Dict[str, str],
     tags=["Auth"]
 )
