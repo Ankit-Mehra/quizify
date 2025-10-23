@@ -29,6 +29,8 @@ async def signup(request: SignupRequest):
     try:
         supabase = get_supabase()
         logger.info(f"Attempting to sign up user with email: {request.email}")
+        
+        # Sign up user - name goes to raw_user_meta_data
         response = supabase.auth.sign_up({
             "email": request.email,
             "password": request.password,
@@ -180,14 +182,18 @@ async def logout(response: Response, user_id: str = Depends(get_current_user_id)
 
 async def change_password(request: ChangePasswordRequest,
                            user_id: str = Depends(get_current_user_id)):
+    """
+    Change password for authenticated user.
+    User is identified by JWT token (user_id), not by email in request body.
+    """
     try:
         supabase = get_supabase()
-        logger.info(f"Password change requested for user: {request.email}")
+        logger.info(f"Password change requested for user ID: {user_id[:8]}...")  # Truncated for security
         supabase.auth.admin.update_user_by_id(user_id, {"password": request.new_password})
-        logger.info(f"Password updated successfully for user: {request.email}")
+        logger.info(f"Password updated successfully for user ID: {user_id[:8]}...")
         return {"message": "Password updated successfully"}
     except Exception as e:
-        logger.error(f"Error during password change: {str(e)}", exc_info=True)
+        logger.error(f"Error during password change for user {user_id[:8]}...: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 async def delete_account(user_id: str = Depends(get_current_user_id)):

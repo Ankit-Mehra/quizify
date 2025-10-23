@@ -1,18 +1,18 @@
 """Authentication request/response schemas"""
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr, Field
 from typing import Optional
 
 
 class SignupRequest(BaseModel):
     """Request model for user signup"""
-    email: str
-    password: str
-    name: str
+    email: EmailStr  # Validates email format
+    password: str = Field(..., min_length=8, description="Password must be at least 8 characters")
+    name: str = Field(..., min_length=1, description="Name cannot be empty")
 
 
 class LoginRequest(BaseModel):
     """Request model for user login"""
-    email: str
+    email: EmailStr  # Validates email format
     password: str
 
 
@@ -23,10 +23,10 @@ class LogoutRequest(BaseModel):
 
 class UpdateEmailRequest(BaseModel):
     """Request model for updating user email"""
-    new_email: str
+    new_email: EmailStr  # Validates email format
 
 
 class ChangePasswordRequest(BaseModel):
-    """Request model for changing user password"""
-    email: str
-    new_password: str
+    """Request model for changing user password - user identified by JWT token"""
+    new_password: str = Field(..., min_length=8, description="Password must be at least 8 characters")
+    # Note: email field removed - user identified by JWT token (user_id from Depends(get_current_user_id))
