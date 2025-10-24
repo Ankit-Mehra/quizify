@@ -120,7 +120,13 @@ class SupabaseAutoRefreshMiddleware(BaseHTTPMiddleware):
                         "Refresh token invalid",
                         extra={"status": refresh_resp.status_code, "response": refresh_resp.text}
                     )
-                    detail = refresh_resp.json() if refresh_resp.content else {}
+                    if refresh_resp.content:
+                        try:
+                            detail = refresh_resp.json()
+                        except ValueError:
+                            detail = {}
+                    else:
+                        detail = {}
                     return JSONResponse(
                         status_code=HTTP_401_UNAUTHORIZED,
                         content={
