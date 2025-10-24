@@ -275,7 +275,7 @@ async def get_current_user_info(user_id: str = Depends(get_current_user_id)) -> 
     Get current authenticated user's information including tier and quota.
     
     Returns:
-        User profile with tier, role, quota information
+        User profile with tier, role, quota, and display name information
     """
     try:
         logger.info(f"Fetching user info for user ID: {user_id}")
@@ -284,6 +284,7 @@ async def get_current_user_info(user_id: str = Depends(get_current_user_id)) -> 
         return {
             "user_id": str(tier_info["id"]),
             "email": tier_info["email"],
+            "display_name": tier_info.get("display_name"),
             "account_tier": tier_info["account_tier"],
             "role": tier_info.get("role", "user"),
             "current_quiz_count": tier_info["current_quiz_count"],
