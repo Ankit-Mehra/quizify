@@ -16,8 +16,7 @@ EXCLUDE_PATHS = [
     "/openapi.json",
     "/redoc",
     "/api/auth/login",
-    "/api/auth/signup",
-    "/api/auth/logout"
+    "/api/auth/signup"
 ]
 
 class SupabaseAutoRefreshMiddleware(BaseHTTPMiddleware):
@@ -63,6 +62,18 @@ class SupabaseAutoRefreshMiddleware(BaseHTTPMiddleware):
 
                     # Make refreshed token available to downstream dependencies immediately
                     request.state.access_token = new_access_token
+
+                    # Inject Authorization header so HTTPBearer dependencies pick it up
+                    existing_headers = list(request.scope.get("headers", []))
+                    filtered_headers = [
+                        (key, value)
+                        for key, value in existing_headers
+                        if key.lower() != b"authorization"
+                    ]
+                    filtered_headers.append(
+                        (b"authorization", f"Bearer {new_access_token}".encode())
+                    )
+                    request.scope["headers"] = filtered_headers
 
                     response = await call_next(request)
                     response.set_cookie(
