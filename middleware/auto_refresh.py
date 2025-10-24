@@ -127,13 +127,19 @@ class SupabaseAutoRefreshMiddleware(BaseHTTPMiddleware):
                             detail = {}
                     else:
                         detail = {}
-                    return JSONResponse(
-                        status_code=HTTP_401_UNAUTHORIZED,
-                        content={
-                            "detail": "Session expired or invalid refresh token",
-                            "supabase_response": detail
-                        }
+                    response = await call_next(request)
+                    # Invalidate stale refresh token so frontend sees the user as logged out
+                    response.delete_cookie(
+                        key="refresh_token",
+                        domain=app_config.COOKIE_DOMAIN if not app_config.is_testing() else None,
+                        path="/"
                     )
+                    response.delete_cookie(
+                        key="access_token",
+                        domain=app_config.COOKIE_DOMAIN if not app_config.is_testing() else None,
+                        path="/"
+                    )
+                    return response
             except Exception as e:
                 logger.exception("Token refresh failed")
                 return JSONResponse(
