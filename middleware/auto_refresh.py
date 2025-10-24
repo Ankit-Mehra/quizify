@@ -117,18 +117,15 @@ class SupabaseAutoRefreshMiddleware(BaseHTTPMiddleware):
 
                 else:
                     logger.warning(
-                        "Refresh token invalid",
+                        "Refresh token invalid - clearing cookies",
                         extra={"status": refresh_resp.status_code, "response": refresh_resp.text}
                     )
-                    if refresh_resp.content:
-                        try:
-                            detail = refresh_resp.json()
-                        except ValueError:
-                            detail = {}
-                    else:
-                        detail = {}
-                    response = await call_next(request)
-                    # Invalidate stale refresh token so frontend sees the user as logged out
+                    # Don't call the next handler - return 401 directly and clear cookies
+                    response = JSONResponse(
+                        status_code=HTTP_401_UNAUTHORIZED,
+                        content={"detail": "Session expired. Please log in again."}
+                    )
+                    # Clear both tokens so frontend knows user is logged out
                     response.delete_cookie(
                         key="refresh_token",
                         domain=app_config.COOKIE_DOMAIN if not app_config.is_testing() else None,
@@ -141,11 +138,23 @@ class SupabaseAutoRefreshMiddleware(BaseHTTPMiddleware):
                     )
                     return response
             except Exception as e:
-                logger.exception("Token refresh failed")
-                return JSONResponse(
+                logger.exception("Token refresh failed - clearing cookies")
+                response = JSONResponse(
                     status_code=HTTP_401_UNAUTHORIZED,
-                    content={"detail": f"Token refresh failed: {str(e)}"}
+                    content={"detail": "Session expired. Please log in again."}
                 )
+                # Clear both tokens
+                response.delete_cookie(
+                    key="refresh_token",
+                    domain=app_config.COOKIE_DOMAIN if not app_config.is_testing() else None,
+                    path="/"
+                )
+                response.delete_cookie(
+                    key="access_token",
+                    domain=app_config.COOKIE_DOMAIN if not app_config.is_testing() else None,
+                    path="/"
+                )
+                return response
 
         # No access and no refresh token — let route-level auth handle it
         return await call_next(request)
