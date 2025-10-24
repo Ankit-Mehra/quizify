@@ -15,22 +15,21 @@ REFRESH_TOKEN_EXPIRE = 60 * 60 * 24 * 30  # 30 days, mirror auth handler
 
 
 def _extract_refresh_token(request: Request) -> str | None:
-    """Return the longest refresh_token value from the Cookie header."""
+    """Return the last refresh_token value from the Cookie header."""
     cookie_header = request.headers.get("cookie")
     if not cookie_header:
         return request.cookies.get("refresh_token")
 
-    refresh_values = []
+    refresh_value = None
     for part in cookie_header.split(";"):
         name, _, value = part.strip().partition("=")
         if name == "refresh_token" and value:
-            refresh_values.append(value)
+            refresh_value = value
 
-    if not refresh_values:
+    if refresh_value is None:
         return request.cookies.get("refresh_token")
 
-    # Prefer the longest candidate – valid Supabase tokens are lengthy while stale placeholders are short
-    return max(refresh_values, key=len)
+    return refresh_value
 
 # Public routes that should NOT trigger token logic
 EXCLUDE_PATHS = [
