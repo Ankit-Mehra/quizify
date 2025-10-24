@@ -2,13 +2,34 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from starlette.status import HTTP_401_UNAUTHORIZED
+from starlette.datastructures import MutableHeaders
 import os
 import requests
+from services.logger import app_logger as logger
 from config import config as app_config
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 ACCESS_TOKEN_EXPIRE = 3600  # 1 hour
+REFRESH_TOKEN_EXPIRE = 60 * 60 * 24 * 30  # 30 days, mirror auth handler
+
+
+def _extract_refresh_token(request: Request) -> str | None:
+    """Return the last refresh_token value from the Cookie header."""
+    cookie_header = request.headers.get("cookie")
+    if not cookie_header:
+        return request.cookies.get("refresh_token")
+
+    refresh_value = None
+    for part in cookie_header.split(";"):
+        name, _, value = part.strip().partition("=")
+        if name == "refresh_token" and value:
+            refresh_value = value
+
+    if refresh_value is None:
+        return request.cookies.get("refresh_token")
+
+    return refresh_value
 
 # Public routes that should NOT trigger token logic
 EXCLUDE_PATHS = [
@@ -28,7 +49,7 @@ class SupabaseAutoRefreshMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         access_token = request.cookies.get("access_token")
-        refresh_token = request.cookies.get("refresh_token")
+        refresh_token = _extract_refresh_token(request)
 
         if access_token:
             headers = {
@@ -40,11 +61,14 @@ class SupabaseAutoRefreshMiddleware(BaseHTTPMiddleware):
                 user_resp = requests.get(f"{SUPABASE_URL}/auth/v1/user", headers=headers)
                 if user_resp.status_code == 200:
                     return await call_next(request)
+                logger.info("Access token invalid, attempting refresh", extra={"status": user_resp.status_code})
             except Exception:
+                logger.exception("Access token validation failed, attempting refresh")
                 pass  # Fall through to refresh
 
         if refresh_token:
             try:
+                logger.debug("Attempting token refresh via Supabase")
                 refresh_resp = requests.post(
                     f"{SUPABASE_URL}/auth/v1/token?grant_type=refresh_token",
                     headers={
@@ -57,6 +81,7 @@ class SupabaseAutoRefreshMiddleware(BaseHTTPMiddleware):
                 if refresh_resp.status_code == 200:
                     session = refresh_resp.json()
                     new_access_token = session.get("access_token")
+                    new_refresh_token = session.get("refresh_token")
                     if not new_access_token:
                         raise Exception("No access token returned")
 
@@ -64,16 +89,9 @@ class SupabaseAutoRefreshMiddleware(BaseHTTPMiddleware):
                     request.state.access_token = new_access_token
 
                     # Inject Authorization header so HTTPBearer dependencies pick it up
-                    existing_headers = list(request.scope.get("headers", []))
-                    filtered_headers = [
-                        (key, value)
-                        for key, value in existing_headers
-                        if key.lower() != b"authorization"
-                    ]
-                    filtered_headers.append(
-                        (b"authorization", f"Bearer {new_access_token}".encode())
-                    )
-                    request.scope["headers"] = filtered_headers
+                    headers = MutableHeaders(scope=request.scope)
+                    headers["Authorization"] = f"Bearer {new_access_token}"
+                    logger.debug("Successfully refreshed access token")
 
                     response = await call_next(request)
                     response.set_cookie(
@@ -85,14 +103,39 @@ class SupabaseAutoRefreshMiddleware(BaseHTTPMiddleware):
                         domain=app_config.COOKIE_DOMAIN if not app_config.is_testing() else None,
                         max_age=ACCESS_TOKEN_EXPIRE
                     )
+                    if new_refresh_token:
+                        response.set_cookie(
+                            key="refresh_token",
+                            value=new_refresh_token,
+                            httponly=True,
+                            secure=True,
+                            samesite="lax",
+                            domain=app_config.COOKIE_DOMAIN if not app_config.is_testing() else None,
+                            max_age=REFRESH_TOKEN_EXPIRE
+                        )
                     return response
 
                 else:
+                    logger.warning(
+                        "Refresh token invalid",
+                        extra={"status": refresh_resp.status_code, "response": refresh_resp.text}
+                    )
+                    if refresh_resp.content:
+                        try:
+                            detail = refresh_resp.json()
+                        except ValueError:
+                            detail = {}
+                    else:
+                        detail = {}
                     return JSONResponse(
                         status_code=HTTP_401_UNAUTHORIZED,
-                        content={"detail": "Session expired or invalid refresh token"}
+                        content={
+                            "detail": "Session expired or invalid refresh token",
+                            "supabase_response": detail
+                        }
                     )
             except Exception as e:
+                logger.exception("Token refresh failed")
                 return JSONResponse(
                     status_code=HTTP_401_UNAUTHORIZED,
                     content={"detail": f"Token refresh failed: {str(e)}"}
