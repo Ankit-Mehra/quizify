@@ -17,6 +17,10 @@ def get_current_user_id(
     token = credentials.credentials if credentials else request.cookies.get("access_token")
 
     if not token:
+        # Middleware may have refreshed the token and stored it on the request state
+        token = getattr(request.state, "access_token", None)
+
+    if not token:
         logger.warning("Authentication required but no token provided")
         raise HTTPException(status_code=401, detail="Authentication required")
 
@@ -63,6 +67,8 @@ def get_current_user_token(
     credentials: HTTPAuthorizationCredentials = Depends(security)
 ) -> str:
     token = credentials.credentials if credentials else request.cookies.get("access_token")
+    if not token:
+        token = getattr(request.state, "access_token", None)
     
     if not token:
         logger.warning("Authentication required but no token provided")

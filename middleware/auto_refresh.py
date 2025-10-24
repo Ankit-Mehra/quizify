@@ -61,6 +61,9 @@ class SupabaseAutoRefreshMiddleware(BaseHTTPMiddleware):
                     if not new_access_token:
                         raise Exception("No access token returned")
 
+                    # Make refreshed token available to downstream dependencies immediately
+                    request.state.access_token = new_access_token
+
                     response = await call_next(request)
                     response.set_cookie(
                         key="access_token",
