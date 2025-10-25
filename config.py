@@ -34,6 +34,9 @@ class Config:
     # Domain must start with '.' to work across subdomains (www, api, etc.)
     COOKIE_DOMAIN: str = os.getenv("COOKIE_DOMAIN", ".quizify.ca")
     
+    # Frontend URL for redirects after email confirmation, password reset, etc.
+    FRONTEND_URL: str = os.getenv("FRONTEND_URL", "https://www.quizify.ca")
+    
     # OpenAI configuration
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
     
