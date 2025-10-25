@@ -241,10 +241,9 @@ async def update_email(request: UpdateEmailRequest,
         new_email = request.new_email
         logger.info(f"Email update requested to: {new_email}")
         
-        supabase = get_supabase()
-        
-        # Set the session with the user's token
-        supabase.auth.set_session(token, token)
+        # Create authenticated Supabase client with user's token
+        # This ensures the update is made on behalf of the authenticated user
+        supabase = app_config.get_authenticated_supabase_client(token)
         
         # Use the Python SDK to update email - triggers Secure Email Change flow
         response = supabase.auth.update_user({"email": new_email})
@@ -358,10 +357,11 @@ async def confirm_email(
             # The verified response contains session tokens we can pass to frontend
             if response.session:
                 access_token = response.session.access_token
-                # Redirect to password reset page with access token
-                # Frontend will use this token when calling /reset-password
+                refresh_token = response.session.refresh_token
+                # Redirect to password reset page with both tokens
+                # Frontend will use these when calling /reset-password
                 return RedirectResponse(
-                    url=f"{app_config.FRONTEND_URL}/reset-password?access_token={access_token}&message=Please+enter+your+new+password",
+                    url=f"{app_config.FRONTEND_URL}/reset-password?access_token={access_token}&refresh_token={refresh_token}&message=Please+enter+your+new+password",
                     status_code=302
                 )
             else:
@@ -439,31 +439,39 @@ async def forgot_password(request: ForgotPasswordRequest):
 
 async def reset_password(request: ResetPasswordRequest):
     """
-    Reset user password with recovery token.
+    Reset user password with recovery tokens.
     
     This endpoint is called by the frontend after user:
     1. Clicks reset link in email
     2. Gets redirected to /reset-password page (via /confirm handler)
     3. Enters new password in form
-    4. Frontend submits new password + access_token to this endpoint
+    4. Frontend submits new password + tokens to this endpoint
     
-    The access_token is provided in the URL by the /confirm handler after
-    validating the recovery token. This token gives temporary access to update password.
+    The tokens are provided in the URL by the /confirm handler after
+    validating the recovery token. These tokens give temporary access to update password.
     """
     try:
-        access_token = request.token  # Actually the access_token from URL
+        access_token = request.token
+        refresh_token = request.refresh_token
         new_password = request.new_password
         
-        logger.info("Password reset attempt with access token")
+        logger.info("Password reset attempt with recovery tokens")
         
         supabase = get_supabase()
         
-        # Update password using the temporary access token
+        # Update password using the temporary recovery session tokens
         try:
-            # Set the session with the recovery access token
-            supabase.auth.set_session(access_token, access_token)
+            # Set the session with both access and refresh tokens from recovery
+            # This authenticates the user temporarily for password update
+            if refresh_token:
+                supabase.auth.set_session(access_token, refresh_token)
+            else:
+                # Fallback: if only access_token provided (shouldn't happen with new flow)
+                logger.warning("Only access_token provided, no refresh_token. This may cause issues.")
+                # Use authenticated client approach instead
+                supabase = app_config.get_authenticated_supabase_client(access_token)
             
-            # Now update the password - user is authenticated via the recovery token
+            # Now update the password - user is authenticated via the recovery session
             response = supabase.auth.update_user({"password": new_password})
             
             if not response.user:
