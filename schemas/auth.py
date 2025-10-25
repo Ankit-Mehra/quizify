@@ -29,3 +29,19 @@ class UpdateEmailRequest(BaseModel):
 class ChangePasswordRequest(BaseModel):
     """Request model for changing user password - user identified by JWT token"""
     new_password: str = Field(..., min_length=8, description="Password must be at least 8 characters")
+
+
+class ForgotPasswordRequest(BaseModel):
+    """Request model for forgot password - triggers password reset email"""
+    email: EmailStr  # Validates email format
+
+
+class ResetPasswordRequest(BaseModel):
+    """Request model for resetting password with recovery token"""
+    token: str = Field(..., description="Recovery token from email link")
+    new_password: str = Field(..., min_length=8, description="New password must be at least 8 characters")
+
+
+class ResendVerificationRequest(BaseModel):
+    """Request model for resending email verification"""
+    email: EmailStr  # Validates email format

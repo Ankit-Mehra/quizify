@@ -1,5 +1,5 @@
-from fastapi import HTTPException, Body, Response, Request
-from fastapi.responses import JSONResponse
+from fastapi import HTTPException, Body, Response, Request, Query
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from services.logger import app_logger as logger
 from fastapi import Depends
@@ -7,7 +7,7 @@ from dependencies.auth_dependencies import get_current_user_id
 from services.db_services.supabase_quiz import get_user_tier_info
 from typing import Dict, Any
 from config import config as app_config
-from schemas.auth import SignupRequest, LoginRequest, LogoutRequest, UpdateEmailRequest, ChangePasswordRequest
+from schemas.auth import SignupRequest, LoginRequest, LogoutRequest, UpdateEmailRequest, ChangePasswordRequest, ForgotPasswordRequest, ResetPasswordRequest, ResendVerificationRequest
 
 security = HTTPBearer(auto_error=False)
 
@@ -297,3 +297,264 @@ async def get_current_user_info(user_id: str = Depends(get_current_user_id)) -> 
     except Exception as e:
         logger.error(f"Error fetching user info: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to retrieve user information")
+
+
+async def confirm_email(
+    token: str = Query(..., description="Email confirmation token from Supabase"),
+    type: str = Query(default="signup", description="Confirmation type: signup, email_change, recovery, etc."),
+):
+    """
+    Handle email confirmation from Supabase.
+    This endpoint is called when user clicks the link in their confirmation email.
+    
+    Flow:
+    1. User clicks link in email → redirects to this endpoint with token
+    2. Backend verifies token with Supabase
+    3. Redirects user to frontend with success/error message
+    """
+    try:
+        supabase = get_supabase()
+        logger.info(f"Email confirmation attempt - type: {type}")
+        
+        # Verify the token with Supabase
+        try:
+            response = supabase.auth.verify_otp({
+                "token_hash": token,
+                "type": type  # 'signup', 'email_change', 'recovery', etc.
+            })
+        except Exception as verify_error:
+            logger.warning(f"Token verification failed: {str(verify_error)}")
+            return RedirectResponse(
+                url=f"{app_config.FRONTEND_URL}/login?error=invalid_token&message=Invalid+or+expired+confirmation+link",
+                status_code=302
+            )
+        
+        if not response.user:
+            logger.warning("Email confirmation failed - no user returned")
+            return RedirectResponse(
+                url=f"{app_config.FRONTEND_URL}/login?error=invalid_token&message=Invalid+or+expired+confirmation+link",
+                status_code=302
+            )
+        
+        user_id = response.user.id
+        user_email = response.user.email
+        logger.info(f"Email confirmed successfully for user: {user_id} ({user_email})")
+        
+        # Handle different confirmation types
+        if type == "signup":
+            # User just confirmed their signup email
+            return RedirectResponse(
+                url=f"{app_config.FRONTEND_URL}/login?confirmed=true&message=Email+verified+successfully!+You+can+now+log+in.",
+                status_code=302
+            )
+        elif type == "email_change":
+            # User confirmed email change
+            return RedirectResponse(
+                url=f"{app_config.FRONTEND_URL}/dashboard?email_changed=true&message=Email+address+updated+successfully",
+                status_code=302
+            )
+        elif type == "recovery":
+            # Password reset confirmation - token verified, now create session for password update
+            # The verified response contains session tokens we can pass to frontend
+            if response.session:
+                access_token = response.session.access_token
+                # Redirect to password reset page with access token
+                # Frontend will use this token when calling /reset-password
+                return RedirectResponse(
+                    url=f"{app_config.FRONTEND_URL}/reset-password?access_token={access_token}&message=Please+enter+your+new+password",
+                    status_code=302
+                )
+            else:
+                logger.error("Recovery token verified but no session returned")
+                return RedirectResponse(
+                    url=f"{app_config.FRONTEND_URL}/login?error=recovery_failed&message=Password+reset+failed.+Please+request+a+new+link.",
+                    status_code=302
+                )
+        else:
+            # Default redirect for unknown types
+            logger.warning(f"Unknown confirmation type: {type}")
+            return RedirectResponse(
+                url=f"{app_config.FRONTEND_URL}/dashboard?confirmed=true",
+                status_code=302
+            )
+            
+    except Exception as e:
+        logger.error(f"Error during email confirmation: {str(e)}", exc_info=True)
+        return RedirectResponse(
+            url=f"{app_config.FRONTEND_URL}/login?error=confirmation_failed&message=Confirmation+failed.+Please+try+again.",
+            status_code=302
+        )
+
+
+async def forgot_password(request: ForgotPasswordRequest):
+    """
+    Trigger password reset email.
+    
+    Sends a password recovery email to the user with a reset link.
+    For security, always returns success even if email doesn't exist
+    (prevents email enumeration attacks).
+    
+    Flow:
+    1. User enters email on forgot password page
+    2. Backend calls Supabase to send recovery email
+    3. Supabase sends email with link to /api/auth/confirm?token=xxx&type=recovery
+    4. User clicks link → backend verifies → redirects to frontend reset-password page
+    5. Frontend calls /api/auth/reset-password with new password
+    """
+    try:
+        email = request.email
+        logger.info(f"Password reset requested for email (first 3 chars): {email[:3]}***")
+        
+        supabase = get_supabase()
+        
+        # Request password reset from Supabase
+        # This sends an email with recovery link to the user
+        try:
+            supabase.auth.reset_password_email(
+                email=email,
+                options={
+                    "redirect_to": f"{app_config.FRONTEND_URL}/reset-password"  # Not used, we handle in /confirm
+                }
+            )
+            logger.info("Password reset email sent successfully")
+        except Exception as supabase_error:
+            # Log error but don't reveal to user (security)
+            logger.warning(f"Supabase password reset error: {str(supabase_error)}")
+        
+        # ALWAYS return success to prevent email enumeration
+        # Even if email doesn't exist, we say we sent it
+        return {
+            "message": "If an account exists with that email, we've sent password reset instructions.",
+            "note": "Check your email inbox (and spam folder). The link expires in 1 hour."
+        }
+        
+    except Exception as e:
+        logger.error(f"Error during forgot password: {str(e)}", exc_info=True)
+        # Still return success for security
+        return {
+            "message": "If an account exists with that email, we've sent password reset instructions.",
+            "note": "Check your email inbox (and spam folder). The link expires in 1 hour."
+        }
+
+
+async def reset_password(request: ResetPasswordRequest):
+    """
+    Reset user password with recovery token.
+    
+    This endpoint is called by the frontend after user:
+    1. Clicks reset link in email
+    2. Gets redirected to /reset-password page (via /confirm handler)
+    3. Enters new password in form
+    4. Frontend submits new password + access_token to this endpoint
+    
+    The access_token is provided in the URL by the /confirm handler after
+    validating the recovery token. This token gives temporary access to update password.
+    """
+    try:
+        access_token = request.token  # Actually the access_token from URL
+        new_password = request.new_password
+        
+        logger.info("Password reset attempt with access token")
+        
+        supabase = get_supabase()
+        
+        # Update password using the temporary access token
+        try:
+            # Set the session with the recovery access token
+            supabase.auth.set_session(access_token, access_token)
+            
+            # Now update the password - user is authenticated via the recovery token
+            response = supabase.auth.update_user({"password": new_password})
+            
+            if not response.user:
+                logger.warning("Password reset failed - invalid or expired token")
+                raise HTTPException(
+                    status_code=401,
+                    detail="Invalid or expired recovery token. Please request a new password reset link."
+                )
+            
+            logger.info(f"Password reset successful for user: {response.user.id}")
+            
+            return {
+                "message": "Password updated successfully! You can now log in with your new password.",
+                "success": True
+            }
+            
+        except HTTPException:
+            raise
+        except Exception as update_error:
+            logger.error(f"Supabase password update error: {str(update_error)}", exc_info=True)
+            raise HTTPException(
+                status_code=400,
+                detail="Failed to update password. The reset link may have expired. Please request a new one."
+            )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error during password reset: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail="An error occurred while resetting your password. Please try again."
+        )
+
+
+async def resend_verification_email(request: ResendVerificationRequest):
+    """
+    Resend email verification link to user.
+    
+    This is useful when:
+    - User didn't receive the original signup confirmation email
+    - Email link expired (24 hours)
+    - User accidentally deleted the email
+    
+    For security, always returns success even if:
+    - Email doesn't exist (prevents email enumeration)
+    - Email is already verified (no harm in sending again)
+    
+    Flow:
+    1. User enters email on "resend verification" page
+    2. Backend calls Supabase to resend verification email
+    3. Supabase sends email with link to /api/auth/confirm?token=xxx&type=signup
+    4. Always returns success message
+    """
+    try:
+        email = request.email
+        logger.info(f"Verification email resend requested for email (first 3 chars): {email[:3]}***")
+        
+        supabase = get_supabase()
+        
+        try:
+            # Resend the confirmation email
+            # Supabase handles checking if user exists and needs verification
+            supabase.auth.resend(
+                type="signup",  # Can be 'signup' or 'email_change'
+                email=email,
+                options={
+                    "redirect_to": f"{app_config.FRONTEND_URL}/login"  # Not used, we handle in /confirm
+                }
+            )
+            logger.info("Verification email resent successfully")
+            
+        except Exception as supabase_error:
+            # Log error but don't reveal to user (security)
+            logger.warning(f"Supabase resend error: {str(supabase_error)}")
+        
+        # ALWAYS return success to prevent email enumeration
+        # Even if:
+        # - Email doesn't exist
+        # - Email is already verified  
+        # - Rate limit exceeded
+        return {
+            "message": "If your email is registered and unverified, we've sent a new verification link.",
+            "note": "Check your email inbox (and spam folder). The link expires in 24 hours.",
+            "email": email
+        }
+        
+    except Exception as e:
+        logger.error(f"Error during resend verification: {str(e)}", exc_info=True)
+        # Still return success for security
+        return {
+            "message": "If your email is registered and unverified, we've sent a new verification link.",
+            "note": "Check your email inbox (and spam folder). The link expires in 24 hours."
+        }
