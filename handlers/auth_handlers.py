@@ -534,9 +534,10 @@ async def resend_verification_email(request: ResendVerificationRequest):
         
         try:
             # Resend the confirmation email
-            # Supabase handles checking if user exists and needs verification
+            # Supabase Python SDK v2+ uses different method signature
+            # The type is passed as first positional argument, not keyword
             supabase.auth.resend(
-                type="signup",  # Can be 'signup' or 'email_change'
+                "signup",  # Type: 'signup' or 'email_change'
                 email=email,
                 options={
                     "redirect_to": f"{app_config.FRONTEND_URL}/login"  # Not used, we handle in /confirm
