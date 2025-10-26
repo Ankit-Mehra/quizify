@@ -17,18 +17,25 @@ def get_question(question_ids: List[UUID]) -> List[Question]:
     Get questions by their IDs using Supabase `.in_` clause
     """
     supabase = get_supabase()
-    logger.debug(f"Fetching {len(question_ids)} questions")
+    
+    # Convert UUIDs to strings for Supabase query
+    # Supabase/PostgREST expects string representation of UUIDs
+    question_id_strs = [str(qid) for qid in question_ids]
+    
+    logger.debug(f"Fetching {len(question_ids)} questions with IDs: {question_id_strs[:3]}...")  # Log first 3 IDs
+    
     try:
         response = (
             supabase
             .table("questions")
             .select("*")
-            .in_("id", question_ids)
+            .in_("id", question_id_strs)  # Use string IDs
             .execute()
         )
         
         if not response.data:
-            logger.warning("No questions found for provided IDs")
+            logger.warning(f"No questions found for provided IDs: {question_id_strs}")
+            logger.warning(f"Query returned: {response}")
             raise HTTPException(status_code=404, detail="Questions not found. The quiz may have been deleted.")
 
         logger.debug(f"Successfully retrieved {len(response.data)} questions")
