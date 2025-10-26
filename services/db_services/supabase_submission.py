@@ -22,7 +22,9 @@ def get_question(question_ids: List[UUID]) -> List[Question]:
     # Supabase/PostgREST expects string representation of UUIDs
     question_id_strs = [str(qid) for qid in question_ids]
     
-    logger.debug(f"Fetching {len(question_ids)} questions with IDs: {question_id_strs[:3]}...")  # Log first 3 IDs
+    # Safe logging - show first 3 IDs if available
+    sample_ids = question_id_strs[:3] if question_id_strs else []
+    logger.debug(f"Fetching {len(question_ids)} questions. Sample IDs: {sample_ids}")
     
     try:
         response = (
@@ -34,8 +36,9 @@ def get_question(question_ids: List[UUID]) -> List[Question]:
         )
         
         if not response.data:
-            logger.warning(f"No questions found for provided IDs: {question_id_strs}")
-            logger.warning(f"Query returned: {response}")
+            logger.warning(f"No questions found for {len(question_id_strs)} provided IDs")
+            # Log only count and status, not full response object (may contain sensitive data)
+            logger.warning(f"Query returned empty result. Expected {len(question_id_strs)} questions.")
             raise HTTPException(status_code=404, detail="Questions not found. The quiz may have been deleted.")
 
         logger.debug(f"Successfully retrieved {len(response.data)} questions")
