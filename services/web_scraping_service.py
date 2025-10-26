@@ -1,10 +1,12 @@
 """
 Web scraping service for extracting content from URLs.
 Implements SSRF protection and uses Playwright + Trafilatura for robust extraction.
+Supports automatic PDF download and text extraction from PDF URLs.
 """
 import ipaddress
 import socket
 import os
+import httpx
 from urllib.parse import urlparse
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeout
 import trafilatura
@@ -13,12 +15,15 @@ from collections import defaultdict
 from fastapi import HTTPException
 from services.logger import app_logger as logger
 from config import config as app_config
+from services.ai_services.doc_service import extract_text_from_pdf
 
 # Constants
-MAX_CONTENT_SIZE = 500 * 1024  # 500KB
+MAX_CONTENT_SIZE = 500 * 1024  # 500KB for HTML content
+MAX_PDF_SIZE = 10 * 1024 * 1024  # 10MB for PDF files (same as file upload limit)
 MIN_CONTENT_SIZE = 100  # 100 characters
 SCRAPE_TIMEOUT = 60000  # 60 seconds in milliseconds (increased from 30s)
 FALLBACK_TIMEOUT = 30000  # 30 seconds fallback for faster retry
+PDF_DOWNLOAD_TIMEOUT = 30.0  # 30 seconds for PDF downloads
 
 # Resource limits for DoS prevention
 MAX_MEMORY_MB = 256  # Maximum memory per browser instance
@@ -114,6 +119,153 @@ PRIVATE_IP_RANGES = [
     ipaddress.ip_network('fc00::/7'),       # Unique local addresses
     ipaddress.ip_network('ff00::/8'),       # Multicast
 ]
+
+
+def is_pdf_url(url: str) -> bool:
+    """
+    Detect if a URL points to a PDF file.
+    
+    Checks for:
+    - .pdf extension in the path
+    - Common PDF hosting patterns (arxiv.org/pdf, etc.)
+    
+    Args:
+        url: The URL to check
+        
+    Returns:
+        True if URL likely points to a PDF, False otherwise
+    """
+    try:
+        parsed_url = urlparse(url.lower())
+        path = parsed_url.path
+        
+        # Check for .pdf extension
+        if path.endswith('.pdf'):
+            return True
+        
+        # Check for common PDF hosting patterns
+        pdf_patterns = [
+            '/pdf/',  # arxiv.org/pdf/..., example.com/documents/pdf/...
+            '.pdf/',  # Some URLs have .pdf in the middle: example.com/file.pdf/download
+        ]
+        
+        for pattern in pdf_patterns:
+            if pattern in path:
+                return True
+        
+        return False
+        
+    except Exception as e:
+        logger.warning(f"Error checking if URL is PDF: {str(e)}")
+        return False
+
+
+async def download_and_extract_pdf(url: str) -> str:
+    """
+    Download PDF from URL and extract text content.
+    
+    NOTE: URL validation should happen in the caller (scrape_content) before calling this function.
+    This function assumes the URL has already been validated for security.
+    
+    This function:
+    1. Downloads the PDF with size limits (10MB max)
+    2. Extracts text using PyMuPDF (via doc_service)
+    3. Validates extracted content
+    
+    Args:
+        url: The PDF URL to download (assumed to be pre-validated)
+        
+    Returns:
+        Extracted text content from the PDF
+        
+    Raises:
+        HTTPException: If download fails, file is too large, or text extraction fails
+    """
+    from services.ai_services.doc_service import extract_text_from_pdf
+    
+    logger.info(f"Downloading PDF from URL: {url}")
+    
+    try:
+        # Download PDF with timeout and size limits
+        async with httpx.AsyncClient(
+            timeout=PDF_DOWNLOAD_TIMEOUT,
+            follow_redirects=True,
+            limits=httpx.Limits(max_connections=5)
+        ) as client:
+            
+            # Stream download to check size before downloading entire file
+            async with client.stream('GET', url) as response:
+                response.raise_for_status()
+                
+                # Check Content-Type header (optional validation)
+                content_type = response.headers.get('content-type', '').lower()
+                logger.debug(f"PDF URL Content-Type: {content_type}")
+                
+                # Check content length if available
+                content_length = response.headers.get('content-length')
+                if content_length:
+                    size = int(content_length)
+                    if size > MAX_PDF_SIZE:
+                        logger.error(f"PDF too large: {size} bytes (max: {MAX_PDF_SIZE})")
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"PDF file is too large ({size / (1024*1024):.1f}MB). Maximum size is {MAX_PDF_SIZE / (1024*1024)}MB."
+                        )
+                    logger.info(f"PDF size: {size / (1024*1024):.2f}MB")
+                
+                # Download PDF content
+                pdf_bytes = b''
+                downloaded_size = 0
+                
+                async for chunk in response.aiter_bytes(chunk_size=8192):
+                    downloaded_size += len(chunk)
+                    
+                    # Check size limit during download
+                    if downloaded_size > MAX_PDF_SIZE:
+                        logger.error(f"PDF download exceeded size limit: {downloaded_size} bytes")
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"PDF file is too large (>{MAX_PDF_SIZE / (1024*1024)}MB). Maximum size is {MAX_PDF_SIZE / (1024*1024)}MB."
+                        )
+                    
+                    pdf_bytes += chunk
+                
+                logger.info(f"PDF downloaded successfully: {len(pdf_bytes) / (1024*1024):.2f}MB")
+        
+        # Extract text from PDF
+        logger.info("Extracting text from downloaded PDF...")
+        text = extract_text_from_pdf(pdf_bytes)
+        
+        if not text or len(text.strip()) < MIN_CONTENT_SIZE:
+            logger.error(f"PDF text extraction returned insufficient content: {len(text)} chars")
+            raise HTTPException(
+                status_code=400,
+                detail="Could not extract meaningful text from PDF. The PDF might be scanned images or empty."
+            )
+        
+        logger.info(f"Successfully extracted {len(text)} characters from PDF")
+        return text
+        
+    except httpx.HTTPStatusError as e:
+        logger.error(f"HTTP error downloading PDF: {e.response.status_code}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Failed to download PDF: HTTP {e.response.status_code}. The URL might be invalid or require authentication."
+        )
+    except httpx.TimeoutException:
+        logger.error(f"Timeout downloading PDF from {url}")
+        raise HTTPException(
+            status_code=408,
+            detail=f"PDF download timed out after {PDF_DOWNLOAD_TIMEOUT} seconds. The file might be too large or the server is slow."
+        )
+    except HTTPException:
+        raise  # Re-raise our own HTTP exceptions
+    except Exception as e:
+        logger.error(f"Error downloading/extracting PDF: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to process PDF: {str(e)}"
+        )
 
 
 def is_private_ip(ip: str) -> bool:
@@ -297,22 +449,30 @@ async def _release_browser_slot(user_id: str = "anonymous") -> None:
 async def scrape_content(url: str, user_id: str = "anonymous") -> str:
     """
     Scrape content from URL using Playwright + Trafilatura.
+    Automatically handles PDF URLs by downloading and extracting text.
     Implements retry logic with different timeout strategies for problematic sites.
     Enhanced with DNS rebinding protection and resource limits to prevent attacks.
     
     Args:
-        url: The URL to scrape
+        url: The URL to scrape (HTML or PDF)
         user_id: User ID for resource tracking and limits
         
     Returns:
-        Extracted text content from the page
+        Extracted text content from the page or PDF
         
     Raises:
         HTTPException: If scraping fails, content is invalid, timeout occurs, or resource limits exceeded
     """
+    # SECURITY: Validate URL once at entry point (SSRF protection)
     validate_url(url)
     
-    # Acquire browser slot (enforces concurrent browser limits)
+    # Check if URL points to a PDF file - handle automatically
+    if is_pdf_url(url):
+        logger.info(f"PDF URL detected - downloading and extracting text: {url}")
+        # PDF download doesn't need browser slot - URL already validated
+        return await download_and_extract_pdf(url)
+    
+    # Acquire browser slot (enforces concurrent browser limits) - only for HTML scraping
     await _acquire_browser_slot(user_id)
     
     try:

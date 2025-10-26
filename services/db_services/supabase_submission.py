@@ -12,11 +12,23 @@ def get_supabase():
     """Get Supabase client (lazy loaded)"""
     return app_config.get_supabase_client()
 
-def get_question(question_ids: List[UUID]) -> List[Question]:
+def get_question(question_ids: List[UUID], user_token: str = None) -> List[Question]:
     """
     Get questions by their IDs using Supabase `.in_` clause
+    
+    Args:
+        question_ids: List of question UUIDs to fetch
+        user_token: User's authentication token for RLS enforcement (recommended)
+                    If None, uses service role (bypasses RLS - use with caution)
+    
+    Returns:
+        List of Question objects
     """
-    supabase = get_supabase()
+    # Use authenticated client if token provided (enforces RLS)
+    if user_token:
+        supabase = app_config.get_authenticated_supabase_client(user_token)
+    else:
+        supabase = get_supabase()  # Service role - bypasses RLS
     
     # Convert UUIDs to strings for Supabase query
     # Supabase/PostgREST expects string representation of UUIDs
