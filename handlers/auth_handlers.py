@@ -534,15 +534,14 @@ async def resend_verification_email(request: ResendVerificationRequest):
         
         try:
             # Resend the confirmation email
-            # Supabase Python SDK v2+ uses different method signature
-            # The type is passed as first positional argument, not keyword
-            supabase.auth.resend(
-                "signup",  # Type: 'signup' or 'email_change'
-                email=email,
-                options={
-                    "redirect_to": f"{app_config.FRONTEND_URL}/login"  # Not used, we handle in /confirm
+            # Supabase Python SDK v2+ takes a single dictionary parameter
+            supabase.auth.resend({
+                "type": "signup",  # Type: 'signup' or 'email_change'
+                "email": email,
+                "options": {
+                    "email_redirect_to": f"{app_config.FRONTEND_URL}/login"  # Not used, we handle in /confirm
                 }
-            )
+            })
             logger.info("Verification email resent successfully")
             
         except Exception as supabase_error:
