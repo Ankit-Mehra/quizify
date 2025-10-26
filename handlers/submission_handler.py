@@ -67,10 +67,10 @@ async def submit_quiz(
     wrong = 0
     detailed_results = []
 
-    # Fetch raw questions
+    # Fetch raw questions using authenticated client (RLS enforcement)
     question_ids = [a.question_id for a in submission.answers]
     try:
-        raw_questions = get_question(question_ids)
+        raw_questions = get_question(question_ids, user_token)
         questions = parse_question_models(raw_questions)
         question_map = {q.id: q for q in questions}
     except Exception as e:
