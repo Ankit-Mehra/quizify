@@ -251,10 +251,15 @@ def get_user_tier_info(user_id: str, user_token: str = None):
     """
     Get user tier information including quota status from user_tier_info view.
     
+    NOTE: This function uses SERVICE ROLE client (not authenticated client) because:
+    - user_tier_info view accesses auth.users table which users don't have permission to query
+    - The view is security-definer and requires elevated permissions
+    - We filter by user_id so users can only see their own data (no security risk)
+    - This is safe because we validate user_id comes from authenticated JWT token
+    
     Args:
-        user_id: The UUID of the user
-        user_token: User's authentication token for RLS enforcement (recommended)
-                    If None, uses service role (bypasses RLS - use with caution)
+        user_id: The UUID of the user (validated from JWT token by caller)
+        user_token: Ignored - we always use service role for this operation
         
     Returns:
         dict: User tier information with keys: id, email, account_tier, 
@@ -264,11 +269,12 @@ def get_user_tier_info(user_id: str, user_token: str = None):
         HTTPException: If user not found or database error occurs
     """
     try:
-        # Use authenticated client if token provided (enforces RLS)
-        if user_token:
-            supabase = get_authed_supabase_client(user_token)
-        else:
-            supabase = get_supabase()  # Service role - bypasses RLS
+        # Always use service role for querying user_tier_info view
+        # This is necessary because the view accesses auth.users table
+        # Security is maintained by:
+        # 1. user_id comes from authenticated JWT (validated by FastAPI dependency)
+        # 2. We only return data for the specific user_id (no risk of data leakage)
+        supabase = get_supabase()
         
         logger.debug(f"Fetching tier info for user: {user_id}")
         

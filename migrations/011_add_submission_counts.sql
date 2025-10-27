@@ -4,6 +4,17 @@
 --          This allows users to see how many quizzes they've attempted via /auth/me
 
 -- ============================================================================
+-- SECURITY MODEL EXPLANATION
+-- ============================================================================
+-- user_submission_counts: security_invoker = on (users can query submissions table)
+-- user_tier_info: security_definer (default) - accesses auth.users table
+--   * auth.users requires elevated permissions (users can't query it directly)
+--   * Backend ALWAYS uses SERVICE ROLE client for get_user_tier_info()
+--   * Backend ALWAYS filters by authenticated user_id (no data leakage risk)
+--   * This is safe because user_id comes from validated JWT token
+-- ============================================================================
+
+-- ============================================================================
 -- Step 1: Create user_submission_counts view (similar to user_quiz_counts)
 -- ============================================================================
 
