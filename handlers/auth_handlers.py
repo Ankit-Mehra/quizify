@@ -289,7 +289,8 @@ async def get_user_info(
             "display_name": tier_info.get("display_name"),
             "account_tier": tier_info["account_tier"],
             "role": tier_info.get("role", "user"),
-            "current_quiz_count": tier_info["current_quiz_count"],
+            "current_quiz_count": tier_info["current_quiz_count"],  # Quizzes created
+            "quizzes_attempted": tier_info.get("quizzes_attempted", 0),  # Quizzes attempted (NEW)
             "quota_limit": tier_info["quota_limit"],
             "quota_exceeded": tier_info["quota_exceeded"],
             "created_at": tier_info.get("created_at")
