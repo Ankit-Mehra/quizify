@@ -50,17 +50,18 @@ def sanitize_filename(filename: str) -> str:
     
     return sanitized
 
-def validate_user_quota(user_id: str):
+def validate_user_quota(user_id: str, user_token: str = None):
     """
     Validate if user has available quota for quiz generation.
     
     Args:
         user_id: The UUID of the user
+        user_token: User's authentication token for RLS enforcement (optional)
         
     Raises:
         HTTPException: 403 Forbidden if quota is exceeded with detailed error message
     """
-    tier_info = get_user_tier_info(user_id)
+    tier_info = get_user_tier_info(user_id, user_token)
     
     if tier_info["quota_exceeded"]:
         current_count = tier_info["current_quiz_count"]
@@ -109,7 +110,7 @@ async def generate_quiz_from_file_openai(
         raise HTTPException(status_code=400, detail="Only PDF, DOCX, or TXT files are supported.")
 
     # Validate quota BEFORE file processing and generation (don't waste AI API calls)
-    validate_user_quota(current_user_id)
+    validate_user_quota(current_user_id, user_token)
 
     try:
         text = await file.read()
@@ -204,8 +205,8 @@ async def generate_quiz_from_fileid(
     file_content = None
     
     try:
-        # Check file record exists
-        file_record = get_file_record(file_id)
+        # Check file record exists (use authenticated client)
+        file_record = get_file_record(file_id, user_token)
         
         if not file_record:
             logger.error(f"File not found with ID: {file_id}")
@@ -247,7 +248,7 @@ async def generate_quiz_from_fileid(
         raise HTTPException(status_code=500, detail=f"Error reading file: {str(e)}")
 
     # Validate quota BEFORE generation (don't waste AI API calls)
-    validate_user_quota(current_user_id)
+    validate_user_quota(current_user_id, user_token)
 
     try:
         logger.info(f"Generating quiz questions from file content (length: {len(file_content)})")
@@ -318,7 +319,7 @@ async def generate_quiz_from_text(
             )
         
         # Validate quota BEFORE generation (don't waste AI API calls)
-        validate_user_quota(current_user_id)
+        validate_user_quota(current_user_id, user_token)
         # Generate quiz questions
         total_questions = data.num_questions if data.num_questions is not None else 10
         quizzes = await generate_quizzes_single_async(
@@ -452,11 +453,12 @@ async def get_quiz_by_id_handler(
 # === Delete quiz by ID ===
 async def delete_quiz_by_id_handler(
     quiz_id: str = Path(...),
-    current_user_id: str = Depends(get_current_user_id)
+    current_user_id: str = Depends(get_current_user_id),
+    user_token: str = Depends(get_current_user_token)
 ):
     """Delete a quiz by ID."""
     try:
-        delete_quiz_from_database(quiz_id)
+        delete_quiz_from_database(quiz_id, user_token)
         return {"message": "Quiz deleted successfully"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error deleting quiz: {str(e)}")
@@ -464,10 +466,11 @@ async def delete_quiz_by_id_handler(
 # === Get metadata ===
 async def get_metadata_handler(
     current_user_id: str = Depends(get_current_user_id),
+    user_token: str = Depends(get_current_user_token)
 ):
     """Get all content sources created by the current user."""
     try:
-        sources = get_metadata(current_user_id)
+        sources = get_metadata(current_user_id, user_token)
         
         return sources
     except Exception as e:
@@ -510,11 +513,11 @@ async def generate_quiz_from_url(
     """Generate quiz from web URL (available for all tiers with quota limits)."""
     
     # Validate quota BEFORE scraping and generation (don't waste resources)
-    validate_user_quota(current_user_id)
+    validate_user_quota(current_user_id, user_token)
     
     try:
         # Get user tier info for logging
-        tier_info = get_user_tier_info(current_user_id)
+        tier_info = get_user_tier_info(current_user_id, user_token)
         
         # Scrape content with user ID for resource tracking
         logger.info(f"User {current_user_id} ({tier_info['account_tier']} tier) generating quiz from URL: {data.url}")

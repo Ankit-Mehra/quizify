@@ -86,9 +86,18 @@ def save_file_to_supabase(user_id: str, file_bytes: bytes, original_filename: st
         logger.error(f"Unexpected error in save_file_to_supabase: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-def get_file_metadata(user_id: str = Depends(get_current_user_id)):
+def get_file_metadata(user_id: str = Depends(get_current_user_id), user_token: str = Depends(get_current_user_token)):
+    """
+    Get file metadata for a user.
+    
+    Args:
+        user_id: The user ID to fetch files for (from auth dependency)
+        user_token: User's authentication token for RLS enforcement (from auth dependency)
+    """
     try:
-        supabase = get_supabase()
+        # Use authenticated client (enforces RLS)
+        supabase = app_config.get_authenticated_supabase_client(user_token)
+        
         if supabase is None:
             raise HTTPException(status_code=500, detail="Supabase client is not initialized. Check your configuration.")
         metadata = supabase.table("user_files").select("*").eq("user_id", user_id).execute()
@@ -98,9 +107,22 @@ def get_file_metadata(user_id: str = Depends(get_current_user_id)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-def get_file_record(file_id: str):
+def get_file_record(file_id: str, user_token: str = None):
+    """
+    Get a file record by its ID.
+    
+    Args:
+        file_id: The file ID to fetch
+        user_token: User's authentication token for RLS enforcement (recommended)
+                    If None, uses service role (bypasses RLS - use with caution)
+    """
     try:
-        supabase = get_supabase()
+        # Use authenticated client if token provided (enforces RLS)
+        if user_token:
+            supabase = app_config.get_authenticated_supabase_client(user_token)
+        else:
+            supabase = get_supabase()  # Service role - bypasses RLS
+        
         if supabase is None:
             raise HTTPException(status_code=500, detail="Supabase client is not initialized. Check your configuration.")
         file_data = supabase.table("user_files").select("*").eq("id", file_id).execute()
@@ -268,8 +290,18 @@ def parse_file_from_supabase(file_record: dict, user_token: str) -> str:
         raise HTTPException(status_code=500, detail=f"Error parsing file content: {str(e)}")
 
 def delete_file_from_supabase(file_id: str, token: str, user_id: str, original_filename: str):
+    """
+    Delete a file from Supabase (both database record and storage).
+    
+    Args:
+        file_id: The file ID to delete
+        token: User's authentication token for RLS enforcement
+        user_id: The user ID (for authorization)
+        original_filename: The original filename
+    """
     try:
-        supabase = get_supabase()
+        # Use authenticated client (enforces RLS)
+        supabase = app_config.get_authenticated_supabase_client(token)
         if supabase is None:
             raise HTTPException(status_code=500, detail="Supabase client is not initialized. Check your configuration.")
         supabase.table("user_files").delete().eq("id", file_id).execute()
