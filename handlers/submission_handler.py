@@ -111,9 +111,11 @@ async def submit_quiz(
         submitted_at=datetime.now()
     )
 
-    save_submission(new_submission)
+    # Save submission with authenticated client (RLS enforcement)
+    save_submission(new_submission, user_token)
 
     for result in detailed_results:
+        # Save each answer with authenticated client (RLS enforcement)
         save_answer(QuizAnswer(
             id=uuid4(),
             submission_id=new_submission.id,
@@ -121,7 +123,7 @@ async def submit_quiz(
             user_answer=result["your_answer"],
             correct_answer=result["correct_answer"],
             is_correct=result["is_correct"]
-        ))
+        ), user_token)
 
     return {
         "id": new_submission.id,
@@ -133,10 +135,15 @@ async def submit_quiz(
     }
 
 
-async def get_submission(submission_id: UUID, user_id: str = Depends(get_current_user_id)):
+async def get_submission(
+    submission_id: UUID, 
+    user_id: str = Depends(get_current_user_id),
+    user_token: str = Depends(get_current_user_token)
+):
     """Retrieve a submission by ID with authorization check"""
     try:
-        submission = get_submission_by_id(submission_id)
+        # Use authenticated client (RLS enforcement)
+        submission = get_submission_by_id(submission_id, user_token)
         
         # Authorization check: user can only access their own submissions
         # Convert both to strings for comparison (user_id is string from auth, submission.user_id is UUID)

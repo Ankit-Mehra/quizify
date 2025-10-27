@@ -199,9 +199,22 @@ def save_metadata(metadata: dict, user_token: Optional[str] = None):
         logger.error(f"Error saving metadata: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
-def get_metadata(user_id: str):
+def get_metadata(user_id: str, user_token: str = None):
+    """
+    Get quiz metadata for a user.
+    
+    Args:
+        user_id: The user ID to fetch metadata for
+        user_token: User's authentication token for RLS enforcement (recommended)
+                    If None, uses service role (bypasses RLS - use with caution)
+    """
     try:
-        supabase = get_supabase()
+        # Use authenticated client if token provided (enforces RLS)
+        if user_token:
+            supabase = get_authed_supabase_client(user_token)
+        else:
+            supabase = get_supabase()  # Service role - bypasses RLS
+        
         logger.debug(f"Fetching metadata for user: {user_id}")
 
         metadata = supabase.table("quiz_metadata").select("*").eq("created_by", user_id).execute()
@@ -211,9 +224,22 @@ def get_metadata(user_id: str):
         logger.error(f"Error retrieving metadata: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
-def delete_quiz_from_database(quiz_id: str):
+def delete_quiz_from_database(quiz_id: str, user_token: str = None):
+    """
+    Delete a quiz from the database.
+    
+    Args:
+        quiz_id: The quiz ID to delete
+        user_token: User's authentication token for RLS enforcement (recommended)
+                    If None, uses service role (bypasses RLS - use with caution)
+    """
     try:
-        supabase = get_supabase()
+        # Use authenticated client if token provided (enforces RLS)
+        if user_token:
+            supabase = get_authed_supabase_client(user_token)
+        else:
+            supabase = get_supabase()  # Service role - bypasses RLS
+        
         logger.debug(f"Deleting quiz with ID: {quiz_id}")
 
         supabase.table("quizzes").delete().eq("id", quiz_id).execute()
@@ -221,12 +247,14 @@ def delete_quiz_from_database(quiz_id: str):
     except Exception as e:
         logger.error(f"Error deleting quiz: {str(e)}", exc_info=True)
 
-def get_user_tier_info(user_id: str):
+def get_user_tier_info(user_id: str, user_token: str = None):
     """
     Get user tier information including quota status from user_tier_info view.
     
     Args:
         user_id: The UUID of the user
+        user_token: User's authentication token for RLS enforcement (recommended)
+                    If None, uses service role (bypasses RLS - use with caution)
         
     Returns:
         dict: User tier information with keys: id, email, account_tier, 
@@ -236,7 +264,12 @@ def get_user_tier_info(user_id: str):
         HTTPException: If user not found or database error occurs
     """
     try:
-        supabase = get_supabase()
+        # Use authenticated client if token provided (enforces RLS)
+        if user_token:
+            supabase = get_authed_supabase_client(user_token)
+        else:
+            supabase = get_supabase()  # Service role - bypasses RLS
+        
         logger.debug(f"Fetching tier info for user: {user_id}")
         
         # Query the user_tier_info view

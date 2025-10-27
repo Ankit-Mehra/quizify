@@ -136,8 +136,9 @@ def is_pdf_url(url: str) -> bool:
         True if URL likely points to a PDF, False otherwise
     """
     try:
-        parsed_url = urlparse(url.lower())
-        path = parsed_url.path
+        parsed_url = urlparse(url)
+        # Only lowercase the path for comparison (not the entire URL)
+        path = parsed_url.path.lower()
         
         # Check for .pdf extension
         if path.endswith('.pdf'):
@@ -181,7 +182,6 @@ async def download_and_extract_pdf(url: str) -> str:
     Raises:
         HTTPException: If download fails, file is too large, or text extraction fails
     """
-    from services.ai_services.doc_service import extract_text_from_pdf
     
     logger.info(f"Downloading PDF from URL: {url}")
     

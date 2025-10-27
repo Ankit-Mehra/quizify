@@ -3,7 +3,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from services.logger import app_logger as logger
 from fastapi import Depends
-from dependencies.auth_dependencies import get_current_user_id
+from dependencies.auth_dependencies import get_current_user_id, get_current_user_token
 from services.db_services.supabase_quiz import get_user_tier_info
 from typing import Dict, Any
 from config import config as app_config
@@ -269,16 +269,19 @@ async def update_email(request: UpdateEmailRequest,
         logger.error(f"Error during email update: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
-async def get_current_user_info(user_id: str = Depends(get_current_user_id)) -> Dict[str, Any]:
+async def get_user_info(
+    user_id: str = Depends(get_current_user_id),
+    user_token: str = Depends(get_current_user_token)
+):
     """
-    Get current authenticated user's information including tier and quota.
+    Get authenticated user's profile information including tier and quota status.
     
     Returns:
         User profile with tier, role, quota, and display name information
     """
     try:
         logger.info(f"Fetching user info for user ID: {user_id}")
-        tier_info = get_user_tier_info(user_id)
+        tier_info = get_user_tier_info(user_id, user_token)
         
         return {
             "user_id": str(tier_info["id"]),
@@ -294,9 +297,8 @@ async def get_current_user_info(user_id: str = Depends(get_current_user_id)) -> 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error fetching user info: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to retrieve user information")
-
+        logger.error(f"Error fetching user info: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 async def confirm_email(
     token: str = Query(..., description="Email confirmation token from Supabase"),

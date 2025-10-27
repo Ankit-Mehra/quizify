@@ -63,8 +63,21 @@ def get_question(question_ids: List[UUID], user_token: str = None) -> List[Quest
         raise HTTPException(status_code=500, detail="Failed to retrieve quiz questions. Please try again.")
 
 
-def save_submission(submission: QuizSubmission):
-    supabase = get_supabase()
+def save_submission(submission: QuizSubmission, user_token: str = None):
+    """
+    Save a quiz submission to the database.
+    
+    Args:
+        submission: QuizSubmission object to save
+        user_token: User's authentication token for RLS enforcement (recommended)
+                    If None, uses service role (bypasses RLS - use with caution)
+    """
+    # Use authenticated client if token provided (enforces RLS)
+    if user_token:
+        supabase = app_config.get_authenticated_supabase_client(user_token)
+    else:
+        supabase = get_supabase()  # Service role - bypasses RLS
+    
     logger.debug(f"Saving submission for quiz_id: {submission.quiz_id}, user_id: {submission.user_id}")
     try:
         payload = submission.model_dump(mode="json")
@@ -76,7 +89,9 @@ def save_submission(submission: QuizSubmission):
         
         # Parse error and return user-friendly message
         error_str = str(e)
-        if "23503" in error_str and "quiz_id" in error_str:
+        if "42501" in error_str:  # RLS policy violation
+            raise HTTPException(status_code=403, detail="Permission denied. You can only submit your own quiz answers.")
+        elif "23503" in error_str and "quiz_id" in error_str:
             raise HTTPException(status_code=404, detail="Quiz not found. Please verify the quiz ID.")
         elif "23503" in error_str:
             raise HTTPException(status_code=400, detail="Invalid reference in submission data.")
@@ -85,8 +100,21 @@ def save_submission(submission: QuizSubmission):
         else:
             raise HTTPException(status_code=500, detail="Failed to save submission. Please try again.")
 
-def save_answer(answer: QuizAnswer):
-    supabase = get_supabase()
+def save_answer(answer: QuizAnswer, user_token: str = None):
+    """
+    Save a quiz answer to the database.
+    
+    Args:
+        answer: QuizAnswer object to save
+        user_token: User's authentication token for RLS enforcement (recommended)
+                    If None, uses service role (bypasses RLS - use with caution)
+    """
+    # Use authenticated client if token provided (enforces RLS)
+    if user_token:
+        supabase = app_config.get_authenticated_supabase_client(user_token)
+    else:
+        supabase = get_supabase()  # Service role - bypasses RLS
+    
     logger.debug(f"Saving answer for question_id: {answer.question_id}")
     try:
         payload = answer.model_dump(mode="json")
@@ -97,15 +125,33 @@ def save_answer(answer: QuizAnswer):
         
         # Parse error and return user-friendly message
         error_str = str(e)
-        if "23503" in error_str:
+        if "42501" in error_str:  # RLS policy violation
+            raise HTTPException(status_code=403, detail="Permission denied. You can only submit your own answers.")
+        elif "23503" in error_str:
             raise HTTPException(status_code=400, detail="Invalid question or submission reference.")
         elif "23505" in error_str:
             raise HTTPException(status_code=409, detail="This answer has already been recorded.")
         else:
             raise HTTPException(status_code=500, detail="Failed to save answer. Please try again.")
 
-def get_submission_by_id(submission_id: UUID) -> QuizSubmission:
-    supabase = get_supabase()
+def get_submission_by_id(submission_id: UUID, user_token: str = None) -> QuizSubmission:
+    """
+    Get a submission by its ID.
+    
+    Args:
+        submission_id: UUID of the submission to fetch
+        user_token: User's authentication token for RLS enforcement (recommended)
+                    If None, uses service role (bypasses RLS - use with caution)
+    
+    Returns:
+        QuizSubmission object
+    """
+    # Use authenticated client if token provided (enforces RLS)
+    if user_token:
+        supabase = app_config.get_authenticated_supabase_client(user_token)
+    else:
+        supabase = get_supabase()  # Service role - bypasses RLS
+    
     logger.debug(f"Fetching submission with id: {submission_id}")
     try:
         response = (
