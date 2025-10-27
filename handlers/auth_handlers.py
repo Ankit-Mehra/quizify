@@ -281,7 +281,7 @@ async def get_user_info(
     """
     try:
         logger.info(f"Fetching user info for user ID: {user_id}")
-        tier_info = get_user_tier_info(user_id, user_token)
+        tier_info = get_user_tier_info(user_id)
         
         return {
             "user_id": str(tier_info["id"]),

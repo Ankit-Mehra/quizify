@@ -61,7 +61,7 @@ def validate_user_quota(user_id: str, user_token: str = None):
     Raises:
         HTTPException: 403 Forbidden if quota is exceeded with detailed error message
     """
-    tier_info = get_user_tier_info(user_id, user_token)
+    tier_info = get_user_tier_info(user_id)
     
     if tier_info["quota_exceeded"]:
         current_count = tier_info["current_quiz_count"]
@@ -517,7 +517,7 @@ async def generate_quiz_from_url(
     
     try:
         # Get user tier info for logging
-        tier_info = get_user_tier_info(current_user_id, user_token)
+        tier_info = get_user_tier_info(current_user_id)
         
         # Scrape content with user ID for resource tracking
         logger.info(f"User {current_user_id} ({tier_info['account_tier']} tier) generating quiz from URL: {data.url}")

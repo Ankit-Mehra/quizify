@@ -247,26 +247,34 @@ def delete_quiz_from_database(quiz_id: str, user_token: str = None):
     except Exception as e:
         logger.error(f"Error deleting quiz: {str(e)}", exc_info=True)
 
-def get_user_tier_info(user_id: str, user_token: str = None):
+def get_user_tier_info(user_id: str):
     """
     Get user tier information including quota status from user_tier_info view.
     
-    NOTE: This function uses SERVICE ROLE client (not authenticated client) because:
-    - user_tier_info view accesses auth.users table which users don't have permission to query
-    - The view is security-definer and requires elevated permissions
-    - We filter by user_id so users can only see their own data (no security risk)
-    - This is safe because we validate user_id comes from authenticated JWT token
+    SECURITY MODEL:
+    - This function ALWAYS uses SERVICE ROLE client (not authenticated client)
+    - Reason: user_tier_info view accesses auth.users table which requires elevated permissions
+    - Safety: user_id comes from authenticated JWT (validated by FastAPI dependency injection)
+    - No data leakage risk: Query is explicitly filtered by user_id parameter
+    
+    This is the ONE documented exception to the "use authenticated clients everywhere" rule.
+    All other database operations should use authenticated clients for RLS enforcement.
     
     Args:
-        user_id: The UUID of the user (validated from JWT token by caller)
-        user_token: Ignored - we always use service role for this operation
+        user_id: The UUID of the user (must be validated from JWT token by caller)
         
     Returns:
-        dict: User tier information with keys: id, email, account_tier, 
-              current_quiz_count, quota_limit, quota_exceeded
+        dict: User tier information with keys:
+            - id: User UUID
+            - email: User email
+            - account_tier: 'free', 'basic', or 'educator'
+            - current_quiz_count: Number of quizzes created
+            - quizzes_attempted: Number of quizzes attempted (submissions)
+            - quota_limit: Max quizzes allowed for tier
+            - quota_exceeded: Boolean indicating if quota is exceeded
               
     Raises:
-        HTTPException: If user not found or database error occurs
+        HTTPException: If user not found (404) or database error occurs (500)
     """
     try:
         # Always use service role for querying user_tier_info view
