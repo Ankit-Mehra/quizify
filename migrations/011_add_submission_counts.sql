@@ -115,7 +115,6 @@ BEGIN
     RAISE NOTICE '  ✅ Updated user_tier_info to include quizzes_attempted';
     RAISE NOTICE '';
     RAISE NOTICE 'Sample query to test:';
-    RAISE NOTICE '  SELECT email, current_quiz_count AS created, quizzes_attempted';
-    RAISE NOTICE '  FROM user_tier_info LIMIT 5;';
+    RAISE NOTICE '  SELECT email, current_quiz_count AS created, quizzes_attempted FROM user_tier_info LIMIT 5;';
     RAISE NOTICE '';
 END $$;
