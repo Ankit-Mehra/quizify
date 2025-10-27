@@ -12,6 +12,11 @@ def get_supabase():
     """Get Supabase client (lazy loaded)"""
     return app_config.get_supabase_client()
 
+def get_authed_supabase_client(user_token: str):
+    """Get authenticated Supabase client for RLS enforcement"""
+    logger.debug(f"Creating authenticated Supabase client with token: {user_token[:10]}...")
+    return app_config.get_authenticated_supabase_client(user_token)
+
 def get_question(question_ids: List[UUID], user_token: str = None) -> List[Question]:
     """
     Get questions by their IDs using Supabase `.in_` clause
@@ -136,40 +141,124 @@ def save_answer(answer: QuizAnswer, user_token: str = None):
 
 def get_submission_by_id(submission_id: UUID, user_token: str = None) -> QuizSubmission:
     """
-    Get a submission by its ID.
+    Retrieve a submission by its ID.
     
     Args:
-        submission_id: UUID of the submission to fetch
+        submission_id: The UUID of the submission
         user_token: User's authentication token for RLS enforcement (recommended)
-                    If None, uses service role (bypasses RLS - use with caution)
-    
-    Returns:
-        QuizSubmission object
     """
-    # Use authenticated client if token provided (enforces RLS)
-    if user_token:
-        supabase = app_config.get_authenticated_supabase_client(user_token)
-    else:
-        supabase = get_supabase()  # Service role - bypasses RLS
-    
-    logger.debug(f"Fetching submission with id: {submission_id}")
     try:
-        response = (
-            supabase
-            .table("submissions")
-            .select("*")
-            .eq("id", submission_id)
-            .execute()
+        # Use authenticated client if token provided (enforces RLS)
+        if user_token:
+            supabase = get_authed_supabase_client(user_token)
+        else:
+            supabase = get_supabase()
+        
+        # Get submission
+        submission_data = supabase.table("submissions").select("*").eq("id", str(submission_id)).execute()
+        
+        if not submission_data.data:
+            raise HTTPException(status_code=404, detail=f"Submission {submission_id} not found")
+        
+        submission = submission_data.data[0]
+        
+        # Get answers for this submission
+        answers_data = supabase.table("answers").select("*").eq("submission_id", str(submission_id)).execute()
+        
+        # Convert to QuizSubmission model
+        return QuizSubmission(
+            id=UUID(submission["id"]),
+            quiz_id=UUID(submission["quiz_id"]),
+            user_id=UUID(submission["user_id"]),
+            score=submission["score"],
+            total_questions=submission["total_questions"],
+            correct_count=submission["correct_count"],
+            wrong_count=submission["wrong_count"],
+            submitted_at=submission["submitted_at"],
+            answers=[
+                QuizAnswer(
+                    question_id=UUID(ans["question_id"]),
+                    submitted_answer=ans["submitted_answer"],
+                    is_correct=ans["is_correct"],
+                    correct_answer=ans.get("correct_answer")
+                )
+                for ans in answers_data.data
+            ]
         )
-        if not response.data:
-            logger.warning(f"Submission not found: {submission_id}")
-            raise HTTPException(status_code=404, detail="Submission not found.")
-
-        logger.debug(f"Successfully retrieved submission: {submission_id}")
-        return QuizSubmission(**response.data[0])
     except HTTPException:
-        raise  # Re-raise HTTP exceptions as-is
+        raise
     except Exception as e:
-        # Log full error details for debugging
-        logger.error(f"Database error fetching submission: {str(e)}")
-        raise HTTPException(status_code=500, detail="Failed to retrieve submission. Please try again.")
+        logger.error(f"Error retrieving submission: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def get_user_submissions(user_id: str, user_token: str = None) -> List[dict]:
+    """
+    Get all submissions for a user with basic info (no detailed answers).
+    
+    Args:
+        user_id: The user's UUID
+        user_token: User's authentication token for RLS enforcement (recommended)
+        
+    Returns:
+        List of submission summaries with: id, quiz_id, score, submitted_at, total_questions
+    """
+    try:
+        # Use authenticated client if token provided (enforces RLS)
+        if user_token:
+            supabase = get_authed_supabase_client(user_token)
+        else:
+            supabase = get_supabase()
+        
+        logger.debug(f"Fetching submissions for user: {user_id}")
+        
+        # Get all submissions for this user, ordered by most recent first
+        submissions = supabase.table("submissions") \
+            .select("id, quiz_id, score, total_questions, correct_count, wrong_count, submitted_at") \
+            .eq("user_id", user_id) \
+            .order("submitted_at", desc=True) \
+            .execute()
+        
+        logger.debug(f"Found {len(submissions.data or [])} submissions for user: {user_id}")
+        return submissions.data or []
+        
+    except Exception as e:
+        logger.error(f"Error retrieving user submissions: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def get_quiz_submissions(quiz_id: str, user_id: str, user_token: str = None) -> List[dict]:
+    """
+    Get all submissions for a specific quiz by a specific user.
+    
+    Args:
+        quiz_id: The quiz UUID
+        user_id: The user's UUID
+        user_token: User's authentication token for RLS enforcement (recommended)
+        
+    Returns:
+        List of submission summaries for this quiz
+    """
+    try:
+        # Use authenticated client if token provided (enforces RLS)
+        if user_token:
+            supabase = get_authed_supabase_client(user_token)
+        else:
+            supabase = get_supabase()
+        
+        logger.debug(f"Fetching submissions for quiz {quiz_id} by user {user_id}")
+        
+        # Get submissions for this quiz by this user
+        submissions = supabase.table("submissions") \
+            .select("id, quiz_id, score, total_questions, correct_count, wrong_count, submitted_at") \
+            .eq("quiz_id", quiz_id) \
+            .eq("user_id", user_id) \
+            .order("submitted_at", desc=True) \
+            .execute()
+        
+        logger.debug(f"Found {len(submissions.data or [])} submissions for quiz {quiz_id} by user {user_id}")
+        return submissions.data or []
+        
+    except Exception as e:
+        logger.error(f"Error retrieving quiz submissions: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
