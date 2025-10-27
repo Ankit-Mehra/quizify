@@ -2,7 +2,7 @@ from fastapi import APIRouter
 from handlers.auth_handlers import (
     signup, login, logout,
     change_password, delete_account, update_email,
-    get_current_user_info, confirm_email,
+    get_user_info, confirm_email,
     forgot_password, reset_password, resend_verification_email
 )
 from typing import Dict, Any
@@ -58,7 +58,7 @@ router.add_api_route(
 
 router.add_api_route(
     "/me",
-    get_current_user_info,
+    get_user_info,
     methods=["GET"],
     response_model=Dict[str, Any],
     summary="Get Current User Info",
