@@ -56,7 +56,7 @@ router.add_api_route(
     methods=["PUT"],
     summary="Update User Tier",
     description="Update a user's account tier. Admin only endpoint.",
-    response_model=Dict[str, Any],
+    response_model=Dict[str, Any],  # TODO: Should be AdminUpdateResponse but handler may return flexible dict
     tags=["Admin"],
     openapi_extra={
         "security": [{"BearerAuth": []}],
@@ -77,7 +77,7 @@ router.add_api_route(
     methods=["PUT"],
     summary="Update User Role",
     description="Update a user's role (promote/demote to admin). Admin only endpoint with audit logging.",
-    response_model=Dict[str, Any],
+    response_model=Dict[str, Any],  # TODO: Should be AdminUpdateResponse but handler may return flexible dict
     tags=["Admin"],
     openapi_extra={
         "security": [{"BearerAuth": []}],

@@ -3,7 +3,8 @@
 **Endpoint**: `POST /api/quiz/{quiz_id}/submit`  
 **Status**: ✅ FULLY IMPLEMENTED  
 **Authentication**: Required (Bearer token)  
-**Last Updated**: 2025-10-23
+**Response Model**: `SubmissionResponse`  
+**Last Updated**: 2025-10-28
 
 ---
 

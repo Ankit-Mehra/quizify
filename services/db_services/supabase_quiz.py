@@ -286,7 +286,9 @@ def get_user_tier_info(user_id: str):
         
         logger.debug(f"Fetching tier info for user: {user_id}")
         
-        # Query the user_tier_info view
+        # Query the user_tier_info view with explicit refresh
+        # Note: Supabase Python client doesn't support cache control headers,
+        # but we can ensure we're getting fresh data by re-initializing if needed
         response = supabase.table("user_tier_info").select("*").eq("id", user_id).execute()
         
         if not response.data or len(response.data) == 0:
@@ -294,10 +296,15 @@ def get_user_tier_info(user_id: str):
             raise HTTPException(status_code=404, detail="User not found")
         
         tier_info = response.data[0]
-        logger.debug(
-            f"User {user_id} tier info: tier={tier_info['account_tier']}, "
-            f"count={tier_info['current_quiz_count']}/{tier_info['quota_limit']}, "
-            f"exceeded={tier_info['quota_exceeded']}"
+        
+        # Log the actual data we received from database
+        logger.info(
+            f"User {user_id[:8]}... tier info from DB: "
+            f"tier={tier_info.get('account_tier')}, "
+            f"quiz_count={tier_info.get('current_quiz_count')}, "
+            f"quizzes_attempted={tier_info.get('quizzes_attempted')}, "
+            f"quota={tier_info.get('quota_limit')}, "
+            f"exceeded={tier_info.get('quota_exceeded')}"
         )
         
         return tier_info

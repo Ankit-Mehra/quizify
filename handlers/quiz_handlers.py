@@ -520,8 +520,22 @@ async def generate_quiz_from_url(
         tier_info = get_user_tier_info(current_user_id)
         
         # Scrape content with user ID for resource tracking
+        # Enable PDF saving to user_files if URL is a PDF
         logger.info(f"User {current_user_id} ({tier_info['account_tier']} tier) generating quiz from URL: {data.url}")
-        content = await scrape_content(str(data.url), current_user_id)
+        content, file_info = await scrape_content(
+            url=str(data.url), 
+            user_id=current_user_id,
+            user_token=user_token,
+            save_pdf=True  # Save PDFs to user_files
+        )
+        
+        # Determine content source reference
+        # If PDF was saved, use file_id; otherwise use URL
+        if file_info and file_info.get('file_id'):
+            content_source_reference = file_info['file_id']
+            logger.info(f"PDF from URL saved as file_id: {content_source_reference}")
+        else:
+            content_source_reference = str(data.url)
         
         # Generate quiz
         total_questions = data.num_questions if data.num_questions is not None else 10
@@ -537,7 +551,7 @@ async def generate_quiz_from_url(
             quizzes, 
             current_user_id,
             content_source_type="url",
-            content_source_reference=str(data.url),
+            content_source_reference=content_source_reference,  # file_id if PDF, URL otherwise
             user_token=user_token
         )
         logger.info(f"Saved quiz from URL with ID: {quiz_id}")
@@ -547,7 +561,7 @@ async def generate_quiz_from_url(
             "quiz_id": quiz_id,
             "content_type": "url",
             "file_name": str(data.url),
-            "file_type": "text/html",
+            "file_type": "application/pdf" if file_info else "text/html",
             "word_count": len(content.split()),
             "created_by": current_user_id,
             "created_at": datetime.now().isoformat(),
@@ -556,13 +570,21 @@ async def generate_quiz_from_url(
         save_metadata(metadata, user_token=user_token)
         logger.info(f"Saved metadata for URL quiz {quiz_id}")
         
-        return {
+        # Build response
+        response = {
             "quiz_id": quiz_id,
             "title": data.title,
             "message": "Quiz generated successfully from URL",
             "questions": saved_questions,  # Return saved questions with IDs
             "source_url": str(data.url)
         }
+        
+        # If PDF was saved, include file info
+        if file_info:
+            response["file_id"] = file_info.get('file_id')
+            response["message"] = "Quiz generated successfully from PDF URL (PDF saved to your files)"
+        
+        return response
         
     except HTTPException:
         raise

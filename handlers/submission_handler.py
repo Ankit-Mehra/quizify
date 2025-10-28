@@ -6,7 +6,7 @@ from pydantic import ValidationError
 from fastapi import HTTPException, Depends
 from uuid import UUID, uuid4
 from datetime import datetime
-from services.db_services.supabase_submission import get_question, save_submission, save_answer, get_submission_by_id
+from services.db_services.supabase_submission import get_question, save_submission, save_answer, get_submission_by_id, get_user_submissions, get_quiz_submissions
 from services.db_services.supabase_quiz import get_quiz_from_database
 from dependencies.auth_dependencies import get_current_user_id, get_current_user_token
 from services.logger import app_logger as logger
@@ -158,3 +158,55 @@ async def get_submission(
     except Exception as e:
         logger.error(f"Unexpected error retrieving submission {submission_id}: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to retrieve submission. Please try again.")
+
+
+async def list_user_submissions(
+    user_id: str = Depends(get_current_user_id),
+    user_token: str = Depends(get_current_user_token)
+):
+    """
+    Get all quiz submissions for the current user.
+    Returns list of submissions with basic info (no detailed answers).
+    """
+    try:
+        logger.info(f"User {user_id} fetching all their submissions")
+        
+        # Use authenticated client (RLS enforcement)
+        submissions = get_user_submissions(user_id, user_token)
+        
+        logger.info(f"User {user_id} has {len(submissions)} submissions")
+        return {
+            "user_id": user_id,
+            "total_submissions": len(submissions),
+            "submissions": submissions
+        }
+    except Exception as e:
+        logger.error(f"Error listing submissions for user {user_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve submissions. Please try again.")
+
+
+async def list_quiz_submissions(
+    quiz_id: UUID,
+    user_id: str = Depends(get_current_user_id),
+    user_token: str = Depends(get_current_user_token)
+):
+    """
+    Get all submissions for a specific quiz by the current user.
+    Useful for seeing attempt history on a particular quiz.
+    """
+    try:
+        logger.info(f"User {user_id} fetching submissions for quiz {quiz_id}")
+        
+        # Use authenticated client (RLS enforcement)
+        submissions = get_quiz_submissions(str(quiz_id), user_id, user_token)
+        
+        logger.info(f"User {user_id} has {len(submissions)} attempts on quiz {quiz_id}")
+        return {
+            "quiz_id": str(quiz_id),
+            "user_id": user_id,
+            "total_attempts": len(submissions),
+            "submissions": submissions
+        }
+    except Exception as e:
+        logger.error(f"Error listing submissions for quiz {quiz_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve quiz submissions. Please try again.")

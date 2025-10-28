@@ -23,6 +23,10 @@ class FileUploadResponse(BaseModel):
     message: str
     file_id: str
 
+class FileDeleteResponse(BaseModel):
+    """Response for file deletion"""
+    message: str
+
 class FileQuizRequest(BaseModel):
     title: str
     num_questions: int

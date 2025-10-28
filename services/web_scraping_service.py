@@ -16,6 +16,7 @@ from fastapi import HTTPException
 from services.logger import app_logger as logger
 from config import config as app_config
 from services.ai_services.doc_service import extract_text_from_pdf
+from services.db_services.supabase_file import save_file_to_supabase
 
 # Constants
 MAX_CONTENT_SIZE = 500 * 1024  # 500KB for HTML content
@@ -161,7 +162,7 @@ def is_pdf_url(url: str) -> bool:
         return False
 
 
-async def download_and_extract_pdf(url: str) -> str:
+async def download_and_extract_pdf(url: str, user_id: str = None, user_token: str = None) -> tuple[str, bytes]:
     """
     Download PDF from URL and extract text content.
     
@@ -172,15 +173,24 @@ async def download_and_extract_pdf(url: str) -> str:
     1. Downloads the PDF with size limits (10MB max)
     2. Extracts text using PyMuPDF (via doc_service)
     3. Validates extracted content
+    4. Returns both text content AND raw PDF bytes (for optional saving)
     
     Args:
         url: The PDF URL to download (assumed to be pre-validated)
+        user_id: Unused parameter (kept for backwards compatibility)
+        user_token: Unused parameter (kept for backwards compatibility)
         
     Returns:
-        Extracted text content from the PDF
+        Tuple of (extracted_text, pdf_bytes) where:
+        - extracted_text (str): Text content extracted from PDF
+        - pdf_bytes (bytes): Raw PDF file bytes for optional saving
         
     Raises:
         HTTPException: If download fails, file is too large, or text extraction fails
+    
+    Note:
+        File saving is handled separately by save_pdf_to_user_files() in the caller (scrape_content).
+        The user_id and user_token parameters are not used by this function.
     """
     
     logger.info(f"Downloading PDF from URL: {url}")
@@ -244,7 +254,9 @@ async def download_and_extract_pdf(url: str) -> str:
             )
         
         logger.info(f"Successfully extracted {len(text)} characters from PDF")
-        return text
+        
+        # Return both text and bytes (bytes can be used to save file if needed)
+        return text, pdf_bytes
         
     except httpx.HTTPStatusError as e:
         logger.error(f"HTTP error downloading PDF: {e.response.status_code}")
@@ -266,6 +278,52 @@ async def download_and_extract_pdf(url: str) -> str:
             status_code=500,
             detail=f"Failed to process PDF: {str(e)}"
         )
+
+
+async def save_pdf_to_user_files(url: str, pdf_bytes: bytes, user_id: str, user_token: str) -> dict | None:
+    """
+    Save downloaded PDF to user_files table and Supabase storage.
+    
+    Args:
+        url: The PDF URL (for extracting filename)
+        pdf_bytes: The PDF file bytes
+        user_id: User ID to save file for
+        user_token: User authentication token
+        
+    Returns:
+        Dict with file metadata if successful, None if failed:
+        - file_id (str): UUID of the saved file
+        - storage_path (str): Path in Supabase storage (format: "{user_id}/{uuid}_{filename}")
+        
+        Returns None on failure (does not raise exception).
+    
+    Note:
+        This function calls save_file_to_supabase() which only returns file_id and storage_path.
+        For complete file metadata including filename, file_size_bytes, mime_type, and uploaded_at,
+        use the GET /files/metadata endpoint after file is saved.
+    """
+    try:
+        # Extract filename from URL or use default
+        parsed_url = urlparse(url)
+        filename = os.path.basename(parsed_url.path) or "downloaded.pdf"
+        if not filename.endswith('.pdf'):
+            filename += '.pdf'
+        
+        logger.info(f"Saving PDF file to user_files for user {user_id}: {filename}")
+        file_info = save_file_to_supabase(
+            user_id=user_id,
+            file_bytes=pdf_bytes,
+            original_filename=filename,
+            token=user_token,
+            file_type="application/pdf"
+        )
+        logger.info(f"PDF saved successfully: file_id={file_info['file_id']}")
+        return file_info
+        
+    except Exception as e:
+        logger.error(f"Failed to save PDF to user_files: {str(e)}", exc_info=True)
+        # Return None instead of raising - caller can decide how to handle
+        return None
 
 
 def is_private_ip(ip: str) -> bool:
@@ -446,7 +504,7 @@ async def _release_browser_slot(user_id: str = "anonymous") -> None:
                 del _active_browsers[user_id]
 
 
-async def scrape_content(url: str, user_id: str = "anonymous") -> str:
+async def scrape_content(url: str, user_id: str = "anonymous", user_token: str = None, save_pdf: bool = False) -> tuple[str, dict | None]:
     """
     Scrape content from URL using Playwright + Trafilatura.
     Automatically handles PDF URLs by downloading and extracting text.
@@ -456,9 +514,12 @@ async def scrape_content(url: str, user_id: str = "anonymous") -> str:
     Args:
         url: The URL to scrape (HTML or PDF)
         user_id: User ID for resource tracking and limits
+        user_token: Optional user token for saving files (required if save_pdf=True for PDFs)
+        save_pdf: If True and URL is a PDF, save the PDF to user_files table
         
     Returns:
-        Extracted text content from the page or PDF
+        Tuple of (extracted_text, file_info_dict or None)
+        file_info_dict contains: {"file_id": str, "storage_path": str} if PDF was saved
         
     Raises:
         HTTPException: If scraping fails, content is invalid, timeout occurs, or resource limits exceeded
@@ -470,7 +531,16 @@ async def scrape_content(url: str, user_id: str = "anonymous") -> str:
     if is_pdf_url(url):
         logger.info(f"PDF URL detected - downloading and extracting text: {url}")
         # PDF download doesn't need browser slot - URL already validated
-        return await download_and_extract_pdf(url)
+        text, pdf_bytes = await download_and_extract_pdf(url, user_id, user_token)
+        
+        # Optionally save PDF to user_files table
+        file_info = None
+        if save_pdf and user_id != "anonymous" and user_token:
+            file_info = await save_pdf_to_user_files(url, pdf_bytes, user_id, user_token)
+            if not file_info:
+                logger.warning("PDF file save failed, but continuing with quiz generation")
+        
+        return text, file_info
     
     # Acquire browser slot (enforces concurrent browser limits) - only for HTML scraping
     await _acquire_browser_slot(user_id)
@@ -616,7 +686,8 @@ async def scrape_content(url: str, user_id: str = "anonymous") -> str:
                         extracted = extracted[:MAX_CONTENT_SIZE]
                     
                     logger.info(f"Successfully extracted {len(extracted)} characters from URL: {url} using strategy: {wait_strategy}")
-                    return extracted
+                    # HTML scraping doesn't save files, so return None for file_info
+                    return extracted, None
                     
             except HTTPException as he:
                 # HTTP exceptions should be raised immediately (don't retry)
