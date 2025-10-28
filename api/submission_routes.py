@@ -1,7 +1,7 @@
 ## Submission Routes
 from fastapi import APIRouter, Response
 from services.logger import app_logger as logger
-from schemas.submission import SubmissionResponse, QuizSubmission
+from schemas.submission import SubmissionResponse, QuizSubmission, UserSubmissionsResponse, QuizSubmissionsResponse
 from handlers.submission_handler import submit_quiz, get_submission, list_user_submissions, list_quiz_submissions
 
 router = APIRouter(tags=["Quiz Submissions"])
@@ -70,7 +70,8 @@ router.add_api_route(
         "- Correct/wrong counts\n"
         "- Submission timestamp\n\n"
         "Submissions are ordered by most recent first."
-    )
+    ),
+    response_model=UserSubmissionsResponse
 )
 
 # List submissions for a specific quiz
@@ -83,5 +84,6 @@ router.add_api_route(
         "Get all attempts (submissions) for a specific quiz by the authenticated user.\n\n"
         "Useful for viewing attempt history and tracking progress on a particular quiz.\n\n"
         "Returns submissions ordered by most recent first."
-    )
+    ),
+    response_model=QuizSubmissionsResponse
 )

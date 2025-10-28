@@ -1,9 +1,10 @@
 # API Contract: Generate Quiz from File (ACTUAL IMPLEMENTATION)
 
 **Endpoint**: `POST /api/quiz/generate/file`  
-**Status**: ✅ FULLY IMPLEMENTED (includes quota validation)  
+**Status**: ✅ FULLY IMPLEMENTED  
 **Authentication**: Required (Bearer token)  
-**Last Updated**: 2025-10-23 (Corrected after audit verification)
+**Response Model**: `QuizGenerationResponse`  
+**Last Updated**: 2025-10-28
 
 ---
 

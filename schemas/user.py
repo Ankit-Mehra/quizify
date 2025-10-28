@@ -78,3 +78,4 @@ class RoleUpdate(BaseModel):
         None,
         description="Optional reason for the role change (for audit logs)"
     )
+

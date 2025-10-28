@@ -143,6 +143,7 @@ class QuizGenerationResponse(BaseModel):
     message: str
     questions: Optional[List[Question]] = None  # Saved questions from database with IDs
     source_url: Optional[str] = None  # URL source for web-based quizzes
+    file_id: Optional[str] = None  # File ID if PDF was saved from URL
 
 class MyQuizzesResponse(BaseModel):
     model_config = ConfigDict(strict=True)
@@ -151,3 +152,7 @@ class MyQuizzesResponse(BaseModel):
     created_by: Optional[str] = None
     created_at: Optional[str] = None
     question_count: Optional[int] = None
+
+class DeleteQuizResponse(BaseModel):
+    """Response for quiz deletion"""
+    message: str

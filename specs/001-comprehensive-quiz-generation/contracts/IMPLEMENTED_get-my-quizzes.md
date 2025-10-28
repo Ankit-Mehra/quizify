@@ -1,9 +1,10 @@
 # API Contract: Get User Quizzes (ACTUAL IMPLEMENTATION)
 
 **Endpoint**: `GET /api/quiz/my-quizzes`  
-**Status**: ✅ IMPLEMENTED (No search/filter)  
+**Status**: ✅ IMPLEMENTED  
 **Authentication**: Required (Bearer token)  
-**Last Updated**: 2025-10-08
+**Response Model**: `List[MyQuizzesResponse]`  
+**Last Updated**: 2025-10-28
 
 ---
 

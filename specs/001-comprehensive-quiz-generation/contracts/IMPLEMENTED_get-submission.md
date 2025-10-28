@@ -3,7 +3,8 @@
 **Endpoint**: `GET /api/submission/{submission_id}`  
 **Status**: ✅ FULLY IMPLEMENTED  
 **Authentication**: Required (Bearer token)  
-**Last Updated**: 2025-10-23
+**Response Model**: `QuizSubmission`  
+**Last Updated**: 2025-10-28
 
 ---
 
@@ -291,17 +292,13 @@ GET /api/submission/invalid-uuid-format
    - Return answer-by-answer breakdown from `answers` table
    - Include question text, user answer, correct answer, is_correct flag
 
-2. **Add Submission History**: `GET /api/quiz/{quiz_id}/submissions`
-   - List all user's submissions for a specific quiz
-   - Support pagination and sorting by date
-
 ### MEDIUM Priority
-3. **Include Quiz Metadata**: Join with `quizzes` table to return quiz title
-4. **Add Filtering**: `GET /api/submissions?quiz_id={id}&start_date={date}`
+2. **Include Quiz Metadata**: Join with `quizzes` table to return quiz title
+3. **Add Filtering**: `GET /api/submissions?start_date={date}&end_date={date}`
 
 ### LOW Priority
-5. **Add Caching**: Cache submission data (immutable after creation)
-6. **Add Statistics**: Aggregate user's performance across all submissions
+4. **Add Caching**: Cache submission data (immutable after creation)
+5. **Add Statistics**: Aggregate user's performance across all submissions
 
 ---
 
@@ -311,9 +308,9 @@ GET /api/submission/invalid-uuid-format
 |----------|---------|--------|
 | `POST /api/quiz/{quiz_id}/submit` | Submit quiz answers | ✅ Implemented |
 | `GET /api/submission/{submission_id}` | Get submission summary | ✅ Implemented (this endpoint) |
+| `GET /api/submissions` | List user's all submissions | ✅ Implemented |
+| `GET /api/quiz/{quiz_id}/submissions` | List quiz submissions | ✅ Implemented |
 | `GET /api/submission/{submission_id}/answers` | Get detailed answers | ❌ Not implemented |
-| `GET /api/quiz/{quiz_id}/submissions` | List quiz submissions | ❌ Not implemented |
-| `GET /api/submissions/history` | Get user's all submissions | ❌ Not implemented |
 
 ---
 

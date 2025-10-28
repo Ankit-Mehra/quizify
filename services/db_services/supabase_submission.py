@@ -162,10 +162,9 @@ def get_submission_by_id(submission_id: UUID, user_token: str = None) -> QuizSub
         
         submission = submission_data.data[0]
         
-        # Get answers for this submission
-        answers_data = supabase.table("answers").select("*").eq("submission_id", str(submission_id)).execute()
-        
-        # Convert to QuizSubmission model
+        # Convert to QuizSubmission model (summary only, no detailed answers)
+        # Note: QuizSubmission schema doesn't include 'answers' field
+        # For detailed answer breakdown, use a separate endpoint (future enhancement)
         return QuizSubmission(
             id=UUID(submission["id"]),
             quiz_id=UUID(submission["quiz_id"]),
@@ -174,16 +173,7 @@ def get_submission_by_id(submission_id: UUID, user_token: str = None) -> QuizSub
             total_questions=submission["total_questions"],
             correct_count=submission["correct_count"],
             wrong_count=submission["wrong_count"],
-            submitted_at=submission["submitted_at"],
-            answers=[
-                QuizAnswer(
-                    question_id=UUID(ans["question_id"]),
-                    submitted_answer=ans["submitted_answer"],
-                    is_correct=ans["is_correct"],
-                    correct_answer=ans.get("correct_answer")
-                )
-                for ans in answers_data.data
-            ]
+            submitted_at=submission["submitted_at"]
         )
     except HTTPException:
         raise

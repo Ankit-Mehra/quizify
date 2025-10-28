@@ -3,7 +3,8 @@ from schemas.quiz import (
     QuizMetadata, 
     QuizGenerationResponse,
     QuizzesResponse,
-    MyQuizzesResponse
+    MyQuizzesResponse,
+    DeleteQuizResponse
 )
 from handlers.quiz_handlers import (
     generate_quiz_from_file_openai,
@@ -131,5 +132,6 @@ router.add_api_route(
     endpoint=delete_quiz_by_id_handler,
     methods=["DELETE"],
     summary="Delete Quiz by ID",
+    response_model=DeleteQuizResponse,
     tags=["Quiz Management"]
 )

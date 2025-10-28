@@ -52,4 +52,17 @@ class SubmissionResponse(BaseModel):
     score: int = Field(..., description="Calculated percentage score (0-100, rounded to nearest integer)", ge=0, le=100)
     detailed_results: List[DetailedResult] = Field(..., description="Detailed results for each question")
 
+class UserSubmissionsResponse(BaseModel):
+    """Response for listing all user's quiz submissions"""
+    user_id: str = Field(..., description="User's UUID")
+    total_submissions: int = Field(..., description="Total number of submissions", ge=0)
+    submissions: List[QuizSubmission] = Field(..., description="List of submissions ordered by most recent first")
+
+class QuizSubmissionsResponse(BaseModel):
+    """Response for listing all attempts for a specific quiz"""
+    quiz_id: str = Field(..., description="Quiz UUID")
+    user_id: str = Field(..., description="User's UUID")
+    total_attempts: int = Field(..., description="Number of attempts on this quiz", ge=0)
+    submissions: List[QuizSubmission] = Field(..., description="List of attempts ordered by most recent first")
+
 

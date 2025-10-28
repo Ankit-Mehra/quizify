@@ -1,62 +1,117 @@
-# Actual vs Specified API Contracts Summary
+# API Contracts Folder Structure
 
-**Last Updated**: 2025-10-23 (Corrected after code verification)  
+**Last Updated**: 2025-10-28  
 **Branch**: test/quiz-generation-and-taking-endpoints  
-**Purpose**: Document what's ACTUALLY implemented vs what was specified
+**Purpose**: Documentation of all API endpoint contracts
 
 ---
 
-## Overview
+## 📁 Folder Organization
 
-This folder contains two sets of API contracts:
+### ✅ **Current Implementation Contracts** (Source of Truth)
+All files prefixed with `IMPLEMENTED_` document the **actual current behavior** of the API:
 
-### 📋 **Original Contracts** (Specification)
-Files without `IMPLEMENTED_` prefix show the **intended design** from the feature spec:
-- `generate-quiz-quota.md` - What SHOULD be implemented
-- `upgrade-tier.md` - What SHOULD be implemented
-- `search-quizzes.md` - What SHOULD be implemented
-- `generate-quiz-from-url.md` - What SHOULD be implemented (NOW IMPLEMENTED ✅)
-- `file-upload-validation.md` - What SHOULD be implemented
+**Authentication & User Management:**
+- `IMPLEMENTED_auth-endpoints.md` - All 11 auth endpoints (signup, login, password management, etc.)
+- `IMPLEMENTED_admin-endpoints.md` - Admin user management (4 endpoints)
 
-### ✅ **Actual Implementation Contracts** (Reality)
-Files with `IMPLEMENTED_` prefix show what's **currently in the codebase**:
-- `IMPLEMENTED_generate-quiz-from-text.md` - Actual behavior (HAS quota validation + size limit)
-- `IMPLEMENTED_get-my-quizzes.md` - Actual behavior of quiz listing
-- `IMPLEMENTED_generate-quiz-from-file.md` - Actual behavior (HAS quota validation)
+**Quiz Generation:**
+- `IMPLEMENTED_generate-quiz-from-text.md` - Text-based quiz generation
+- `IMPLEMENTED_generate-quiz-from-file.md` - File-based quiz generation (PDF/DOCX)
+- `IMPLEMENTED_generate-quiz-from-url.md` - URL scraping-based generation
+
+**Quiz Management:**
+- `IMPLEMENTED_get-my-quizzes.md` - List user's quizzes
+- `IMPLEMENTED_get-quiz-by-id.md` - Get full quiz details
+- `IMPLEMENTED_get-quiz-metadata.md` - Get content source tracking
+- `IMPLEMENTED_delete-quiz.md` - Delete quiz
+
+**Quiz Submissions:**
+- `IMPLEMENTED_submit-quiz.md` - Submit answers and get results
+- `IMPLEMENTED_get-submission.md` - Get specific submission
+- `IMPLEMENTED_list-user-submissions.md` - List user's submissions
+- `IMPLEMENTED_list-quiz-submissions.md` - List quiz's submissions
+
+**File Management:**
+- `IMPLEMENTED_file-endpoints.md` - File upload/download/delete (4 endpoints)
+
+**Index:**
+- `CONTRACTS_INDEX.md` - Complete index of all 31 endpoints
 
 ---
 
-## What's Implemented
+### 📋 **Future Feature Specifications**
+Files that document **planned but not yet implemented** features:
+- `search-quizzes.md` - Future: Search/filter for quizzes
+- `upgrade-tier.md` - Future: Self-service tier upgrade
 
+### 📚 **Historical Documentation**
+- `AUDIT_SUMMARY.md` - Historical audit record (October 2025)
+- `_archive/old-specs/` - Superseded specification files
 
-### ✅ Endpoints That Exist
+---
 
-| Endpoint | Status | Notes |
-|----------|--------|-------|
-| `POST /api/quiz/generate-text` | ✅ Works | ✅ Has quota validation (Line 321) + 10MB limit (Line 336) |
-| `POST /api/quiz/generate-file` | ✅ Works | ✅ Has quota validation (Line 112) |
-| `POST /api/quiz/generate/{file_id}` | ✅ Works | ✅ Has quota validation (Line 250) |
-| `POST /api/quiz/generate-url` | ✅ Works | ✅ Has quota validation (Line 512) + SSRF protection |
-| `GET /api/quiz/my-quizzes` | ✅ Works | No search/filter params |
-| `GET /api/quiz/{quiz_id}` | ✅ Works | Fully functional |
-| `DELETE /api/quiz/{quiz_id}` | ✅ Works | Fully functional |
-| `POST /api/quiz/{quiz_id}/submit` | ✅ Works | ✅ Scoring + detailed results |
-| `GET /api/submission/{submission_id}` | ✅ Works | ✅ Authorization enforced (own submissions only) |
-| `POST /api/files/upload` | ✅ Works | ⚠️ Missing 10MB size validation |
+## 🎯 Which File Should I Use?
 
-### ❌ Endpoints That Don't Exist
+### For Implementation
+✅ **Always use `IMPLEMENTED_*.md` files** - these reflect actual code behavior
 
-| Endpoint | Priority | Effort |
+### For Planning Future Features
+📋 Use non-prefixed files (e.g., `search-quizzes.md`, `upgrade-tier.md`)
+
+### For Historical Context
+📚 Check `AUDIT_SUMMARY.md` or `_archive/old-specs/`
+
+---
+
+## 📊 Current Implementation Status
+
+### ✅ Fully Implemented (31 endpoints)
+- **Authentication**: 11 endpoints
+- **Quiz Generation**: 4 endpoints  
+- **Quiz Management**: 4 endpoints
+- **Submissions**: 4 endpoints
+- **Admin**: 4 endpoints
+- **Files**: 4 endpoints
+
+### 📋 Future Features (2 endpoints)
+- `GET /quiz/search` - Search and filter quizzes
+- `POST /auth/upgrade-tier` - Self-service tier upgrade
+
+---
+
+## 🔄 Maintenance Guidelines
+
+### When Implementation Changes:
+1. Update corresponding `IMPLEMENTED_*.md` file
+2. Update `CONTRACTS_INDEX.md` if endpoints added/removed
+3. Run contract verification tests
+
+### When Adding New Features:
+1. Create specification file (no prefix) for planning
+2. Implement feature
+3. Create `IMPLEMENTED_*.md` with actual behavior
+4. Move original spec to `_archive/old-specs/` if superseded
+
+---
+
+## 📖 Documentation Standards
+
+Each `IMPLEMENTED_*.md` contract includes:
+- ✅ Accurate response_model names
+- ✅ Complete request/response examples
+- ✅ All error responses (401, 403, 404, 422, 500)
+- ✅ Security features (RLS, RBAC, SSRF protection)
+- ✅ Implementation details
+- ✅ Usage examples (cURL, JavaScript)
+- ✅ Testing considerations
+- ✅ Integration points
+
+---
+
+**For Complete API Reference**: See `CONTRACTS_INDEX.md`
 |----------|----------|--------|
 | `POST /api/tier/upgrade` | 🟡 MEDIUM | 3-4 hours (needs payment integration) |
-| `GET /api/quiz/search` | 🟡 MEDIUM | 2-3 hours (query params + filtering) |
-| `GET /api/submissions/history` | 🟡 MEDIUM | 2-3 hours (list user's submissions) |
-
-### ❌ Endpoints That Don't Exist
-
-| Endpoint | Priority | Effort |
-|----------|----------|--------|
-| `POST /api/tier/upgrade` | � MEDIUM | 3-4 hours (needs payment integration) |
 | `GET /api/quiz/search` | 🟡 MEDIUM | 2-3 hours (query params + filtering) |
 
 ---
