@@ -16,6 +16,7 @@ from fastapi import HTTPException
 from services.logger import app_logger as logger
 from config import config as app_config
 from services.ai_services.doc_service import extract_text_from_pdf
+from services.db_services.supabase_file import save_file_to_supabase
 
 # Constants
 MAX_CONTENT_SIZE = 500 * 1024  # 500KB for HTML content
@@ -287,10 +288,6 @@ async def save_pdf_to_user_files(url: str, pdf_bytes: bytes, user_id: str, user_
         Dict with file_id and storage_path if successful, None if failed
     """
     try:
-        from services.db_services.supabase_file import save_file_to_supabase
-        from urllib.parse import urlparse
-        import os
-        
         # Extract filename from URL or use default
         parsed_url = urlparse(url)
         filename = os.path.basename(parsed_url.path) or "downloaded.pdf"

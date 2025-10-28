@@ -12,7 +12,6 @@ from handlers.admin_handlers import (
     update_user_role
 )
 from schemas.user import UserTierUpdate, UserWithTier, RoleUpdate
-from schemas.auth import AdminUpdateResponse
 from services.logger import app_logger as logger
 
 router = APIRouter(prefix="/admin", tags=["Admin"])

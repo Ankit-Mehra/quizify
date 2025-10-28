@@ -1,11 +1,18 @@
 from fastapi import APIRouter
 from handlers.auth_handlers import (
-    signup, login, logout,
-    change_password, delete_account, update_email,
-    get_user_info, confirm_email,
-    forgot_password, reset_password, resend_verification_email
+    signup,
+    login,
+    logout,
+    change_password,
+    delete_account,
+    update_email,
+    get_user_info,
+    confirm_email,
+    forgot_password,
+    reset_password,
+    resend_verification_email
 )
-from schemas.auth import AuthSuccessResponse, AuthMessageResponse, UserInfoResponse
+from schemas.auth import AuthMessageResponse, UserInfoResponse
 from typing import Dict, Any
 from services.logger import app_logger as logger
 

@@ -13,8 +13,8 @@ def get_supabase():
     return app_config.get_supabase_client()
 
 def get_authed_supabase_client(user_token: str):
-    """Get authenticated Supabase client for RLS enforcement"""
-    logger.debug(f"Creating authenticated Supabase client with token: {user_token[:10]}...")
+    """Returns Supabase client with user's JWT token for RLS enforcement"""
+    logger.debug(f"Creating authenticated Supabase client with token: {user_token[:4]}...")
     return app_config.get_authenticated_supabase_client(user_token)
 
 def get_question(question_ids: List[UUID], user_token: str = None) -> List[Question]:
