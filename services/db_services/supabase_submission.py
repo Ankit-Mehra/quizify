@@ -204,7 +204,7 @@ def get_user_submissions(user_id: str, user_token: str = None) -> List[dict]:
         
         # Get all submissions for this user, ordered by most recent first
         submissions = supabase.table("submissions") \
-            .select("id, quiz_id, score, total_questions, correct_count, wrong_count, submitted_at") \
+            .select("id, quiz_id, user_id, score, total_questions, correct_count, wrong_count, submitted_at") \
             .eq("user_id", user_id) \
             .order("submitted_at", desc=True) \
             .execute()
@@ -240,7 +240,7 @@ def get_quiz_submissions(quiz_id: str, user_id: str, user_token: str = None) -> 
         
         # Get submissions for this quiz by this user
         submissions = supabase.table("submissions") \
-            .select("id, quiz_id, score, total_questions, correct_count, wrong_count, submitted_at") \
+            .select("id, quiz_id, user_id, score, total_questions, correct_count, wrong_count, submitted_at") \
             .eq("quiz_id", quiz_id) \
             .eq("user_id", user_id) \
             .order("submitted_at", desc=True) \
