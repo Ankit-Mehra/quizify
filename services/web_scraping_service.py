@@ -177,14 +177,20 @@ async def download_and_extract_pdf(url: str, user_id: str = None, user_token: st
     
     Args:
         url: The PDF URL to download (assumed to be pre-validated)
-        user_id: Optional user ID if file should be saved to user_files
-        user_token: Optional user token for saving file (required if user_id provided)
+        user_id: Unused parameter (kept for backwards compatibility)
+        user_token: Unused parameter (kept for backwards compatibility)
         
     Returns:
-        Tuple of (extracted_text, pdf_bytes)
+        Tuple of (extracted_text, pdf_bytes) where:
+        - extracted_text (str): Text content extracted from PDF
+        - pdf_bytes (bytes): Raw PDF file bytes for optional saving
         
     Raises:
         HTTPException: If download fails, file is too large, or text extraction fails
+    
+    Note:
+        File saving is handled separately by save_pdf_to_user_files() in the caller (scrape_content).
+        The user_id and user_token parameters are not used by this function.
     """
     
     logger.info(f"Downloading PDF from URL: {url}")
@@ -276,7 +282,7 @@ async def download_and_extract_pdf(url: str, user_id: str = None, user_token: st
 
 async def save_pdf_to_user_files(url: str, pdf_bytes: bytes, user_id: str, user_token: str) -> dict | None:
     """
-    Save downloaded PDF to user_files table.
+    Save downloaded PDF to user_files table and Supabase storage.
     
     Args:
         url: The PDF URL (for extracting filename)
@@ -285,7 +291,16 @@ async def save_pdf_to_user_files(url: str, pdf_bytes: bytes, user_id: str, user_
         user_token: User authentication token
         
     Returns:
-        Dict with file_id and storage_path if successful, None if failed
+        Dict with file metadata if successful, None if failed:
+        - file_id (str): UUID of the saved file
+        - storage_path (str): Path in Supabase storage (format: "{user_id}/{uuid}_{filename}")
+        
+        Returns None on failure (does not raise exception).
+    
+    Note:
+        This function calls save_file_to_supabase() which only returns file_id and storage_path.
+        For complete file metadata including filename, file_size_bytes, mime_type, and uploaded_at,
+        use the GET /files/metadata endpoint after file is saved.
     """
     try:
         # Extract filename from URL or use default
