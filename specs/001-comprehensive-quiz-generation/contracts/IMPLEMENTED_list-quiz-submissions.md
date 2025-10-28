@@ -100,7 +100,8 @@ class QuizSubmissionsResponse(BaseModel):
 | `submissions` | array | List of submissions (ordered by most recent first) |
 | `submissions[].id` | string (UUID) | Submission ID |
 | `submissions[].quiz_id` | string (UUID) | Quiz ID (same as parent) |
-| `submissions[].score` | float | Score percentage (0-100) |
+| `submissions[].user_id` | string (UUID) | User ID (same as top-level user_id) |
+| `submissions[].score` | integer | Score percentage (0-100, rounded to nearest integer) |
 | `submissions[].total_questions` | integer | Number of questions |
 | `submissions[].correct_count` | integer | Correct answers |
 | `submissions[].wrong_count` | integer | Wrong answers |
@@ -438,6 +439,7 @@ const needsPractice = quizAnalytics
 
 | Date | Version | Changes | Author |
 |------|---------|---------|--------|
+| 2025-10-28 | 1.1 | Fixed response validation: Added user_id field to submissions array | System |
 | 2025-10-28 | 1.0 | Initial implementation | System |
 
 ---
