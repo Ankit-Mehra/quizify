@@ -227,9 +227,14 @@ def get_metadata(user_id: str, user_token: str = None):
         result = []
         for item in metadata.data or []:
             flattened = {**item}
-            if item.get("quizzes"):
+            # Safely extract quiz title if it exists
+            if item.get("quizzes") and isinstance(item["quizzes"], dict) and item["quizzes"].get("title"):
                 flattened["quiz_title"] = item["quizzes"]["title"]
-            del flattened["quizzes"]  # Remove nested object
+            else:
+                # Handle orphaned metadata (quiz was deleted but metadata remains)
+                flattened["quiz_title"] = None
+            # Safely remove nested quizzes object (won't raise KeyError if missing)
+            flattened.pop("quizzes", None)
             result.append(flattened)
         
         logger.debug(f"Found {len(result)} metadata records for user: {user_id}")
