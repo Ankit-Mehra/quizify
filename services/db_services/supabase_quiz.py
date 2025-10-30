@@ -201,7 +201,7 @@ def save_metadata(metadata: dict, user_token: Optional[str] = None):
 
 def get_metadata(user_id: str, user_token: str = None):
     """
-    Get quiz metadata for a user.
+    Get quiz metadata for a user with quiz titles.
     
     Args:
         user_id: The user ID to fetch metadata for
@@ -217,9 +217,26 @@ def get_metadata(user_id: str, user_token: str = None):
         
         logger.debug(f"Fetching metadata for user: {user_id}")
 
-        metadata = supabase.table("quiz_metadata").select("*").eq("created_by", user_id).execute()
-        logger.debug(f"Found {len(metadata.data or [])} metadata records for user: {user_id}")
-        return metadata.data
+        # Join quiz_metadata with quizzes to get the quiz title
+        # Order by created_at DESC to show most recent quizzes first
+        metadata = supabase.table("quiz_metadata") \
+            .select("*, quizzes(title)") \
+            .eq("created_by", user_id) \
+            .order("created_at", desc=True) \
+            .execute()
+        
+        # Flatten the nested quiz title into the response
+        result = []
+        for item in metadata.data or []:
+            flattened = {**item}
+            # Extract quiz title safely (handles missing key, None, non-dict, missing title)
+            flattened["quiz_title"] = item.get("quizzes", {}).get("title")
+            # Remove nested object after flattening to match schema
+            flattened.pop("quizzes", None)
+            result.append(flattened)
+        
+        logger.debug(f"Found {len(result)} metadata records for user: {user_id}")
+        return result
     except Exception as e:
         logger.error(f"Error retrieving metadata: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))

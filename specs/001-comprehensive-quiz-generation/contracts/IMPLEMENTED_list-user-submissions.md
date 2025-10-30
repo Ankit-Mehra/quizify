@@ -99,7 +99,8 @@ class UserSubmissionsResponse(BaseModel):
 | `submissions` | array | List of submission summaries (ordered by most recent first) |
 | `submissions[].id` | string (UUID) | Submission ID |
 | `submissions[].quiz_id` | string (UUID) | Quiz that was attempted |
-| `submissions[].score` | float | Score percentage (0-100) |
+| `submissions[].user_id` | string (UUID) | User ID (same as top-level user_id) |
+| `submissions[].score` | integer | Score percentage (0-100, rounded to nearest integer) |
 | `submissions[].total_questions` | integer | Number of questions in the quiz |
 | `submissions[].correct_count` | integer | Number of correct answers |
 | `submissions[].wrong_count` | integer | Number of wrong answers |
@@ -138,7 +139,7 @@ class UserSubmissionsResponse(BaseModel):
 
 #### Query
 ```sql
-SELECT id, quiz_id, score, total_questions, correct_count, wrong_count, submitted_at
+SELECT id, quiz_id, user_id, score, total_questions, correct_count, wrong_count, submitted_at
 FROM submissions
 WHERE user_id = ?
 ORDER BY submitted_at DESC
@@ -338,6 +339,7 @@ Object.entries(submissionsByQuiz).forEach(([quizId, attempts]) => {
 
 | Date | Version | Changes | Author |
 |------|---------|---------|--------|
+| 2025-10-28 | 1.1 | Fixed response validation: Added user_id field to submissions array | System |
 | 2025-10-28 | 1.0 | Initial implementation | System |
 
 ---

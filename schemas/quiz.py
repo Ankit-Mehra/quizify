@@ -74,6 +74,7 @@ class QuizMetadata(BaseModel):
     
     id: Optional[str] = None
     quiz_id: Optional[str] = None
+    quiz_title: Optional[str] = None  # Title of the quiz (from quizzes table)
     content_type: str  # "text" or "file"
     content_source_type: Optional[CONTENT_SOURCE_TYPES] = None  # NEW: source type
     content_source_reference: Optional[str] = None  # NEW: file_id or URL
