@@ -227,13 +227,9 @@ def get_metadata(user_id: str, user_token: str = None):
         result = []
         for item in metadata.data or []:
             flattened = {**item}
-            # Safely extract quiz title if it exists
-            if item.get("quizzes") and isinstance(item["quizzes"], dict) and item["quizzes"].get("title"):
-                flattened["quiz_title"] = item["quizzes"]["title"]
-            else:
-                # Handle orphaned metadata (quiz was deleted but metadata remains)
-                flattened["quiz_title"] = None
-            # Safely remove nested quizzes object (won't raise KeyError if missing)
+            # Extract quiz title safely (handles missing key, None, non-dict, missing title)
+            flattened["quiz_title"] = item.get("quizzes", {}).get("title")
+            # Remove nested object after flattening to match schema
             flattened.pop("quizzes", None)
             result.append(flattened)
         
