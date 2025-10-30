@@ -218,9 +218,11 @@ def get_metadata(user_id: str, user_token: str = None):
         logger.debug(f"Fetching metadata for user: {user_id}")
 
         # Join quiz_metadata with quizzes to get the quiz title
+        # Order by created_at DESC to show most recent quizzes first
         metadata = supabase.table("quiz_metadata") \
             .select("*, quizzes(title)") \
             .eq("created_by", user_id) \
+            .order("created_at", desc=True) \
             .execute()
         
         # Flatten the nested quiz title into the response
