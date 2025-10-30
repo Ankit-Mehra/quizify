@@ -87,7 +87,7 @@ Authorization: Bearer {access_token}
 **Response Fields**:
 - `id` (string): UUID of the metadata record
 - `quiz_id` (string): UUID of the quiz
-- `quiz_title` (string): **NEW** - Quiz title (fetched via join with quizzes table)
+- `quiz_title` (string): Quiz title (fetched via join with quizzes table)
 - `content_type` (enum): Legacy field - "text" or "file"
 - `content_source_type` (enum): Source of content used for quiz generation
   - `"text"`: Direct text input
