@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.security import HTTPBearer
 from fastapi.openapi.utils import get_openapi
 from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
 import os
 import json
 from dotenv import load_dotenv
@@ -20,6 +21,7 @@ app_config.validate_config()
 from services.logger import app_logger as logger  # noqa: E402
 from api import auth_routes, quiz_routes, file_routes, submission_routes, admin_routes  # noqa: E402
 from middleware.auto_refresh import SupabaseAutoRefreshMiddleware  # noqa: E402
+from services.redis.client import lifespan as redis_lifespan, check_redis_health  # noqa: E402
 
 # Get the CORS origins from environment variable or use default
 try:
@@ -34,12 +36,32 @@ enable_docs = os.getenv("ENABLE_DOCS", "false").lower() == "true"
 docs_url = "/docs" if enable_docs else None
 redoc_url = "/redoc" if enable_docs else None
 
+
+@asynccontextmanager
+async def app_lifespan(app: FastAPI):
+    """
+    Application lifespan manager that handles startup and shutdown events.
+    
+    This replaces the deprecated @app.on_event("startup") and @app.on_event("shutdown")
+    decorators with the modern lifespan context manager approach.
+    """
+    logger.info("Application startup: initializing resources...")
+    
+    # Initialize Redis connection (delegates to redis_lifespan)
+    async with redis_lifespan(app):
+        logger.info("Application startup complete")
+        yield
+    
+    logger.info("Application shutdown: cleaning up resources...")
+
+
 app = FastAPI(
     title="Quiz Generator API",
     description="Backend API for Quizify application",
     version="0.1.0",
     docs_url=docs_url,
-    redoc_url=redoc_url
+    redoc_url=redoc_url,
+    lifespan=app_lifespan
 )
 logger.info("FastAPI application initialized")
 
@@ -65,6 +87,25 @@ app.include_router(admin_routes.router, prefix="/api")
 
 # Include remaining routers directly
 logger.info("API routers registered")
+
+
+# Health check endpoints
+@app.get("/health", tags=["Health"])
+async def health_check():
+    """Basic health check endpoint"""
+    return {"status": "healthy", "service": "quizify-api"}
+
+
+@app.get("/health/redis", tags=["Health"])
+async def redis_health_check():
+    """Redis connection health check"""
+    health = await check_redis_health()
+    status_code = 200 if health.get("connected") else 503
+    return {
+        "status": "healthy" if health.get("connected") else "unhealthy",
+        "redis": health
+    }
+
 
 # Security scheme for Swagger UI
 bearer_scheme = HTTPBearer()
