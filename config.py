@@ -6,6 +6,7 @@ testing mode detection, and Supabase client initialization.
 """
 
 import os
+from typing import Optional
 from supabase import create_client, Client
 
 
@@ -45,6 +46,40 @@ class Config:
         "SCRAPER_USER_AGENT",
         "Mozilla/5.0 (compatible; QuizifyBot/1.0; +https://quizify.app/bot)"
     )
+    
+    # ============================================================================
+    # Redis Configuration (for distributed state management)
+    # ============================================================================
+    
+    # Main connection URL (provided by Railway Redis service)
+    # Railway provides: REDIS_URL, REDISHOST, REDISPORT, REDIS_PASSWORD
+    # We use REDIS_URL as it contains the complete connection string
+    # Format: redis://default:PASSWORD@redis.railway.internal:6379
+    REDIS_URL: Optional[str] = os.getenv("REDIS_URL", "redis://localhost:6379")
+    
+    # Feature flag to enable/disable Redis
+    REDIS_ENABLED: bool = os.getenv("REDIS_ENABLED", "true").lower() == "true"
+    
+    # Connection pool settings
+    REDIS_MAX_CONNECTIONS: int = int(os.getenv("REDIS_MAX_CONNECTIONS", "20"))
+    REDIS_SOCKET_TIMEOUT: int = int(os.getenv("REDIS_SOCKET_TIMEOUT", "5"))
+    REDIS_SOCKET_CONNECT_TIMEOUT: int = int(os.getenv("REDIS_SOCKET_CONNECT_TIMEOUT", "5"))
+    
+    # Health check interval (seconds)
+    REDIS_HEALTH_CHECK_INTERVAL: int = int(os.getenv("REDIS_HEALTH_CHECK_INTERVAL", "30"))
+    
+    # Cache TTL settings (seconds)
+    REDIS_CACHE_TTL_USER_TIER: int = int(os.getenv("REDIS_CACHE_TTL_USER_TIER", "300"))  # 5 minutes
+    REDIS_CACHE_TTL_QUIZ_METADATA: int = int(os.getenv("REDIS_CACHE_TTL_QUIZ_METADATA", "1800"))  # 30 minutes
+    REDIS_CACHE_TTL_QUIZ_QUESTIONS: int = int(os.getenv("REDIS_CACHE_TTL_QUIZ_QUESTIONS", "3600"))  # 1 hour
+    
+    # Browser slot settings
+    REDIS_BROWSER_SLOT_TTL: int = int(os.getenv("REDIS_BROWSER_SLOT_TTL", "300"))  # 5 minutes
+    MAX_CONCURRENT_BROWSERS: int = int(os.getenv("MAX_CONCURRENT_BROWSERS", "3"))
+    
+    # Session settings
+    REDIS_SESSION_TTL: int = int(os.getenv("REDIS_SESSION_TTL", "604800"))  # 7 days
+    MAX_SESSIONS_PER_USER: int = int(os.getenv("MAX_SESSIONS_PER_USER", "10"))
     
     @classmethod
     def is_testing(cls) -> bool:
