@@ -20,9 +20,9 @@ app_config.validate_config()
 
 # Import modules that depend on environment variables
 from services.logger import app_logger as logger  # noqa: E402
-from api import auth_routes, quiz_routes, file_routes, submission_routes, admin_routes  # noqa: E402
+from api import auth_routes, quiz_routes, file_routes, submission_routes, admin_routes, health_routes  # noqa: E402
 from middleware.auto_refresh import SupabaseAutoRefreshMiddleware  # noqa: E402
-from services.redis.client import lifespan as redis_lifespan, check_redis_health  # noqa: E402
+from services.redis.client import lifespan as redis_lifespan  # noqa: E402
 
 # Get the CORS origins from environment variable or use default
 try:
@@ -84,32 +84,11 @@ app.include_router(quiz_routes.router, prefix="/api")
 app.include_router(file_routes.router, prefix="/api")
 app.include_router(submission_routes.router, prefix="/api")
 app.include_router(admin_routes.router, prefix="/api")
+app.include_router(health_routes.router)  # No prefix - mount at root
 
 
 # Include remaining routers directly
 logger.info("API routers registered")
-
-
-# Health check endpoints
-@app.get("/health", tags=["Health"])
-async def health_check():
-    """Basic health check endpoint"""
-    return {"status": "healthy", "service": "quizify-api"}
-
-
-@app.get("/health/redis", tags=["Health"])
-async def redis_health_check():
-    """Redis connection health check"""
-    health = await check_redis_health()
-    status_code = 200 if health.get("connected") else 503
-    
-    return JSONResponse(
-        status_code=status_code,
-        content={
-            "status": "healthy" if health.get("connected") else "unhealthy",
-            "redis": health
-        }
-    )
 
 
 # Security scheme for Swagger UI
