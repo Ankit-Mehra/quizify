@@ -144,7 +144,6 @@ async def test_lifespan_closes_redis_on_shutdown():
     """Test that Redis connection is closed on app shutdown"""
     from fastapi import FastAPI
     from services.redis.client import lifespan
-    import services.redis.client as client_module
     
     app = FastAPI()
     

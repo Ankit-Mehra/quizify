@@ -55,7 +55,7 @@ class Config:
     # Railway provides: REDIS_URL, REDISHOST, REDISPORT, REDIS_PASSWORD
     # We use REDIS_URL as it contains the complete connection string
     # Format: redis://default:PASSWORD@redis.railway.internal:6379
-    REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379")
+    REDIS_URL: Optional[str] = os.getenv("REDIS_URL", "redis://localhost:6379")
     
     # Feature flag to enable/disable Redis
     REDIS_ENABLED: bool = os.getenv("REDIS_ENABLED", "true").lower() == "true"
