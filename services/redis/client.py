@@ -8,6 +8,7 @@ Features:
 - Automatic reconnection on failure
 """
 
+import time
 import redis.asyncio as redis
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -104,7 +105,6 @@ async def check_redis_health() -> dict:
         return {"connected": False, "error": "Redis client not initialized"}
     
     try:
-        import time
         start = time.time()
         await redis_client.ping()
         latency = (time.time() - start) * 1000  # Convert to milliseconds

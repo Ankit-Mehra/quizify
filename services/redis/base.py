@@ -30,7 +30,7 @@ class RedisServiceBase(ABC):
     """
     
     def __init__(self):
-        # In-memory storage for fallback (shared across all instances)
+        # In-memory storage for fallback (per-instance storage)
         self._memory_store: dict = {}
         self._memory_lock = asyncio.Lock()
         

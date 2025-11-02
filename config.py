@@ -6,6 +6,7 @@ testing mode detection, and Supabase client initialization.
 """
 
 import os
+from typing import Optional
 from supabase import create_client, Client
 
 

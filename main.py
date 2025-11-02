@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.security import HTTPBearer
 from fastapi.openapi.utils import get_openapi
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 import os
 import json
@@ -101,10 +102,14 @@ async def redis_health_check():
     """Redis connection health check"""
     health = await check_redis_health()
     status_code = 200 if health.get("connected") else 503
-    return {
-        "status": "healthy" if health.get("connected") else "unhealthy",
-        "redis": health
-    }
+    
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "status": "healthy" if health.get("connected") else "unhealthy",
+            "redis": health
+        }
+    )
 
 
 # Security scheme for Swagger UI

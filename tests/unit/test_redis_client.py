@@ -10,6 +10,7 @@ Tests cover:
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+import services.redis.client as client_module
 from services.redis.client import get_redis_client, check_redis_health
 
 
@@ -25,7 +26,6 @@ def mock_redis_config(monkeypatch):
 async def test_redis_client_returns_none_when_disabled(monkeypatch):
     """Test that Redis client is None when REDIS_ENABLED=false"""
     # Reset the module-level redis_client
-    import services.redis.client as client_module
     client_module.redis_client = None
     
     # Mock config to disable Redis
@@ -41,7 +41,6 @@ async def test_redis_client_returns_none_when_disabled(monkeypatch):
 async def test_health_check_when_redis_not_initialized():
     """Test health check returns error when Redis client not initialized"""
     # Reset the module-level redis_client
-    import services.redis.client as client_module
     client_module.redis_client = None
     
     health = await check_redis_health()
@@ -54,8 +53,6 @@ async def test_health_check_when_redis_not_initialized():
 @pytest.mark.asyncio
 async def test_health_check_when_redis_ping_fails():
     """Test health check returns error when ping fails"""
-    import services.redis.client as client_module
-    
     # Mock a redis client that fails on ping
     mock_client = AsyncMock()
     mock_client.ping = AsyncMock(side_effect=Exception("Connection refused"))
@@ -74,8 +71,6 @@ async def test_health_check_when_redis_ping_fails():
 @pytest.mark.asyncio
 async def test_health_check_when_redis_connected():
     """Test health check returns success when Redis connected"""
-    import services.redis.client as client_module
-    
     # Mock a redis client that succeeds
     mock_client = AsyncMock()
     mock_client.ping = AsyncMock(return_value=True)
@@ -95,8 +90,6 @@ async def test_health_check_when_redis_connected():
 @pytest.mark.asyncio
 async def test_get_redis_client_returns_cached_instance():
     """Test that get_redis_client returns the same instance"""
-    import services.redis.client as client_module
-    
     # Set up a mock client
     mock_client = AsyncMock()
     client_module.redis_client = mock_client
@@ -116,7 +109,6 @@ async def test_lifespan_handles_redis_connection_error_gracefully():
     """Test that app can start even if Redis connection fails"""
     from fastapi import FastAPI
     from services.redis.client import lifespan
-    import services.redis.client as client_module
     
     # Reset client
     client_module.redis_client = None
