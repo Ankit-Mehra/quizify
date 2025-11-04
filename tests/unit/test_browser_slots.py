@@ -146,38 +146,34 @@ async def test_acquire_slot_redis_exceeds_limit():
 
 @pytest.mark.asyncio
 async def test_release_slot_with_redis():
-    """Test slot release with mocked Redis client"""
+    """Test slot release with mocked Redis client using Lua script"""
     manager = BrowserSlotManager()
     
-    # Mock Redis with 2 existing slots
+    # Mock Redis - now using Lua script for atomic decrement
     mock_redis = AsyncMock()
-    mock_redis.get = AsyncMock(return_value="2")
-    mock_redis.set = AsyncMock()
+    mock_redis.eval = AsyncMock(return_value=1)  # Returns new count after decrement
     
     with patch.object(manager, '_get_redis_client', return_value=mock_redis):
         await manager._release_slot_redis("test_user")
         
-        # Should update to 1 slot
-        mock_redis.set.assert_called_once()
-        call_args = mock_redis.set.call_args
-        assert call_args[0][1] == 1  # new count
+        # Should call eval (Lua script) instead of get/set
+        mock_redis.eval.assert_called_once()
 
 
 @pytest.mark.asyncio
 async def test_release_slot_redis_deletes_when_zero():
-    """Test that Redis key is deleted when count reaches 0"""
+    """Test that Lua script deletes Redis key when count reaches 0"""
     manager = BrowserSlotManager()
     
-    # Mock Redis with 1 existing slot
+    # Mock Redis - Lua script returns 0 when key is deleted
     mock_redis = AsyncMock()
-    mock_redis.get = AsyncMock(return_value="1")
-    mock_redis.delete = AsyncMock()
+    mock_redis.eval = AsyncMock(return_value=0)  # Returns 0 when count reaches zero
     
     with patch.object(manager, '_get_redis_client', return_value=mock_redis):
         await manager._release_slot_redis("test_user")
         
-        # Should delete key instead of setting to 0
-        mock_redis.delete.assert_called_once()
+        # Should call eval (Lua script handles deletion internally)
+        mock_redis.eval.assert_called_once()
 
 
 @pytest.mark.asyncio

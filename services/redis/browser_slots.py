@@ -12,6 +12,8 @@ Features:
 """
 
 import asyncio
+import os
+import uuid
 from typing import Optional
 from fastapi import HTTPException
 import redis.asyncio as redis
@@ -33,16 +35,31 @@ class BrowserSlotManager(RedisServiceBase, RedisMetricsMixin):
     3. If under limit, increment count and set TTL
     4. Release lock using Lua script (atomic check-and-delete with owner verification)
     
+    Atomic Operations:
+    - Slot acquisition: Protected by distributed lock with instance-unique identifier
+    - Slot release: Atomic decrement via Lua script (prevents read-modify-write races)
+    
+    Lock Uniqueness:
+    - Lock value includes: process_id + hostname + uuid + task_name + task_id
+    - Ensures true distributed uniqueness across multiple app instances
+    - Prevents accidental lock releases by other instances
+    
     Retry Policy:
     - Single retry with 100ms backoff if lock is busy
     - Returns 503 if still busy after retry
     
+    Configuration:
+    - REDIS_LOCK_TTL: Lock timeout (default 30s for slow networks)
+    - REDIS_BROWSER_SLOT_TTL: Slot expiration (default 5 minutes)
+    - MAX_CONCURRENT_BROWSERS: Per-user slot limit (default 3)
+    
     Race Condition Prevention:
-    - Lock prevents concurrent modifications to slot count across instances
+    - Acquisition: Distributed lock prevents concurrent modifications
+    - Release: Lua script ensures atomic decrement (no read-modify-write races)
     - Slot count is always refetched after acquiring lock (even after retry)
     - Lua script ensures only lock owner can release the lock
-    - TTL on lock prevents indefinite blocking (30s timeout for slow networks)
-    - TTL on slots ensures automatic cleanup after 5 minutes
+    - TTL on lock prevents indefinite blocking
+    - TTL on slots ensures automatic cleanup
     
     Metrics Tracked:
     - slot_acquisition_attempts: Total attempts to acquire slots
@@ -63,6 +80,12 @@ class BrowserSlotManager(RedisServiceBase, RedisMetricsMixin):
             self._metrics = defaultdict(int)
         self._max_slots = app_config.MAX_CONCURRENT_BROWSERS
         self._slot_ttl = app_config.REDIS_BROWSER_SLOT_TTL
+        self._lock_ttl = app_config.REDIS_LOCK_TTL
+        
+        # Generate unique instance identifier for distributed locking
+        # Combines process ID, hostname, and UUID to ensure uniqueness across instances
+        self._instance_id = f"{os.getpid()}_{os.uname().nodename}_{uuid.uuid4().hex[:8]}"
+        logger.info(f"BrowserSlotManager initialized with instance_id: {self._instance_id}")
         
     def _get_slot_key(self, user_id: str) -> str:
         """Generate Redis key for user's browser slots"""
@@ -149,15 +172,16 @@ class BrowserSlotManager(RedisServiceBase, RedisMetricsMixin):
         # Use Redis SET NX (set if not exists) as a distributed lock
         # This prevents race conditions across multiple instances
         lock_acquired = False
-        lock_value = f"{asyncio.current_task().get_name()}_{id(asyncio.current_task())}"
+        # Include instance ID to ensure lock uniqueness across distributed instances
+        lock_value = f"{self._instance_id}_{asyncio.current_task().get_name()}_{id(asyncio.current_task())}"
         
         try:
-            # Try to acquire lock (expires in 30 seconds as safety)
+            # Try to acquire lock (configurable timeout via REDIS_LOCK_TTL)
             lock_acquired = await redis_client.set(
                 lock_key,
                 lock_value,
                 nx=True,  # Only set if doesn't exist
-                ex=30  # Expire in 30 seconds (prevents deadlock, allows for slow networks)
+                ex=self._lock_ttl  # Configurable timeout (default 30s for slow networks)
             )
             
             if not lock_acquired:
@@ -165,7 +189,7 @@ class BrowserSlotManager(RedisServiceBase, RedisMetricsMixin):
                 logger.debug(f"Lock busy for user {user_id[:8]}..., retrying...")
                 await asyncio.sleep(0.1)  # Brief wait
                 # Retry once
-                lock_acquired = await redis_client.set(lock_key, lock_value, nx=True, ex=30)
+                lock_acquired = await redis_client.set(lock_key, lock_value, nx=True, ex=self._lock_ttl)
                 if not lock_acquired:
                     logger.warning(f"Failed to acquire lock for user {user_id[:8]}... after retry")
                     raise HTTPException(
@@ -216,27 +240,44 @@ class BrowserSlotManager(RedisServiceBase, RedisMetricsMixin):
                 await redis_client.eval(script, 1, lock_key, lock_value)
     
     async def _release_slot_redis(self, user_id: str) -> None:
-        """Redis implementation of slot release"""
+        """
+        Redis implementation of slot release with atomic decrement.
+        
+        Uses Lua script for atomic read-modify-write to prevent race conditions
+        when multiple instances release slots simultaneously.
+        """
         redis_client = self._get_redis_client()
         if not redis_client:
             raise Exception("Redis client not available")
         
         slot_key = self._get_slot_key(user_id)
         
-        # Decrement slot count (minimum 0)
-        current_count = await redis_client.get(slot_key)
-        if current_count:
-            current_count = int(current_count)
-            if current_count > 0:
-                new_count = current_count - 1
-                if new_count > 0:
-                    # Still has active slots, update with TTL
-                    await redis_client.set(slot_key, new_count, ex=self._slot_ttl)
-                else:
-                    # No more slots, delete key
-                    await redis_client.delete(slot_key)
-                
-                logger.debug(f"Browser slot released for user {user_id[:8]}...: {new_count}/{self._max_slots}")
+        # Atomic decrement using Lua script (prevents race conditions)
+        # Script returns the new count after decrement
+        script = """
+        local current = redis.call("get", KEYS[1])
+        if current then
+            local count = tonumber(current)
+            if count > 0 then
+                local new_count = count - 1
+                if new_count > 0 then
+                    redis.call("set", KEYS[1], new_count, "EX", ARGV[1])
+                    return new_count
+                else
+                    redis.call("del", KEYS[1])
+                    return 0
+                end
+            end
+        end
+        return 0
+        """
+        
+        try:
+            new_count = await redis_client.eval(script, 1, slot_key, self._slot_ttl)
+            logger.debug(f"Browser slot released for user {user_id[:8]}...: {new_count}/{self._max_slots} (Redis atomic)")
+        except redis.RedisError as e:
+            logger.error(f"Redis error in slot release for user {user_id[:8]}...: {e}")
+            # Don't raise - release failures shouldn't break user flow
     
     async def _get_slot_count_redis(self, user_id: str) -> int:
         """Redis implementation of getting slot count"""
