@@ -11,12 +11,12 @@ from urllib.parse import urlparse
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeout
 import trafilatura
 import asyncio
-from collections import defaultdict
 from fastapi import HTTPException
 from services.logger import app_logger as logger
 from config import config as app_config
 from services.ai_services.doc_service import extract_text_from_pdf
 from services.db_services.supabase_file import save_file_to_supabase
+from services.redis.browser_slots import browser_slot_manager
 
 # Constants
 MAX_CONTENT_SIZE = 500 * 1024  # 500KB for HTML content
@@ -88,11 +88,6 @@ def _get_chrome_args() -> list:
         logger.info("Native environment detected - maintaining sandbox security")
     
     return args
-
-# Global browser tracking for resource management
-# Key: user_id or 'anonymous', Value: count of active browsers
-_active_browsers = defaultdict(int)
-_browser_lock = asyncio.Lock()
 
 # Private IP ranges to block (SSRF prevention) - IPv4 and IPv6
 PRIVATE_IP_RANGES = [
@@ -468,40 +463,27 @@ async def _acquire_browser_slot(user_id: str = "anonymous") -> None:
     """
     Acquire a browser slot for the user, enforcing concurrent browser limits.
     
+    Uses Redis-based coordination when available, falls back to memory for single instance.
+    
     Args:
         user_id: User ID for tracking, defaults to 'anonymous'
         
     Raises:
         HTTPException: If user has exceeded concurrent browser limit
     """
-    async with _browser_lock:
-        current_count = _active_browsers[user_id]
-        if current_count >= MAX_CONCURRENT_BROWSERS:
-            logger.warning(f"User {user_id} exceeded concurrent browser limit: {current_count}/{MAX_CONCURRENT_BROWSERS}")
-            raise HTTPException(
-                status_code=429,  # Too Many Requests
-                detail=f"Too many concurrent browser sessions. Maximum allowed: {MAX_CONCURRENT_BROWSERS}"
-            )
-        
-        _active_browsers[user_id] += 1
-        logger.debug(f"Browser slot acquired for user {user_id}: {_active_browsers[user_id]}/{MAX_CONCURRENT_BROWSERS}")
+    await browser_slot_manager.acquire_slot(user_id)
 
 
 async def _release_browser_slot(user_id: str = "anonymous") -> None:
     """
     Release a browser slot for the user.
     
+    Uses Redis-based coordination when available, falls back to memory for single instance.
+    
     Args:
         user_id: User ID for tracking, defaults to 'anonymous'
     """
-    async with _browser_lock:
-        if _active_browsers[user_id] > 0:
-            _active_browsers[user_id] -= 1
-            logger.debug(f"Browser slot released for user {user_id}: {_active_browsers[user_id]}/{MAX_CONCURRENT_BROWSERS}")
-            
-            # Clean up entry if no active browsers
-            if _active_browsers[user_id] == 0:
-                del _active_browsers[user_id]
+    await browser_slot_manager.release_slot(user_id)
 
 
 async def scrape_content(url: str, user_id: str = "anonymous", user_token: str = None, save_pdf: bool = False) -> tuple[str, dict | None]:
