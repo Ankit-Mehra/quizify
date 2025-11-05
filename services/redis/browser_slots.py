@@ -14,7 +14,6 @@ Features:
 import asyncio
 import os
 import uuid
-from typing import Optional
 from fastapi import HTTPException
 import redis.asyncio as redis
 from services.redis.base import RedisServiceBase, RedisMetricsMixin
@@ -72,12 +71,10 @@ class BrowserSlotManager(RedisServiceBase, RedisMetricsMixin):
     """
     
     def __init__(self):
-        # Initialize both parent classes (RedisServiceBase and RedisMetricsMixin)
+        # Initialize both parent classes using cooperative multiple inheritance
+        # RedisMetricsMixin.__init__ will call RedisServiceBase.__init__ via super()
         super().__init__()
-        # Explicitly initialize metrics if not already done by mixin
-        if not hasattr(self, '_metrics'):
-            from collections import defaultdict
-            self._metrics = defaultdict(int)
+        
         self._max_slots = app_config.MAX_CONCURRENT_BROWSERS
         self._slot_ttl = app_config.REDIS_BROWSER_SLOT_TTL
         self._lock_ttl = app_config.REDIS_LOCK_TTL
