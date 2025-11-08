@@ -143,4 +143,234 @@ finally:
 - **User Enumeration Prevention**: Logs use truncated user IDs, generic error messages to clients
 
 <!-- MANUAL ADDITIONS START -->
+
+## 🔄 MANDATORY WORKFLOW FOR ALL CODE CHANGES
+
+**IMPORTANT**: Follow this workflow for EVERY code change, feature, or bug fix. Do not skip steps.
+
+### Phase 1: Pre-Implementation Review
+1. **Understand Requirements**: Clarify the task/feature requirements before coding
+2. **Check Existing Code**: Search for similar patterns in the codebase to maintain consistency
+3. **Plan Architecture**: Identify which files need changes and potential impact areas
+
+### Phase 2: Implementation
+4. **Write Code**: Implement the feature/fix following project conventions
+5. **Self-Review Checklist** (MANDATORY before commit):
+   - ✅ **Security**: No hardcoded secrets, proper input validation, SQL injection prevention
+   - ✅ **DRY Principles**: No duplicated code, reusable functions/handlers extracted
+   - ✅ **Type Safety**: All type hints defined, Pydantic schemas validated
+   - ✅ **Error Handling**: Proper try-except blocks, meaningful HTTPException messages
+   - ✅ **Performance**: Optimized database queries, efficient async operations, proper indexing
+   - ✅ **Authentication**: Proper JWT validation, RLS policies enforced, user context maintained
+   - ✅ **Database**: Correct table usage (profiles not auth.users), proper migrations created
+   - ✅ **API Design**: RESTful conventions, proper status codes, consistent response schemas
+   - ✅ **Logical Flaws**: Edge cases handled, null checks, boundary conditions, quota enforcement
+   - ✅ **Testing**: Unit tests for business logic, integration tests for endpoints
+   - ✅ **Documentation**: Docstrings for functions/classes, inline comments for complex logic
+
+6. **Fix Issues**: Address any problems found in self-review
+
+### Phase 3: Git Workflow
+7. **Stage Changes**: `git add -A` (or specific files)
+8. **Commit with Conventional Commits**:
+   ```bash
+   git commit -m "type: brief description
+   
+   - Detailed change 1
+   - Detailed change 2
+   - Security/DRY/performance improvements"
+   ```
+   Types: `feat`, `fix`, `refactor`, `docs`, `style`, `test`, `chore`, `perf`, `ci`
+
+9. **Push to Remote**: `git push origin <branch-name>`
+
+### Phase 4: Pull Request & Review Cycle
+10. **Check for Existing PR**: 
+    - If PR exists for current branch → skip to step 12
+    - If no PR exists → proceed to step 11
+
+11. **Create Pull Request**:
+    - Base branch: `main` (or appropriate target branch)
+    - Include comprehensive PR description:
+      - Summary of changes
+      - Why this change is needed
+      - Testing performed (pytest results, manual testing)
+      - API contract changes (if any)
+      - Database migrations (if any)
+      - Breaking changes (if any)
+
+12. **Request GitHub Copilot Review**: Always request automated review from GitHub Copilot
+
+13. **Review Analysis** (CRITICAL):
+    - Read ALL Copilot review comments carefully
+    - Categorize feedback:
+      - 🔴 Critical: Security, bugs, breaking changes, SQL injection → MUST fix
+      - 🟡 Important: Performance, maintainability, best practices, async patterns → SHOULD fix
+      - 🟢 Nice-to-have: Style preferences, minor optimizations → Consider fixing
+    - For each applicable comment:
+      - Implement the suggested fix
+      - Add explanatory comments if needed
+      - Update tests if behavior changes
+
+14. **Apply Feedback**:
+    - Make code changes based on review
+    - Run self-review checklist again (step 5)
+    - Run tests: `pytest tests/ -v`
+    - Commit changes: `git commit -m "fix: address Copilot review feedback - [specific issue]"`
+    - Push: `git push origin <branch-name>`
+
+15. **Re-request Copilot Review**: After pushing fixes, request review again
+
+16. **Repeat Review Cycle**: 
+    - **MINIMUM 3 ITERATIONS** of steps 12-15
+    - Continue until Copilot has no more critical/important feedback
+    - Or until you've addressed all reasonable suggestions (document why if not applicable)
+
+### Phase 5: Merge Preparation
+17. **Final Checks**:
+    - All CI/CD checks passing (pytest, ruff linting)
+    - No merge conflicts with target branch
+    - All review feedback addressed or justified
+    - Database migrations tested
+    - API documentation updated if endpoints changed
+    - CHANGELOG.md updated for significant changes
+
+18. **Request Human Review** (if applicable):
+    - Tag specific reviewers based on area of change
+    - Respond promptly to human reviewer comments
+
+19. **Merge Request**:
+    - Comment on PR: "Ready for merge - all reviews addressed, checks passing"
+    - Wait for approval from maintainer/senior developer
+    - Just merge, do not squash/rebase unless instructed
+
+### Phase 6: Post-Merge
+20. **Cleanup**:
+    - Do not delete branch until confirmed no hotfixes needed
+    - Update local main: `git checkout main && git pull origin main`
+    - Monitor logs for any production issues
+
+21. **Documentation**:
+    - Update README.md if user-facing features added
+    - Update API documentation if endpoints changed
+    - Add to knowledge base if complex problem solved
+
+---
+
+## 🚨 NEVER SKIP THESE
+
+- ❌ Never commit without running the self-review checklist
+- ❌ Never skip Copilot review request
+- ❌ Never merge without addressing critical security/bug issues
+- ❌ Never push secrets, API keys, or database credentials
+- ❌ Never use `--force` push without explicit approval
+- ❌ Never merge your own PR without review (unless trivial docs/typos)
+- ❌ Never bypass RLS policies without justification
+- ❌ Never modify auth.users table directly (use profiles table)
+
+---
+
+## 🎯 Additional Best Practices
+
+### Security
+- Use environment variables for all secrets (`.env` file, never commit)
+- Validate all user inputs with Pydantic schemas
+- Use parameterized queries (SQLAlchemy/Supabase handles this)
+- Implement rate limiting for API endpoints
+- Always use authenticated Supabase client for user operations
+- Validate file uploads (size, type, content)
+- Implement SSRF protection for URL inputs
+- Keep dependencies updated (`pip list --outdated`)
+
+### Performance
+- Use async/await for all I/O operations
+- Batch database queries when possible
+- Implement proper database indexes
+- Cache frequently accessed data (consider Redis)
+- Use connection pooling for external services
+- Monitor API response times
+- Optimize AI token usage
+
+### Code Quality
+- Keep functions small (< 50 lines ideal)
+- Use descriptive variable/function names
+- Extract magic numbers to config constants
+- Write pure functions when possible
+- Use early returns to reduce nesting
+- Add unit tests for business logic
+- Use type hints consistently
+
+### FastAPI Specific
+- Use dependency injection for shared logic
+- Implement proper response models (Pydantic)
+- Use background tasks for long operations
+- Add proper OpenAPI documentation
+- Use HTTPException with proper status codes
+- Implement request validation at route level
+- Use middleware for cross-cutting concerns
+
+### Database Best Practices
+- Always use migrations for schema changes
+- Test migrations in development first
+- Use `user_tier_info` view for quota checks
+- Update `profiles` table for user tier changes
+- Track content sources in quiz metadata
+- Implement proper RLS policies
+- Use indexes for frequently queried fields
+
+### Testing
+- Write unit tests for handlers and services
+- Write integration tests for API endpoints
+- Mock external services (OpenAI, Supabase) in unit tests
+- Test authentication/authorization flows
+- Test error cases and edge conditions
+- Use pytest fixtures for test data
+- Aim for >80% code coverage
+
+### Git Commit Messages
+Follow Conventional Commits:
+```
+feat: add Redis-based browser slot management
+fix: resolve race condition in quota enforcement
+refactor: extract file validation to separate service
+perf: optimize database queries with indexes
+docs: add API documentation for submission endpoints
+test: add integration tests for web scraping flow
+chore: update dependencies to latest versions
+```
+
+---
+
+## 📋 Quick Reference Checklist
+
+Before every commit, verify:
+- [ ] Code follows project structure and conventions
+- [ ] All type hints added (mypy compatible)
+- [ ] Linting passes (`ruff check .`)
+- [ ] Tests pass (`pytest tests/ -v`)
+- [ ] No hardcoded secrets or credentials
+- [ ] Security best practices followed
+- [ ] DRY principles applied
+- [ ] Error handling implemented
+- [ ] Proper async/await usage
+- [ ] Database queries optimized
+- [ ] Comments added for complex logic
+- [ ] Manual testing completed
+
+Before every PR:
+- [ ] Branch up to date with main
+- [ ] Descriptive PR title and description
+- [ ] Database migrations included (if needed)
+- [ ] API contract documented (if changed)
+- [ ] Self-review completed
+- [ ] Ready for Copilot review
+
+Before merge:
+- [ ] 3+ Copilot review iterations completed
+- [ ] All critical feedback addressed
+- [ ] CI/CD checks passing (pytest, ruff)
+- [ ] No merge conflicts
+- [ ] Human approval received (if required)
+- [ ] Deployment plan ready (if significant change)
+
 <!-- MANUAL ADDITIONS END -->
