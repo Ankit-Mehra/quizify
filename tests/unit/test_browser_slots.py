@@ -8,8 +8,9 @@ Tests cover:
 - Memory fallback behavior
 """
 
+import asyncio
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 from fastapi import HTTPException
 from services.redis.browser_slots import BrowserSlotManager
 
@@ -206,7 +207,6 @@ async def test_concurrent_slot_acquisition():
             return False
     
     # Run concurrent acquisitions
-    import asyncio
     results = await asyncio.gather(*[acquire_slot_safe() for _ in range(5)])
     
     # Only max_slots should succeed

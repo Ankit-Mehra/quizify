@@ -72,8 +72,13 @@ class BrowserSlotManager(RedisServiceBase, RedisMetricsMixin):
     
     def __init__(self):
         # Initialize both parent classes using cooperative multiple inheritance
-        # RedisMetricsMixin.__init__ will call RedisServiceBase.__init__ via super()
+        # This ensures RedisMetricsMixin.__init__ -> RedisServiceBase.__init__ chain
         super().__init__()
+        
+        # Ensure _metrics is initialized (defensive check for edge cases)
+        if not hasattr(self, '_metrics'):
+            from collections import defaultdict
+            self._metrics = defaultdict(int)
         
         self._max_slots = app_config.MAX_CONCURRENT_BROWSERS
         self._slot_ttl = app_config.REDIS_BROWSER_SLOT_TTL
@@ -170,7 +175,15 @@ class BrowserSlotManager(RedisServiceBase, RedisMetricsMixin):
         # This prevents race conditions across multiple instances
         lock_acquired = False
         # Include instance ID to ensure lock uniqueness across distributed instances
-        lock_value = f"{self._instance_id}_{asyncio.current_task().get_name()}_{id(asyncio.current_task())}"
+        # Handle case where current_task() returns None (outside asyncio context)
+        current_task = asyncio.current_task()
+        if current_task is not None:
+            task_name = current_task.get_name()
+            task_id = id(current_task)
+        else:
+            task_name = "no_task"
+            task_id = "no_id"
+        lock_value = f"{self._instance_id}_{task_name}_{task_id}"
         
         try:
             # Try to acquire lock (configurable timeout via REDIS_LOCK_TTL)
