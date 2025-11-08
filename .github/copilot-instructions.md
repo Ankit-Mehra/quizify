@@ -148,6 +148,14 @@ finally:
 
 **IMPORTANT**: Follow this workflow for EVERY code change, feature, or bug fix. Do not skip steps.
 
+**Tools**: This workflow uses the **GitHub MCP Server** to automate GitHub operations including:
+- Checking for existing PRs and reviews
+- Requesting Copilot reviews
+- Reading review comments and feedback
+- Adding comments to PRs
+- Resolving review conversations
+- Managing PR state and merge operations
+
 ### Phase 1: Pre-Implementation Review
 1. **Understand Requirements**: Clarify the task/feature requirements before coding
 2. **Check Existing Code**: Search for similar patterns in the codebase to maintain consistency
@@ -185,12 +193,13 @@ finally:
 9. **Push to Remote**: `git push origin <branch-name>`
 
 ### Phase 4: Pull Request & Review Cycle
-10. **Check for Existing PR**: 
+10. **Check for Existing PR** (use GitHub MCP): 
+    - Use `github_search_pull_requests` to find PR for current branch
     - If PR exists for current branch → skip to step 12
     - If no PR exists → proceed to step 11
 
-11. **Create Pull Request**:
-    - Base branch: `main` (or appropriate target branch)
+11. **Create Pull Request** (use GitHub MCP):
+    - Use `github_create_pull_request` with base: `deploy/production`
     - Include comprehensive PR description:
       - Summary of changes
       - Why this change is needed
@@ -199,16 +208,19 @@ finally:
       - Database migrations (if any)
       - Breaking changes (if any)
 
-12. **Check Existing Reviews and Comments**:
-    - Review the PR to see if GitHub Copilot has already reviewed
-    - Check for any existing review comments or feedback
+12. **Check Existing Reviews and Comments** (use GitHub MCP):
+    - Use `github_pull_request_read` with method `get_reviews` to check for existing reviews
+    - Use `github_pull_request_read` with method `get_review_comments` to read feedback
     - If reviews exist → skip to step 13 to analyze feedback
     - If no reviews exist → proceed to step 12b
 
-12b. **Request GitHub Copilot Review**: Request automated review from GitHub Copilot
+12b. **Request GitHub Copilot Review** (use GitHub MCP): 
+    - Use `github_request_copilot_review` to request automated review
 
-13. **Review Analysis** (CRITICAL):
+13. **Review Analysis** (CRITICAL - use GitHub MCP):
+    - Use `github_pull_request_read` to read ALL review comments
     - Read ALL Copilot review comments carefully
+    - Read ALL human reviewer comments carefully
     - Categorize feedback:
       - 🔴 Critical: Security, bugs, breaking changes, SQL injection → MUST fix
       - 🟡 Important: Performance, maintainability, best practices, async patterns → SHOULD fix
@@ -217,6 +229,7 @@ finally:
       - Implement the suggested fix
       - Add explanatory comments if needed
       - Update tests if behavior changes
+      - Use `github_add_comment_to_pending_review` or reply to comment explaining what was fixed or why it wasn't applicable
 
 14. **Apply Feedback**:
     - Make code changes based on review
@@ -225,12 +238,13 @@ finally:
     - Commit changes: `git commit -m "fix: address Copilot review feedback - [specific issue]"`
     - Push: `git push origin <branch-name>`
 
-15. **Check for New Comments**: 
-    - After pushing, check if Copilot has already provided new feedback
+15. **Check for New Comments** (use GitHub MCP): 
+    - Use `github_pull_request_read` to check if Copilot has provided new feedback after push
     - If new comments exist → go to step 13 to analyze
     - If no new comments → proceed to step 15b
 
-15b. **Re-request Copilot Review**: Request review again after addressing feedback
+15b. **Re-request Copilot Review** (use GitHub MCP): 
+    - Use `github_request_copilot_review` to request review again after addressing feedback
 
 16. **Repeat Review Cycle**: 
     - **MINIMUM 3 ITERATIONS** of steps 12-15
@@ -242,6 +256,8 @@ finally:
     - All CI/CD checks passing (pytest, ruff linting)
     - No merge conflicts with target branch
     - All review feedback addressed or justified
+    - **All GitHub review comments resolved** (both Copilot and human reviewers)
+    - Responded to every review comment with explanation of fix or justification
     - Database migrations tested
     - API documentation updated if endpoints changed
     - CHANGELOG.md updated for significant changes
@@ -249,17 +265,21 @@ finally:
 18. **Request Human Review** (if applicable):
     - Tag specific reviewers based on area of change
     - Respond promptly to human reviewer comments
+    - Mark conversations as resolved after addressing feedback
 
 19. **Merge Request**:
-    - Comment on PR: "Ready for merge - all reviews addressed, checks passing"
+    - Verify all review comment threads are resolved
+    - Comment on PR: "Ready for merge - all reviews addressed, all comments resolved, checks passing"
     - Wait for approval from maintainer/senior developer
-    - Just merge, do not squash/rebase unless instructed
+    - Merge into `deploy/production` branch
+    - Do not squash/rebase unless instructed
 
 ### Phase 6: Post-Merge
 20. **Cleanup**:
     - Do not delete branch until confirmed no hotfixes needed
-    - Update local main: `git checkout main && git pull origin main`
+    - Update local deploy/production: `git checkout deploy/production && git pull origin deploy/production`
     - Monitor logs for any production issues
+    - Verify deployment on Railway or production environment
 
 21. **Documentation**:
     - Update README.md if user-facing features added
@@ -369,7 +389,7 @@ Before every commit, verify:
 - [ ] Manual testing completed
 
 Before every PR:
-- [ ] Branch up to date with main
+- [ ] Branch up to date with deploy/production
 - [ ] Descriptive PR title and description
 - [ ] Database migrations included (if needed)
 - [ ] API contract documented (if changed)
@@ -379,8 +399,10 @@ Before every PR:
 Before merge:
 - [ ] 3+ Copilot review iterations completed
 - [ ] All critical feedback addressed
+- [ ] All review comments resolved or justified
+- [ ] Responded to every GitHub review comment
 - [ ] CI/CD checks passing (pytest, ruff)
-- [ ] No merge conflicts
+- [ ] No merge conflicts with deploy/production
 - [ ] Human approval received (if required)
 - [ ] Deployment plan ready (if significant change)
 
