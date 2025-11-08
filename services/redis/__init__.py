@@ -6,8 +6,10 @@ This module provides:
 - Connection pooling for optimal performance
 - Health checks and automatic reconnection
 - Graceful fallback to in-memory storage
+- Browser slot management for distributed coordination
 """
 
 from .client import get_redis_client, lifespan, check_redis_health
+from .browser_slots import browser_slot_manager
 
-__all__ = ["get_redis_client", "lifespan", "check_redis_health"]
+__all__ = ["get_redis_client", "lifespan", "check_redis_health", "browser_slot_manager"]

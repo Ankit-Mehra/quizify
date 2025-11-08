@@ -75,6 +75,7 @@ class Config:
     
     # Browser slot settings
     REDIS_BROWSER_SLOT_TTL: int = int(os.getenv("REDIS_BROWSER_SLOT_TTL", "300"))  # 5 minutes
+    REDIS_LOCK_TTL: int = int(os.getenv("REDIS_LOCK_TTL", "30"))  # 30 seconds (distributed lock timeout)
     MAX_CONCURRENT_BROWSERS: int = int(os.getenv("MAX_CONCURRENT_BROWSERS", "3"))
     
     # Session settings
