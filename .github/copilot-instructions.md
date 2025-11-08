@@ -199,7 +199,13 @@ finally:
       - Database migrations (if any)
       - Breaking changes (if any)
 
-12. **Request GitHub Copilot Review**: Always request automated review from GitHub Copilot
+12. **Check Existing Reviews and Comments**:
+    - Review the PR to see if GitHub Copilot has already reviewed
+    - Check for any existing review comments or feedback
+    - If reviews exist → skip to step 13 to analyze feedback
+    - If no reviews exist → proceed to step 12b
+
+12b. **Request GitHub Copilot Review**: Request automated review from GitHub Copilot
 
 13. **Review Analysis** (CRITICAL):
     - Read ALL Copilot review comments carefully
@@ -219,7 +225,12 @@ finally:
     - Commit changes: `git commit -m "fix: address Copilot review feedback - [specific issue]"`
     - Push: `git push origin <branch-name>`
 
-15. **Re-request Copilot Review**: After pushing fixes, request review again
+15. **Check for New Comments**: 
+    - After pushing, check if Copilot has already provided new feedback
+    - If new comments exist → go to step 13 to analyze
+    - If no new comments → proceed to step 15b
+
+15b. **Re-request Copilot Review**: Request review again after addressing feedback
 
 16. **Repeat Review Cycle**: 
     - **MINIMUM 3 ITERATIONS** of steps 12-15
