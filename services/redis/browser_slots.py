@@ -166,7 +166,7 @@ class BrowserSlotManager(RedisServiceBase, RedisMetricsMixin):
         self._increment_metric("redis_mode_used")
         redis_client = self._get_redis_client()
         if not redis_client:
-            raise Exception("Redis client not available")
+            raise HTTPException(status_code=503, detail="Redis client not available")
         
         slot_key = self._get_slot_key(user_id)
         lock_key = self._get_lock_key(user_id)
@@ -235,7 +235,7 @@ class BrowserSlotManager(RedisServiceBase, RedisMetricsMixin):
             raise
         except redis.RedisError as e:
             logger.error(f"Redis error in slot acquisition for user {user_id[:8]}...: {e}")
-            raise Exception("Redis error during slot acquisition")
+            raise HTTPException(status_code=503, detail="Redis error during slot acquisition")
         finally:
             # Always release the lock
             if lock_acquired:
@@ -258,7 +258,7 @@ class BrowserSlotManager(RedisServiceBase, RedisMetricsMixin):
         """
         redis_client = self._get_redis_client()
         if not redis_client:
-            raise Exception("Redis client not available")
+            raise HTTPException(status_code=503, detail="Redis client not available")
         
         slot_key = self._get_slot_key(user_id)
         
@@ -293,7 +293,7 @@ class BrowserSlotManager(RedisServiceBase, RedisMetricsMixin):
         """Redis implementation of getting slot count"""
         redis_client = self._get_redis_client()
         if not redis_client:
-            raise Exception("Redis client not available")
+            raise HTTPException(status_code=503, detail="Redis client not available")
         
         slot_key = self._get_slot_key(user_id)
         count = await redis_client.get(slot_key)
