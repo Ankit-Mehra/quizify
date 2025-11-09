@@ -19,7 +19,6 @@ import re
 
 from services.redis.base import RedisServiceBase, RedisMetricsMixin
 from services.logger import app_logger as logger
-import redis.asyncio as redis
 
 
 # Generic type variable bound to Pydantic BaseModel
@@ -53,6 +52,9 @@ class CacheService(RedisServiceBase, RedisMetricsMixin):
         RedisServiceBase.__init__(self)
         RedisMetricsMixin.__init__(self)
         self.prefix = prefix
+        
+        # Track expiry tasks to prevent race conditions when re-setting keys
+        self._expiry_tasks: Dict[str, asyncio.Task] = {}
         
         # Initialize metrics if not already done by RedisMetricsMixin
         if not hasattr(self, '_metrics'):
@@ -158,20 +160,32 @@ class CacheService(RedisServiceBase, RedisMetricsMixin):
         full_key = self._build_key(key)
         
         async with self._memory_lock:
+            # Cancel any existing expiry task for this key to prevent race conditions
+            if full_key in self._expiry_tasks:
+                self._expiry_tasks[full_key].cancel()
+            
             self._memory_store[full_key] = value
             self._increment_metric("memory_cache_sets")
             logger.debug(f"Cache SET (Memory): {full_key}")
             
-            # Schedule cleanup after TTL (in-memory TTL simulation)
-            asyncio.create_task(self._memory_expire(full_key, ttl))
+            # Schedule cleanup after TTL (in-memory TTL simulation) and track task
+            task = asyncio.create_task(self._memory_expire(full_key, ttl))
+            self._expiry_tasks[full_key] = task
     
     async def _memory_expire(self, full_key: str, ttl: int):
         """Simulate TTL expiration in memory"""
-        await asyncio.sleep(ttl)
-        async with self._memory_lock:
-            if full_key in self._memory_store:
-                del self._memory_store[full_key]
-                logger.debug(f"Cache EXPIRED (Memory): {full_key}")
+        try:
+            await asyncio.sleep(ttl)
+            async with self._memory_lock:
+                if full_key in self._memory_store:
+                    del self._memory_store[full_key]
+                    logger.debug(f"Cache EXPIRED (Memory): {full_key}")
+                # Remove completed task from tracking
+                self._expiry_tasks.pop(full_key, None)
+        except asyncio.CancelledError:
+            # Task was cancelled (key was re-set), clean up tracking
+            self._expiry_tasks.pop(full_key, None)
+            logger.debug(f"Cache EXPIRY CANCELLED (Memory): {full_key}")
     
     async def get_or_fetch(
         self,
@@ -306,7 +320,11 @@ class CacheService(RedisServiceBase, RedisMetricsMixin):
         deleted_count = 0
         
         # Use SCAN to find matching keys (more memory efficient than KEYS)
+        # Use pipeline for efficient batch deletion
         cursor = 0
+        pipeline = redis_client.pipeline()
+        keys_to_delete = []
+        
         while True:
             cursor, keys = await redis_client.scan(
                 cursor=cursor,
@@ -315,11 +333,17 @@ class CacheService(RedisServiceBase, RedisMetricsMixin):
             )
             
             if keys:
-                deleted = await redis_client.delete(*keys)
-                deleted_count += deleted
+                keys_to_delete.extend(keys)
             
             if cursor == 0:
                 break
+        
+        # Execute batch deletion via pipeline for better performance
+        if keys_to_delete:
+            for key in keys_to_delete:
+                pipeline.unlink(key)  # UNLINK is async, faster than DELETE
+            await pipeline.execute()
+            deleted_count = len(keys_to_delete)
         
         if deleted_count > 0:
             self._increment_metric("redis_cache_pattern_deletes")

@@ -4,6 +4,7 @@ from typing import List, Optional
 from services.logger import db_logger as logger
 from config import config as app_config
 from pydantic import BaseModel
+import asyncio
 
 
 # Pydantic models for caching - extracted to module level for performance
@@ -188,6 +189,11 @@ async def get_quiz_metadata_cached(quiz_id: str, user_id: str) -> dict:
     - Automatic after 30 minutes (TTL)
     - Manual via invalidate_quiz_cache() on quiz updates/deletion
     
+    Cache design limitation:
+    - Cache key is per-user (quiz_id:user_id)
+    - Database query filters by created_by, so only quiz creators can access
+    - If quiz sharing is added in the future, cache design will need updating
+    
     Args:
         quiz_id: UUID of the quiz
         user_id: UUID of the requesting user (for RLS)
@@ -203,31 +209,35 @@ async def get_quiz_metadata_cached(quiz_id: str, user_id: str) -> dict:
     cache = get_cache_service(prefix="quiz_metadata")
     
     async def fetch_from_db():
-        # Use service role for metadata query (RLS enforced by user_id filter)
-        supabase = get_supabase()
+        # Use service role client; restrict access by filtering on created_by (user_id)
+        # Wrap synchronous Supabase calls in thread pool to avoid blocking event loop
+        def _fetch():
+            supabase = get_supabase()
+            
+            # Get quiz metadata
+            quiz_response = supabase.table("quizzes").select("*").eq("id", quiz_id).eq("created_by", user_id).execute()
+            
+            if not quiz_response.data:
+                raise HTTPException(status_code=404, detail="Quiz not found")
+            
+            quiz_data = quiz_response.data[0]
+            
+            # Get question count
+            questions_response = supabase.table("questions").select("id", count="exact").eq("quiz_id", quiz_id).execute()  # type: ignore[attr-defined] - Supabase Python client doesn't expose .count attribute
+            question_count = questions_response.count or 0
+            
+            return QuizMetadata(
+                id=quiz_data["id"],
+                title=quiz_data["title"],
+                created_by=quiz_data["created_by"],
+                created_at=quiz_data["created_at"],
+                question_count=question_count,
+                content_source_type=quiz_data.get("content_source_type"),
+                content_source_reference=quiz_data.get("content_source_reference")
+            )
         
-        # Get quiz metadata
-        quiz_response = supabase.table("quizzes").select("*").eq("id", quiz_id).eq("created_by", user_id).execute()
-        
-        if not quiz_response.data:
-            raise HTTPException(status_code=404, detail="Quiz not found")
-        
-        quiz_data = quiz_response.data[0]
-        
-        # Get question count
-        # type: ignore - Supabase Python client doesn't expose .count attribute in type hints
-        questions_response = supabase.table("questions").select("id", count="exact").eq("quiz_id", quiz_id).execute()  # type: ignore[attr-defined]
-        question_count = questions_response.count or 0
-        
-        return QuizMetadata(
-            id=quiz_data["id"],
-            title=quiz_data["title"],
-            created_by=quiz_data["created_by"],
-            created_at=quiz_data["created_at"],
-            question_count=question_count,
-            content_source_type=quiz_data.get("content_source_type"),
-            content_source_reference=quiz_data.get("content_source_reference")
-        )
+        # Run blocking Supabase calls in thread pool
+        return await asyncio.to_thread(_fetch)
     
     # Cache key: "quiz_metadata:{quiz_id}:{user_id}"
     cache_key = f"{quiz_id}:{user_id}"
@@ -493,8 +503,8 @@ async def get_user_tier_info_cached(user_id: str) -> dict:
     
     # Fetch function for cache-aside pattern
     async def fetch_from_db():
-        # Call the original synchronous function
-        tier_data = get_user_tier_info(user_id)
+        # Wrap synchronous function in thread pool to avoid blocking event loop
+        tier_data = await asyncio.to_thread(get_user_tier_info, user_id)
         return UserTierInfo(**tier_data)
     
     # Use cache-aside pattern: try cache first, fetch on miss

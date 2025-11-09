@@ -147,8 +147,11 @@ async def test_cache_statistics_integration():
     assert total_misses == 1, f"Expected 1 miss, got {total_misses}"
     
     # Hit rate should be 2/3 = 0.667
-    hit_rate = stats.get("redis_hit_rate", 0) or stats.get("memory_hit_rate", 0)
-    assert 0.65 <= hit_rate <= 0.68, f"Expected hit rate ~0.667, got {hit_rate}"
+    # Select the hit rate that has actual operations (> 0), prioritizing Redis
+    redis_hit_rate = stats.get("redis_hit_rate", 0)
+    memory_hit_rate = stats.get("memory_hit_rate", 0)
+    hit_rate = redis_hit_rate if redis_hits > 0 else memory_hit_rate
+    assert 0.65 <= hit_rate <= 0.68, f"Expected hit rate ~0.667, got {hit_rate} (redis: {redis_hit_rate}, memory: {memory_hit_rate})"
 
 
 @pytest.mark.asyncio
