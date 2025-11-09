@@ -282,6 +282,11 @@ class CacheService(RedisServiceBase, RedisMetricsMixin):
         
         async with self._memory_lock:
             if full_key in self._memory_store:
+                # Cancel expiry task if exists to prevent memory leak
+                task = self._expiry_tasks.pop(full_key, None)
+                if task is not None:
+                    task.cancel()
+                
                 del self._memory_store[full_key]
                 self._increment_metric("memory_cache_deletes")
                 logger.debug(f"Cache DELETE (Memory): {full_key}")
@@ -359,7 +364,8 @@ class CacheService(RedisServiceBase, RedisMetricsMixin):
         full_pattern = self._build_key(pattern)
         
         # Convert Redis pattern to Python pattern (simple * wildcard support)
-        regex_pattern = full_pattern.replace("*", ".*")
+        # Escape regex special chars first, then replace \* with .*
+        regex_pattern = re.escape(full_pattern).replace(r"\*", ".*")
         regex = re.compile(f"^{regex_pattern}$")
         
         async with self._memory_lock:
@@ -369,6 +375,11 @@ class CacheService(RedisServiceBase, RedisMetricsMixin):
             ]
             
             for key in keys_to_delete:
+                # Cancel expiry task if exists to prevent memory leak
+                task = self._expiry_tasks.pop(key, None)
+                if task is not None:
+                    task.cancel()
+                
                 del self._memory_store[key]
             
             if keys_to_delete:
