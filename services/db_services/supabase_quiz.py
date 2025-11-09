@@ -176,6 +176,10 @@ async def get_quiz_metadata_cached(quiz_id: str, user_id: str) -> dict:
     """
     Get quiz metadata (without questions) with Redis caching.
     
+    NOTE: This function is available for future handler integration. Epic 3 focuses on
+    infrastructure setup. Handler migration to use cached functions will be done in
+    follow-up work (Epic 4: Handler Integration) to keep changes focused and testable.
+    
     Caches only the quiz metadata (title, created_by, created_at, question_count)
     to avoid storing large question data in Redis. Questions are always fetched
     fresh from the database.
@@ -189,11 +193,12 @@ async def get_quiz_metadata_cached(quiz_id: str, user_id: str) -> dict:
     - Automatic after 30 minutes (TTL)
     - Manual via invalidate_quiz_cache() on quiz updates/deletion
     
-    Cache design limitation:
-    - Cache key is per-user (quiz_id:user_id)
-    - Database query filters by created_by, so only quiz creators can access
-    - If quiz sharing is added in the future, cache design will need updating
-    # TODO: If implementing quiz sharing, update cache key design to handle shared access
+    **IMPORTANT Cache Limitation**:
+    - Cache key is per-user (quiz_id:user_id) - assumes only creators access quizzes
+    - Database query filters by created_by, restricting access to quiz owners
+    - TODO: If quiz sharing/collaboration is added, this cache design MUST be updated
+      to handle multiple users accessing the same quiz (consider shared quiz_id key
+      without user_id filter, but ensure RLS policies are enforced)
     
     Args:
         quiz_id: UUID of the quiz
@@ -277,12 +282,16 @@ async def invalidate_quiz_cache(quiz_id: str, user_id: Optional[str] = None) -> 
         cache_key = f"{quiz_id}:{user_id}"
         deleted = await cache.delete(cache_key)
         if deleted:
-            logger.info(f"Invalidated quiz cache for quiz {quiz_id[:8]}... user {user_id[:8]}...")
+            # Safe string slicing for logging (UUIDs are 36 chars, but defensive programming)
+            quiz_preview = quiz_id[:8] if len(quiz_id) >= 8 else quiz_id
+            user_preview = user_id[:8] if len(user_id) >= 8 else user_id
+            logger.info(f"Invalidated quiz cache for quiz {quiz_preview}... user {user_preview}...")
     else:
         # Invalidate all caches for this quiz (pattern: quiz_id:*)
         deleted_count = await cache.delete_pattern(f"{quiz_id}:*")
         if deleted_count > 0:
-            logger.info(f"Invalidated {deleted_count} quiz caches for quiz {quiz_id[:8]}...")
+            quiz_preview = quiz_id[:8] if len(quiz_id) >= 8 else quiz_id
+            logger.info(f"Invalidated {deleted_count} quiz caches for quiz {quiz_preview}...")
 
 
 def get_user_quizzes(user_id: str, user_token: Optional[str] = None):
@@ -477,6 +486,10 @@ async def get_user_tier_info_cached(user_id: str) -> dict:
     """
     Get user tier information with Redis caching.
     
+    NOTE: This function is available for future handler integration. Epic 3 focuses on
+    infrastructure setup. Handler migration to use cached functions will be done in
+    follow-up work (Epic 4: Handler Integration) to keep changes focused and testable.
+    
     This is the RECOMMENDED function to use for tier checks as it provides:
     - 50x faster response time (1-5ms vs 50-200ms database query)
     - Reduced database load
@@ -543,7 +556,10 @@ async def invalidate_user_tier_cache(user_id: str) -> None:
     cache = get_cache_service(prefix="user_tier")
     deleted = await cache.delete(user_id)
     
+    # Safe string slicing for logging (UUIDs are 36 chars, but defensive programming)
+    user_preview = user_id[:8] if len(user_id) >= 8 else user_id
+    
     if deleted:
-        logger.info(f"Invalidated tier cache for user: {user_id[:8]}...")
+        logger.info(f"Invalidated tier cache for user: {user_preview}...")
     else:
-        logger.debug(f"No cache to invalidate for user: {user_id[:8]}...")
+        logger.debug(f"No cache to invalidate for user: {user_preview}...")

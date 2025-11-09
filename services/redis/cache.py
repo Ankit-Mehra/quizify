@@ -161,11 +161,10 @@ class CacheService(RedisServiceBase, RedisMetricsMixin):
         
         async with self._memory_lock:
             # Cancel any existing expiry task for this key to prevent race conditions
-            if full_key in self._expiry_tasks:
-                task = self._expiry_tasks[full_key]
+            # Use pop() to handle atomically - safer than check + delete
+            task = self._expiry_tasks.pop(full_key, None)
+            if task is not None:
                 task.cancel()
-                # Remove from tracking immediately to avoid handling in _memory_expire
-                del self._expiry_tasks[full_key]
             
             self._memory_store[full_key] = value
             self._increment_metric("memory_cache_sets")
@@ -183,11 +182,12 @@ class CacheService(RedisServiceBase, RedisMetricsMixin):
                 if full_key in self._memory_store:
                     del self._memory_store[full_key]
                     logger.debug(f"Cache EXPIRED (Memory): {full_key}")
-                # Remove completed task from tracking
+                # Remove completed task from tracking (protected by lock)
                 self._expiry_tasks.pop(full_key, None)
         except asyncio.CancelledError:
             # Task was cancelled (key was re-set), clean up tracking
-            self._expiry_tasks.pop(full_key, None)
+            async with self._memory_lock:
+                self._expiry_tasks.pop(full_key, None)
             logger.debug(f"Cache EXPIRY CANCELLED (Memory): {full_key}")
     
     async def get_or_fetch(
