@@ -80,7 +80,8 @@ async def test_cache_aside_pattern_integration():
         ttl=60
     )
     assert item2.name == "Fetched Item"
-    assert fetch_count == 1  # Fetch should NOT be called again
+    # Verify cache hit (fetch should NOT be called again)
+    assert fetch_count == 1, f"Expected 1 fetch call, got {fetch_count}"
 
 
 @pytest.mark.asyncio

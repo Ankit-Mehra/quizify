@@ -3,6 +3,31 @@ from schemas.quiz import Question
 from typing import List, Optional
 from services.logger import db_logger as logger
 from config import config as app_config
+from pydantic import BaseModel
+
+
+# Pydantic models for caching - extracted to module level for performance
+class QuizMetadata(BaseModel):
+    """Quiz metadata model for caching"""
+    id: str
+    title: str
+    created_by: str
+    created_at: str
+    question_count: int
+    content_source_type: Optional[str] = None
+    content_source_reference: Optional[str] = None
+
+
+class UserTierInfo(BaseModel):
+    """User tier info model for caching"""
+    id: str
+    email: str
+    name: Optional[str] = None
+    account_tier: str
+    current_quiz_count: int
+    quizzes_attempted: int
+    quota_limit: int
+    quota_exceeded: bool
 
 # Lazy load Supabase client to avoid initialization issues in tests
 def get_supabase():
@@ -174,16 +199,6 @@ async def get_quiz_metadata_cached(quiz_id: str, user_id: str) -> dict:
         This does NOT return questions. Use get_quiz_from_database() if you need questions.
     """
     from services.redis import get_cache_service
-    from pydantic import BaseModel
-    
-    class QuizMetadata(BaseModel):
-        id: str
-        title: str
-        created_by: str
-        created_at: str
-        question_count: int
-        content_source_type: Optional[str] = None
-        content_source_reference: Optional[str] = None
     
     cache = get_cache_service(prefix="quiz_metadata")
     
@@ -200,7 +215,8 @@ async def get_quiz_metadata_cached(quiz_id: str, user_id: str) -> dict:
         quiz_data = quiz_response.data[0]
         
         # Get question count
-        questions_response = supabase.table("questions").select("id", count="exact").eq("quiz_id", quiz_id).execute()  # type: ignore
+        # type: ignore - Supabase Python client doesn't expose .count attribute in type hints
+        questions_response = supabase.table("questions").select("id", count="exact").eq("quiz_id", quiz_id).execute()  # type: ignore[attr-defined]
         question_count = questions_response.count or 0
         
         return QuizMetadata(
@@ -472,18 +488,6 @@ async def get_user_tier_info_cached(user_id: str) -> dict:
             raise HTTPException(status_code=429, detail="Quota exceeded")
     """
     from services.redis import get_cache_service
-    from pydantic import BaseModel
-    
-    # Define Pydantic model for type-safe caching
-    class UserTierInfo(BaseModel):
-        id: str
-        email: str
-        name: Optional[str] = None
-        account_tier: str
-        current_quiz_count: int
-        quizzes_attempted: int
-        quota_limit: int
-        quota_exceeded: bool
     
     cache = get_cache_service(prefix="user_tier")
     

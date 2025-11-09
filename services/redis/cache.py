@@ -11,10 +11,11 @@ Provides:
 - Automatic memory fallback when Redis unavailable
 """
 
-from typing import TypeVar, Generic, Optional, Callable, Awaitable, List, Dict, Any
-from pydantic import BaseModel
+from typing import TypeVar, Optional, Callable, Awaitable, Dict, Any
+from pydantic import BaseModel, ValidationError
 from collections import defaultdict
 import asyncio
+import re
 
 from services.redis.base import RedisServiceBase, RedisMetricsMixin
 from services.logger import app_logger as logger
@@ -49,7 +50,8 @@ class CacheService(RedisServiceBase, RedisMetricsMixin):
         Args:
             prefix: Key prefix for namespacing (e.g., "cache", "quiz", "user")
         """
-        super().__init__()
+        RedisServiceBase.__init__(self)
+        RedisMetricsMixin.__init__(self)
         self.prefix = prefix
         
         # Initialize metrics if not already done by RedisMetricsMixin
@@ -92,7 +94,7 @@ class CacheService(RedisServiceBase, RedisMetricsMixin):
             logger.debug(f"Cache HIT (Redis): {full_key}")
             try:
                 return model.model_validate_json(cached)
-            except Exception as e:
+            except ValidationError as e:
                 logger.error(f"Failed to deserialize cached value for {full_key}: {e}")
                 # Delete corrupted cache entry
                 await redis_client.delete(full_key)
@@ -330,7 +332,6 @@ class CacheService(RedisServiceBase, RedisMetricsMixin):
         full_pattern = self._build_key(pattern)
         
         # Convert Redis pattern to Python pattern (simple * wildcard support)
-        import re
         regex_pattern = full_pattern.replace("*", ".*")
         regex = re.compile(f"^{regex_pattern}$")
         
@@ -457,8 +458,8 @@ class CacheService(RedisServiceBase, RedisMetricsMixin):
         }
 
 
-# Global cache service instances (lazy initialization)
-_cache_service: Optional[CacheService] = None
+# Global cache service instances (lazy initialization) - dict for per-prefix singletons
+_cache_services: Dict[str, CacheService] = {}
 
 
 def get_cache_service(prefix: str = "cache") -> CacheService:
@@ -469,13 +470,13 @@ def get_cache_service(prefix: str = "cache") -> CacheService:
         prefix: Cache key prefix for namespacing
         
     Returns:
-        CacheService instance
+        CacheService instance (singleton per prefix)
         
     Note:
-        This returns a singleton per prefix. If you need different
-        prefixes, call this function with different prefix values.
+        This returns a singleton per prefix. Multiple prefixes are supported
+        and each maintains its own instance.
     """
-    global _cache_service
-    if _cache_service is None or _cache_service.prefix != prefix:
-        _cache_service = CacheService(prefix=prefix)
-    return _cache_service
+    global _cache_services
+    if prefix not in _cache_services:
+        _cache_services[prefix] = CacheService(prefix=prefix)
+    return _cache_services[prefix]

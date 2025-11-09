@@ -379,7 +379,7 @@ class TestTTLManagement:
         await asyncio.sleep(3)
         
         # Should be gone (for memory fallback, we simulate expiration)
-        result = await cache_service.get("user:short_ttl", UserProfile)
+        _ = await cache_service.get("user:short_ttl", UserProfile)
         # May or may not be None depending on Redis vs memory
         # This test is mostly for manual verification
 
