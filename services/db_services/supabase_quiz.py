@@ -193,6 +193,7 @@ async def get_quiz_metadata_cached(quiz_id: str, user_id: str) -> dict:
     - Cache key is per-user (quiz_id:user_id)
     - Database query filters by created_by, so only quiz creators can access
     - If quiz sharing is added in the future, cache design will need updating
+    # TODO: If implementing quiz sharing, update cache key design to handle shared access
     
     Args:
         quiz_id: UUID of the quiz
@@ -210,34 +211,35 @@ async def get_quiz_metadata_cached(quiz_id: str, user_id: str) -> dict:
     
     async def fetch_from_db():
         # Use service role client; restrict access by filtering on created_by (user_id)
-        # Wrap synchronous Supabase calls in thread pool to avoid blocking event loop
-        def _fetch():
+        # Run two blocking Supabase calls in parallel threads for better performance
+        def fetch_quiz_metadata():
             supabase = get_supabase()
-            
-            # Get quiz metadata
             quiz_response = supabase.table("quizzes").select("*").eq("id", quiz_id).eq("created_by", user_id).execute()
-            
             if not quiz_response.data:
                 raise HTTPException(status_code=404, detail="Quiz not found")
-            
-            quiz_data = quiz_response.data[0]
-            
-            # Get question count
-            questions_response = supabase.table("questions").select("id", count="exact").eq("quiz_id", quiz_id).execute()  # type: ignore[attr-defined] - Supabase Python client doesn't expose .count attribute
-            question_count = questions_response.count or 0
-            
-            return QuizMetadata(
-                id=quiz_data["id"],
-                title=quiz_data["title"],
-                created_by=quiz_data["created_by"],
-                created_at=quiz_data["created_at"],
-                question_count=question_count,
-                content_source_type=quiz_data.get("content_source_type"),
-                content_source_reference=quiz_data.get("content_source_reference")
-            )
+            return quiz_response.data[0]
         
-        # Run blocking Supabase calls in thread pool
-        return await asyncio.to_thread(_fetch)
+        def fetch_question_count():
+            supabase = get_supabase()
+            # Supabase Python client doesn't expose .count attribute
+            questions_response = supabase.table("questions").select("id", count="exact").eq("quiz_id", quiz_id).execute()  # type: ignore[attr-defined]
+            return questions_response.count or 0
+        
+        # Run both queries concurrently in separate threads
+        quiz_data, question_count = await asyncio.gather(
+            asyncio.to_thread(fetch_quiz_metadata),
+            asyncio.to_thread(fetch_question_count)
+        )
+        
+        return QuizMetadata(
+            id=quiz_data["id"],
+            title=quiz_data["title"],
+            created_by=quiz_data["created_by"],
+            created_at=quiz_data["created_at"],
+            question_count=question_count,
+            content_source_type=quiz_data.get("content_source_type"),
+            content_source_reference=quiz_data.get("content_source_reference")
+        )
     
     # Cache key: "quiz_metadata:{quiz_id}:{user_id}"
     cache_key = f"{quiz_id}:{user_id}"

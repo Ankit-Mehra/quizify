@@ -162,7 +162,10 @@ class CacheService(RedisServiceBase, RedisMetricsMixin):
         async with self._memory_lock:
             # Cancel any existing expiry task for this key to prevent race conditions
             if full_key in self._expiry_tasks:
-                self._expiry_tasks[full_key].cancel()
+                task = self._expiry_tasks[full_key]
+                task.cancel()
+                # Remove from tracking immediately to avoid handling in _memory_expire
+                del self._expiry_tasks[full_key]
             
             self._memory_store[full_key] = value
             self._increment_metric("memory_cache_sets")
@@ -225,14 +228,14 @@ class CacheService(RedisServiceBase, RedisMetricsMixin):
             return cached
         
         # Cache miss - fetch from source
-        logger.debug(f"Fetching fresh data for: {self._build_key(key)}")
+        logger.debug(f"Cache miss - fetching fresh data for: {self._build_key(key)}")
         try:
             value = await fetch_fn()
         except Exception as e:
             logger.error(f"Failed to fetch data for {self._build_key(key)}: {e}")
             raise  # Re-raise fetch errors - these are business logic failures
         
-        # Store in cache for next time (non-critical, failures logged internally)
+        # Try to cache result for next time, but don't fail the request if caching fails
         try:
             await self.set(key, value, ttl)
         except Exception as e:
