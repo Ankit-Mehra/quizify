@@ -421,7 +421,7 @@ async def get_quiz_by_id_handler(
     Get a specific quiz by ID with Redis caching (Epic 3).
     
     Uses hybrid caching approach:
-    - Quiz metadata (title, created_by, etc.) cached in Redis (30min TTL) for 50x speedup
+    - Quiz metadata (title, created_by, etc.) cached in Redis (30min TTL)
     - Questions fetched fresh from database (not cached due to size)
     
     Authorization:
@@ -474,6 +474,8 @@ async def get_quiz_by_id_handler(
             "title": metadata["title"],
             "created_by": metadata["created_by"],
             "created_at": metadata["created_at"],
+            "content_source_type": metadata.get("content_source_type"),
+            "content_source_reference": metadata.get("content_source_reference"),
             "questions": questions_response.data
         }
     
