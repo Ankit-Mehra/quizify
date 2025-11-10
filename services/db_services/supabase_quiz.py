@@ -512,7 +512,12 @@ async def get_user_tier_info_cached(user_id: str) -> dict:
         if tier_info['quota_exceeded']:
             raise HTTPException(status_code=429, detail="Quota exceeded")
     """
-    from services.redis import get_cache_service
+    from services.redis import get_cache_service, get_redis_client
+    
+    # Diagnostic logging for production debugging
+    redis_client = get_redis_client()
+    user_preview = user_id[:8] if len(user_id) >= 8 else user_id
+    logger.info(f"🔍 get_user_tier_info_cached called for user {user_preview}... | Redis client: {'✅ Available' if redis_client else '❌ None'}")
     
     cache = get_cache_service(prefix="user_tier")
     
