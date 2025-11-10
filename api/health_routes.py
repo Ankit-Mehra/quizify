@@ -11,7 +11,7 @@ import time
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from services.redis.client import check_redis_health, get_redis_client
-from dependencies.auth_dependencies import get_current_user
+from dependencies.auth_dependencies import get_current_user_id
 from services.logger import app_logger as logger
 
 router = APIRouter(tags=["Health"])
@@ -74,10 +74,10 @@ async def redis_health_check():
 
 @router.get(
     "/health/redis/info",
-    dependencies=[Depends(get_current_user)],
+    dependencies=[Depends(get_current_user_id)],
     openapi_extra={"security": [{"BearerAuth": []}]}
 )
-async def redis_detailed_info(current_user: dict = Depends(get_current_user)):
+async def redis_detailed_info(current_user_id: str = Depends(get_current_user_id)):
     """
     Get detailed Redis server information for debugging (ADMIN ONLY).
     
