@@ -66,6 +66,105 @@ async def redis_health_check():
 
 
 # ============================================================================
+# REDIS DETAILED INFO (Debug endpoint)
+# ============================================================================
+
+@router.get("/health/redis/info")
+async def redis_detailed_info():
+    """
+    Get detailed Redis server information for debugging.
+    
+    Shows memory usage, configuration, performance metrics, and network info.
+    Useful for diagnosing performance issues in production.
+    
+    Returns:
+        dict: Detailed Redis server information or error
+        
+    Status Codes:
+        200: Redis info retrieved successfully
+        503: Redis unavailable
+    """
+    from services.redis.client import get_redis_client
+    import time
+    
+    redis_client = get_redis_client()
+    
+    if not redis_client:
+        return JSONResponse(
+            status_code=503,
+            content={"error": "Redis client not initialized"}
+        )
+    
+    try:
+        # Measure actual GET latency
+        start = time.time()
+        await redis_client.ping()
+        ping_latency = (time.time() - start) * 1000
+        
+        # Get Redis INFO
+        info = await redis_client.info()
+        
+        # Measure GET operation latency
+        start = time.time()
+        await redis_client.set("_latency_test", "test", ex=10)
+        set_latency = (time.time() - start) * 1000
+        
+        start = time.time()
+        await redis_client.get("_latency_test")
+        get_latency = (time.time() - start) * 1000
+        
+        return {
+            "connected": True,
+            "redis_version": info.get("redis_version"),
+            "redis_mode": info.get("redis_mode"),
+            "uptime_in_days": info.get("uptime_in_days"),
+            
+            # Memory info
+            "memory": {
+                "used_memory_human": info.get("used_memory_human"),
+                "used_memory_peak_human": info.get("used_memory_peak_human"),
+                "maxmemory_human": info.get("maxmemory_human"),
+                "maxmemory_policy": info.get("maxmemory_policy"),
+                "mem_fragmentation_ratio": info.get("mem_fragmentation_ratio")
+            },
+            
+            # Performance metrics
+            "performance": {
+                "ping_latency_ms": round(ping_latency, 2),
+                "set_latency_ms": round(set_latency, 2),
+                "get_latency_ms": round(get_latency, 2),
+                "connected_clients": info.get("connected_clients"),
+                "total_commands_processed": info.get("total_commands_processed"),
+                "instantaneous_ops_per_sec": info.get("instantaneous_ops_per_sec")
+            },
+            
+            # Data info
+            "data": {
+                "total_keys": await redis_client.dbsize(),
+                "keyspace_hits": info.get("keyspace_hits"),
+                "keyspace_misses": info.get("keyspace_misses"),
+                "evicted_keys": info.get("evicted_keys")
+            },
+            
+            # Network info
+            "network": {
+                "total_net_input_bytes": info.get("total_net_input_bytes"),
+                "total_net_output_bytes": info.get("total_net_output_bytes"),
+                "rejected_connections": info.get("rejected_connections")
+            }
+        }
+        
+    except Exception as e:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": f"Failed to get Redis info: {str(e)}",
+                "connected": False
+            }
+        )
+
+
+# ============================================================================
 # FUTURE HEALTH CHECKS (Placeholder for Epic 2+)
 # ============================================================================
 # 
