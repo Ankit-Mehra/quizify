@@ -7,9 +7,12 @@ Provides endpoints for:
 - Future: Database health, external service checks, etc.
 """
 
-from fastapi import APIRouter
+import time
+from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
-from services.redis.client import check_redis_health
+from services.redis.client import check_redis_health, get_redis_client
+from dependencies.auth_dependencies import get_current_user
+from services.logger import app_logger as logger
 
 router = APIRouter(tags=["Health"])
 
@@ -66,13 +69,19 @@ async def redis_health_check():
 
 
 # ============================================================================
-# REDIS DETAILED INFO (Debug endpoint)
+# REDIS DETAILED INFO (Debug endpoint - ADMIN ONLY)
 # ============================================================================
 
-@router.get("/health/redis/info")
-async def redis_detailed_info():
+@router.get(
+    "/health/redis/info",
+    dependencies=[Depends(get_current_user)],
+    openapi_extra={"security": [{"BearerAuth": []}]}
+)
+async def redis_detailed_info(current_user: dict = Depends(get_current_user)):
     """
-    Get detailed Redis server information for debugging.
+    Get detailed Redis server information for debugging (ADMIN ONLY).
+    
+    **SECURITY**: Requires authentication. Exposes sensitive Redis metrics.
     
     Shows memory usage, configuration, performance metrics, and network info.
     Useful for diagnosing performance issues in production.
@@ -82,11 +91,9 @@ async def redis_detailed_info():
         
     Status Codes:
         200: Redis info retrieved successfully
+        401: Unauthorized (no valid token)
         503: Redis unavailable
     """
-    from services.redis.client import get_redis_client
-    import time
-    
     redis_client = get_redis_client()
     
     if not redis_client:
@@ -96,7 +103,7 @@ async def redis_detailed_info():
         )
     
     try:
-        # Measure actual GET latency
+        # Measure PING latency
         start = time.time()
         await redis_client.ping()
         ping_latency = (time.time() - start) * 1000
@@ -104,13 +111,17 @@ async def redis_detailed_info():
         # Get Redis INFO
         info = await redis_client.info()
         
-        # Measure GET operation latency
+        # Use unique test key to avoid collisions between concurrent requests
+        test_key = f"_latency_test:{time.time_ns()}"
+        
+        # Measure SET operation latency
         start = time.time()
-        await redis_client.set("_latency_test", "test", ex=10)
+        await redis_client.set(test_key, "test", ex=1)  # 1 second expiration
         set_latency = (time.time() - start) * 1000
         
+        # Measure GET operation latency
         start = time.time()
-        await redis_client.get("_latency_test")
+        await redis_client.get(test_key)
         get_latency = (time.time() - start) * 1000
         
         return {
@@ -155,10 +166,12 @@ async def redis_detailed_info():
         }
         
     except Exception as e:
+        # Log full error internally, return generic message to client
+        logger.error(f"Failed to get Redis info: {str(e)}", exc_info=True)
         return JSONResponse(
             status_code=503,
             content={
-                "error": f"Failed to get Redis info: {str(e)}",
+                "error": "Failed to retrieve Redis diagnostics",
                 "connected": False
             }
         )
