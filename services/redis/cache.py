@@ -153,7 +153,7 @@ class CacheService(RedisServiceBase, RedisMetricsMixin):
             self._increment_metric("redis_cache_sets")
             logger.info(f"✅ Cache SET (Redis): {full_key} [TTL={ttl}s]")  # Changed to INFO for production visibility
         except Exception as e:
-            logger.error(f"❌ Failed to cache value for {full_key}: {e}")
+            logger.error(f"Failed to cache value for {full_key}: {e}")
             # Don't raise - gracefully degrade, request should continue
             # Memory fallback will be used automatically via _with_fallback
     

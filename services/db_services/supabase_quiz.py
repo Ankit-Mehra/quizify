@@ -516,7 +516,8 @@ async def get_user_tier_info_cached(user_id: str) -> dict:
     
     # Diagnostic logging for production debugging
     redis_client = get_redis_client()
-    logger.info(f"🔍 get_user_tier_info_cached called for user {user_id[:8]}... | Redis client: {'✅ Available' if redis_client else '❌ None'}")
+    user_preview = user_id[:8] if len(user_id) >= 8 else user_id
+    logger.info(f"🔍 get_user_tier_info_cached called for user {user_preview}... | Redis client: {'✅ Available' if redis_client else '❌ None'}")
     
     cache = get_cache_service(prefix="user_tier")
     
