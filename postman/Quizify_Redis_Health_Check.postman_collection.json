@@ -195,6 +195,123 @@
 			"description": "Basic health monitoring endpoints for application and Redis connectivity."
 		},
 		{
+			"name": "Diagnostics",
+			"item": [
+				{
+					"name": "Redis Detailed Info (Authenticated)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200 (authenticated)\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"const jsonData = pm.response.json();",
+									"",
+									"pm.test(\"Response has all required sections\", function () {",
+									"    pm.expect(jsonData).to.have.property('connected');",
+									"    pm.expect(jsonData).to.have.property('redis_version');",
+									"    pm.expect(jsonData).to.have.property('memory');",
+									"    pm.expect(jsonData).to.have.property('performance');",
+									"    pm.expect(jsonData).to.have.property('data');",
+									"    pm.expect(jsonData).to.have.property('network');",
+									"});",
+									"",
+									"pm.test(\"Redis is connected\", function () {",
+									"    pm.expect(jsonData.connected).to.be.true;",
+									"});",
+									"",
+									"// Performance analysis",
+									"const perf = jsonData.performance;",
+									"console.log(\"\\n=== Redis Performance Metrics ===\");",
+									"console.log(`PING latency: ${perf.ping_latency_ms}ms`);",
+									"console.log(`SET latency:  ${perf.set_latency_ms}ms`);",
+									"console.log(`GET latency:  ${perf.get_latency_ms}ms`);",
+									"console.log(`Connected clients: ${perf.connected_clients}`);",
+									"console.log(`Ops per second: ${perf.instantaneous_ops_per_sec}`);",
+									"",
+									"// Memory analysis",
+									"console.log(\"\\n=== Memory Usage ===\");",
+									"console.log(`Used: ${jsonData.memory.used_memory_human}`);",
+									"console.log(`Peak: ${jsonData.memory.used_memory_peak_human}`);",
+									"console.log(`Max:  ${jsonData.memory.maxmemory_human}`);",
+									"console.log(`Fragmentation: ${jsonData.memory.mem_fragmentation_ratio}`);",
+									"",
+									"// Data stats",
+									"console.log(\"\\n=== Data Statistics ===\");",
+									"console.log(`Total keys: ${jsonData.data.total_keys}`);",
+									"console.log(`Cache hits: ${jsonData.data.keyspace_hits}`);",
+									"console.log(`Cache misses: ${jsonData.data.keyspace_misses}`);",
+									"console.log(`Evicted keys: ${jsonData.data.evicted_keys}`);",
+									"",
+									"// Hit rate calculation",
+									"const hits = jsonData.data.keyspace_hits || 0;",
+									"const misses = jsonData.data.keyspace_misses || 0;",
+									"const total = hits + misses;",
+									"if (total > 0) {",
+									"    const hitRate = (hits / total * 100).toFixed(2);",
+									"    console.log(`Hit rate: ${hitRate}%`);",
+									"}",
+									"",
+									"// Performance classification",
+									"const avgLatency = (perf.ping_latency_ms + perf.get_latency_ms + perf.set_latency_ms) / 3;",
+									"console.log(\"\\n=== Performance Classification ===\");",
+									"console.log(`Average latency: ${avgLatency.toFixed(2)}ms`);",
+									"",
+									"if (avgLatency < 10) {",
+									"    console.log(\"✅ EXCELLENT: Railway internal network (< 10ms)\");",
+									"} else if (avgLatency < 50) {",
+									"    console.log(\"✅ GOOD: Acceptable for production (< 50ms)\");",
+									"} else if (avgLatency < 100) {",
+									"    console.log(\"⚠️ ACCEPTABLE: May indicate network issues (< 100ms)\");",
+									"} else {",
+									"    console.log(\"❌ SLOW: Investigate connection/network (>= 100ms)\");",
+									"}",
+									"",
+									"pm.test(\"Performance metrics are within acceptable range\", function () {",
+									"    pm.expect(perf.ping_latency_ms).to.be.a('number');",
+									"    pm.expect(perf.get_latency_ms).to.be.a('number');",
+									"    pm.expect(perf.set_latency_ms).to.be.a('number');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{AUTH_TOKEN}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{BASE_URL}}/health/redis/info",
+							"host": [
+								"{{BASE_URL}}"
+							],
+							"path": [
+								"health",
+								"redis",
+								"info"
+							]
+						},
+						"description": "**AUTHENTICATED ENDPOINT** - Detailed Redis diagnostics for production debugging.\\n\\n**Security:** Requires Bearer token authentication.\\n\\n**Purpose:**\\n- Diagnose performance issues (e.g., 340ms cache hit latency)\\n- Analyze memory usage and fragmentation\\n- Monitor cache hit rates\\n- Identify network latency bottlenecks\\n- Check Redis version and configuration\\n\\n**Shows:**\\n1. **Performance Metrics:**\\n   - PING, SET, GET latency (actual measurements)\\n   - Connected clients\\n   - Operations per second\\n\\n2. **Memory Info:**\\n   - Used/peak/max memory\\n   - Fragmentation ratio\\n   - Eviction policy\\n\\n3. **Data Statistics:**\\n   - Total keys\\n   - Cache hits/misses\\n   - Hit rate percentage\\n   - Evicted keys\\n\\n4. **Network Stats:**\\n   - Bytes in/out\\n   - Rejected connections\\n\\n**Prerequisites:**\\n1. Login to get AUTH_TOKEN:\\n   ```bash\\n   POST {{BASE_URL}}/api/auth/login\\n   {\\\"email\\\": \\\"your@email.com\\\", \\\"password\\\": \\\"yourpassword\\\"}\\n   ```\\n2. Set AUTH_TOKEN in environment variables\\n\\n**Expected Response (200 OK):**\\n```json\\n{\\n  \\\"connected\\\": true,\\n  \\\"redis_version\\\": \\\"7.4.6\\\",\\n  \\\"redis_mode\\\": \\\"standalone\\\",\\n  \\\"memory\\\": {\\n    \\\"used_memory_human\\\": \\\"1.20M\\\",\\n    \\\"maxmemory_human\\\": \\\"256.00M\\\",\\n    \\\"maxmemory_policy\\\": \\\"allkeys-lru\\\",\\n    \\\"mem_fragmentation_ratio\\\": 11.85\\n  },\\n  \\\"performance\\\": {\\n    \\\"ping_latency_ms\\\": 1.97,\\n    \\\"set_latency_ms\\\": 0.98,\\n    \\\"get_latency_ms\\\": 0.51\\n  },\\n  \\\"data\\\": {\\n    \\\"total_keys\\\": 1,\\n    \\\"keyspace_hits\\\": 3,\\n    \\\"keyspace_misses\\\": 1\\n  }\\n}\\n```\\n\\n**Use Cases:**\\n- **Railway Hobby Plan Diagnosis**: Check if PING/GET < 30ms\\n- **Network Issue Detection**: If latencies > 200ms, Railway networking problem\\n- **Memory Pressure**: Check fragmentation ratio (should be < 1.5)\\n- **Cache Effectiveness**: Monitor hit rate (aim for > 80%)\\n\\n**Troubleshooting:**\\n- **401 Unauthorized**: AUTH_TOKEN missing or expired\\n- **503 Service Unavailable**: Redis not connected\\n- **Generic error**: Check Railway logs for detailed exception"
+					},
+					"response": []
+				}
+			],
+			"description": "Advanced diagnostics endpoints requiring authentication for production debugging."
+		},
+		{
 			"name": "Performance Tests",
 			"item": [
 				{
