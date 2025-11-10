@@ -65,11 +65,12 @@ class RedisServiceBase(ABC):
                 return await redis_fn(*args, **kwargs)
             except redis.RedisError as e:
                 logger.warning(
-                    f"Redis {operation_name} failed, using memory fallback: {e}"
+                    f"🚨 Redis {operation_name} failed (RedisError), using memory fallback: {type(e).__name__}"
                 )
             except Exception as e:
                 logger.error(
-                    f"Unexpected error in Redis {operation_name}, using memory fallback: {e}"
+                    f"🚨 Unexpected error in Redis {operation_name}, using memory fallback: {type(e).__name__}",
+                    exc_info=True
                 )
         
         # Fallback to memory
