@@ -86,6 +86,7 @@ class CacheService(RedisServiceBase, RedisMetricsMixin):
         """Redis implementation of get"""
         redis_client = self._get_redis_client()
         if not redis_client:
+            logger.info(f"⚠️ Redis client not available for cache GET: {self._build_key(key)}")
             return None
         
         full_key = self._build_key(key)
@@ -93,7 +94,7 @@ class CacheService(RedisServiceBase, RedisMetricsMixin):
         
         if cached:
             self._increment_metric("redis_cache_hits")
-            logger.debug(f"Cache HIT (Redis): {full_key}")
+            logger.info(f"🎯 Cache HIT (Redis): {full_key}")  # Changed to INFO for production visibility
             try:
                 return model.model_validate_json(cached)
             except ValidationError as e:
@@ -103,7 +104,7 @@ class CacheService(RedisServiceBase, RedisMetricsMixin):
                 return None
         else:
             self._increment_metric("redis_cache_misses")
-            logger.debug(f"Cache MISS (Redis): {full_key}")
+            logger.info(f"❌ Cache MISS (Redis): {full_key}")  # Changed to INFO for production visibility
             return None
     
     async def _memory_get(self, key: str, model: type[T]) -> Optional[T]:
@@ -140,6 +141,7 @@ class CacheService(RedisServiceBase, RedisMetricsMixin):
         """Redis implementation of set"""
         redis_client = self._get_redis_client()
         if not redis_client:
+            logger.info(f"⚠️ Redis client not available for cache SET: {self._build_key(key)}")
             return
         
         full_key = self._build_key(key)
@@ -149,9 +151,9 @@ class CacheService(RedisServiceBase, RedisMetricsMixin):
             json_value = value.model_dump_json()
             await redis_client.setex(full_key, ttl, json_value)
             self._increment_metric("redis_cache_sets")
-            logger.debug(f"Cache SET (Redis): {full_key} [TTL={ttl}s]")
+            logger.info(f"✅ Cache SET (Redis): {full_key} [TTL={ttl}s]")  # Changed to INFO for production visibility
         except Exception as e:
-            logger.error(f"Failed to cache value for {full_key}: {e}")
+            logger.error(f"❌ Failed to cache value for {full_key}: {e}")
             # Don't raise - gracefully degrade, request should continue
             # Memory fallback will be used automatically via _with_fallback
     
