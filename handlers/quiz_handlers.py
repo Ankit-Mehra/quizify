@@ -9,8 +9,8 @@ from services.db_services.supabase_quiz import (
     save_quiz_to_database, get_user_quizzes,
     get_quiz_from_database, save_metadata, 
     get_metadata, delete_quiz_from_database,
-    get_user_tier_info, get_user_tier_info_cached,
-    get_quiz_metadata_cached, get_authed_supabase_client)
+    get_user_tier_info_cached, get_quiz_metadata_cached,
+    get_authed_supabase_client)
 from services.db_services.supabase_file import ( 
     get_file_record, save_file_to_supabase,
     parse_file_from_supabase)
@@ -424,6 +424,12 @@ async def get_quiz_by_id_handler(
     - Quiz metadata (title, created_by, etc.) cached in Redis (30min TTL) for 50x speedup
     - Questions fetched fresh from database (not cached due to size)
     
+    Authorization:
+    - Metadata: Uses service role client with explicit created_by filter in get_quiz_metadata_cached()
+    - Questions: Uses authenticated client with RLS policy enforcement
+    - This mixed approach is intentional: metadata needs caching (service role for performance),
+      while questions use RLS for consistent access control across all endpoints
+    
     Performance:
     - Cache hit: ~2-5ms (metadata from Redis) + ~50ms (questions from DB) = ~55ms total
     - Cache miss: ~50ms (metadata from DB) + ~50ms (questions from DB) = ~100ms total
@@ -437,7 +443,10 @@ async def get_quiz_by_id_handler(
                 detail="Invalid quiz ID. Please provide a valid quiz ID."
             )
         
-        # Get quiz metadata from cache (includes ownership check via user_id filter)
+        # Get quiz metadata from cache.
+        # Ownership is enforced by the database query in get_quiz_metadata_cached,
+        # which filters on the created_by field using current_user_id.
+        # If the quiz does not exist or does not belong to the user, a 404 is raised.
         try:
             metadata = await get_quiz_metadata_cached(quiz_id, current_user_id)
         except HTTPException as e:
@@ -450,8 +459,14 @@ async def get_quiz_by_id_handler(
         logger.info(f"Quiz access for quiz ID: {quiz_id}")
         
         # Fetch questions from database (not cached due to size)
+        # Uses authenticated client with RLS enforcement for consistent access control
         supabase = get_authed_supabase_client(user_token)
         questions_response = supabase.table("questions").select("*").eq("quiz_id", quiz_id).execute()
+        
+        # If no questions are found, treat as not found (data integrity issue)
+        if not questions_response.data or len(questions_response.data) == 0:
+            logger.warning(f"Quiz {quiz_id} has metadata but no questions (data integrity issue)")
+            raise HTTPException(status_code=404, detail="Quiz questions not found")
         
         # Combine metadata and questions
         return {
