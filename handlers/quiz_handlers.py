@@ -430,6 +430,13 @@ async def get_quiz_by_id_handler(
     - This mixed approach is intentional: metadata needs caching (service role for performance),
       while questions use RLS for consistent access control across all endpoints
     
+    Known Architectural Tradeoff:
+    - Two authorization mechanisms exist: explicit filter (metadata) vs RLS policies (questions)
+    - Both currently verify created_by = current_user_id for identical access control
+    - Future risk: If RLS policies change (e.g., quiz sharing feature), explicit filter must sync
+    - Mitigation: Integration tests verify both paths. Consider refactoring when sharing implemented
+    - Tracked in: GitHub issue #73 for future consolidation to single authorization approach
+    
     Performance:
     - Cache hit: ~2-5ms (metadata from Redis) + ~50ms (questions from DB) = ~55ms total
     - Cache miss: ~50ms (metadata from DB) + ~50ms (questions from DB) = ~100ms total
@@ -463,10 +470,11 @@ async def get_quiz_by_id_handler(
         supabase = get_authed_supabase_client(user_token)
         questions_response = supabase.table("questions").select("*").eq("quiz_id", quiz_id).execute()
         
-        # If no questions are found, treat as not found (data integrity issue)
+        # If no questions are found, this indicates data corruption (metadata exists but questions missing)
+        # Using 500 (server error) instead of 404 since this is a data integrity issue, not "not found"
         if not questions_response.data or len(questions_response.data) == 0:
-            logger.warning(f"Quiz {quiz_id} has metadata but no questions (data integrity issue)")
-            raise HTTPException(status_code=404, detail="Quiz questions not found")
+            logger.error(f"Data integrity issue: Quiz {quiz_id} has metadata but no questions")
+            raise HTTPException(status_code=500, detail="Quiz data incomplete. Please contact support.")
         
         # Combine metadata and questions
         return {
