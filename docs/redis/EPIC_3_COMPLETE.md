@@ -111,11 +111,20 @@ async def get_user_tier_info_cached(user_id: str) -> UserTierInfo:
 
 **Function Signature**:
 ```python
-async def get_quiz_metadata_cached(quiz_id: str, user_id: str) -> Dict[str, Any]:
+async def get_quiz_metadata_cached(
+    quiz_id: str,
+    user_id: str,
+    user_token: Optional[str] = None
+) -> Dict[str, Any]:
     """
     Get quiz metadata with Redis caching.
     
-    Cache key: quiz_metadata:{quiz_id}
+    Args:
+        quiz_id: The ID of the quiz.
+        user_id: The ID of the user requesting the quiz.
+        user_token: Optional Supabase JWT token for authenticated access (default: None).
+    
+    Cache key: quiz_metadata:{quiz_id}:{user_id}
     TTL: 30 minutes
     
     Returns:
