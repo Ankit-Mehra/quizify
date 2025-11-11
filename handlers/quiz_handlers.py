@@ -443,6 +443,9 @@ async def get_quiz_by_id_handler(
     - Improvement: 2x faster on cache hits for full quiz retrieval
     """
     try:
+        # Truncate quiz_id for logging (security: prevent information leakage)
+        quiz_preview = quiz_id[:8] if len(quiz_id) >= 8 else quiz_id
+        
         # Check for invalid quiz IDs
         if not quiz_id or quiz_id.lower() == "undefined" or quiz_id.lower() == "null":
             raise HTTPException(
@@ -462,8 +465,8 @@ async def get_quiz_by_id_handler(
                 raise HTTPException(status_code=404, detail="Quiz not found")
             raise
         
-        # Log quiz access (without exposing full user IDs)
-        logger.info(f"Quiz access for quiz ID: {quiz_id}")
+        # Log quiz access (without exposing full quiz IDs)
+        logger.info(f"Quiz access for quiz ID: {quiz_preview}...")
         
         # Fetch questions from database (not cached due to size)
         # Uses authenticated client with RLS enforcement for consistent access control
@@ -473,7 +476,7 @@ async def get_quiz_by_id_handler(
         # If no questions are found, this indicates data corruption (metadata exists but questions missing)
         # Using 500 (server error) instead of 404 since this is a data integrity issue, not "not found"
         if not questions_response.data or len(questions_response.data) == 0:
-            logger.error(f"Data integrity issue: Quiz {quiz_id} has metadata but no questions")
+            logger.error(f"Data integrity issue: Quiz {quiz_preview}... has metadata but no questions")
             raise HTTPException(status_code=500, detail="Quiz data incomplete. Please contact support.")
         
         # Combine metadata and questions
@@ -490,8 +493,10 @@ async def get_quiz_by_id_handler(
     except HTTPException as e:
         raise e
     except Exception as e:
-        logger.error(f"Error retrieving quiz {quiz_id}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Error retrieving quiz: {str(e)}")
+        # Log detailed error for debugging (with truncated quiz_id)
+        logger.error(f"Error retrieving quiz {quiz_preview}...: {str(e)}", exc_info=True)
+        # Return generic error message (security: don't expose internal details)
+        raise HTTPException(status_code=500, detail="An error occurred while retrieving the quiz. Please try again later.")
 
 # === Delete quiz by ID ===
 async def delete_quiz_by_id_handler(
