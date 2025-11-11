@@ -452,11 +452,10 @@ async def get_quiz_by_id_handler(
             )
         
         # Get quiz metadata from cache.
-        # Ownership is enforced by the database query in get_quiz_metadata_cached,
-        # which filters on the created_by field using current_user_id.
+        # Ownership is enforced by RLS when using authenticated client (user_token provided).
         # If the quiz does not exist or does not belong to the user, a 404 is raised.
         try:
-            metadata = await get_quiz_metadata_cached(quiz_id, current_user_id)
+            metadata = await get_quiz_metadata_cached(quiz_id, current_user_id, user_token)
         except HTTPException as e:
             if e.status_code == 404:
                 # Quiz doesn't exist or user doesn't have access

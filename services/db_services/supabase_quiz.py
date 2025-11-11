@@ -172,7 +172,7 @@ def get_quiz_from_database(quiz_id: str, user_token: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-async def get_quiz_metadata_cached(quiz_id: str, user_id: str) -> dict:
+async def get_quiz_metadata_cached(quiz_id: str, user_id: str, user_token: Optional[str] = None) -> dict:
     """
     Get quiz metadata (without questions) with Redis caching.
     
@@ -195,7 +195,7 @@ async def get_quiz_metadata_cached(quiz_id: str, user_id: str) -> dict:
     
     **IMPORTANT Cache Limitation**:
     - Cache key is per-user (quiz_id:user_id) - assumes only creators access quizzes
-    - Database query filters by created_by, restricting access to quiz owners
+    - Database query uses RLS when token provided, manual filter otherwise
     - TODO: If quiz sharing/collaboration is added, this cache design MUST be updated
       to handle multiple users accessing the same quiz (consider shared quiz_id key
       without user_id filter, but ensure RLS policies are enforced)
@@ -203,6 +203,7 @@ async def get_quiz_metadata_cached(quiz_id: str, user_id: str) -> dict:
     Args:
         quiz_id: UUID of the quiz
         user_id: UUID of the requesting user (for RLS)
+        user_token: Optional JWT token for authenticated queries (recommended)
         
     Returns:
         dict: Quiz metadata with keys: id, title, created_by, created_at, question_count
@@ -215,11 +216,18 @@ async def get_quiz_metadata_cached(quiz_id: str, user_id: str) -> dict:
     cache = get_cache_service(prefix="quiz_metadata")
     
     async def fetch_from_db():
-        # Use service role client; restrict access by filtering on created_by (user_id)
+        # Use authenticated client if token provided (respects RLS), otherwise service role
         # Run two blocking Supabase calls in parallel threads for better performance
         def fetch_quiz_metadata():
-            supabase = get_supabase()
-            quiz_response = supabase.table("quizzes").select("*").eq("id", quiz_id).eq("created_by", user_id).execute()
+            if user_token:
+                supabase = get_authed_supabase_client(user_token)
+                # With RLS, just query by ID - RLS handles access control
+                quiz_response = supabase.table("quizzes").select("*").eq("id", quiz_id).execute()
+            else:
+                supabase = get_supabase()
+                # Without RLS, manually filter by created_by
+                quiz_response = supabase.table("quizzes").select("*").eq("id", quiz_id).eq("created_by", user_id).execute()
+            
             if not quiz_response.data:
                 raise HTTPException(status_code=404, detail="Quiz not found")
             return quiz_response.data[0]
