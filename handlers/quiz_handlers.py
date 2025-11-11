@@ -443,9 +443,6 @@ async def get_quiz_by_id_handler(
     try:
         # Truncate quiz_id for logging (security: prevent information leakage)
         quiz_preview = quiz_id[:8] if len(quiz_id) >= 8 else quiz_id
-        user_preview = current_user_id[:8] if len(current_user_id) >= 8 else current_user_id
-        
-        logger.info(f"Quiz retrieval request - Quiz: {quiz_preview}..., User: {user_preview}...")
         
         # Check for invalid quiz IDs
         if not quiz_id or quiz_id.lower() == "undefined" or quiz_id.lower() == "null":
@@ -455,11 +452,10 @@ async def get_quiz_by_id_handler(
             )
         
         # Get quiz metadata from cache.
-        # Ownership is enforced by the database query in get_quiz_metadata_cached,
-        # which filters on the created_by field using current_user_id.
+        # Ownership is enforced by RLS when using authenticated client (user_token provided).
         # If the quiz does not exist or does not belong to the user, a 404 is raised.
         try:
-            metadata = await get_quiz_metadata_cached(quiz_id, current_user_id)
+            metadata = await get_quiz_metadata_cached(quiz_id, current_user_id, user_token)
         except HTTPException as e:
             if e.status_code == 404:
                 # Quiz doesn't exist or user doesn't have access
