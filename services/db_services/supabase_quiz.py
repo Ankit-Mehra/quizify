@@ -218,9 +218,20 @@ async def get_quiz_metadata_cached(quiz_id: str, user_id: str) -> dict:
         # Use service role client; restrict access by filtering on created_by (user_id)
         # Run two blocking Supabase calls in parallel threads for better performance
         def fetch_quiz_metadata():
+            from services.logger import app_logger as logger
             supabase = get_supabase()
+            
+            # DEBUG: Check if quiz exists at all (without user filter)
+            quiz_check = supabase.table("quizzes").select("id, created_by").eq("id", quiz_id).execute()
+            if quiz_check.data:
+                logger.info(f"DEBUG: Quiz {quiz_id[:8]}... exists. created_by={quiz_check.data[0]['created_by'][:8]}..., requested_user={user_id[:8]}...")
+            else:
+                logger.warning(f"DEBUG: Quiz {quiz_id[:8]}... does NOT exist in database")
+            
+            # Now filter by user
             quiz_response = supabase.table("quizzes").select("*").eq("id", quiz_id).eq("created_by", user_id).execute()
             if not quiz_response.data:
+                logger.warning(f"DEBUG: Quiz {quiz_id[:8]}... not found for user {user_id[:8]}...")
                 raise HTTPException(status_code=404, detail="Quiz not found")
             return quiz_response.data[0]
         

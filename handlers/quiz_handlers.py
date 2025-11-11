@@ -443,6 +443,9 @@ async def get_quiz_by_id_handler(
     try:
         # Truncate quiz_id for logging (security: prevent information leakage)
         quiz_preview = quiz_id[:8] if len(quiz_id) >= 8 else quiz_id
+        user_preview = current_user_id[:8] if len(current_user_id) >= 8 else current_user_id
+        
+        logger.info(f"Quiz retrieval request - Quiz: {quiz_preview}..., User: {user_preview}...")
         
         # Check for invalid quiz IDs
         if not quiz_id or quiz_id.lower() == "undefined" or quiz_id.lower() == "null":
