@@ -9,7 +9,8 @@ from services.db_services.supabase_quiz import (
     save_quiz_to_database, get_user_quizzes,
     get_quiz_from_database, save_metadata, 
     get_metadata, delete_quiz_from_database,
-    get_user_tier_info, get_user_tier_info_cached)
+    get_user_tier_info_cached, get_quiz_metadata_cached,
+    get_authed_supabase_client)
 from services.db_services.supabase_file import ( 
     get_file_record, save_file_to_supabase,
     parse_file_from_supabase)
@@ -416,41 +417,97 @@ async def get_quiz_by_id_handler(
     current_user_id: str = Depends(get_current_user_id),
     user_token: str = Depends(get_current_user_token)
 ):
-    """Get a specific quiz by ID."""
+    """
+    Retrieve a specific quiz by ID, combining cached metadata and fresh questions.
+
+    Uses hybrid caching: metadata cached in Redis (30min TTL), questions fetched fresh.
+    Metadata uses service role with explicit filter; questions use RLS for access control.
+
+    Args:
+        quiz_id: The ID of the quiz to retrieve.
+        current_user_id: The ID of the requesting user (injected by auth dependency).
+        user_token: The user's authentication token (injected by auth dependency).
+
+    Returns:
+        dict: Quiz metadata (id, title, created_by, created_at, content_source fields,
+              question_count) and full questions array.
+
+    Raises:
+        HTTPException: 400 if quiz_id invalid, 404 if not found/no access,
+                      500 if data integrity issues or internal errors.
+
+    Note:
+        Mixed authorization approach (explicit filter + RLS) creates maintenance burden.
+        TODO(authorization): Consolidate to single approach when quiz sharing implemented.
+    """
     try:
+        # Truncate quiz_id for logging (security: prevent information leakage)
+        quiz_preview = quiz_id[:8] if len(quiz_id) >= 8 else quiz_id
+        
         # Check for invalid quiz IDs
         if not quiz_id or quiz_id.lower() == "undefined" or quiz_id.lower() == "null":
             raise HTTPException(
                 status_code=400, 
                 detail="Invalid quiz ID. Please provide a valid quiz ID."
             )
-            
-        # Get quiz data from database (this will raise 404 if not found)
+        
+        # Get quiz metadata from cache.
+        # Ownership is enforced by the database query in get_quiz_metadata_cached,
+        # which filters on the created_by field using current_user_id.
+        # If the quiz does not exist or does not belong to the user, a 404 is raised.
         try:
-            quiz_data = get_quiz_from_database(quiz_id, user_token)
+            metadata = await get_quiz_metadata_cached(quiz_id, current_user_id)
         except HTTPException as e:
             if e.status_code == 404:
-                # Quiz truly doesn't exist
+                # Quiz doesn't exist or user doesn't have access
                 raise HTTPException(status_code=404, detail="Quiz not found")
             raise
         
-        # Log quiz access attempt (without exposing user IDs)
-        logger.info(f"Quiz access check for quiz ID: {quiz_id}")
+        # Defense-in-depth: Explicitly verify ownership after fetching metadata
+        # Protects against cache poisoning attacks
+        if metadata["created_by"] != current_user_id:
+            logger.warning(f"Access denied - User attempting to access quiz they don't own")
+            raise HTTPException(status_code=403, detail="Access denied")
         
-        # Verify that the user has access to this quiz
-        if quiz_data["created_by"] != current_user_id:
-            logger.warning(f"Access denied - User {current_user_id} trying to access quiz {quiz_id} created by {quiz_data['created_by']}")
-            raise HTTPException(
-                status_code=403, 
-                detail="Access denied. You don't have permission to view this quiz."
-            )
+        # Log quiz access (without exposing full quiz IDs)
+        logger.info(f"Quiz access for quiz ID: {quiz_preview}...")
         
-        return quiz_data
+        # Check question_count from cached metadata to detect data integrity issues early
+        # This avoids an unnecessary database query if we know there are no questions
+        question_count = metadata.get("question_count", 0)
+        if question_count == 0:
+            logger.error(f"Data integrity issue: Quiz {quiz_preview}... has no questions")
+            raise HTTPException(status_code=500, detail="Quiz data incomplete. Please contact support.")
+        
+        # Fetch questions from database (not cached due to size)
+        # Uses authenticated client with RLS enforcement for consistent access control
+        supabase = get_authed_supabase_client(user_token)
+        questions_response = supabase.table("questions").select("*").eq("quiz_id", quiz_id).execute()
+        
+        # Verify questions were actually returned (RLS could filter them out)
+        if not questions_response.data:
+            logger.error(f"Data integrity issue: Quiz {quiz_preview}... has question_count={question_count} but RLS returned no questions")
+            raise HTTPException(status_code=500, detail="Quiz data incomplete. Please contact support.")
+        
+        # Combine metadata and questions
+        return {
+            "id": metadata["id"],
+            "title": metadata["title"],
+            "created_by": metadata["created_by"],
+            "created_at": metadata["created_at"],
+            "content_source_type": metadata.get("content_source_type"),
+            "content_source_reference": metadata.get("content_source_reference"),
+            "question_count": question_count,
+            "questions": questions_response.data
+        }
     
     except HTTPException as e:
         raise e
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error retrieving quiz: {str(e)}")
+        # Log detailed error for debugging (with truncated quiz_id)
+        logger.error(f"Error retrieving quiz {quiz_preview}...: {str(e)}", exc_info=True)
+        # Return generic error message (security: don't expose internal details)
+        raise HTTPException(status_code=500, detail="An error occurred while retrieving the quiz. Please try again later.")
 
 # === Delete quiz by ID ===
 async def delete_quiz_by_id_handler(
