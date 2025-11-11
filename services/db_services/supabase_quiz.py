@@ -233,7 +233,11 @@ async def get_quiz_metadata_cached(quiz_id: str, user_id: str, user_token: Optio
             return quiz_response.data[0]
         
         def fetch_question_count():
-            supabase = get_supabase()
+            # Use same auth method as quiz metadata for consistency
+            if user_token:
+                supabase = get_authed_supabase_client(user_token)
+            else:
+                supabase = get_supabase()
             # Supabase Python client doesn't expose .count attribute
             questions_response = supabase.table("questions").select("id", count="exact").eq("quiz_id", quiz_id).execute()  # type: ignore[attr-defined]
             return questions_response.count or 0
