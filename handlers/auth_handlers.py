@@ -66,9 +66,10 @@ async def signup(request: SignupRequest):
         supabase = get_supabase()
         logger.info(f"Attempting to sign up user with email: {request.email}")
 
-        # Enforce password policy at application layer so API returns consistent 400
+        # Pydantic already validates min_length=8, but double-check for defense-in-depth
+        # Don't strip() - whitespace is valid in passwords
         raw_password = request.password or ""
-        if len(raw_password.strip()) < 8:
+        if len(raw_password) < 8:
             logger.warning("Signup rejected for %s due to weak password", request.email)
             raise HTTPException(status_code=400, detail="Password must be at least 8 characters long")
         
@@ -145,13 +146,16 @@ async def login(request_body: LoginRequest, response: Response, request: Request
                     device_type,
                 )
         except TooManySessionsError as e:
+            # Hard fail for session limits - this is a security control
+            # User must explicitly manage their sessions (logout or revoke)
             logger.warning(f"Too many sessions for user {_short_user_id(user_id)}: {e}")
             raise HTTPException(
                 status_code=429,
                 detail="Too many active sessions. Please logout from other devices or revoke old sessions."
             )
         except Exception as redis_error:
-            # Don't fail login if Redis session creation fails (fallback mode)
+            # Soft fail for other Redis errors - fallback mode allows login without session
+            # This ensures service availability even when Redis is down
             logger.warning(f"Failed to create Redis session (fallback mode): {redis_error}")
         
         # Set access token cookie

@@ -1,7 +1,6 @@
 """
 Unit tests for device type detection from user agent strings.
 """
-import pytest
 from handlers.auth_handlers import detect_device_type
 
 

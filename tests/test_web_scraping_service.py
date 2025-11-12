@@ -4,7 +4,7 @@ Tests URL validation, SSRF protection, and error handling.
 """
 import pytest
 from playwright.async_api import TimeoutError as PlaywrightTimeout
-from unittest.mock import patch, AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 from fastapi import HTTPException
 from services.web_scraping_service import validate_url, scrape_content
 

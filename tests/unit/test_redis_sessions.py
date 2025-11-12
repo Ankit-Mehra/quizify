@@ -18,10 +18,6 @@ import pytest
 from fakeredis import aioredis as fakeredis
 
 from services.redis.sessions import (
-    SessionError,
-    SessionExpiredError,
-    SessionInfo,
-    SessionNotFoundError,
     SessionService,
     TooManySessionsError,
 )

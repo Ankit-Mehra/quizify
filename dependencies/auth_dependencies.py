@@ -45,8 +45,12 @@ async def _validate_request_session(request: Request, user_id: str) -> Optional[
         session_id = request.cookies.get("session_id")
 
     if not session_id:
-        logger.warning("Session ID missing for user %s", _short_id(user_id, length=8))
-        raise HTTPException(status_code=401, detail="Session expired or missing")
+        # Allow authentication without session_id for backward compatibility
+        # This ensures existing API clients continue working after Redis deployment
+        logger.warning("Session ID missing for user %s (allowing for backward compatibility)", _short_id(user_id, length=8))
+        request.state.session_validated = True
+        request.state.session_id = None
+        return None
 
     session_service = SessionService(redis_client)
     session_info = await session_service.validate_session(session_id)
@@ -102,7 +106,8 @@ async def _authenticate_request(
 
     try:
         logger.debug("Verifying token with Supabase")
-        async with httpx.AsyncClient(timeout=5) as client:
+        # 10-second timeout for better global coverage (users far from Supabase servers)
+        async with httpx.AsyncClient(timeout=10) as client:
             response = await client.get(f"{SUPABASE_URL}/auth/v1/user", headers=headers)
 
         if response.status_code != 200:

@@ -155,16 +155,24 @@ class SessionService:
             ... )
         """
         try:
-            # Check session count limit
-            session_count = await self.get_session_count(user_id)
-            if session_count >= 10:
-                logger.warning(
-                    f"User {user_id[:8]}... has too many sessions: {session_count}"
-                )
-                raise TooManySessionsError(user_id, session_count, max_sessions=10)
-
-            # Generate session ID
+            # Generate session ID first
             session_id = self._generate_session_id()
+            user_sessions_key = f"user_sessions:{user_id}"
+            
+            # Atomic check-and-create to prevent race condition:
+            # 1. Add to set first (optimistic)
+            # 2. Check count after adding
+            # 3. Rollback if exceeds limit
+            await self.redis.sadd(user_sessions_key, session_id)
+            session_count = await self.redis.scard(user_sessions_key)
+            
+            if session_count > 10:
+                # Rollback: remove the session we just added
+                await self.redis.srem(user_sessions_key, session_id)
+                logger.warning(
+                    f"User {user_id[:8]}... has too many sessions: {session_count - 1}"
+                )
+                raise TooManySessionsError(user_id, session_count - 1, max_sessions=10)
 
             # Prepare session metadata
             now = datetime.utcnow()
@@ -188,9 +196,7 @@ class SessionService:
             await self.redis.hset(session_key, mapping=session_data)
             await self.redis.expire(session_key, self.session_ttl)
 
-            # Add to user's session set
-            user_sessions_key = f"user_sessions:{user_id}"
-            await self.redis.sadd(user_sessions_key, session_id)
+            # Set TTL on user sessions set
             await self.redis.expire(user_sessions_key, self.session_ttl)
 
             logger.info(
@@ -377,13 +383,13 @@ class SessionService:
             if session_ids and isinstance(next(iter(session_ids)), bytes):
                 session_ids = {sid.decode() for sid in session_ids}
 
-            # Delete all sessions
-            count = 0
+            # Batch delete all session keys using a pipeline for efficiency
+            pipe = self.redis.pipeline()
             for session_id in session_ids:
                 session_key = f"session:{session_id}"
-                deleted = await self.redis.delete(session_key)
-                if deleted:
-                    count += 1
+                pipe.delete(session_key)
+            results = await pipe.execute()
+            count = sum(1 for result in results if result)
 
             # Clear user's session set
             await self.redis.delete(user_sessions_key)
@@ -497,14 +503,17 @@ class SessionService:
             if session_ids and isinstance(next(iter(session_ids)), bytes):
                 session_ids = {sid.decode() for sid in session_ids}
 
-            # Check each session
-            removed_count = 0
-            for session_id in session_ids:
-                session_key = f"session:{session_id}"
-                exists = await self.redis.exists(session_key)
+            # Batch EXISTS checks using Redis pipeline for efficiency
+            pipe = self.redis.pipeline()
+            session_keys = [f"session:{session_id}" for session_id in session_ids]
+            for session_key in session_keys:
+                pipe.exists(session_key)
+            exists_results = await pipe.execute()
 
+            # Remove sessions that don't exist
+            removed_count = 0
+            for session_id, exists in zip(session_ids, exists_results):
                 if not exists:
-                    # Remove from set if session doesn't exist
                     await self.redis.srem(user_sessions_key, session_id)
                     removed_count += 1
 

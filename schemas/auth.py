@@ -7,7 +7,7 @@ from schemas.user import ACCOUNT_TIERS, USER_ROLES
 class SignupRequest(BaseModel):
     """Request model for user signup"""
     email: EmailStr  # Validates email format
-    password: str = Field(..., description="User password")
+    password: str = Field(..., min_length=8, description="Password must be at least 8 characters")
     name: str = Field(..., min_length=1, description="Name cannot be empty")
 
 
