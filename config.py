@@ -72,6 +72,7 @@ class Config:
     REDIS_CACHE_TTL_USER_TIER: int = int(os.getenv("REDIS_CACHE_TTL_USER_TIER", "300"))  # 5 minutes
     REDIS_CACHE_TTL_QUIZ_METADATA: int = int(os.getenv("REDIS_CACHE_TTL_QUIZ_METADATA", "1800"))  # 30 minutes
     REDIS_CACHE_TTL_QUIZ_QUESTIONS: int = int(os.getenv("REDIS_CACHE_TTL_QUIZ_QUESTIONS", "3600"))  # 1 hour
+    REDIS_CACHE_TTL_SUBMISSIONS: int = int(os.getenv("REDIS_CACHE_TTL_SUBMISSIONS", "600"))  # 10 minutes
     
     # Browser slot settings
     REDIS_BROWSER_SLOT_TTL: int = int(os.getenv("REDIS_BROWSER_SLOT_TTL", "300"))  # 5 minutes
