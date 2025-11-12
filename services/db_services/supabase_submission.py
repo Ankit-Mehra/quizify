@@ -6,7 +6,7 @@ from schemas.quiz import Question
 from fastapi import HTTPException
 from uuid import UUID
 from config import config as app_config
-from pydantic import BaseModel
+from pydantic import BaseModel, RootModel
 import asyncio
 
 
@@ -21,6 +21,11 @@ class SubmissionSummary(BaseModel):
     correct_count: int
     wrong_count: int
     submitted_at: str
+
+
+class SubmissionList(RootModel[List[SubmissionSummary]]):
+    """Wrapper for caching lists of submissions - needed for Redis serialization"""
+    pass
 
 
 # Lazy load Supabase client to avoid initialization issues in tests
@@ -310,22 +315,26 @@ async def get_user_submissions_cached(user_id: str, user_token: str) -> List[dic
     async def fetch_from_db():
         # Run blocking Supabase call in thread pool
         def fetch_submissions():
-            # ALWAYS use authenticated client (enforces RLS)
-            supabase = get_authed_supabase_client(user_token)
-            
-            # Get all submissions for this user
-            submissions = supabase.table("submissions") \
-                .select("id, quiz_id, user_id, score, total_questions, correct_count, wrong_count, submitted_at") \
-                .eq("user_id", user_id) \
-                .order("submitted_at", desc=True) \
-                .execute()
-            
-            return submissions.data or []
+            try:
+                # ALWAYS use authenticated client (enforces RLS)
+                supabase = get_authed_supabase_client(user_token)
+                
+                # Get all submissions for this user
+                submissions = supabase.table("submissions") \
+                    .select("id, quiz_id, user_id, score, total_questions, correct_count, wrong_count, submitted_at") \
+                    .eq("user_id", user_id) \
+                    .order("submitted_at", desc=True) \
+                    .execute()
+                
+                return submissions.data or []
+            except Exception as e:
+                logger.error(f"Error retrieving user submissions: {str(e)}", exc_info=True)
+                raise HTTPException(status_code=500, detail=str(e))
         
         submissions_data = await asyncio.to_thread(fetch_submissions)
         
-        # Convert to Pydantic models for caching (ensures consistent serialization)
-        return [SubmissionSummary(**sub) for sub in submissions_data]
+        # Convert to Pydantic models and wrap in RootModel for caching
+        return SubmissionList([SubmissionSummary(**sub) for sub in submissions_data])
     
     # Cache key: user_id only (no need for per-quiz caching here)
     cache_key = user_id
@@ -333,12 +342,12 @@ async def get_user_submissions_cached(user_id: str, user_token: str) -> List[dic
     submissions = await cache.get_or_fetch(
         key=cache_key,
         fetch_fn=fetch_from_db,
-        model=List[SubmissionSummary],  # type: ignore
+        model=SubmissionList,
         ttl=app_config.REDIS_CACHE_TTL_SUBMISSIONS  # 10 minutes (600 seconds)
     )
     
     # Convert back to dict for backward compatibility
-    return [sub.model_dump() for sub in submissions]
+    return [sub.model_dump() for sub in submissions.root]
 
 
 async def get_quiz_submissions_cached(quiz_id: str, user_id: str, user_token: str) -> List[dict]:
@@ -371,23 +380,27 @@ async def get_quiz_submissions_cached(quiz_id: str, user_id: str, user_token: st
     async def fetch_from_db():
         # Run blocking Supabase call in thread pool
         def fetch_submissions():
-            # ALWAYS use authenticated client (enforces RLS)
-            supabase = get_authed_supabase_client(user_token)
-            
-            # Get submissions for this quiz by this user
-            submissions = supabase.table("submissions") \
-                .select("id, quiz_id, user_id, score, total_questions, correct_count, wrong_count, submitted_at") \
-                .eq("quiz_id", quiz_id) \
-                .eq("user_id", user_id) \
-                .order("submitted_at", desc=True) \
-                .execute()
-            
-            return submissions.data or []
+            try:
+                # ALWAYS use authenticated client (enforces RLS)
+                supabase = get_authed_supabase_client(user_token)
+                
+                # Get submissions for this quiz by this user
+                submissions = supabase.table("submissions") \
+                    .select("id, quiz_id, user_id, score, total_questions, correct_count, wrong_count, submitted_at") \
+                    .eq("quiz_id", quiz_id) \
+                    .eq("user_id", user_id) \
+                    .order("submitted_at", desc=True) \
+                    .execute()
+                
+                return submissions.data or []
+            except Exception as e:
+                logger.error(f"Supabase error fetching submissions for quiz {quiz_id}, user {user_id}: {e}")
+                raise HTTPException(status_code=500, detail="Failed to fetch submissions from database.")
         
         submissions_data = await asyncio.to_thread(fetch_submissions)
         
-        # Convert to Pydantic models for caching
-        return [SubmissionSummary(**sub) for sub in submissions_data]
+        # Convert to Pydantic models and wrap in RootModel for caching
+        return SubmissionList([SubmissionSummary(**sub) for sub in submissions_data])
     
     # Cache key: "quiz_id:user_id" (per-quiz, per-user)
     cache_key = f"{quiz_id}:{user_id}"
@@ -395,12 +408,12 @@ async def get_quiz_submissions_cached(quiz_id: str, user_id: str, user_token: st
     submissions = await cache.get_or_fetch(
         key=cache_key,
         fetch_fn=fetch_from_db,
-        model=List[SubmissionSummary],  # type: ignore
+        model=SubmissionList,
         ttl=app_config.REDIS_CACHE_TTL_SUBMISSIONS  # 10 minutes (600 seconds)
     )
     
     # Convert back to dict for backward compatibility
-    return [sub.model_dump() for sub in submissions]
+    return [sub.model_dump() for sub in submissions.root]
 
 
 async def invalidate_user_submissions_cache(user_id: str) -> None:
