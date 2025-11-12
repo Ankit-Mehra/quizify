@@ -328,15 +328,15 @@ async def get_user_submissions_cached(user_id: str, user_token: str) -> List[dic
                 
                 return submissions.data or []
             except Exception as e:
-                logger.error(f"Error retrieving user submissions: {str(e)}", exc_info=True)
-                raise HTTPException(status_code=500, detail=str(e))
+                logger.error(f"Supabase error fetching submissions for user {user_id}: {e}")
+                raise HTTPException(status_code=500, detail="Failed to fetch submissions from database.")
         
         submissions_data = await asyncio.to_thread(fetch_submissions)
         
         # Convert to Pydantic models and wrap in RootModel for caching
         return SubmissionList([SubmissionSummary(**sub) for sub in submissions_data])
     
-    # Cache key: user_id only (no need for per-quiz caching here)
+    # Cache key: user_id only (caches all submissions for this user across all quizzes)
     cache_key = user_id
     
     submissions = await cache.get_or_fetch(
