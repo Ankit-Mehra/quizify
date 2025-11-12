@@ -10,6 +10,8 @@ Contract tests for POST /api/auth/signup endpoint.Tests the authentication signu
 """
 
 import pytest
+
+import pytest
 from fastapi.testclient import TestClient
 from main import app
 import os
