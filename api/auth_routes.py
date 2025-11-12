@@ -10,10 +10,13 @@ from handlers.auth_handlers import (
     confirm_email,
     forgot_password,
     reset_password,
-    resend_verification_email
+    resend_verification_email,
+    logout_all_devices,
+    get_active_sessions,
+    revoke_session
 )
 from schemas.auth import AuthMessageResponse, UserInfoResponse
-from typing import Dict, Any
+from typing import Dict, Any, List
 from services.logger import app_logger as logger
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
@@ -111,4 +114,38 @@ router.add_api_route(
     summary="Resend Verification Email",
     description="Resend email verification link. Always returns success to prevent email enumeration.",
     tags=["Auth"]
+)
+
+# ============================================================================
+# SESSION MANAGEMENT ENDPOINTS (Epic 4 - Task 4.3 & 4.4)
+# ============================================================================
+
+router.add_api_route(
+    "/logout-all-devices",
+    logout_all_devices,
+    methods=["POST"],
+    response_model=Dict[str, Any],
+    summary="Logout All Devices",
+    description="Logout from all devices. Deletes all Redis sessions and forces re-login. Useful for security actions like password change.",
+    tags=["Auth", "Session Management"]
+)
+
+router.add_api_route(
+    "/sessions",
+    get_active_sessions,
+    methods=["GET"],
+    response_model=List[Dict[str, Any]],
+    summary="Get Active Sessions",
+    description="Get list of active sessions for current user across all devices. Shows device type, last activity, IP (hashed), and user agent.",
+    tags=["Auth", "Session Management"]
+)
+
+router.add_api_route(
+    "/sessions/{session_id_to_revoke}",
+    revoke_session,
+    methods=["DELETE"],
+    response_model=Dict[str, Any],
+    summary="Revoke Session",
+    description="Revoke a specific session by ID. User can only revoke their own sessions. Useful for removing suspicious or lost devices.",
+    tags=["Auth", "Session Management"]
 )
