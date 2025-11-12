@@ -22,8 +22,8 @@ class MockSupabaseAuth:
         if email in self._registered_emails:
             raise Exception("User already registered")
         
-        if len(password) < 6:
-            raise Exception("Password should be at least 6 characters")
+        if len(password) < 8:
+            raise Exception("Password should be at least 8 characters")
         
         self._registered_emails.add(email)
         
@@ -63,6 +63,7 @@ class MockSupabaseClient:
                     "account_tier": "free",
                     "current_quiz_count": 0,
                     "quota_limit": 5,
+                    "quizzes_attempted": 0,
                     "quota_exceeded": False
                 }
             ],

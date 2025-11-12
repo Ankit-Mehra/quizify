@@ -1,3 +1,6 @@
+
+
+
 """
 Contract tests for POST /api/auth/signup endpoint.
 

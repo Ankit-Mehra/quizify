@@ -25,6 +25,14 @@ else:
 ACCESS_TOKEN_EXPIRE = 3600  # 1 hour
 REFRESH_TOKEN_EXPIRE = 60 * 60 * 24 * 30  # 30 days
 
+
+def _short_user_id(user_id: Optional[str]) -> str:
+    """Return obfuscated user identifier for logging."""
+    if not user_id:
+        return "unknown"
+    return f"{user_id[:8]}..."
+
+
 def detect_device_type(user_agent: Optional[str]) -> str:
     """
     Detect device type from user agent string.
@@ -57,11 +65,17 @@ async def signup(request: SignupRequest):
     try:
         supabase = get_supabase()
         logger.info(f"Attempting to sign up user with email: {request.email}")
+
+        # Enforce password policy at application layer so API returns consistent 400
+        raw_password = request.password or ""
+        if len(raw_password.strip()) < 8:
+            logger.warning("Signup rejected for %s due to weak password", request.email)
+            raise HTTPException(status_code=400, detail="Password must be at least 8 characters long")
         
         # Sign up user - name goes to raw_user_meta_data
         response = supabase.auth.sign_up({
             "email": request.email,
-            "password": request.password,
+            "password": raw_password,
             "options": {
                 "data": {
                     "name": request.name
@@ -101,21 +115,21 @@ async def login(request_body: LoginRequest, response: Response, request: Request
         })
         
         session = result.session
-        
+
         if session is None:
             logger.warning(f"Login failed: No session returned for {request_body.email}")
             raise HTTPException(status_code=401, detail="Invalid credentials")
-        
+
         access_token = session.access_token
         refresh_token = session.refresh_token
-        user_id = result.user.id if result.user else None
-        
-        logger.info(f"User logged in: {user_id}")
-        
+        user_id = result.user.id if result.user and getattr(result.user, "id", None) else None
+
+        logger.info(f"User logged in: {_short_user_id(user_id)}")
+
         # Create Redis session for multi-device tracking
         session_id: Optional[str] = None
         try:
-            if hasattr(request.app.state, 'redis') and request.app.state.redis:
+            if user_id and hasattr(request.app.state, 'redis') and request.app.state.redis:
                 session_service = SessionService(request.app.state.redis)
                 user_agent = request.headers.get("user-agent")
                 device_type = detect_device_type(user_agent)
@@ -125,9 +139,13 @@ async def login(request_body: LoginRequest, response: Response, request: Request
                     ip_address=request.client.host if request.client else None,
                     user_agent=user_agent
                 )
-                logger.info(f"Redis session created for user {user_id[:8]}... (device: {device_type})")
+                logger.info(
+                    "Redis session created for user %s (device: %s)",
+                    _short_user_id(user_id),
+                    device_type,
+                )
         except TooManySessionsError as e:
-            logger.warning(f"Too many sessions for user {user_id[:8]}...: {e}")
+            logger.warning(f"Too many sessions for user {_short_user_id(user_id)}: {e}")
             raise HTTPException(
                 status_code=429,
                 detail="Too many active sessions. Please logout from other devices or revoke old sessions."
@@ -245,8 +263,11 @@ async def logout(
     Frontend should send session_id as query parameter: /auth/logout?session_id=sess_xxx
     """
     try:
-        logger.info(f"User {user_id[:8]}... logout requested")
-        
+        logger.info(f"User {_short_user_id(user_id)} logout requested")
+
+        if not session_id:
+            session_id = getattr(request.state, "session_id", None)
+
         # Delete Redis session if session_id provided
         if session_id:
             try:
@@ -254,7 +275,7 @@ async def logout(
                     session_service = SessionService(request.app.state.redis)
                     success = await session_service.logout(session_id)
                     if success:
-                        logger.info(f"Redis session deleted for user {user_id[:8]}...")
+                        logger.info(f"Redis session deleted for user {_short_user_id(user_id)}")
                     else:
                         logger.warning(f"Redis session not found: {session_id[:12]}...")
             except Exception as redis_error:
@@ -265,7 +286,7 @@ async def logout(
         domain = app_config.COOKIE_DOMAIN if not app_config.is_testing() else None
         response.delete_cookie(key="access_token", path="/", domain=domain, httponly=True)
         response.delete_cookie(key="refresh_token", path="/", domain=domain, httponly=True)
-        logger.info(f"User {user_id[:8]}... logged out successfully")
+        logger.info(f"User {_short_user_id(user_id)} logged out successfully")
         return {"message": "Successfully logged out"}
     except Exception as e:
         logger.error(f"Error during logout: {str(e)}", exc_info=True)
@@ -682,7 +703,7 @@ async def logout_all_devices(
     3. Force re-login on all devices
     """
     try:
-        logger.info(f"Logout all devices requested for user {user_id[:8]}...")
+        logger.info(f"Logout all devices requested for user {_short_user_id(user_id)}")
         
         # Delete all Redis sessions
         count = 0
@@ -690,7 +711,7 @@ async def logout_all_devices(
             if hasattr(request.app.state, 'redis') and request.app.state.redis:
                 session_service = SessionService(request.app.state.redis)
                 count = await session_service.logout_all_devices(user_id)
-                logger.info(f"Deleted {count} Redis sessions for user {user_id[:8]}...")
+                logger.info(f"Deleted {count} Redis sessions for user {_short_user_id(user_id)}")
         except Exception as redis_error:
             # Don't fail if Redis deletion fails (fallback mode)
             logger.warning(f"Failed to delete Redis sessions (fallback mode): {redis_error}")
@@ -728,7 +749,7 @@ async def get_active_sessions(
     Frontend can display this in "Active Sessions" page for security management.
     """
     try:
-        logger.info(f"Fetching active sessions for user {user_id[:8]}...")
+        logger.info(f"Fetching active sessions for user {_short_user_id(user_id)}")
         
         # Get sessions from Redis
         sessions: List[SessionInfo] = []
@@ -736,7 +757,7 @@ async def get_active_sessions(
             if hasattr(request.app.state, 'redis') and request.app.state.redis:
                 session_service = SessionService(request.app.state.redis)
                 sessions = await session_service.list_sessions(user_id)
-                logger.info(f"Found {len(sessions)} active sessions for user {user_id[:8]}...")
+                logger.info(f"Found {len(sessions)} active sessions for user {_short_user_id(user_id)}")
         except Exception as redis_error:
             logger.warning(f"Failed to fetch Redis sessions (fallback mode): {redis_error}")
             # Return empty list in fallback mode
@@ -775,7 +796,11 @@ async def revoke_session(
     Use case: User sees suspicious device in "Active Sessions" and wants to logout that device.
     """
     try:
-        logger.info(f"Session revoke requested: {session_id_to_revoke[:12]}... by user {user_id[:8]}...")
+        logger.info(
+            "Session revoke requested: %s by user %s",
+            f"{session_id_to_revoke[:12]}...",
+            _short_user_id(user_id),
+        )
         
         if not hasattr(request.app.state, 'redis') or not request.app.state.redis:
             raise HTTPException(
@@ -795,7 +820,9 @@ async def revoke_session(
         
         if session_info.user_id != user_id:
             logger.warning(
-                f"User {user_id[:8]}... attempted to revoke session belonging to {session_info.user_id[:8]}..."
+                "User %s attempted to revoke session belonging to %s",
+                _short_user_id(user_id),
+                _short_user_id(session_info.user_id),
             )
             raise HTTPException(
                 status_code=403,

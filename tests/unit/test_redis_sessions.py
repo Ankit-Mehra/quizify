@@ -277,6 +277,24 @@ class TestSessionRefresh:
         assert ttl > 3600  # Should be more than 1 hour
         assert ttl <= 86400  # Should be at most 24 hours
 
+    @pytest.mark.asyncio
+    async def test_refresh_extends_user_session_set_ttl(self, session_service, redis_client):
+        """Should refresh TTL for user session set as well"""
+        session_id = await session_service.create_session(
+            user_id="user_123", device_type="browser"
+        )
+
+        user_sessions_key = "user_sessions:user_123"
+
+        # Set shorter TTL to ensure refresh updates it
+        await redis_client.expire(user_sessions_key, 300)
+
+        await session_service.refresh_session(session_id)
+
+        ttl = await redis_client.ttl(user_sessions_key)
+        assert ttl > 300
+        assert ttl <= 86400
+
 
 class TestLogout:
     """Tests for logout()"""

@@ -6,6 +6,7 @@ to enable integration testing without real external dependencies.
 """
 
 import pytest
+from fastapi import HTTPException
 from unittest.mock import Mock, patch
 
 # Mock Supabase responses for integration tests
@@ -36,8 +37,8 @@ class MockSupabaseAuth:
         if email in self._users:
             raise Exception("User already registered")
         
-        if len(password) < 6:
-            raise Exception("Password should be at least 6 characters")
+        if len(password) < 8:
+            raise Exception("Password should be at least 8 characters")
         
         user_id = f"user_{self._next_user_id}"
         self._next_user_id += 1
@@ -105,10 +106,11 @@ class MockSupabaseStorage:
 class MockSupabaseTable:
     """Mock Supabase table operations."""
     
-    def __init__(self, table_name):
+    def __init__(self, table_name, quiz_storage=None):
         self.table_name = table_name
         self._data = []
         self._query: dict = {}
+        self._quiz_storage = quiz_storage
         # Default tier data for user_tier_info queries
         if table_name == "user_tier_info":
             self._data = [
@@ -117,6 +119,7 @@ class MockSupabaseTable:
                     "email": "test@example.com",
                     "account_tier": "free",
                     "current_quiz_count": 0,
+                    "quizzes_attempted": 0,
                     "quota_limit": 5,
                     "quota_exceeded": False
                 }
@@ -153,6 +156,18 @@ class MockSupabaseTable:
     
     def execute(self):
         """Mock execute query."""
+        # Special handling for questions table - fetch from quiz storage
+        if self.table_name == "questions" and "filter" in self._query:
+            filter_col, filter_val = list(self._query["filter"].items())[0]
+            if filter_col == "quiz_id" and self._quiz_storage:
+                quiz = self._quiz_storage.get_quiz(filter_val)
+                if quiz:
+                    return Mock(
+                        data=quiz.get("questions", []),
+                        error=None,
+                        count=len(quiz.get("questions", []))
+                    )
+        
         # Apply filter if specified
         result_data = self._data
         if "filter" in self._query:
@@ -160,27 +175,29 @@ class MockSupabaseTable:
             result_data = [row for row in self._data if row.get(filter_col) == filter_val]
         
         # If no data and not a specific table, return default
-        if not result_data and self.table_name not in ["user_tier_info"]:
+        if not result_data and self.table_name not in ["user_tier_info", "questions"]:
             result_data = [{"id": "mock_123"}]
-        
+
         return Mock(
             data=result_data,
-            error=None
+            error=None,
+            count=len(result_data)
         )
 
 
 class MockSupabaseClient:
     """Mock Supabase client for integration tests."""
     
-    def __init__(self):
+    def __init__(self, quiz_storage=None):
         self.auth = MockSupabaseAuth()
         self.storage = MockSupabaseStorage()
         self._tables = {}
+        self._quiz_storage = quiz_storage
     
     def table(self, table_name):
         """Mock table accessor."""
         if table_name not in self._tables:
-            self._tables[table_name] = MockSupabaseTable(table_name)
+            self._tables[table_name] = MockSupabaseTable(table_name, self._quiz_storage)
         return self._tables[table_name]
 
 
@@ -438,7 +455,23 @@ def mock_requests_get(url, headers=None, **kwargs):
     return Mock(status_code=200, json=lambda: {}, raise_for_status=lambda: None)
 
 
-def mock_get_user_quizzes(user_id):
+class MockSupabaseAsyncClient:
+    """Async mock of httpx.AsyncClient for Supabase auth calls."""
+
+    def __init__(self, *args, **kwargs):
+        self.timeout = kwargs.get("timeout", None)
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def get(self, url, headers=None):
+        return mock_requests_get(url, headers=headers)
+
+
+def mock_get_user_quizzes(user_id, user_token=None):
     """Mock getting user quizzes."""
     return _quiz_storage.get_user_quizzes(user_id)
 
@@ -446,6 +479,25 @@ def mock_get_user_quizzes(user_id):
 def mock_get_quiz_from_database(quiz_id, user_id=None):
     """Mock getting quiz from database."""
     return _quiz_storage.get_quiz(quiz_id, user_id)
+
+
+async def mock_get_quiz_metadata_cached(quiz_id, user_id, user_token=None):
+    """Mock cached metadata retrieval using in-memory quiz storage."""
+    quiz = _quiz_storage.get_quiz(quiz_id, user_id)
+    if not quiz:
+        raise HTTPException(status_code=404, detail="Quiz not found")
+
+    created_by = quiz.get("created_by") or quiz.get("user_id") or (user_id or "mock_user_123")
+
+    return {
+        "id": quiz_id,
+        "title": quiz.get("title", "Mock Quiz"),
+        "created_by": created_by,
+        "created_at": quiz.get("created_at", "2025-10-04T00:00:00"),
+        "question_count": len(quiz.get("questions", [])),
+        "content_source_type": quiz.get("content_source_type"),
+        "content_source_reference": quiz.get("content_source_reference"),
+    }
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -458,20 +510,25 @@ def setup_integration_mocks():
     """
     from contextlib import ExitStack
     
-    mock_supabase = MockSupabaseClient()
+    # Pass the quiz storage to the mock client so it can access saved quizzes
+    mock_supabase = MockSupabaseClient(quiz_storage=_quiz_storage)
     
     # Use ExitStack to manage multiple patches without deep nesting
     with ExitStack() as stack:
         # Patch the lazy loading functions for all modules that use Supabase
         stack.enter_context(patch("handlers.auth_handlers.get_supabase", return_value=mock_supabase))
         stack.enter_context(patch("services.db_services.supabase_quiz.get_supabase", return_value=mock_supabase))
+        stack.enter_context(patch("services.db_services.supabase_quiz.get_authed_supabase_client", return_value=mock_supabase))
         stack.enter_context(patch("services.db_services.supabase_file.get_supabase", return_value=mock_supabase))
         stack.enter_context(patch("services.db_services.supabase_submission.get_supabase", return_value=mock_supabase))
+        stack.enter_context(patch("services.db_services.supabase_quiz.get_quiz_metadata_cached", side_effect=mock_get_quiz_metadata_cached))
         
         # Patch external dependencies
-        stack.enter_context(patch("dependencies.auth_dependencies.requests.get", side_effect=mock_requests_get))
+        stack.enter_context(patch("dependencies.auth_dependencies.httpx.AsyncClient", MockSupabaseAsyncClient))
         
         # Patch handler-level functions
+        stack.enter_context(patch("handlers.quiz_handlers.get_quiz_metadata_cached", side_effect=mock_get_quiz_metadata_cached))
+        stack.enter_context(patch("handlers.quiz_handlers.get_authed_supabase_client", return_value=mock_supabase))
         stack.enter_context(patch("handlers.quiz_handlers.generate_quizzes_single_async", side_effect=mock_generate_quizzes_single_async))
         stack.enter_context(patch("handlers.quiz_handlers.save_quiz_to_database", side_effect=mock_save_quiz_to_database))
         stack.enter_context(patch("handlers.quiz_handlers.get_user_quizzes", side_effect=mock_get_user_quizzes))

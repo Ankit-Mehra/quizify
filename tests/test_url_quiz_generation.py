@@ -19,10 +19,15 @@ class TestGenerateQuizFromUrl:
     @patch('handlers.quiz_handlers.generate_quizzes_single_async')
     @patch('handlers.quiz_handlers.scrape_content')
     @patch('handlers.quiz_handlers.validate_user_quota')
-    @patch('handlers.quiz_handlers.get_user_tier_info')
+    @patch('handlers.quiz_handlers.get_user_tier_info_cached')
     async def test_free_tier_user_success(
-        self, mock_get_tier_info, mock_validate_quota, 
-        mock_scrape, mock_generate, mock_save_quiz, mock_save_metadata
+        self,
+        mock_get_tier_info,
+        mock_validate_quota,
+        mock_scrape,
+        mock_generate,
+        mock_save_quiz,
+        mock_save_metadata,
     ):
         """Test that free tier users CAN generate quizzes from URLs (within quota)."""
         # Mock tier info
@@ -32,11 +37,15 @@ class TestGenerateQuizFromUrl:
             'account_tier': 'free',
             'current_quiz_count': 2,
             'quota_limit': 5,
+            'quizzes_attempted': 2,
             'quota_exceeded': False
         }
         
         # Mock scraping
-        mock_scrape.return_value = "This is a long article about machine learning with many interesting concepts that would make great quiz questions. Machine learning is a subset of artificial intelligence."
+        mock_scrape.return_value = (
+            "This is a long article about machine learning with many interesting concepts that would make great quiz questions. Machine learning is a subset of artificial intelligence.",
+            None,
+        )
         
         # Mock quiz generation
         mock_question = {
@@ -71,7 +80,7 @@ class TestGenerateQuizFromUrl:
         assert result['source_url'] == 'https://example.com/article'
         
         # Verify calls
-        mock_validate_quota.assert_called_once_with('test-user-id')
+        mock_validate_quota.assert_called_once_with('test-user-id', 'test-token')
         mock_scrape.assert_called_once()
         mock_generate.assert_called_once()
         mock_save_quiz.assert_called_once()
@@ -88,10 +97,15 @@ class TestGenerateQuizFromUrl:
     @patch('handlers.quiz_handlers.generate_quizzes_single_async')
     @patch('handlers.quiz_handlers.scrape_content')
     @patch('handlers.quiz_handlers.validate_user_quota')
-    @patch('handlers.quiz_handlers.get_user_tier_info')
+    @patch('handlers.quiz_handlers.get_user_tier_info_cached')
     async def test_basic_tier_user_success(
-        self, mock_get_tier_info, mock_validate_quota, 
-        mock_scrape, mock_generate, mock_save_quiz, mock_save_metadata
+        self,
+        mock_get_tier_info,
+        mock_validate_quota,
+        mock_scrape,
+        mock_generate,
+        mock_save_quiz,
+        mock_save_metadata,
     ):
         """Test that basic tier users can generate quizzes from URLs."""
         # Mock tier info
@@ -101,11 +115,15 @@ class TestGenerateQuizFromUrl:
             'account_tier': 'basic',
             'current_quiz_count': 10,
             'quota_limit': 100,
+            'quizzes_attempted': 25,
             'quota_exceeded': False
         }
         
         # Mock scraping
-        mock_scrape.return_value = "This is a long article about machine learning with many interesting concepts that would make great quiz questions. Machine learning is a subset of artificial intelligence."
+        mock_scrape.return_value = (
+            "This is a long article about machine learning with many interesting concepts that would make great quiz questions. Machine learning is a subset of artificial intelligence.",
+            None,
+        )
         
         # Mock quiz generation
         mock_question = {
@@ -138,9 +156,9 @@ class TestGenerateQuizFromUrl:
         assert result['title'] == 'ML Quiz'
         assert result['message'] == 'Quiz generated successfully from URL'
         assert result['source_url'] == 'https://example.com/article'
-        
+
         # Verify calls
-        mock_validate_quota.assert_called_once_with('test-user-id')
+        mock_validate_quota.assert_called_once_with('test-user-id', 'test-token')
         mock_scrape.assert_called_once()
         mock_generate.assert_called_once()
         mock_save_quiz.assert_called_once()
@@ -157,7 +175,7 @@ class TestGenerateQuizFromUrl:
     @patch('handlers.quiz_handlers.generate_quizzes_single_async')
     @patch('handlers.quiz_handlers.scrape_content')
     @patch('handlers.quiz_handlers.validate_user_quota')
-    @patch('handlers.quiz_handlers.get_user_tier_info')
+    @patch('handlers.quiz_handlers.get_user_tier_info_cached')
     async def test_educator_tier_user_success(
         self, mock_get_tier_info, mock_validate_quota, 
         mock_scrape, mock_generate, mock_save_quiz, mock_save_metadata
@@ -170,11 +188,15 @@ class TestGenerateQuizFromUrl:
             'account_tier': 'educator',
             'current_quiz_count': 50,
             'quota_limit': 500,
+            'quizzes_attempted': 200,
             'quota_exceeded': False
         }
         
         # Mock scraping
-        mock_scrape.return_value = "Educational content about photosynthesis and how plants convert light energy into chemical energy."
+        mock_scrape.return_value = (
+            "Educational content about photosynthesis and how plants convert light energy into chemical energy.",
+            None,
+        )
         
         # Mock quiz generation
         mock_question = {
@@ -208,7 +230,7 @@ class TestGenerateQuizFromUrl:
     
     @pytest.mark.asyncio
     @patch('handlers.quiz_handlers.validate_user_quota')
-    @patch('handlers.quiz_handlers.get_user_tier_info')
+    @patch('handlers.quiz_handlers.get_user_tier_info_cached')
     async def test_free_tier_quota_exceeded(self, mock_get_tier_info, mock_validate_quota):
         """Test that quota enforcement applies to free tier users (5 quiz limit)."""
         mock_get_tier_info.return_value = {
@@ -217,6 +239,7 @@ class TestGenerateQuizFromUrl:
             'account_tier': 'free',
             'current_quiz_count': 5,
             'quota_limit': 5,
+            'quizzes_attempted': 5,
             'quota_exceeded': True
         }
         
@@ -244,14 +267,14 @@ class TestGenerateQuizFromUrl:
                 current_user_id='test-user-id',
                 user_token='test-token'
             )
-        
+
         assert exc_info.value.status_code == 403
         # Quota enforcement blocks before any processing
-        mock_validate_quota.assert_called_once_with('test-user-id')
+        mock_validate_quota.assert_called_once_with('test-user-id', 'test-token')
 
     @pytest.mark.asyncio
     @patch('handlers.quiz_handlers.validate_user_quota')
-    @patch('handlers.quiz_handlers.get_user_tier_info')
+    @patch('handlers.quiz_handlers.get_user_tier_info_cached')
     async def test_basic_tier_quota_exceeded(self, mock_get_tier_info, mock_validate_quota):
         """Test that quota enforcement still applies to basic tier users."""
         mock_get_tier_info.return_value = {
@@ -260,6 +283,7 @@ class TestGenerateQuizFromUrl:
             'account_tier': 'basic',
             'current_quiz_count': 100,
             'quota_limit': 100,
+            'quizzes_attempted': 120,
             'quota_exceeded': True
         }
         
@@ -293,7 +317,7 @@ class TestGenerateQuizFromUrl:
     @pytest.mark.asyncio
     @patch('handlers.quiz_handlers.scrape_content')
     @patch('handlers.quiz_handlers.validate_user_quota')
-    @patch('handlers.quiz_handlers.get_user_tier_info')
+    @patch('handlers.quiz_handlers.get_user_tier_info_cached')
     async def test_invalid_url_rejected(
         self, mock_get_tier_info, mock_validate_quota, mock_scrape
     ):
@@ -304,6 +328,7 @@ class TestGenerateQuizFromUrl:
             'account_tier': 'basic',
             'current_quiz_count': 10,
             'quota_limit': 100,
+            'quizzes_attempted': 15,
             'quota_exceeded': False
         }
         
@@ -333,7 +358,7 @@ class TestGenerateQuizFromUrl:
     @pytest.mark.asyncio
     @patch('handlers.quiz_handlers.scrape_content')
     @patch('handlers.quiz_handlers.validate_user_quota')
-    @patch('handlers.quiz_handlers.get_user_tier_info')
+    @patch('handlers.quiz_handlers.get_user_tier_info_cached')
     async def test_scraping_timeout_handled(
         self, mock_get_tier_info, mock_validate_quota, mock_scrape
     ):
@@ -344,6 +369,7 @@ class TestGenerateQuizFromUrl:
             'account_tier': 'basic',
             'current_quiz_count': 10,
             'quota_limit': 100,
+            'quizzes_attempted': 15,
             'quota_exceeded': False
         }
         
@@ -373,7 +399,7 @@ class TestGenerateQuizFromUrl:
     @pytest.mark.asyncio
     @patch('handlers.quiz_handlers.scrape_content')
     @patch('handlers.quiz_handlers.validate_user_quota')
-    @patch('handlers.quiz_handlers.get_user_tier_info')
+    @patch('handlers.quiz_handlers.get_user_tier_info_cached')
     async def test_insufficient_content_handled(
         self, mock_get_tier_info, mock_validate_quota, mock_scrape
     ):
@@ -384,6 +410,7 @@ class TestGenerateQuizFromUrl:
             'account_tier': 'basic',
             'current_quiz_count': 10,
             'quota_limit': 100,
+            'quizzes_attempted': 15,
             'quota_exceeded': False
         }
         

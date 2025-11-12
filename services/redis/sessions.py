@@ -287,6 +287,14 @@ class SessionService:
             # Extend TTL
             await self.redis.expire(session_key, self.session_ttl)
 
+            # Ensure user session set TTL stays in sync
+            user_id = await self.redis.hget(session_key, "user_id")
+            if user_id:
+                if isinstance(user_id, bytes):
+                    user_id = user_id.decode()
+                user_sessions_key = f"user_sessions:{user_id}"
+                await self.redis.expire(user_sessions_key, self.session_ttl)
+
             return True
 
         except Exception as e:
