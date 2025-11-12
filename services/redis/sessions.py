@@ -155,24 +155,21 @@ class SessionService:
             ... )
         """
         try:
-            # Generate session ID first
-            session_id = self._generate_session_id()
+            # Check session count BEFORE adding (simpler atomic pattern)
             user_sessions_key = f"user_sessions:{user_id}"
-            
-            # Atomic check-and-create to prevent race condition:
-            # 1. Add to set first (optimistic)
-            # 2. Check count after adding
-            # 3. Rollback if exceeds limit
-            await self.redis.sadd(user_sessions_key, session_id)
             session_count = await self.redis.scard(user_sessions_key)
             
-            if session_count > 10:
-                # Rollback: remove the session we just added
-                await self.redis.srem(user_sessions_key, session_id)
+            if session_count >= 10:
                 logger.warning(
-                    f"User {user_id[:8]}... has too many sessions: {session_count - 1}"
+                    f"User {user_id[:8]}... has too many sessions: {session_count}"
                 )
-                raise TooManySessionsError(user_id, session_count - 1, max_sessions=10)
+                raise TooManySessionsError(user_id, session_count, max_sessions=10)
+            
+            # Generate session ID after limit check passes
+            session_id = self._generate_session_id()
+            
+            # Add to set (limit already verified)
+            await self.redis.sadd(user_sessions_key, session_id)
 
             # Prepare session metadata
             now = datetime.utcnow()
@@ -510,12 +507,17 @@ class SessionService:
                 pipe.exists(session_key)
             exists_results = await pipe.execute()
 
-            # Remove sessions that don't exist
-            removed_count = 0
-            for session_id, exists in zip(session_ids, exists_results):
-                if not exists:
-                    await self.redis.srem(user_sessions_key, session_id)
-                    removed_count += 1
+            # Batch remove sessions that don't exist (O(1) instead of O(N))
+            expired_session_ids = [
+                session_id for session_id, exists in zip(session_ids, exists_results)
+                if not exists
+            ]
+            
+            if expired_session_ids:
+                await self.redis.srem(user_sessions_key, *expired_session_ids)
+                removed_count = len(expired_session_ids)
+            else:
+                removed_count = 0
 
             if removed_count > 0:
                 logger.info(

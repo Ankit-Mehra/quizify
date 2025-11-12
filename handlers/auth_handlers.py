@@ -33,6 +33,11 @@ def _short_user_id(user_id: Optional[str]) -> str:
     return f"{user_id[:8]}..."
 
 
+def get_redis_client(request: Request) -> Optional[Any]:
+    """Get Redis client from app state, returns None if unavailable."""
+    return getattr(request.app.state, 'redis', None) if hasattr(request.app.state, 'redis') else None
+
+
 def detect_device_type(user_agent: Optional[str]) -> str:
     """
     Detect device type from user agent string.
@@ -130,8 +135,9 @@ async def login(request_body: LoginRequest, response: Response, request: Request
         # Create Redis session for multi-device tracking
         session_id: Optional[str] = None
         try:
-            if user_id and hasattr(request.app.state, 'redis') and request.app.state.redis:
-                session_service = SessionService(request.app.state.redis)
+            redis_client = get_redis_client(request)
+            if user_id and redis_client:
+                session_service = SessionService(redis_client)
                 user_agent = request.headers.get("user-agent")
                 device_type = detect_device_type(user_agent)
                 session_id = await session_service.create_session(
@@ -275,8 +281,9 @@ async def logout(
         # Delete Redis session if session_id provided
         if session_id:
             try:
-                if hasattr(request.app.state, 'redis') and request.app.state.redis:
-                    session_service = SessionService(request.app.state.redis)
+                redis_client = get_redis_client(request)
+                if redis_client:
+                    session_service = SessionService(redis_client)
                     success = await session_service.logout(session_id)
                     if success:
                         logger.info(f"Redis session deleted for user {_short_user_id(user_id)}")
@@ -712,8 +719,9 @@ async def logout_all_devices(
         # Delete all Redis sessions
         count = 0
         try:
-            if hasattr(request.app.state, 'redis') and request.app.state.redis:
-                session_service = SessionService(request.app.state.redis)
+            redis_client = get_redis_client(request)
+            if redis_client:
+                session_service = SessionService(redis_client)
                 count = await session_service.logout_all_devices(user_id)
                 logger.info(f"Deleted {count} Redis sessions for user {_short_user_id(user_id)}")
         except Exception as redis_error:
@@ -758,8 +766,9 @@ async def get_active_sessions(
         # Get sessions from Redis
         sessions: List[SessionInfo] = []
         try:
-            if hasattr(request.app.state, 'redis') and request.app.state.redis:
-                session_service = SessionService(request.app.state.redis)
+            redis_client = get_redis_client(request)
+            if redis_client:
+                session_service = SessionService(redis_client)
                 sessions = await session_service.list_sessions(user_id)
                 logger.info(f"Found {len(sessions)} active sessions for user {_short_user_id(user_id)}")
         except Exception as redis_error:
@@ -806,13 +815,14 @@ async def revoke_session(
             _short_user_id(user_id),
         )
         
-        if not hasattr(request.app.state, 'redis') or not request.app.state.redis:
+        redis_client = get_redis_client(request)
+        if not redis_client:
             raise HTTPException(
                 status_code=503,
                 detail="Session management unavailable (Redis not connected)"
             )
         
-        session_service = SessionService(request.app.state.redis)
+        session_service = SessionService(redis_client)
         
         # SECURITY: Verify session belongs to user
         session_info = await session_service.validate_session(session_id_to_revoke)

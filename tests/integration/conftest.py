@@ -509,6 +509,10 @@ def setup_integration_mocks():
     Uses context managers stacked with contextlib for cleaner setup.
     """
     from contextlib import ExitStack
+    from dependencies.auth_dependencies import reset_http_client
+    
+    # Reset HTTP client singleton before patching (ensures fresh mock client is used)
+    reset_http_client()
     
     # Pass the quiz storage to the mock client so it can access saved quizzes
     mock_supabase = MockSupabaseClient(quiz_storage=_quiz_storage)

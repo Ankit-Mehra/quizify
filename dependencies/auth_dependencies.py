@@ -14,6 +14,33 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 SESSION_HEADER = "X-Session-ID"
 
+# Module-level HTTP client for connection reuse (avoids TLS handshake overhead)
+_http_client: Optional[httpx.AsyncClient] = None
+
+
+def get_http_client() -> httpx.AsyncClient:
+    """
+    Get or create shared HTTP client for Supabase auth requests.
+    
+    Uses module-level singleton to reuse TCP connections and avoid TLS handshake
+    overhead on every auth request. The client is created on first use and reused
+    for subsequent requests.
+    
+    Note: In tests, httpx.AsyncClient is patched to return a mock client, so this
+    function will return the mocked version.
+    """
+    global _http_client
+    if _http_client is None:
+        # This will be the mocked client in tests due to patch
+        _http_client = httpx.AsyncClient(timeout=10)
+    return _http_client
+
+
+def reset_http_client():
+    """Reset the shared HTTP client (used in tests to clear singleton state)."""
+    global _http_client
+    _http_client = None
+
 
 def _short_id(value: Optional[str], length: int = 12) -> str:
     """Return obfuscated identifier for logging."""
@@ -38,7 +65,10 @@ async def _validate_request_session(request: Request, user_id: str) -> Optional[
         request.state.session_id = None
         return None
 
-    session_id = request.headers.get(SESSION_HEADER)
+    # Check session_id in order of precedence: state → header → query → cookie
+    session_id = getattr(request.state, "session_id", None)
+    if not session_id:
+        session_id = request.headers.get(SESSION_HEADER)
     if not session_id:
         session_id = request.query_params.get("session_id")
     if not session_id:
@@ -106,9 +136,9 @@ async def _authenticate_request(
 
     try:
         logger.debug("Verifying token with Supabase")
-        # 10-second timeout for better global coverage (users far from Supabase servers)
-        async with httpx.AsyncClient(timeout=10) as client:
-            response = await client.get(f"{SUPABASE_URL}/auth/v1/user", headers=headers)
+        # Use shared HTTP client for connection reuse (avoids TLS handshake on every request)
+        client = get_http_client()
+        response = await client.get(f"{SUPABASE_URL}/auth/v1/user", headers=headers)
 
         if response.status_code != 200:
             logger.warning("Invalid token. Supabase status: %s", response.status_code)

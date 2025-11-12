@@ -57,6 +57,8 @@ def _build_request(app: Starlette, headers: List[Tuple[bytes, bytes]] | None = N
 @pytest.fixture(autouse=True)
 def configure_supabase(monkeypatch):
     """Configure Supabase settings for tests."""
+    # Reset HTTP client singleton before each test
+    auth_deps.reset_http_client()
     monkeypatch.setattr(auth_deps, "SUPABASE_URL", "https://supabase.test")
     monkeypatch.setattr(auth_deps, "SUPABASE_KEY", "test_key")
 
