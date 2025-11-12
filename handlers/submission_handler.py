@@ -6,7 +6,16 @@ from pydantic import ValidationError
 from fastapi import HTTPException, Depends
 from uuid import UUID, uuid4
 from datetime import datetime
-from services.db_services.supabase_submission import get_question, save_submission, save_answer, get_submission_by_id, get_user_submissions, get_quiz_submissions
+from services.db_services.supabase_submission import (
+    get_question, 
+    save_submission, 
+    save_answer, 
+    get_submission_by_id, 
+    get_user_submissions_cached,
+    get_quiz_submissions_cached,
+    invalidate_user_submissions_cache,
+    invalidate_quiz_submissions_cache
+)
 from services.db_services.supabase_quiz import get_quiz_from_database
 from dependencies.auth_dependencies import get_current_user_id, get_current_user_token
 from services.logger import app_logger as logger
@@ -125,6 +134,16 @@ async def submit_quiz(
             is_correct=result["is_correct"]
         ), user_token)
 
+    # Invalidate submission caches after successful submission
+    # This ensures /my-attempts and quiz history show the new submission immediately
+    try:
+        await invalidate_user_submissions_cache(user_id)
+        await invalidate_quiz_submissions_cache(str(quiz_id), user_id)
+        logger.debug(f"Invalidated submission caches for user {user_id} and quiz {quiz_id}")
+    except Exception as e:
+        # Don't fail the submission if cache invalidation fails
+        logger.warning(f"Failed to invalidate submission caches: {e}")
+
     return {
         "id": new_submission.id,
         "total_questions": submission.total_questions,
@@ -165,14 +184,14 @@ async def list_user_submissions(
     user_token: str = Depends(get_current_user_token)
 ):
     """
-    Get all quiz submissions for the current user.
+    Get all quiz submissions for the current user with Redis caching.
     Returns list of submissions with basic info (no detailed answers).
     """
     try:
-        logger.info(f"User {user_id} fetching all their submissions")
+        logger.info(f"User {user_id} fetching all their submissions (with caching)")
         
-        # Use authenticated client (RLS enforcement)
-        submissions = get_user_submissions(user_id, user_token)
+        # Use cached version with authenticated client (RLS enforcement)
+        submissions = await get_user_submissions_cached(user_id, user_token)
         
         logger.info(f"User {user_id} has {len(submissions)} submissions")
         return {
@@ -191,14 +210,14 @@ async def list_quiz_submissions(
     user_token: str = Depends(get_current_user_token)
 ):
     """
-    Get all submissions for a specific quiz by the current user.
+    Get all submissions for a specific quiz by the current user with Redis caching.
     Useful for seeing attempt history on a particular quiz.
     """
     try:
-        logger.info(f"User {user_id} fetching submissions for quiz {quiz_id}")
+        logger.info(f"User {user_id} fetching submissions for quiz {quiz_id} (with caching)")
         
-        # Use authenticated client (RLS enforcement)
-        submissions = get_quiz_submissions(str(quiz_id), user_id, user_token)
+        # Use cached version with authenticated client (RLS enforcement)
+        submissions = await get_quiz_submissions_cached(str(quiz_id), user_id, user_token)
         
         logger.info(f"User {user_id} has {len(submissions)} attempts on quiz {quiz_id}")
         return {
