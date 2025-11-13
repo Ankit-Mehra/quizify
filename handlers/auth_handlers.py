@@ -34,8 +34,14 @@ def _short_user_id(user_id: Optional[str]) -> str:
 
 
 def get_redis_client(request: Request) -> Optional[Any]:
-    """Get Redis client from app state, returns None if unavailable."""
-    return getattr(request.app.state, 'redis', None) if hasattr(request.app.state, 'redis') else None
+    """
+    Get Redis client from request app state.
+    
+    Returns Redis client stored in app.state during startup, or None if unavailable.
+    This approach is consistent with auth_dependencies and ensures we use the same
+    Redis instance initialized during app startup.
+    """
+    return getattr(request.app.state, "redis", None)
 
 
 def detect_device_type(user_agent: Optional[str]) -> str:
