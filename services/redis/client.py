@@ -51,6 +51,9 @@ async def lifespan(app: FastAPI):
             await redis_client.ping()
             logger.info("✅ Redis connected successfully")
             
+            # Store in app.state for access in request handlers
+            app.state.redis = redis_client
+            
         except redis.RedisError as e:
             logger.error(f"❌ Redis connection failed: {e}")
             logger.warning("Application will use memory fallback for state management")
