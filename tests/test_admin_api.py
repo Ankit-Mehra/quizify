@@ -115,7 +115,7 @@ def mock_profile_data():
 class TestIsAdminFunction:
     """Test admin authorization logic"""
     
-    @patch("handlers.admin_handlers.config.is_testing")
+    @patch("handlers.admin_handlers.app_config.is_testing")
     def test_is_admin_in_testing_mode(self, mock_is_testing):
         """In testing mode, all users should be granted admin access"""
         mock_is_testing.return_value = True
@@ -124,7 +124,7 @@ class TestIsAdminFunction:
         
         assert result is True
     
-    @patch("handlers.admin_handlers.config.is_testing")
+    @patch("handlers.admin_handlers.app_config.is_testing")
     @patch.dict("os.environ", {"ADMIN_USER_IDS": "admin-1,admin-2,admin-3"})
     def test_is_admin_with_env_variable(self, mock_is_testing):
         """Admin IDs from environment variable should be recognized"""
@@ -135,7 +135,7 @@ class TestIsAdminFunction:
         assert is_admin("admin-3") is True
         assert is_admin("regular-user") is False
     
-    @patch("handlers.admin_handlers.config.is_testing")
+    @patch("handlers.admin_handlers.app_config.is_testing")
     @patch.dict("os.environ", {}, clear=True)
     def test_is_admin_no_env_variable(self, mock_is_testing):
         """Without env variable, non-hardcoded users should not be admin"""
@@ -1089,7 +1089,7 @@ class TestIsAdminRBAC:
     """Test the is_admin function with database-backed roles"""
     
     @patch("handlers.admin_handlers.get_supabase")
-    @patch("handlers.admin_handlers.config.is_testing")
+    @patch("handlers.admin_handlers.app_config.is_testing")
     def test_is_admin_checks_database_role(
         self,
         mock_is_testing,
@@ -1119,7 +1119,7 @@ class TestIsAdminRBAC:
         mock_client.table.assert_called_with("profiles")
     
     @patch("handlers.admin_handlers.get_supabase")
-    @patch("handlers.admin_handlers.config.is_testing")
+    @patch("handlers.admin_handlers.app_config.is_testing")
     def test_is_admin_rejects_regular_user(
         self,
         mock_is_testing,
@@ -1148,7 +1148,7 @@ class TestIsAdminRBAC:
         assert result is False
     
     @patch("handlers.admin_handlers.get_supabase")
-    @patch("handlers.admin_handlers.config.is_testing")
+    @patch("handlers.admin_handlers.app_config.is_testing")
     @patch.dict("os.environ", {"ADMIN_USER_IDS": "fallback-admin-123"})
     def test_is_admin_fallback_to_env_variable(
         self,
@@ -1177,7 +1177,7 @@ class TestIsAdminRBAC:
         
         assert result is True  # Found in ADMIN_USER_IDS
     
-    @patch("handlers.admin_handlers.config.is_testing")
+    @patch("handlers.admin_handlers.app_config.is_testing")
     def test_is_admin_testing_mode(
         self,
         mock_is_testing

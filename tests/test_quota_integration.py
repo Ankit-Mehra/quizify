@@ -82,6 +82,7 @@ def create_tier_info(account_tier: str, current_count: int, quota_limit: int) ->
         'id': 'test-user-id',
         'account_tier': account_tier,
         'current_quiz_count': current_count,
+        'quizzes_attempted': current_count,
         'quota_limit': quota_limit,
         'quota_exceeded': current_count >= quota_limit
     }
@@ -116,7 +117,7 @@ def assert_quota_exceeded_error(exc_info, expected_tier: str, expected_count: in
 @contextmanager
 def mock_quiz_generation_success(mock_question, tier_info, quiz_id="quiz-123"):
     """Context manager to mock successful quiz generation with all dependencies."""
-    with patch('handlers.quiz_handlers.get_user_tier_info') as mock_tier, \
+    with patch('handlers.quiz_handlers.get_user_tier_info_cached') as mock_tier, \
          patch('handlers.quiz_handlers.generate_quizzes_single_async') as mock_generate, \
          patch('handlers.quiz_handlers.save_quiz_to_database') as mock_save_quiz, \
          patch('handlers.quiz_handlers.save_file_to_supabase') as mock_save_file, \
@@ -142,7 +143,7 @@ def mock_file_extraction_and_generation(mock_question, tier_info, quiz_id="quiz-
     if extracted_text is None:
         extracted_text = "Extracted text content for quiz generation."
     
-    with patch('handlers.quiz_handlers.get_user_tier_info') as mock_tier, \
+    with patch('handlers.quiz_handlers.get_user_tier_info_cached') as mock_tier, \
          patch('handlers.quiz_handlers.extract_text_from_plain_text') as mock_extract, \
          patch('handlers.quiz_handlers.generate_quizzes_single_async') as mock_generate, \
          patch('handlers.quiz_handlers.save_quiz_to_database') as mock_save_quiz, \
@@ -171,7 +172,7 @@ def mock_file_id_generation(mock_question, mock_file_record, tier_info, quiz_id=
     if parsed_text is None:
         parsed_text = "Parsed text from stored file."
     
-    with patch('handlers.quiz_handlers.get_user_tier_info') as mock_tier, \
+    with patch('handlers.quiz_handlers.get_user_tier_info_cached') as mock_tier, \
          patch('handlers.quiz_handlers.get_file_record') as mock_get_record, \
          patch('handlers.quiz_handlers.parse_file_from_supabase') as mock_parse, \
          patch('handlers.quiz_handlers.generate_quizzes_single_async') as mock_generate, \
@@ -198,7 +199,7 @@ def mock_file_id_generation(mock_question, mock_file_record, tier_info, quiz_id=
 @contextmanager
 def mock_quota_exceeded(tier_info):
     """Context manager to mock quota exceeded scenario (no generation)."""
-    with patch('handlers.quiz_handlers.get_user_tier_info') as mock_tier:
+    with patch('handlers.quiz_handlers.get_user_tier_info_cached') as mock_tier:
         mock_tier.return_value = tier_info
         yield mock_tier
 
@@ -311,7 +312,7 @@ class TestQuotaEnforcementTextEndpoint:
     """Integration tests for quota enforcement on file generation endpoint."""
     
     @pytest.mark.asyncio
-    @patch('handlers.quiz_handlers.get_user_tier_info')
+    @patch('handlers.quiz_handlers.get_user_tier_info_cached')
     @patch('handlers.quiz_handlers.extract_text_from_plain_text')
     @patch('handlers.quiz_handlers.generate_quizzes_single_async')
     @patch('handlers.quiz_handlers.save_quiz_to_database')
@@ -385,7 +386,7 @@ class TestQuotaEnforcementTextEndpoint:
         mock_save_quiz.assert_called_once()
         
     @pytest.mark.asyncio
-    @patch('handlers.quiz_handlers.get_user_tier_info')
+    @patch('handlers.quiz_handlers.get_user_tier_info_cached')
     async def test_file_endpoint_free_tier_at_limit_forbidden(self, mock_get_tier_info):
         """Test file endpoint returns 403 for free tier user at limit."""
         # Setup mock
@@ -423,7 +424,7 @@ class TestQuotaEnforcementTextEndpoint:
         assert detail['user_tier'] == 'free'
         
     @pytest.mark.asyncio
-    @patch('handlers.quiz_handlers.get_user_tier_info')
+    @patch('handlers.quiz_handlers.get_user_tier_info_cached')
     async def test_file_endpoint_basic_tier_at_limit_forbidden(self, mock_get_tier_info):
         """Test file endpoint returns 403 for basic tier user at limit."""
         # Setup mock
@@ -465,7 +466,7 @@ class TestQuotaCheckBeforeGeneration:
     """Tests to verify quota check happens before AI generation."""
     
     @pytest.mark.asyncio
-    @patch('handlers.quiz_handlers.get_user_tier_info')
+    @patch('handlers.quiz_handlers.get_user_tier_info_cached')
     @patch('handlers.quiz_handlers.generate_quizzes_single_async')
     async def test_text_endpoint_quota_check_before_ai_call(
         self, mock_generate, mock_get_tier_info
@@ -503,7 +504,7 @@ class TestQuotaCheckBeforeGeneration:
         mock_generate.assert_not_called()
         
     @pytest.mark.asyncio
-    @patch('handlers.quiz_handlers.get_user_tier_info')
+    @patch('handlers.quiz_handlers.get_user_tier_info_cached')
     @patch('handlers.quiz_handlers.extract_text_from_plain_text')
     @patch('handlers.quiz_handlers.generate_quizzes_single_async')
     async def test_file_endpoint_quota_check_before_ai_call(
@@ -551,7 +552,7 @@ class TestQuotaEnforcementFileIdEndpoint:
     """Integration tests for quota enforcement on file ID generation endpoint."""
     
     @pytest.mark.asyncio
-    @patch('handlers.quiz_handlers.get_user_tier_info')
+    @patch('handlers.quiz_handlers.get_user_tier_info_cached')
     @patch('handlers.quiz_handlers.get_file_record')
     @patch('handlers.quiz_handlers.parse_file_from_supabase')
     @patch('handlers.quiz_handlers.generate_quizzes_single_async')
@@ -630,7 +631,7 @@ class TestQuotaEnforcementFileIdEndpoint:
         mock_save_quiz.assert_called_once()
         
     @pytest.mark.asyncio
-    @patch('handlers.quiz_handlers.get_user_tier_info')
+    @patch('handlers.quiz_handlers.get_user_tier_info_cached')
     @patch('handlers.quiz_handlers.get_file_record')
     @patch('handlers.quiz_handlers.parse_file_from_supabase')
     async def test_file_id_endpoint_free_tier_at_limit_forbidden(
@@ -681,7 +682,7 @@ class TestQuotaEnforcementFileIdEndpoint:
         assert 'Upgrade to basic' in detail['detail']
         
     @pytest.mark.asyncio
-    @patch('handlers.quiz_handlers.get_user_tier_info')
+    @patch('handlers.quiz_handlers.get_user_tier_info_cached')
     @patch('handlers.quiz_handlers.get_file_record')
     @patch('handlers.quiz_handlers.parse_file_from_supabase')
     async def test_file_id_endpoint_basic_tier_at_limit_forbidden(
@@ -732,7 +733,7 @@ class TestQuotaEnforcementFileIdEndpoint:
         assert 'Upgrade to educator' in detail['detail']
         
     @pytest.mark.asyncio
-    @patch('handlers.quiz_handlers.get_user_tier_info')
+    @patch('handlers.quiz_handlers.get_user_tier_info_cached')
     @patch('handlers.quiz_handlers.get_file_record')
     @patch('handlers.quiz_handlers.parse_file_from_supabase')
     @patch('handlers.quiz_handlers.generate_quizzes_single_async')

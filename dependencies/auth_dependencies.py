@@ -1,78 +1,186 @@
 import os
-import requests
-from fastapi import HTTPException, Depends, Request
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from typing import Optional, Tuple
+
+import httpx
+from fastapi import Depends, HTTPException, Request
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+
 from services.logger import app_logger as logger
+from services.redis.sessions import SessionService
 
 security = HTTPBearer(auto_error=False)
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
+SESSION_HEADER = "X-Session-ID"
+
+# Module-level HTTP client for connection reuse (avoids TLS handshake overhead)
+_http_client: Optional[httpx.AsyncClient] = None
+
+
+def get_http_client() -> httpx.AsyncClient:
+    """
+    Get or create shared HTTP client for Supabase auth requests.
+    
+    Uses module-level singleton to reuse TCP connections and avoid TLS handshake
+    overhead on every auth request. The client is created on first use and reused
+    for subsequent requests.
+    
+    Note: In tests, httpx.AsyncClient is patched to return a mock client, so this
+    function will return the mocked version.
+    """
+    global _http_client
+    if _http_client is None:
+        # This will be the mocked client in tests due to patch
+        _http_client = httpx.AsyncClient(timeout=10)
+    return _http_client
+
+
+def reset_http_client():
+    """Reset the shared HTTP client (used in tests to clear singleton state)."""
+    global _http_client
+    _http_client = None
+
+
+def _short_id(value: Optional[str], length: int = 12) -> str:
+    """Return obfuscated identifier for logging."""
+    if not value:
+        return "unknown"
+    return f"{value[:length]}..."
+
+
 logger.info("Auth helper initialized")
 
-def get_current_user_id(
-    request: Request,
-    credentials: HTTPAuthorizationCredentials = Depends(security)
-) -> str:
-    token = credentials.credentials if credentials else request.cookies.get("access_token")
 
+async def _validate_request_session(request: Request, user_id: str) -> Optional[str]:
+    """Validate Redis session associated with the request and refresh its TTL."""
+
+    if getattr(request.state, "session_validated", False):
+        return getattr(request.state, "session_id", None)
+
+    redis_client = getattr(request.app.state, "redis", None)
+    if not redis_client:
+        logger.warning("Redis client unavailable; skipping session validation (fallback mode)")
+        request.state.session_validated = True
+        request.state.session_id = None
+        return None
+
+    # Check session_id in order of precedence: state → header → query → cookie
+    session_id = getattr(request.state, "session_id", None)
+    if not session_id:
+        session_id = request.headers.get(SESSION_HEADER)
+    if not session_id:
+        session_id = request.query_params.get("session_id")
+    if not session_id:
+        session_id = request.cookies.get("session_id")
+
+    if not session_id:
+        # Allow authentication without session_id for backward compatibility
+        # This ensures existing API clients continue working after Redis deployment
+        logger.warning("Session ID missing for user %s (allowing for backward compatibility)", _short_id(user_id, length=8))
+        request.state.session_validated = True
+        request.state.session_id = None
+        return None
+
+    session_service = SessionService(redis_client)
+    session_info = await session_service.validate_session(session_id)
+    if not session_info:
+        logger.warning("Session %s not found for user %s", _short_id(session_id), _short_id(user_id, 8))
+        raise HTTPException(status_code=401, detail="Session expired or invalid")
+
+    if session_info.user_id != user_id:
+        logger.warning(
+            "User %s attempted to use session %s belonging to %s",
+            _short_id(user_id, 8),
+            _short_id(session_id),
+            _short_id(session_info.user_id, 8),
+        )
+        raise HTTPException(status_code=403, detail="Session does not belong to authenticated user")
+
+    refreshed = await session_service.refresh_session(session_id)
+    if not refreshed:
+        logger.warning("Session %s failed to refresh for user %s", _short_id(session_id), _short_id(user_id, 8))
+        raise HTTPException(status_code=401, detail="Session expired or invalid")
+
+    request.state.session_validated = True
+    request.state.session_id = session_id
+    request.state.session_info = session_info
+    return session_id
+
+
+async def _authenticate_request(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials],
+) -> Tuple[str, str]:
+    """Authenticate request with Supabase and validate Redis session."""
+
+    if getattr(request.state, "auth_cached", False):
+        return request.state.auth_user_id, request.state.auth_token
+
+    token = credentials.credentials if credentials else request.cookies.get("access_token")
     if not token:
-        # Middleware may have refreshed the token and stored it on the request state
         token = getattr(request.state, "access_token", None)
 
     if not token:
         logger.warning("Authentication required but no token provided")
         raise HTTPException(status_code=401, detail="Authentication required")
 
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        logger.error("Supabase credentials not configured")
+        raise HTTPException(status_code=500, detail="Authentication service misconfigured")
+
     headers = {
         "Authorization": f"Bearer {token}",
-        "apikey": SUPABASE_KEY
+        "apikey": SUPABASE_KEY,
     }
 
     try:
         logger.debug("Verifying token with Supabase")
-        response = requests.get(f"{SUPABASE_URL}/auth/v1/user", headers=headers)
+        # Use shared HTTP client for connection reuse (avoids TLS handshake on every request)
+        client = get_http_client()
+        response = await client.get(f"{SUPABASE_URL}/auth/v1/user", headers=headers)
 
         if response.status_code != 200:
-            logger.warning(f"Invalid token. Supabase status: {response.status_code}")
+            logger.warning("Invalid token. Supabase status: %s", response.status_code)
             raise HTTPException(status_code=401, detail="Invalid or expired token")
 
         user_info = response.json()
-        
-        # DEBUG: Log more details about the user authentication
-        logger.debug(f"Full user info: {user_info}")
-        
-        # Always prefer UUID over email for consistency
-        user_id = user_info.get("id")
+        logger.debug("Full user info: %s", user_info)
+
+        user_id = user_info.get("id") or user_info.get("email")
         if not user_id:
-            logger.error(f"No UUID found in user info, falling back to email: {user_info.get('email')}")
-            user_id = user_info.get("email")
-        
-        if not user_id:
-            logger.error("No valid user identifier found in token")
+            logger.error("No valid user identifier found in token payload")
             raise HTTPException(status_code=401, detail="Invalid user token - no identifier found")
-        
-        logger.debug(f"Using user ID: {user_id}")
-        return user_id
+
+        await _validate_request_session(request, user_id)
+
+        request.state.auth_cached = True
+        request.state.access_token = token
+        request.state.auth_user_id = user_id
+        request.state.auth_token = token
+
+        logger.debug("Authenticated user %s", _short_id(user_id, 8))
+        return user_id, token
 
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Auth error: {e}", exc_info=True)
+    except Exception as exc:
+        logger.error(f"Auth error: {exc}", exc_info=True)
         raise HTTPException(status_code=401, detail="Authentication failed")
 
 
-def get_current_user_token(
+async def get_current_user_id(
     request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(security)
 ) -> str:
-    token = credentials.credentials if credentials else request.cookies.get("access_token")
-    if not token:
-        token = getattr(request.state, "access_token", None)
-    
-    if not token:
-        logger.warning("Authentication required but no token provided")
-        raise HTTPException(status_code=401, detail="Authentication token required")
-    
-    logger.debug("Retrieved user token")
+    user_id, _ = await _authenticate_request(request, credentials)
+    return user_id
+
+
+async def get_current_user_token(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+) -> str:
+    _, token = await _authenticate_request(request, credentials)
+    logger.debug("Retrieved user token for request")
     return token

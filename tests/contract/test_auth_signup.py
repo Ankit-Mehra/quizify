@@ -1,12 +1,15 @@
-"""
-Contract tests for POST /api/auth/signup endpoint.
 
-Tests the authentication signup functionality including:
+
+
+"""
+Contract tests for POST /api/auth/signup endpoint.Tests the authentication signup functionality including:
 - Valid signup with proper credentials
 - Duplicate email handling  
 - Invalid email format validation
 - Weak password rejection
 """
+
+import pytest
 
 import pytest
 from fastapi.testclient import TestClient
@@ -123,11 +126,15 @@ class TestAuthSignup:
         
         response = client.post("/api/auth/signup", json=payload)
         
-        assert response.status_code == 400, \
-            f"Expected 400 for weak password, got {response.status_code}: {response.text}"
+        # Pydantic validates password min_length at schema level (422 validation error)
+        assert response.status_code == 422, \
+            f"Expected 422 for weak password (Pydantic validation), got {response.status_code}: {response.text}"
         
         data = response.json()
-        assert "detail" in data or "message" in data, f"Error response missing detail/message: {data}"
+        assert "detail" in data, f"Error response missing detail: {data}"
+        # Verify Pydantic caught the password length issue
+        assert any("password" in str(err).lower() for err in data["detail"]), \
+            f"Expected password validation error, got: {data}"
     
     def test_missing_required_fields_returns_422(self, mock_supabase_client):
         """

@@ -5,7 +5,8 @@ from services.logger import app_logger as logger
 from fastapi import Depends
 from dependencies.auth_dependencies import get_current_user_id, get_current_user_token
 from services.db_services.supabase_quiz import get_user_tier_info_cached
-from typing import Dict, Any
+from services.redis.sessions import SessionService, SessionInfo, TooManySessionsError
+from typing import Dict, Any, List, Optional
 from config import config as app_config
 from schemas.auth import SignupRequest, LoginRequest, LogoutRequest, UpdateEmailRequest, ChangePasswordRequest, ForgotPasswordRequest, ResetPasswordRequest, ResendVerificationRequest
 
@@ -24,16 +25,63 @@ else:
 ACCESS_TOKEN_EXPIRE = 3600  # 1 hour
 REFRESH_TOKEN_EXPIRE = 60 * 60 * 24 * 30  # 30 days
 
+
+def _short_user_id(user_id: Optional[str]) -> str:
+    """Return obfuscated user identifier for logging."""
+    if not user_id:
+        return "unknown"
+    return f"{user_id[:8]}..."
+
+
+def get_redis_client(request: Request) -> Optional[Any]:
+    """Get Redis client from app state, returns None if unavailable."""
+    return getattr(request.app.state, 'redis', None) if hasattr(request.app.state, 'redis') else None
+
+
+def detect_device_type(user_agent: Optional[str]) -> str:
+    """
+    Detect device type from user agent string.
+    
+    Returns:
+        "mobile" for mobile devices
+        "browser" for desktop/laptop browsers
+        "api" for API clients or unknown
+    """
+    if not user_agent:
+        return "api"
+    
+    user_agent_lower = user_agent.lower()
+    
+    # Check for mobile devices
+    mobile_keywords = ["mobile", "android", "iphone", "ipad", "ipod", "windows phone", "blackberry"]
+    if any(keyword in user_agent_lower for keyword in mobile_keywords):
+        return "mobile"
+    
+    # Check for known browsers (desktop)
+    browser_keywords = ["mozilla", "chrome", "safari", "firefox", "edge", "opera"]
+    if any(keyword in user_agent_lower for keyword in browser_keywords):
+        return "browser"
+    
+    # Default to API for unknown user agents (curl, postman, etc.)
+    return "api"
+
 # Remove template rendering functions
 async def signup(request: SignupRequest):
     try:
         supabase = get_supabase()
         logger.info(f"Attempting to sign up user with email: {request.email}")
+
+        # Pydantic already validates min_length=8, but double-check for defense-in-depth
+        # Don't strip() - whitespace is valid in passwords
+        raw_password = request.password or ""
+        if len(raw_password) < 8:
+            logger.warning("Signup rejected for %s due to weak password", request.email)
+            raise HTTPException(status_code=400, detail="Password must be at least 8 characters long")
         
         # Sign up user - name goes to raw_user_meta_data
         response = supabase.auth.sign_up({
             "email": request.email,
-            "password": request.password,
+            "password": raw_password,
             "options": {
                 "data": {
                     "name": request.name
@@ -63,25 +111,58 @@ async def signup(request: SignupRequest):
             raise HTTPException(status_code=500, detail=str(e))
 
 
-async def login(request: LoginRequest, response: Response):
+async def login(request_body: LoginRequest, response: Response, request: Request):
     try:
         supabase = get_supabase()
-        logger.info(f"Login attempt for user: {request.email}")
+        logger.info(f"Login attempt for user: {request_body.email}")
         result = supabase.auth.sign_in_with_password({
-            "email": request.email,
-            "password": request.password
+            "email": request_body.email,
+            "password": request_body.password
         })
         
         session = result.session
-        
+
         if session is None:
-            logger.warning(f"Login failed: No session returned for {request.email}")
+            logger.warning(f"Login failed: No session returned for {request_body.email}")
             raise HTTPException(status_code=401, detail="Invalid credentials")
-        
+
         access_token = session.access_token
         refresh_token = session.refresh_token
-        
-        logger.info(f"User logged in: {result.user.id if result.user else 'Unknown'}")
+        user_id = result.user.id if result.user and getattr(result.user, "id", None) else None
+
+        logger.info(f"User logged in: {_short_user_id(user_id)}")
+
+        # Create Redis session for multi-device tracking
+        session_id: Optional[str] = None
+        try:
+            redis_client = get_redis_client(request)
+            if user_id and redis_client:
+                session_service = SessionService(redis_client)
+                user_agent = request.headers.get("user-agent")
+                device_type = detect_device_type(user_agent)
+                session_id = await session_service.create_session(
+                    user_id=user_id,
+                    device_type=device_type,
+                    ip_address=request.client.host if request.client else None,
+                    user_agent=user_agent
+                )
+                logger.info(
+                    "Redis session created for user %s (device: %s)",
+                    _short_user_id(user_id),
+                    device_type,
+                )
+        except TooManySessionsError as e:
+            # Hard fail for session limits - this is a security control
+            # User must explicitly manage their sessions (logout or revoke)
+            logger.warning(f"Too many sessions for user {_short_user_id(user_id)}: {e}")
+            raise HTTPException(
+                status_code=429,
+                detail="Too many active sessions. Please logout from other devices or revoke old sessions."
+            )
+        except Exception as redis_error:
+            # Soft fail for other Redis errors - fallback mode allows login without session
+            # This ensures service availability even when Redis is down
+            logger.warning(f"Failed to create Redis session (fallback mode): {redis_error}")
         
         # Set access token cookie
         # Domain allows cookie to be shared across all subdomains (www, api, etc.)
@@ -110,10 +191,14 @@ async def login(request: LoginRequest, response: Response):
         response_data = {
             "message": "Successfully logged in",
             "user": {
-                "id": result.user.id if result.user else None,
+                "id": user_id,
                 "email": result.user.email if result.user else None
             }
         }
+        
+        # Include session_id if created
+        if session_id:
+            response_data["session_id"] = session_id
         
         # SECURITY: Only expose token in response body during testing or development
         # In production, token is only available via HttpOnly cookie
@@ -122,9 +207,11 @@ async def login(request: LoginRequest, response: Response):
         
         return response_data
 
+    except HTTPException:
+        raise
     except Exception as e:
         error_message = str(e).lower()
-        logger.warning(f"Failed login for {request.email}: {e}")
+        logger.warning(f"Failed login for {request_body.email}: {e}")
         
         # Provide specific error messages for common issues
         if "email not confirmed" in error_message or "email confirmation" in error_message:
@@ -173,14 +260,44 @@ async def refresh_session(request: Request, response: Response):
         raise HTTPException(status_code=401, detail="Invalid refresh token")
 
 
-async def logout(response: Response, user_id: str = Depends(get_current_user_id)):
+async def logout(
+    request: Request,
+    response: Response,
+    user_id: str = Depends(get_current_user_id),
+    session_id: Optional[str] = Query(None, alias="session_id")
+):
+    """
+    Logout current device.
+    
+    Deletes the Redis session (if session_id provided) and clears auth cookies.
+    Frontend should send session_id as query parameter: /auth/logout?session_id=sess_xxx
+    """
     try:
-        logger.info(f"User {user_id} logout requested")
+        logger.info(f"User {_short_user_id(user_id)} logout requested")
+
+        if not session_id:
+            session_id = getattr(request.state, "session_id", None)
+
+        # Delete Redis session if session_id provided
+        if session_id:
+            try:
+                redis_client = get_redis_client(request)
+                if redis_client:
+                    session_service = SessionService(redis_client)
+                    success = await session_service.logout(session_id)
+                    if success:
+                        logger.info(f"Redis session deleted for user {_short_user_id(user_id)}")
+                    else:
+                        logger.warning(f"Redis session not found: {session_id[:12]}...")
+            except Exception as redis_error:
+                # Don't fail logout if Redis deletion fails (fallback mode)
+                logger.warning(f"Failed to delete Redis session (fallback mode): {redis_error}")
+        
         # Must match domain used when setting cookies
         domain = app_config.COOKIE_DOMAIN if not app_config.is_testing() else None
         response.delete_cookie(key="access_token", path="/", domain=domain, httponly=True)
         response.delete_cookie(key="refresh_token", path="/", domain=domain, httponly=True)
-        logger.info(f"User {user_id} logged out successfully")
+        logger.info(f"User {_short_user_id(user_id)} logged out successfully")
         return {"message": "Successfully logged out"}
     except Exception as e:
         logger.error(f"Error during logout: {str(e)}", exc_info=True)
@@ -572,3 +689,174 @@ async def resend_verification_email(request: ResendVerificationRequest):
             "message": "If your email is registered and unverified, we've sent a new verification link.",
             "note": "Check your email inbox (and spam folder). The link expires in 24 hours."
         }
+
+
+# ============================================================================
+# SESSION MANAGEMENT ENDPOINTS (Epic 4 - Task 4.3 & 4.4)
+# ============================================================================
+
+async def logout_all_devices(
+    request: Request,
+    response: Response,
+    user_id: str = Depends(get_current_user_id)
+):
+    """
+    Logout all devices for current user.
+    
+    Useful for security actions like:
+    - Password change
+    - Suspicious activity detected
+    - User wants to revoke all sessions
+    
+    This will:
+    1. Delete all Redis sessions for the user
+    2. Clear cookies for current device
+    3. Force re-login on all devices
+    """
+    try:
+        logger.info(f"Logout all devices requested for user {_short_user_id(user_id)}")
+        
+        # Delete all Redis sessions
+        count = 0
+        try:
+            redis_client = get_redis_client(request)
+            if redis_client:
+                session_service = SessionService(redis_client)
+                count = await session_service.logout_all_devices(user_id)
+                logger.info(f"Deleted {count} Redis sessions for user {_short_user_id(user_id)}")
+        except Exception as redis_error:
+            # Don't fail if Redis deletion fails (fallback mode)
+            logger.warning(f"Failed to delete Redis sessions (fallback mode): {redis_error}")
+        
+        # Clear cookies for current device
+        domain = app_config.COOKIE_DOMAIN if not app_config.is_testing() else None
+        response.delete_cookie(key="access_token", path="/", domain=domain, httponly=True)
+        response.delete_cookie(key="refresh_token", path="/", domain=domain, httponly=True)
+        
+        return {
+            "message": f"Successfully logged out from {count} device(s)",
+            "devices_logged_out": count
+        }
+        
+    except Exception as e:
+        logger.error(f"Error during logout all devices: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+async def get_active_sessions(
+    request: Request,
+    user_id: str = Depends(get_current_user_id)
+) -> List[Dict[str, Any]]:
+    """
+    Get list of active sessions for current user across all devices.
+    
+    Returns session metadata:
+    - session_id: Unique identifier
+    - device_type: browser, mobile, api
+    - created_at: When session was created
+    - last_active: Last activity timestamp
+    - ip_address: Hashed IP for privacy
+    - user_agent: Truncated user agent string
+    
+    Frontend can display this in "Active Sessions" page for security management.
+    """
+    try:
+        logger.info(f"Fetching active sessions for user {_short_user_id(user_id)}")
+        
+        # Get sessions from Redis
+        sessions: List[SessionInfo] = []
+        try:
+            redis_client = get_redis_client(request)
+            if redis_client:
+                session_service = SessionService(redis_client)
+                sessions = await session_service.list_sessions(user_id)
+                logger.info(f"Found {len(sessions)} active sessions for user {_short_user_id(user_id)}")
+        except Exception as redis_error:
+            logger.warning(f"Failed to fetch Redis sessions (fallback mode): {redis_error}")
+            # Return empty list in fallback mode
+            return []
+        
+        # Convert to dict for API response
+        return [
+            {
+                "session_id": session.session_id,
+                "device_type": session.device_type,
+                "created_at": session.created_at.isoformat(),
+                "last_active": session.last_active.isoformat(),
+                "ip_address": session.ip_address,  # Already hashed
+                "user_agent": session.user_agent,  # Already truncated
+                "is_expired": session.is_expired
+            }
+            for session in sessions
+        ]
+        
+    except Exception as e:
+        logger.error(f"Error fetching active sessions: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+async def revoke_session(
+    session_id_to_revoke: str,
+    request: Request,
+    user_id: str = Depends(get_current_user_id)
+):
+    """
+    Revoke a specific session by ID.
+    
+    Security check: Verifies the session belongs to the authenticated user
+    before revoking it. Prevents users from revoking other users' sessions.
+    
+    Use case: User sees suspicious device in "Active Sessions" and wants to logout that device.
+    """
+    try:
+        logger.info(
+            "Session revoke requested: %s by user %s",
+            f"{session_id_to_revoke[:12]}...",
+            _short_user_id(user_id),
+        )
+        
+        redis_client = get_redis_client(request)
+        if not redis_client:
+            raise HTTPException(
+                status_code=503,
+                detail="Session management unavailable (Redis not connected)"
+            )
+        
+        session_service = SessionService(redis_client)
+        
+        # SECURITY: Verify session belongs to user
+        session_info = await session_service.validate_session(session_id_to_revoke)
+        if not session_info:
+            raise HTTPException(
+                status_code=404,
+                detail="Session not found or already expired"
+            )
+        
+        if session_info.user_id != user_id:
+            logger.warning(
+                "User %s attempted to revoke session belonging to %s",
+                _short_user_id(user_id),
+                _short_user_id(session_info.user_id),
+            )
+            raise HTTPException(
+                status_code=403,
+                detail="You can only revoke your own sessions"
+            )
+        
+        # Revoke the session
+        success = await session_service.logout(session_id_to_revoke)
+        
+        if not success:
+            raise HTTPException(status_code=404, detail="Session not found")
+        
+        logger.info(f"Session {session_id_to_revoke[:12]}... revoked successfully")
+        return {
+            "message": "Session revoked successfully",
+            "session_id": session_id_to_revoke
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error revoking session: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))

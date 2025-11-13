@@ -4,7 +4,7 @@ Tests URL validation, SSRF protection, and error handling.
 """
 import pytest
 from playwright.async_api import TimeoutError as PlaywrightTimeout
-from unittest.mock import patch, AsyncMock
+from unittest.mock import AsyncMock, Mock, patch
 from fastapi import HTTPException
 from services.web_scraping_service import validate_url, scrape_content
 
@@ -121,151 +121,160 @@ class TestValidateUrl:
 
 class TestScrapeContent:
     """Tests for content scraping functionality."""
-    
+
     @pytest.mark.asyncio
-    @patch('services.web_scraping_service.async_playwright')
-    @patch('services.web_scraping_service.trafilatura.extract')
+    @patch("services.web_scraping_service.async_playwright")
+    @patch("services.web_scraping_service.trafilatura.extract")
     async def test_scrape_content_success(self, mock_extract, mock_playwright):
         """Test successful content scraping."""
-        # Mock Playwright
+
         mock_browser = AsyncMock()
         mock_context = AsyncMock()
         mock_page = AsyncMock()
-        mock_page.content = AsyncMock(return_value='<html><body>Test content</body></html>')
+        mock_page.goto = AsyncMock()
+        mock_page.content = AsyncMock(return_value="<html><body>Test content</body></html>")
+        mock_page.set_default_navigation_timeout = Mock()
+        mock_page.set_default_timeout = Mock()
         mock_context.new_page = AsyncMock(return_value=mock_page)
         mock_browser.new_context = AsyncMock(return_value=mock_context)
-        
-        mock_p = AsyncMock()
-        mock_p.chromium.launch = AsyncMock(return_value=mock_browser)
-        mock_playwright.return_value.__aenter__ = AsyncMock(return_value=mock_p)
+
+        playwright_manager = AsyncMock()
+        playwright_manager.chromium.launch = AsyncMock(return_value=mock_browser)
+        mock_playwright.return_value.__aenter__ = AsyncMock(return_value=playwright_manager)
         mock_playwright.return_value.__aexit__ = AsyncMock(return_value=None)
-        
-        # Mock Trafilatura - content must be at least 100 characters
-        extracted_content = "This is extracted content from the web page that is long enough to pass validation. It contains more than one hundred characters."
+
+        extracted_content = (
+            "This is extracted content from the web page that is long enough to pass "
+            "validation. It contains more than one hundred characters."
+        )
         mock_extract.return_value = extracted_content
-        
-        # Test
-        result = await scrape_content("https://example.com/page")
-        
-        assert result == extracted_content
+
+        content, metadata = await scrape_content("https://example.com/page")
+
+        assert content == extracted_content
+        assert metadata is None
         mock_page.goto.assert_called_once()
-    
+
     @pytest.mark.asyncio
     async def test_scrape_content_rejects_invalid_url(self):
         """Test that scraping rejects invalid URLs."""
+
         with pytest.raises(HTTPException) as exc_info:
             await scrape_content("http://localhost/data")
-        
+
         assert exc_info.value.status_code == 400
-    
+
     @pytest.mark.asyncio
-    @patch('services.web_scraping_service.resolve_hostname_to_ips')
-    @patch('services.web_scraping_service.async_playwright')
+    @patch("services.web_scraping_service.resolve_hostname_to_ips")
+    @patch("services.web_scraping_service.async_playwright")
     async def test_scrape_content_handles_timeout(self, mock_playwright, mock_resolve):
         """Test that scraping handles page load timeouts."""
-        # Mock DNS resolution to pass validation
-        mock_resolve.return_value = ['93.184.216.34']
-        
-        # Mock Playwright with timeout
+
+        mock_resolve.return_value = ["93.184.216.34"]
+
         mock_browser = AsyncMock()
         mock_context = AsyncMock()
         mock_page = AsyncMock()
         mock_page.goto = AsyncMock(side_effect=PlaywrightTimeout("Timeout"))
+        mock_page.set_default_navigation_timeout = Mock()
+        mock_page.set_default_timeout = Mock()
         mock_context.new_page = AsyncMock(return_value=mock_page)
         mock_browser.new_context = AsyncMock(return_value=mock_context)
-        
-        mock_p = AsyncMock()
-        mock_p.chromium.launch = AsyncMock(return_value=mock_browser)
-        mock_playwright.return_value.__aenter__ = AsyncMock(return_value=mock_p)
+
+        playwright_manager = AsyncMock()
+        playwright_manager.chromium.launch = AsyncMock(return_value=mock_browser)
+        mock_playwright.return_value.__aenter__ = AsyncMock(return_value=playwright_manager)
         mock_playwright.return_value.__aexit__ = AsyncMock(return_value=None)
-        
-        # Test
+
         with pytest.raises(HTTPException) as exc_info:
             await scrape_content("https://slow-site.com/page")
-        
+
         assert exc_info.value.status_code == 408
         assert "timeout" in exc_info.value.detail.lower()
-    
+
     @pytest.mark.asyncio
-    @patch('services.web_scraping_service.async_playwright')
-    @patch('services.web_scraping_service.trafilatura.extract')
+    @patch("services.web_scraping_service.async_playwright")
+    @patch("services.web_scraping_service.trafilatura.extract")
     async def test_scrape_content_handles_no_content(self, mock_extract, mock_playwright):
         """Test that scraping handles pages with no extractable content."""
-        # Mock Playwright
+
         mock_browser = AsyncMock()
         mock_context = AsyncMock()
         mock_page = AsyncMock()
-        mock_page.content = AsyncMock(return_value='<html><body></body></html>')
+        mock_page.goto = AsyncMock()
+        mock_page.content = AsyncMock(return_value="<html><body></body></html>")
+        mock_page.set_default_navigation_timeout = Mock()
+        mock_page.set_default_timeout = Mock()
         mock_context.new_page = AsyncMock(return_value=mock_page)
         mock_browser.new_context = AsyncMock(return_value=mock_context)
-        
-        mock_p = AsyncMock()
-        mock_p.chromium.launch = AsyncMock(return_value=mock_browser)
-        mock_playwright.return_value.__aenter__ = AsyncMock(return_value=mock_p)
+
+        playwright_manager = AsyncMock()
+        playwright_manager.chromium.launch = AsyncMock(return_value=mock_browser)
+        mock_playwright.return_value.__aenter__ = AsyncMock(return_value=playwright_manager)
         mock_playwright.return_value.__aexit__ = AsyncMock(return_value=None)
-        
-        # Mock Trafilatura returning None
+
         mock_extract.return_value = None
-        
-        # Test
+
         with pytest.raises(HTTPException) as exc_info:
             await scrape_content("https://example.com/empty")
-        
+
         assert exc_info.value.status_code == 422
         assert "could not extract" in exc_info.value.detail.lower()
-    
+
     @pytest.mark.asyncio
-    @patch('services.web_scraping_service.async_playwright')
-    @patch('services.web_scraping_service.trafilatura.extract')
+    @patch("services.web_scraping_service.async_playwright")
+    @patch("services.web_scraping_service.trafilatura.extract")
     async def test_scrape_content_handles_short_content(self, mock_extract, mock_playwright):
         """Test that scraping rejects content that's too short."""
-        # Mock Playwright
+
         mock_browser = AsyncMock()
         mock_context = AsyncMock()
         mock_page = AsyncMock()
-        mock_page.content = AsyncMock(return_value='<html><body>Short</body></html>')
+        mock_page.goto = AsyncMock()
+        mock_page.content = AsyncMock(return_value="<html><body>Short</body></html>")
+        mock_page.set_default_navigation_timeout = Mock()
+        mock_page.set_default_timeout = Mock()
         mock_context.new_page = AsyncMock(return_value=mock_page)
         mock_browser.new_context = AsyncMock(return_value=mock_context)
-        
-        mock_p = AsyncMock()
-        mock_p.chromium.launch = AsyncMock(return_value=mock_browser)
-        mock_playwright.return_value.__aenter__ = AsyncMock(return_value=mock_p)
+
+        playwright_manager = AsyncMock()
+        playwright_manager.chromium.launch = AsyncMock(return_value=mock_browser)
+        mock_playwright.return_value.__aenter__ = AsyncMock(return_value=playwright_manager)
         mock_playwright.return_value.__aexit__ = AsyncMock(return_value=None)
-        
-        # Mock Trafilatura returning short content
+
         mock_extract.return_value = "Short"
-        
-        # Test
+
         with pytest.raises(HTTPException) as exc_info:
             await scrape_content("https://example.com/short")
-        
+
         assert exc_info.value.status_code == 422
         assert "too short" in exc_info.value.detail.lower()
-    
+
     @pytest.mark.asyncio
-    @patch('services.web_scraping_service.async_playwright')
-    @patch('services.web_scraping_service.trafilatura.extract')
+    @patch("services.web_scraping_service.async_playwright")
+    @patch("services.web_scraping_service.trafilatura.extract")
     async def test_scrape_content_truncates_long_content(self, mock_extract, mock_playwright):
-        """Test that scraping truncates content that's too long."""
-        # Mock Playwright
+        """Test that scraping truncates overly long content."""
+
         mock_browser = AsyncMock()
         mock_context = AsyncMock()
         mock_page = AsyncMock()
-        mock_page.content = AsyncMock(return_value='<html><body>Content</body></html>')
+        mock_page.goto = AsyncMock()
+        mock_page.content = AsyncMock(return_value="<html><body>Content</body></html>")
+        mock_page.set_default_navigation_timeout = Mock()
+        mock_page.set_default_timeout = Mock()
         mock_context.new_page = AsyncMock(return_value=mock_page)
         mock_browser.new_context = AsyncMock(return_value=mock_context)
-        
-        mock_p = AsyncMock()
-        mock_p.chromium.launch = AsyncMock(return_value=mock_browser)
-        mock_playwright.return_value.__aenter__ = AsyncMock(return_value=mock_p)
+
+        playwright_manager = AsyncMock()
+        playwright_manager.chromium.launch = AsyncMock(return_value=mock_browser)
+        mock_playwright.return_value.__aenter__ = AsyncMock(return_value=playwright_manager)
         mock_playwright.return_value.__aexit__ = AsyncMock(return_value=None)
-        
-        # Mock Trafilatura returning very long content (> 500KB)
+
         long_content = "a" * (500 * 1024 + 1000)
         mock_extract.return_value = long_content
-        
-        # Test
-        result = await scrape_content("https://example.com/long")
-        
-        # Should be truncated to 500KB
-        assert len(result) == 500 * 1024
+
+        content, metadata = await scrape_content("https://example.com/long")
+
+        assert len(content) == 500 * 1024
+        assert metadata is None
