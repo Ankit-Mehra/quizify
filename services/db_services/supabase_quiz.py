@@ -23,8 +23,9 @@ class UserTierInfo(BaseModel):
     """User tier info model for caching"""
     id: str
     email: str
-    name: Optional[str] = None
+    display_name: Optional[str] = None  # FIXED: Was 'name', should be 'display_name'
     account_tier: str
+    role: str = "user"  # ADDED: Missing role field
     current_quiz_count: int
     quizzes_attempted: int
     quota_limit: int
