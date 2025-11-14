@@ -769,6 +769,9 @@ async def get_active_sessions(
     try:
         logger.info(f"Fetching active sessions for user {_short_user_id(user_id)}")
         
+        # Get current session ID from request state (set by auth middleware)
+        current_session_id = getattr(request.state, "session_id", None)
+        
         # Get sessions from Redis
         sessions: List[SessionInfo] = []
         try:
@@ -791,7 +794,8 @@ async def get_active_sessions(
                 "last_active": session.last_active.isoformat(),
                 "ip_address": session.ip_address,  # Already hashed
                 "user_agent": session.user_agent,  # Already truncated
-                "is_expired": session.is_expired
+                "is_expired": session.is_expired,
+                "is_current": session.session_id == current_session_id  # Mark current device
             }
             for session in sessions
         ]
