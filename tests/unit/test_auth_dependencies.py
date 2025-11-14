@@ -117,7 +117,7 @@ async def test_get_current_user_id_valid_session(mock_supabase, redis_client, cr
 
 @pytest.mark.asyncio
 async def test_get_current_user_id_missing_session(mock_supabase, redis_client, credentials):
-    """Test that missing session_id allows auth for backward compatibility"""
+    """Test that missing session_id returns 401 (session required for security)"""
     session_service = SessionService(redis_client)
     await session_service.create_session(user_id="user_123", device_type="browser")
 
@@ -125,12 +125,12 @@ async def test_get_current_user_id_missing_session(mock_supabase, redis_client, 
     app.state.redis = redis_client
     request = _build_request(app)
 
-    # Should succeed even without session_id for backward compatibility
-    user_id = await auth_deps.get_current_user_id(request, credentials)
-    assert user_id == "user_123"
-    # Session validation was skipped but auth succeeded
-    assert request.state.session_validated is True
-    assert request.state.session_id is None
+    # Should fail without session_id (session management enforcement)
+    with pytest.raises(HTTPException) as exc_info:
+        await auth_deps.get_current_user_id(request, credentials)
+    
+    assert exc_info.value.status_code == 401
+    assert "Session ID required" in exc_info.value.detail
 
 
 @pytest.mark.asyncio

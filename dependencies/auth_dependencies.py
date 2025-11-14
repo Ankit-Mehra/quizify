@@ -75,12 +75,16 @@ async def _validate_request_session(request: Request, user_id: str) -> Optional[
         session_id = request.cookies.get("session_id")
 
     if not session_id:
-        # Allow authentication without session_id for backward compatibility
-        # This ensures existing API clients continue working after Redis deployment
-        logger.warning("Session ID missing for user %s (allowing for backward compatibility)", _short_id(user_id, length=8))
-        request.state.session_validated = True
-        request.state.session_id = None
-        return None
+        # SECURITY: Session ID is required for session management to work
+        # Without it, session revocation, logout all devices, and session limits are bypassed
+        logger.warning(
+            "Session ID missing for user %s - returning 401 (session required)",
+            _short_id(user_id, length=8)
+        )
+        raise HTTPException(
+            status_code=401,
+            detail="Session ID required. Please login again to create a new session."
+        )
 
     session_service = SessionService(redis_client)
     session_info = await session_service.validate_session(session_id)
