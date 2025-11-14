@@ -165,11 +165,7 @@ sessions.forEach(session => {
 
 **⚠️ CRITICAL**: Use this endpoint to logout **OTHER** devices. Do NOT use `POST /api/auth/logout`.
 
-**⚠️ IMPORTANT**: Session revocation is **NOT immediate**. The target device will only be logged out when:
-1. It makes its next authenticated request, AND
-2. It includes the `X-Session-ID` header in that request
-
-If the device doesn't send `X-Session-ID` header, the backend allows the request for backward compatibility, and the device remains logged in despite session revocation.
+**⚠️ IMPORTANT**: Session revocation takes effect on the target device's next authenticated request. The device will receive a 401 error and must re-login.
 
 **Request**:
 ```
@@ -190,7 +186,7 @@ X-Session-ID: sess_desktop_xyz  // ← Current device session
 2. Target device JWT cookie still valid (up to 1 hour) ✅
 3. Target device makes next request:
    - **WITH** `X-Session-ID` → Backend validates → 401 Unauthorized → Device logged out ✅
-   - **WITHOUT** `X-Session-ID` → Backend allows (backward compat) → Device stays logged in ❌
+   - **WITHOUT** `X-Session-ID` → Backend returns 401 Unauthorized → User must login ✅
 
 **Frontend Action**:
 ```javascript
@@ -663,7 +659,7 @@ fetch('/api/quiz/generate', {
   credentials: 'include',
   body: JSON.stringify(data)
 });
-// Backend logs: "Session ID not provided (backward compatibility mode)"
+// Backend returns: 401 Unauthorized - "Session ID required"
 ```
 
 ### ✅ CORRECT: Always Include Session Header
@@ -817,9 +813,9 @@ const sessionId = localStorage.getItem('session_id');
 ## Best Practices
 
 1. **⚠️ CRITICAL: Always send X-Session-ID header** on ALL authenticated requests
-   - Without this header, session revocation will NOT work
-   - Backend allows requests without session_id (backward compatibility mode)
-   - Device won't get logged out even after session is revoked
+   - Without this header, requests will receive a 401 Unauthorized error
+   - Session management features (revocation, limits) require this header
+   - Device will be immediately logged out if header is missing
 2. **Always set credentials: 'include'** for cookie support
 3. **Store session_id in localStorage** for persistence across page refreshes
 4. **Use DELETE /sessions/{id}** for revoking other devices
@@ -870,21 +866,19 @@ const sessionId = localStorage.getItem('session_id');
 
 **Symptom**: Revoked Android session, but Android device still works
 
-**Root Cause**: Session revocation is **NOT immediate**. The device continues working until:
-1. It makes a new authenticated request, AND
-2. It includes the `X-Session-ID` header in that request
+**Root Cause**: Session revocation takes effect when the target device makes its next authenticated request. The device's JWT cookie remains valid (up to 1 hour) until the next API call.
 
 **How It Works**:
 1. Desktop calls `DELETE /api/auth/sessions/{android_session_id}` → Session deleted from Redis ✅
 2. Android still has valid JWT cookie (valid for 1 hour) ✅
 3. Android makes next request:
-   - **WITH** `X-Session-ID` header → Backend checks Redis → 401 Unauthorized ✅
-   - **WITHOUT** `X-Session-ID` header → Backend allows (backward compatibility) ❌
+   - **WITH** `X-Session-ID` header → Backend validates session → 401 Unauthorized → Device logged out ✅
+   - **WITHOUT** `X-Session-ID` header → Backend returns 401 Unauthorized → Device logged out ✅
 
 **Check**:
-1. Android device Network tab: Check if `X-Session-ID` header is being sent
-2. Backend logs: Look for "Session ID missing" warnings
-3. Backend logs: Look for "Session ... not found" (means validation working)
+1. Android device Network tab: Verify `X-Session-ID` header is being sent
+2. Backend logs: Look for "Session ID missing for user ... - returning 401 (session required)"
+3. Backend logs: Look for "Session ... not found for user ..." (session validation working)
 
 **Solution**:
 ```javascript
@@ -896,7 +890,7 @@ fetch('/api/quiz/generate', {
   credentials: 'include',
   body: JSON.stringify(data)
 });
-// Result: Backend allows request even if session revoked!
+// Backend returns: 401 Unauthorized - "Session ID required"
 
 // ✅ CORRECT - Always include session header
 fetch('/api/quiz/generate', {
@@ -913,15 +907,9 @@ fetch('/api/quiz/generate', {
 **Testing**:
 1. Revoke Android session from Desktop
 2. On Android, refresh page or trigger any API call
-3. Check Network tab for `X-Session-ID` header
-4. If header present → Should get 401 error
-5. If header missing → Request succeeds (this is the bug!)
-
-**Long-Term Solution** (Backend Change):
-The backend currently allows requests without session_id for "backward compatibility". Consider:
-- Adding a config flag to enforce session validation
-- Requiring session_id for all requests after deprecation period
-- Documenting that session revocation only works if client sends session_id
+3. Should receive 401 Unauthorized immediately
+4. Verify frontend redirects to login page
+5. Verify localStorage cleared
 
 ---
 
@@ -942,15 +930,17 @@ The backend currently allows requests without session_id for "backward compatibi
 
 ### Session Not Validated
 
-**Symptom**: Backend logs "Session ID not provided (backward compatibility mode)"
+**Symptom**: Backend logs "Session ID missing for user ... - returning 401 (session required)"
 
 **Check**:
-1. Network tab: Verify `X-Session-ID` header present
+1. Network tab: Verify `X-Session-ID` header present in request
 2. localStorage: Check if `session_id` stored
+3. Frontend receives 401 Unauthorized response
 
 **Solution**:
 - Add `X-Session-ID` header to all authenticated requests
 - Verify session_id not null/undefined before sending
+- Ensure session_id stored in localStorage after login
 
 ---
 
