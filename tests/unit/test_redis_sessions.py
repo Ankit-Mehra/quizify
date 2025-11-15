@@ -64,6 +64,10 @@ class TestSessionCreation:
             refresh_token=refresh_token,
         )
 
+        # Get session_id via refresh_token
+        session_id = await session_service.find_session_by_refresh_token(refresh_token)
+        assert session_id is not None
+
         # Validate session was created
         session_info = await session_service.validate_session(session_id)
 
@@ -82,6 +86,10 @@ class TestSessionCreation:
             user_id="user_123", device_type="browser", ip_address="192.168.1.1"
         , refresh_token=refresh_token)
 
+        # Get session_id via refresh_token
+        session_id = await session_service.find_session_by_refresh_token(refresh_token)
+        assert session_id is not None
+
         session_info = await session_service.validate_session(session_id)
 
         # IP should be hashed, not plaintext
@@ -98,6 +106,10 @@ class TestSessionCreation:
             user_id="user_123", device_type="browser", user_agent=long_ua
         , refresh_token=refresh_token)
 
+        # Get session_id via refresh_token
+        session_id = await session_service.find_session_by_refresh_token(refresh_token)
+        assert session_id is not None
+
         session_info = await session_service.validate_session(session_id)
 
         # Should be truncated to 100 chars + "..."
@@ -111,6 +123,10 @@ class TestSessionCreation:
         client_session_token = await session_service.create_session(
             user_id="user_123", device_type="api"
         , refresh_token=refresh_token)
+
+        # Get session_id via refresh_token
+        session_id = await session_service.find_session_by_refresh_token(refresh_token)
+        assert session_id is not None
 
         session_info = await session_service.validate_session(session_id)
 
@@ -164,17 +180,16 @@ class TestSessionCreation:
         """Should reject session creation if user has 5+ sessions (updated limit)"""
         # Create 5 sessions (new limit)
         for i in range(5):
-            refresh_token = "test_refresh_token"
-            client_session_token = await session_service.create_session(
-                user_id="user_123", device_type=f"device_{i}"
-            , refresh_token=refresh_token)
+            refresh_token = f"test_refresh_token_{i}"
+            await session_service.create_session(
+                user_id="user_123", device_type=f"device_{i}", refresh_token=refresh_token
+            )
 
         # 6th session should raise error
         with pytest.raises(TooManySessionsError) as exc_info:
-            refresh_token = "test_refresh_token"
-            client_session_token = await session_service.create_session(
-                user_id="user_123", device_type="device_6"
-            , refresh_token=refresh_token)
+            await session_service.create_session(
+                user_id="user_123", device_type="device_6", refresh_token="test_refresh_token_6"
+            )
 
         assert exc_info.value.user_id == "user_123"
         assert exc_info.value.count == 5
@@ -245,7 +260,11 @@ class TestSessionValidation:
         client_session_token = await session_service.create_session(
             user_id="user_123", device_type="browser"
         , refresh_token=refresh_token)
-
+        
+        # Get session_id via refresh_token
+        session_id = await session_service.find_session_by_refresh_token(refresh_token)
+        assert session_id is not None
+        
         session_info = await session_service.validate_session(session_id)
 
         assert session_info is not None
@@ -262,6 +281,10 @@ class TestSessionRefresh:
         client_session_token = await session_service.create_session(
             user_id="user_123", device_type="browser"
         , refresh_token=refresh_token)
+
+        # Get session_id via refresh_token
+        session_id = await session_service.find_session_by_refresh_token(refresh_token)
+        assert session_id is not None
 
         # Get initial last_active
         session1 = await session_service.validate_session(session_id)
@@ -316,6 +339,10 @@ class TestSessionRefresh:
             user_id="user_123", device_type="browser"
         , refresh_token=refresh_token)
 
+        # Get session_id via refresh_token
+        session_id = await session_service.find_session_by_refresh_token(refresh_token)
+        assert session_id is not None
+
         user_sessions_key = "user_sessions:user_123"
 
         # Set shorter TTL to ensure refresh updates it
@@ -338,6 +365,10 @@ class TestLogout:
         client_session_token = await session_service.create_session(
             user_id="user_123", device_type="browser"
         , refresh_token=refresh_token)
+
+        # Get session_id via refresh_token
+        session_id = await session_service.find_session_by_refresh_token(refresh_token)
+        assert session_id is not None
 
         # Logout
         success = await session_service.logout(session_id)
@@ -362,12 +393,20 @@ class TestLogout:
     async def test_logout_preserves_other_sessions(self, session_service):
         """Should not affect other sessions for same user"""
         # Create 2 sessions
-        session_id1, _ = await session_service.create_session(
-            user_id="user_123", device_type="browser"
+        token1 = "test_refresh_token_1"
+        await session_service.create_session(
+            user_id="user_123", device_type="browser", refresh_token=token1
         )
-        session_id2, _ = await session_service.create_session(
-            user_id="user_123", device_type="mobile"
+        token2 = "test_refresh_token_2"
+        await session_service.create_session(
+            user_id="user_123", device_type="mobile", refresh_token=token2
         )
+
+        # Get session IDs
+        session_id1 = await session_service.find_session_by_refresh_token(token1)
+        session_id2 = await session_service.find_session_by_refresh_token(token2)
+        assert session_id1 is not None
+        assert session_id2 is not None
 
         # Logout first session
         await session_service.logout(session_id1)
@@ -424,12 +463,20 @@ class TestLogoutAllDevices:
     async def test_logout_all_devices_preserves_other_users(self, session_service):
         """Should not affect other users' sessions"""
         # Create sessions for 2 users
-        session_id1, _ = await session_service.create_session(
-            user_id="user_123", device_type="browser"
+        token1 = "test_refresh_token_user_123"
+        await session_service.create_session(
+            user_id="user_123", device_type="browser", refresh_token=token1
         )
-        session_id2, _ = await session_service.create_session(
-            user_id="user_456", device_type="browser"
+        token2 = "test_refresh_token_user_456"
+        await session_service.create_session(
+            user_id="user_456", device_type="browser", refresh_token=token2
         )
+
+        # Get session IDs
+        session_id1 = await session_service.find_session_by_refresh_token(token1)
+        session_id2 = await session_service.find_session_by_refresh_token(token2)
+        assert session_id1 is not None
+        assert session_id2 is not None
 
         # Logout all devices for user_123
         await session_service.logout_all_devices("user_123")
@@ -448,15 +495,15 @@ class TestListSessions:
     async def test_list_sessions_multiple_devices(self, session_service):
         """Should list all active sessions"""
         # Create 3 sessions
-        session_id1, _ = await session_service.create_session("user_123", "browser")
-        session_id2, _ = await session_service.create_session("user_123", "mobile")
-        session_id3, _ = await session_service.create_session("user_123", "api")
+        await session_service.create_session("user_123", "browser", refresh_token="token_1")
+        await session_service.create_session("user_123", "mobile", refresh_token="token_2")
+        await session_service.create_session("user_123", "tablet", refresh_token="token_3")
 
         sessions = await session_service.list_sessions("user_123")
 
         assert len(sessions) == 3
         device_types = {s.device_type for s in sessions}
-        assert device_types == {"browser", "mobile", "api"}
+        assert device_types == {"browser", "mobile", "tablet"}
 
     @pytest.mark.asyncio
     async def test_list_sessions_no_sessions(self, session_service):
@@ -469,12 +516,20 @@ class TestListSessions:
     async def test_list_sessions_filters_expired(self, session_service, redis_client):
         """Should exclude expired sessions from list"""
         # Create 2 sessions
-        session_id1, _ = await session_service.create_session(
-            user_id="user_123", device_type="browser"
+        token1 = "test_refresh_token_1"
+        await session_service.create_session(
+            user_id="user_123", device_type="browser", refresh_token=token1
         )
-        session_id2, _ = await session_service.create_session(
-            user_id="user_123", device_type="mobile"
+        token2 = "test_refresh_token_2"
+        await session_service.create_session(
+            user_id="user_123", device_type="mobile", refresh_token=token2
         )
+
+        # Get session IDs
+        session_id1 = await session_service.find_session_by_refresh_token(token1)
+        session_id2 = await session_service.find_session_by_refresh_token(token2)
+        assert session_id1 is not None
+        assert session_id2 is not None
 
         # Manually expire first session (set to 31 days ago, exceeds new 30-day TTL)
         session_key1 = f"session:{session_id1}"
@@ -495,9 +550,9 @@ class TestSessionCount:
     async def test_get_session_count(self, session_service):
         """Should return correct count"""
         # Create 3 sessions
-        session_id1, _ = await session_service.create_session("user_123", "browser")
-        session_id2, _ = await session_service.create_session("user_123", "mobile")
-        session_id3, _ = await session_service.create_session("user_123", "api")
+        await session_service.create_session("user_123", "browser", refresh_token="token_1")
+        await session_service.create_session("user_123", "mobile", refresh_token="token_2")
+        await session_service.create_session("user_123", "api", refresh_token="token_3")
 
         count = await session_service.get_session_count("user_123")
 
@@ -518,12 +573,20 @@ class TestCleanupExpiredSessions:
     async def test_cleanup_expired_sessions(self, session_service, redis_client):
         """Should remove expired session references from user set"""
         # Create 2 sessions
-        session_id1, _ = await session_service.create_session(
-            user_id="user_123", device_type="browser"
+        token1 = "test_refresh_token_1"
+        await session_service.create_session(
+            user_id="user_123", device_type="browser", refresh_token=token1
         )
-        session_id2, _ = await session_service.create_session(
-            user_id="user_123", device_type="mobile"
+        token2 = "test_refresh_token_2"
+        await session_service.create_session(
+            user_id="user_123", device_type="mobile", refresh_token=token2
         )
+
+        # Get session IDs
+        session_id1 = await session_service.find_session_by_refresh_token(token1)
+        session_id2 = await session_service.find_session_by_refresh_token(token2)
+        assert session_id1 is not None
+        assert session_id2 is not None
 
         # Manually delete first session (simulate expiration)
         session_key1 = f"session:{session_id1}"
@@ -542,8 +605,8 @@ class TestCleanupExpiredSessions:
     async def test_cleanup_no_expired_sessions(self, session_service):
         """Should return 0 if no expired sessions"""
         # Create 2 valid sessions
-        session_id1, _ = await session_service.create_session("user_123", "browser")
-        session_id2, _ = await session_service.create_session("user_123", "mobile")
+        await session_service.create_session("user_123", "browser", refresh_token="token_1")
+        await session_service.create_session("user_123", "mobile", refresh_token="token_2")
 
         # Cleanup should find nothing
         removed = await session_service.cleanup_expired_sessions("user_123")
@@ -566,6 +629,10 @@ class TestEdgeCases:
             user_id="user_123", device_type="browser"
         , refresh_token=refresh_token)
 
+        # Get session_id via refresh_token
+        session_id = await session_service.find_session_by_refresh_token(refresh_token)
+        assert session_id is not None
+
         session_info = await session_service.validate_session(session_id)
 
         # Fresh session should not be expired
@@ -582,14 +649,20 @@ class TestEdgeCases:
         """Should handle concurrent session creation"""
         # Create 5 sessions concurrently
         tasks = [
-            session_service.create_session("user_123", f"device_{i}")
+            session_service.create_session(
+                user_id="user_123", device_type=f"device_{i}", refresh_token=f"test_refresh_token_{i}"
+            )
             for i in range(5)
         ]
 
         results = await asyncio.gather(*tasks)
         
-        # Extract session_ids (first element of tuple)
-        session_ids = [result[0] for result in results]
+        # Get session_ids from refresh tokens (results are client_session_tokens)
+        session_ids = []
+        for i in range(5):
+            session_id = await session_service.find_session_by_refresh_token(f"test_refresh_token_{i}")
+            if session_id:
+                session_ids.append(session_id)
 
         # All should be unique
         assert len(set(session_ids)) == 5
@@ -679,25 +752,25 @@ class TestCookieBasedAuthentication:
         token2 = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.mobile_token"
         
         # Create two sessions with different refresh_tokens
-        session_id1, client_token1 = await session_service.create_session(
+        client_token1 = await session_service.create_session(
             user_id="user_123",
             device_type="browser",
             refresh_token=token1
         )
         
-        session_id2, client_token2 = await session_service.create_session(
+        client_token2 = await session_service.create_session(
             user_id="user_123",
             device_type="mobile",
             refresh_token=token2
         )
         
         # Should be able to find each session by its refresh_token
-        found_id1 = await session_service.find_session_by_refresh_token(token1)
-        found_id2 = await session_service.find_session_by_refresh_token(token2)
+        session_id1 = await session_service.find_session_by_refresh_token(token1)
+        session_id2 = await session_service.find_session_by_refresh_token(token2)
         
-        assert found_id1 == session_id1
-        assert found_id2 == session_id2
-        assert found_id1 != found_id2
+        assert session_id1 is not None
+        assert session_id2 is not None
+        assert session_id1 != session_id2
     
     @pytest.mark.asyncio
     async def test_refresh_token_mapping_expires_with_session(self, session_service, redis_client):
