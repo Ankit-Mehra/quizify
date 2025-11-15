@@ -12,8 +12,6 @@ security = HTTPBearer(auto_error=False)
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
-SESSION_HEADER = "X-Session-ID"
-
 # Module-level HTTP client for connection reuse (avoids TLS handshake overhead)
 _http_client: Optional[httpx.AsyncClient] = None
 
@@ -76,40 +74,17 @@ async def _validate_request_session(request: Request, user_id: str) -> Optional[
             detail="Session management service temporarily unavailable. Please try again."
         )
 
-    # Check session_id in order of precedence: state → header → query → cookie → refresh_token
+    # Check session_id: state → refresh_token cookie (XSS-safe)
     session_id = getattr(request.state, "session_id", None)
-    session_lookup_method = "state"
     
-    if not session_id:
-        session_id = request.headers.get(SESSION_HEADER)
-        if session_id:
-            session_lookup_method = "header (deprecated)"
-            logger.debug(
-                "Session lookup via X-Session-ID header (DEPRECATED) for user %s. "
-                "Migrate to cookie-only authentication.",
-                _short_id(user_id, length=8)
-            )
-    
-    if not session_id:
-        session_id = request.query_params.get("session_id")
-        if session_id:
-            session_lookup_method = "query"
-    
-    if not session_id:
-        session_id = request.cookies.get("session_id")
-        if session_id:
-            session_lookup_method = "cookie"
-    
-    # NEW: Try cookie-based lookup via refresh_token (preferred method)
     if not session_id:
         refresh_token = request.cookies.get("refresh_token")
         if refresh_token:
             session_service = SessionService(redis_client)
             session_id = await session_service.find_session_by_refresh_token(refresh_token)
             if session_id:
-                session_lookup_method = "refresh_token (cookie-based)"
                 logger.debug(
-                    "Session lookup via refresh_token cookie for user %s (XSS-safe method)",
+                    "Session lookup via refresh_token cookie for user %s",
                     _short_id(user_id, length=8)
                 )
 

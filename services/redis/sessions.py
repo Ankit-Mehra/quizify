@@ -218,7 +218,7 @@ class SessionService:
         ip_address: Optional[str] = None,
         user_agent: Optional[str] = None,
         refresh_token: Optional[str] = None,
-    ) -> tuple[str, str]:
+    ) -> str:
         """
         Create a new authentication session atomically.
 
@@ -226,27 +226,25 @@ class SessionService:
         and adds session to user's active session set. Uses Lua script
         to ensure atomic check-and-add operation (prevents race conditions).
         
-        Optionally creates a refresh_token → session_id mapping to enable
-        cookie-based session lookup without requiring X-Session-ID header.
+        Creates a refresh_token → session_id mapping to enable cookie-based 
+        session lookup (XSS-safe authentication).
 
         Args:
             user_id: User identifier
             device_type: Type of device ('browser', 'mobile', 'api')
             ip_address: Client IP address (will be hashed with secret salt)
             user_agent: Client user agent string (will be truncated)
-            refresh_token: Optional Supabase refresh token for cookie-based lookup
+            refresh_token: Supabase refresh token for cookie-based lookup (required)
 
         Returns:
-            tuple: (session_id, client_session_token)
-                - session_id: Server-side session identifier
-                - client_session_token: Optional HMAC-signed token for UI only
+            str: client_session_token - HMAC-signed token for UI identification only
 
         Raises:
             TooManySessionsError: If user has >= MAX_SESSIONS_PER_USER active sessions
             redis.RedisError: If Redis operation fails
 
         Example:
-            >>> session_id, client_token = await service.create_session(
+            >>> client_token = await service.create_session(
             ...     user_id="user_123",
             ...     device_type="browser",
             ...     ip_address="192.168.1.1",
@@ -333,19 +331,15 @@ class SessionService:
             # Set TTL on user sessions set
             await self.redis.expire(user_sessions_key, self.session_ttl)
             
-            # If refresh token provided, create reverse mapping for cookie-based lookup
+            # Create reverse mapping for cookie-based lookup
             if refresh_token_hash:
                 refresh_token_key = f"refresh_token:{refresh_token_hash}"
                 await self.redis.set(refresh_token_key, session_id, ex=self.session_ttl)
                 logger.info(
-                    f"Created session for user {user_id[:8]}... on {device_type} device (cookie-based lookup enabled)"
-                )
-            else:
-                logger.info(
-                    f"Created session for user {user_id[:8]}... on {device_type} device (header-based only)"
+                    f"Created session for user {user_id[:8]}... on {device_type} device (cookie-based)"
                 )
 
-            return session_id, client_session_token
+            return client_session_token
 
         except TooManySessionsError:
             raise

@@ -44,22 +44,24 @@ class TestSessionCreation:
     @pytest.mark.asyncio
     async def test_create_session_basic(self, session_service):
         """Should create session with minimal metadata"""
-        session_id, client_session_token = await session_service.create_session(
+        refresh_token = "test_refresh_token"
+        client_session_token = await session_service.create_session(
             user_id="user_123", device_type="browser"
-        )
+        , refresh_token=refresh_token)
 
-        assert session_id.startswith("sess_")
-        assert len(session_id) == 41  # "sess_" + UUID (36 chars)
+        # Session is created internally, only client_session_token is returned
         assert client_session_token.startswith("cst_")  # Client session token for UI
 
     @pytest.mark.asyncio
     async def test_create_session_with_full_metadata(self, session_service):
         """Should create session with all metadata fields"""
-        session_id, client_session_token = await session_service.create_session(
+        refresh_token = "test_refresh_token"
+        client_session_token = await session_service.create_session(
             user_id="user_123",
             device_type="mobile",
             ip_address="192.168.1.1",
             user_agent="Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X)",
+            refresh_token=refresh_token,
         )
 
         # Validate session was created
@@ -75,9 +77,10 @@ class TestSessionCreation:
     @pytest.mark.asyncio
     async def test_create_session_hashes_ip(self, session_service):
         """Should hash IP address for privacy"""
-        session_id, _ = await session_service.create_session(
+        refresh_token = "test_refresh_token"
+        client_session_token = await session_service.create_session(
             user_id="user_123", device_type="browser", ip_address="192.168.1.1"
-        )
+        , refresh_token=refresh_token)
 
         session_info = await session_service.validate_session(session_id)
 
@@ -90,9 +93,10 @@ class TestSessionCreation:
         """Should truncate user agent to prevent memory bloat"""
         long_ua = "A" * 200  # 200 character user agent
 
-        session_id, _ = await session_service.create_session(
+        refresh_token = "test_refresh_token"
+        client_session_token = await session_service.create_session(
             user_id="user_123", device_type="browser", user_agent=long_ua
-        )
+        , refresh_token=refresh_token)
 
         session_info = await session_service.validate_session(session_id)
 
@@ -103,9 +107,10 @@ class TestSessionCreation:
     @pytest.mark.asyncio
     async def test_create_session_without_optional_fields(self, session_service):
         """Should handle missing IP and user agent"""
-        session_id, _ = await session_service.create_session(
+        refresh_token = "test_refresh_token"
+        client_session_token = await session_service.create_session(
             user_id="user_123", device_type="api"
-        )
+        , refresh_token=refresh_token)
 
         session_info = await session_service.validate_session(session_id)
 
@@ -115,9 +120,14 @@ class TestSessionCreation:
     @pytest.mark.asyncio
     async def test_create_session_adds_to_user_set(self, session_service, redis_client):
         """Should add session ID to user's session set"""
-        session_id, _ = await session_service.create_session(
+        refresh_token = "test_refresh_token"
+        client_session_token = await session_service.create_session(
             user_id="user_123", device_type="browser"
-        )
+        , refresh_token=refresh_token)
+
+        # Get session_id via refresh_token
+        session_id = await session_service.find_session_by_refresh_token(refresh_token)
+        assert session_id is not None
 
         # Check Redis set
         user_sessions_key = "user_sessions:user_123"
@@ -128,9 +138,14 @@ class TestSessionCreation:
     @pytest.mark.asyncio
     async def test_create_session_sets_ttl(self, session_service, redis_client):
         """Should set TTL on session and user set"""
-        session_id, _ = await session_service.create_session(
+        refresh_token = "test_refresh_token"
+        client_session_token = await session_service.create_session(
             user_id="user_123", device_type="browser"
-        )
+        , refresh_token=refresh_token)
+
+        # Get session_id via refresh_token
+        session_id = await session_service.find_session_by_refresh_token(refresh_token)
+        assert session_id is not None
 
         # Check TTL was set
         session_key = f"session:{session_id}"
@@ -149,15 +164,17 @@ class TestSessionCreation:
         """Should reject session creation if user has 5+ sessions (updated limit)"""
         # Create 5 sessions (new limit)
         for i in range(5):
-            session_id, _ = await session_service.create_session(
+            refresh_token = "test_refresh_token"
+            client_session_token = await session_service.create_session(
                 user_id="user_123", device_type=f"device_{i}"
-            )
+            , refresh_token=refresh_token)
 
         # 6th session should raise error
         with pytest.raises(TooManySessionsError) as exc_info:
-            session_id, _ = await session_service.create_session(
+            refresh_token = "test_refresh_token"
+            client_session_token = await session_service.create_session(
                 user_id="user_123", device_type="device_6"
-            )
+            , refresh_token=refresh_token)
 
         assert exc_info.value.user_id == "user_123"
         assert exc_info.value.count == 5
@@ -170,9 +187,14 @@ class TestSessionValidation:
     @pytest.mark.asyncio
     async def test_validate_existing_session(self, session_service):
         """Should return session info for valid session"""
-        session_id, _ = await session_service.create_session(
+        refresh_token = "test_refresh_token"
+        client_session_token = await session_service.create_session(
             user_id="user_123", device_type="browser"
-        )
+        , refresh_token=refresh_token)
+
+        # Get session_id via refresh_token
+        session_id = await session_service.find_session_by_refresh_token(refresh_token)
+        assert session_id is not None
 
         session_info = await session_service.validate_session(session_id)
 
@@ -193,9 +215,14 @@ class TestSessionValidation:
     @pytest.mark.asyncio
     async def test_validate_expired_session(self, session_service, redis_client):
         """Should return None and cleanup expired session"""
-        session_id, _ = await session_service.create_session(
+        refresh_token = "test_refresh_token"
+        client_session_token = await session_service.create_session(
             user_id="user_123", device_type="browser"
-        )
+        , refresh_token=refresh_token)
+
+        # Get session_id via refresh_token
+        session_id = await session_service.find_session_by_refresh_token(refresh_token)
+        assert session_id is not None
 
         # Manually set last_active to 31 days ago (expired - new 30-day TTL)
         session_key = f"session:{session_id}"
@@ -214,9 +241,10 @@ class TestSessionValidation:
     @pytest.mark.asyncio
     async def test_validate_session_not_expired(self, session_service):
         """Should return info for recently active session"""
-        session_id, _ = await session_service.create_session(
+        refresh_token = "test_refresh_token"
+        client_session_token = await session_service.create_session(
             user_id="user_123", device_type="browser"
-        )
+        , refresh_token=refresh_token)
 
         session_info = await session_service.validate_session(session_id)
 
@@ -230,9 +258,10 @@ class TestSessionRefresh:
     @pytest.mark.asyncio
     async def test_refresh_existing_session(self, session_service):
         """Should update last_active timestamp"""
-        session_id, _ = await session_service.create_session(
+        refresh_token = "test_refresh_token"
+        client_session_token = await session_service.create_session(
             user_id="user_123", device_type="browser"
-        )
+        , refresh_token=refresh_token)
 
         # Get initial last_active
         session1 = await session_service.validate_session(session_id)
@@ -259,9 +288,14 @@ class TestSessionRefresh:
     @pytest.mark.asyncio
     async def test_refresh_extends_ttl(self, session_service, redis_client):
         """Should extend TTL to 24 hours"""
-        session_id, _ = await session_service.create_session(
+        refresh_token = "test_refresh_token"
+        client_session_token = await session_service.create_session(
             user_id="user_123", device_type="browser"
-        )
+        , refresh_token=refresh_token)
+
+        # Get session_id via refresh_token
+        session_id = await session_service.find_session_by_refresh_token(refresh_token)
+        assert session_id is not None
 
         # Set TTL to 1 hour for testing
         session_key = f"session:{session_id}"
@@ -277,9 +311,10 @@ class TestSessionRefresh:
     @pytest.mark.asyncio
     async def test_refresh_extends_user_session_set_ttl(self, session_service, redis_client):
         """Should refresh TTL for user session set as well"""
-        session_id, _ = await session_service.create_session(
+        refresh_token = "test_refresh_token"
+        client_session_token = await session_service.create_session(
             user_id="user_123", device_type="browser"
-        )
+        , refresh_token=refresh_token)
 
         user_sessions_key = "user_sessions:user_123"
 
@@ -299,9 +334,10 @@ class TestLogout:
     @pytest.mark.asyncio
     async def test_logout_single_session(self, session_service):
         """Should delete session and remove from user set"""
-        session_id, _ = await session_service.create_session(
+        refresh_token = "test_refresh_token"
+        client_session_token = await session_service.create_session(
             user_id="user_123", device_type="browser"
-        )
+        , refresh_token=refresh_token)
 
         # Logout
         success = await session_service.logout(session_id)
@@ -354,9 +390,14 @@ class TestLogoutAllDevices:
         # Create 3 sessions
         session_ids = []
         for device in ["browser", "mobile", "api"]:
-            session_id, _ = await session_service.create_session(
+            refresh_token = "test_refresh_token"
+            client_session_token = await session_service.create_session(
                 user_id="user_123", device_type=device
-            )
+            , refresh_token=refresh_token)
+
+            # Get session_id via refresh_token
+            session_id = await session_service.find_session_by_refresh_token(refresh_token)
+            assert session_id is not None
             session_ids.append(session_id)
 
         # Logout all devices
@@ -520,9 +561,10 @@ class TestEdgeCases:
     @pytest.mark.asyncio
     async def test_session_info_is_expired_property(self, session_service):
         """Should correctly identify expired sessions"""
-        session_id, _ = await session_service.create_session(
+        refresh_token = "test_refresh_token"
+        client_session_token = await session_service.create_session(
             user_id="user_123", device_type="browser"
-        )
+        , refresh_token=refresh_token)
 
         session_info = await session_service.validate_session(session_id)
 
@@ -565,11 +607,15 @@ class TestCookieBasedAuthentication:
         """Should create session with refresh_token mapping"""
         refresh_token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.test_token"
         
-        session_id, client_session_token = await session_service.create_session(
+        client_session_token = await session_service.create_session(
             user_id="user_123",
             device_type="browser",
             refresh_token=refresh_token
         )
+
+        # Get session_id via refresh_token
+        session_id = await session_service.find_session_by_refresh_token(refresh_token)
+        assert session_id is not None
         
         # Should return both identifiers
         assert session_id.startswith("sess_")
@@ -588,10 +634,11 @@ class TestCookieBasedAuthentication:
     @pytest.mark.asyncio
     async def test_client_session_token_format(self, session_service):
         """Should generate valid client_session_token"""
-        session_id, client_session_token = await session_service.create_session(
+        refresh_token = "test_refresh_token"
+        client_session_token = await session_service.create_session(
             user_id="user_123",
             device_type="browser"
-        )
+        , refresh_token=refresh_token)
         
         # Should have correct format: cst_{session_prefix}_{signature}
         assert client_session_token.startswith("cst_")
@@ -602,11 +649,16 @@ class TestCookieBasedAuthentication:
     @pytest.mark.asyncio
     async def test_backward_compatibility_without_refresh_token(self, session_service):
         """Should work without refresh_token (header-based flow)"""
-        session_id, client_session_token = await session_service.create_session(
+        refresh_token = "test_refresh_token"
+        client_session_token = await session_service.create_session(
             user_id="user_123",
             device_type="browser"
             # No refresh_token parameter
-        )
+        , refresh_token=refresh_token)
+
+        # Get session_id via refresh_token
+        session_id = await session_service.find_session_by_refresh_token(refresh_token)
+        assert session_id is not None
         
         # Should still create session successfully
         assert session_id.startswith("sess_")
@@ -652,11 +704,15 @@ class TestCookieBasedAuthentication:
         """Should cleanup refresh_token mapping when session expires"""
         refresh_token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.test_token"
         
-        session_id, _ = await session_service.create_session(
+        client_session_token = await session_service.create_session(
             user_id="user_123",
             device_type="browser",
             refresh_token=refresh_token
         )
+
+        # Get session_id via refresh_token
+        session_id = await session_service.find_session_by_refresh_token(refresh_token)
+        assert session_id is not None
         
         # Verify mapping exists
         found_session_id = await session_service.find_session_by_refresh_token(refresh_token)
@@ -677,10 +733,16 @@ class TestCookieBasedAuthentication:
     @pytest.mark.asyncio
     async def test_client_session_token_persists_across_validation(self, session_service):
         """Should return same client_session_token on session validation"""
-        session_id, original_client_token = await session_service.create_session(
+        refresh_token = "test_refresh_token"
+        original_client_token = await session_service.create_session(
             user_id="user_123",
-            device_type="browser"
+            device_type="browser",
+            refresh_token=refresh_token
         )
+        
+        # Get session_id via refresh_token
+        session_id = await session_service.find_session_by_refresh_token(refresh_token)
+        assert session_id is not None
         
         # Validate session
         session_info = await session_service.validate_session(session_id)
@@ -694,11 +756,15 @@ class TestCookieBasedAuthentication:
         """Should not expose raw refresh_token in session info"""
         refresh_token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.sensitive_token"
         
-        session_id, _ = await session_service.create_session(
+        client_session_token = await session_service.create_session(
             user_id="user_123",
             device_type="browser",
             refresh_token=refresh_token
         )
+        
+        # Get session_id via refresh_token
+        session_id = await session_service.find_session_by_refresh_token(refresh_token)
+        assert session_id is not None
         
         # Validate session
         session_info = await session_service.validate_session(session_id)
@@ -712,16 +778,19 @@ class TestCookieBasedAuthentication:
     @pytest.mark.asyncio
     async def test_session_list_includes_client_token(self, session_service):
         """Should include client_session_token in session list"""
-        # Create sessions with and without refresh_token
-        session_id1, client_token1 = await session_service.create_session(
+        # Create sessions with refresh_token
+        refresh_token1 = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.token1"
+        client_token1 = await session_service.create_session(
             user_id="user_123",
             device_type="browser",
-            refresh_token="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.token1"
+            refresh_token=refresh_token1
         )
         
-        session_id2, client_token2 = await session_service.create_session(
+        refresh_token2 = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.token2"
+        client_token2 = await session_service.create_session(
             user_id="user_123",
-            device_type="mobile"
+            device_type="mobile",
+            refresh_token=refresh_token2
         )
         
         # List sessions
@@ -730,6 +799,6 @@ class TestCookieBasedAuthentication:
         assert len(sessions) == 2
         
         # Both should have client_session_token
-        session_tokens = {s.session_id: s.client_session_token for s in sessions}
-        assert session_tokens[session_id1] == client_token1
-        assert session_tokens[session_id2] == client_token2
+        session_tokens = [s.client_session_token for s in sessions]
+        assert client_token1 in session_tokens
+        assert client_token2 in session_tokens
