@@ -6,6 +6,7 @@ os.environ["SUPABASE_URL"] = "https://test.supabase.co"
 os.environ["SUPABASE_KEY"] = "test_key"
 os.environ["SUPABASE_STORAGE_NAME"] = "test-bucket"
 os.environ["OPENAI_API_KEY"] = "sk-test123"
+os.environ["IP_HASH_SECRET"] = "test-secret-for-ip-hashing-min-32-chars"
 os.environ["TESTING"] = "true"
 
 class MockSupabaseAuth:

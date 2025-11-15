@@ -38,9 +38,9 @@ class SessionInfo(BaseModel):
 
     @property
     def is_expired(self) -> bool:
-        """Check if session is older than 24 hours"""
+        """Check if session is older than 30 days (aligned with refresh token expiry)"""
         age = datetime.utcnow() - self.last_active
-        return age.total_seconds() > 86400  # 24 hours
+        return age.total_seconds() > 2592000  # 30 days
 
 
 class SessionError(Exception):
@@ -64,7 +64,7 @@ class SessionExpiredError(SessionError):
 class TooManySessionsError(SessionError):
     """Raised when user has too many active sessions"""
 
-    def __init__(self, user_id: str, count: int, max_sessions: int = 10):
+    def __init__(self, user_id: str, count: int, max_sessions: int = 5):
         self.user_id = user_id
         self.count = count
         self.max_sessions = max_sessions
@@ -78,8 +78,8 @@ class SessionService:
     Manages user authentication sessions using Redis.
 
     Provides multi-device session tracking, logout-all-devices,
-    and session activity monitoring. Sessions expire after 24 hours
-    of inactivity.
+    and session activity monitoring. Sessions expire after 30 days
+    of inactivity (aligned with refresh token expiry).
 
     Redis Data Structure:
     - session:{session_id} → Hash with session metadata
@@ -93,6 +93,24 @@ class SessionService:
         >>> await service.logout(session_id)
     """
 
+    # Lua script for atomic session limit check + add
+    # Returns: 1 if added successfully, 0 if limit exceeded
+    CREATE_SESSION_SCRIPT = """
+    local user_sessions_key = KEYS[1]
+    local session_id = ARGV[1]
+    local max_sessions = tonumber(ARGV[2])
+    
+    local count = redis.call('SCARD', user_sessions_key)
+    if count >= max_sessions then
+        return 0
+    end
+    
+    redis.call('SADD', user_sessions_key, session_id)
+    return 1
+    """
+    
+    MAX_SESSIONS_PER_USER = 5  # Lowered from 10 for better security
+
     def __init__(self, redis_client: redis.Redis):
         """
         Initialize session service.
@@ -101,12 +119,36 @@ class SessionService:
             redis_client: Async Redis client instance
         """
         self.redis = redis_client
-        self.session_ttl = 86400  # 24 hours
+        self.session_ttl = 2592000  # 30 days (aligned with refresh token expiry)
 
     @staticmethod
     def _hash_ip(ip_address: str) -> str:
-        """Hash IP address for privacy"""
-        return hashlib.sha256(ip_address.encode()).hexdigest()[:16]
+        """
+        Hash IP address with secret salt for privacy.
+        
+        Uses HMAC-SHA256 with secret salt to prevent rainbow table attacks.
+        If IP_HASH_SECRET is not set, stores "redacted" instead of exposing
+        the IP in any form.
+        
+        Args:
+            ip_address: Raw IP address
+            
+        Returns:
+            Salted hash or "redacted" if no secret configured
+        """
+        import os
+        
+        # Get secret salt from environment (should be set in production)
+        secret = os.getenv("IP_HASH_SECRET")
+        if not secret:
+            # If no secret configured, don't store IP at all for privacy
+            logger.warning("IP_HASH_SECRET not set - IP addresses will not be stored")
+            return "redacted"
+        
+        # Use HMAC for salted hashing (prevents rainbow table attacks)
+        import hmac
+        h = hmac.new(secret.encode(), ip_address.encode(), hashlib.sha256)
+        return h.hexdigest()[:16]
 
     @staticmethod
     def _truncate_user_agent(user_agent: str, max_length: int = 100) -> str:
@@ -128,22 +170,23 @@ class SessionService:
         user_agent: Optional[str] = None,
     ) -> str:
         """
-        Create a new authentication session.
+        Create a new authentication session atomically.
 
         Generates a unique session ID, stores session metadata in Redis,
-        and adds session to user's active session set.
+        and adds session to user's active session set. Uses Lua script
+        to ensure atomic check-and-add operation (prevents race conditions).
 
         Args:
             user_id: User identifier
             device_type: Type of device ('browser', 'mobile', 'api')
-            ip_address: Client IP address (will be hashed)
+            ip_address: Client IP address (will be hashed with secret salt)
             user_agent: Client user agent string (will be truncated)
 
         Returns:
             session_id: Unique session identifier (UUID)
 
         Raises:
-            TooManySessionsError: If user has >10 active sessions
+            TooManySessionsError: If user has >= MAX_SESSIONS_PER_USER active sessions
             redis.RedisError: If Redis operation fails
 
         Example:
@@ -155,21 +198,40 @@ class SessionService:
             ... )
         """
         try:
-            # Check session count BEFORE adding (simpler atomic pattern)
             user_sessions_key = f"user_sessions:{user_id}"
-            session_count = await self.redis.scard(user_sessions_key)
+            session_id = self._generate_session_id()
             
-            if session_count >= 10:
+            # Atomic check-and-add using Lua script (prevents race conditions)
+            try:
+                result = await self.redis.eval(
+                    self.CREATE_SESSION_SCRIPT,
+                    1,  # number of keys
+                    user_sessions_key,  # KEYS[1]
+                    session_id,  # ARGV[1]
+                    str(self.MAX_SESSIONS_PER_USER),  # ARGV[2]
+                )
+            except Exception as lua_error:
+                # Fallback for test environments using fakeredis (doesn't support Lua)
+                if "unknown command" in str(lua_error).lower() and "eval" in str(lua_error).lower():
+                    logger.warning("Lua script not supported (fakeredis) - using non-atomic fallback for tests")
+                    session_count = await self.redis.scard(user_sessions_key)
+                    if session_count >= self.MAX_SESSIONS_PER_USER:
+                        result = 0
+                    else:
+                        await self.redis.sadd(user_sessions_key, session_id)
+                        result = 1
+                else:
+                    raise
+            
+            if result == 0:
+                # Limit exceeded - get current count for error message
+                session_count = await self.redis.scard(user_sessions_key)
                 logger.warning(
                     f"User {user_id[:8]}... has too many sessions: {session_count}"
                 )
-                raise TooManySessionsError(user_id, session_count, max_sessions=10)
-            
-            # Generate session ID after limit check passes
-            session_id = self._generate_session_id()
-            
-            # Add to set (limit already verified)
-            await self.redis.sadd(user_sessions_key, session_id)
+                raise TooManySessionsError(
+                    user_id, session_count, max_sessions=self.MAX_SESSIONS_PER_USER
+                )
 
             # Prepare session metadata
             now = datetime.utcnow()

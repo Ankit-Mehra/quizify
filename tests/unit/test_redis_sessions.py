@@ -131,36 +131,36 @@ class TestSessionCreation:
             user_id="user_123", device_type="browser"
         )
 
-        # Check TTL on session key
+        # Check TTL was set
         session_key = f"session:{session_id}"
         ttl = await redis_client.ttl(session_key)
         assert ttl > 0
-        assert ttl <= 86400  # 24 hours
+        assert ttl <= 2592000  # 30 days (updated from 24 hours)
 
         # Check TTL on user sessions set
         user_sessions_key = "user_sessions:user_123"
         ttl = await redis_client.ttl(user_sessions_key)
         assert ttl > 0
-        assert ttl <= 86400
+        assert ttl <= 2592000  # 30 days (updated from 24 hours)
 
     @pytest.mark.asyncio
     async def test_create_session_enforces_max_limit(self, session_service):
-        """Should reject session creation if user has 10+ sessions"""
-        # Create 10 sessions
-        for i in range(10):
+        """Should reject session creation if user has 5+ sessions (updated limit)"""
+        # Create 5 sessions (new limit)
+        for i in range(5):
             await session_service.create_session(
                 user_id="user_123", device_type=f"device_{i}"
             )
 
-        # 11th session should raise error
+        # 6th session should raise error
         with pytest.raises(TooManySessionsError) as exc_info:
             await session_service.create_session(
-                user_id="user_123", device_type="device_11"
+                user_id="user_123", device_type="device_6"
             )
 
         assert exc_info.value.user_id == "user_123"
-        assert exc_info.value.count == 10
-        assert exc_info.value.max_sessions == 10
+        assert exc_info.value.count == 5
+        assert exc_info.value.max_sessions == 5
 
 
 class TestSessionValidation:
@@ -196,9 +196,9 @@ class TestSessionValidation:
             user_id="user_123", device_type="browser"
         )
 
-        # Manually set last_active to 25 hours ago (expired)
+        # Manually set last_active to 31 days ago (expired - new 30-day TTL)
         session_key = f"session:{session_id}"
-        expired_time = datetime.utcnow() - timedelta(hours=25)
+        expired_time = datetime.utcnow() - timedelta(days=31)
         await redis_client.hset(session_key, "last_active", expired_time.isoformat())
 
         # Should return None for expired session
@@ -271,7 +271,7 @@ class TestSessionRefresh:
 
         ttl = await redis_client.ttl(session_key)
         assert ttl > 3600  # Should be more than 1 hour
-        assert ttl <= 86400  # Should be at most 24 hours
+        assert ttl <= 2592000  # Should be at most 30 days (updated from 24 hours)
 
     @pytest.mark.asyncio
     async def test_refresh_extends_user_session_set_ttl(self, session_service, redis_client):
@@ -289,7 +289,7 @@ class TestSessionRefresh:
 
         ttl = await redis_client.ttl(user_sessions_key)
         assert ttl > 300
-        assert ttl <= 86400
+        assert ttl <= 2592000  # 30 days (updated from 24 hours)
 
 
 class TestLogout:
@@ -434,9 +434,9 @@ class TestListSessions:
             user_id="user_123", device_type="mobile"
         )
 
-        # Manually expire first session
+        # Manually expire first session (set to 31 days ago, exceeds new 30-day TTL)
         session_key1 = f"session:{session_id1}"
-        expired_time = datetime.utcnow() - timedelta(hours=25)
+        expired_time = datetime.utcnow() - timedelta(days=31)
         await redis_client.hset(session_key1, "last_active", expired_time.isoformat())
 
         # Should only return 1 valid session
@@ -528,8 +528,8 @@ class TestEdgeCases:
         # Fresh session should not be expired
         assert not session_info.is_expired
 
-        # Manually set last_active to 25 hours ago
-        session_info.last_active = datetime.utcnow() - timedelta(hours=25)
+        # Manually set last_active to 31 days ago (exceeds new 30-day TTL)
+        session_info.last_active = datetime.utcnow() - timedelta(days=31)
 
         # Now should be expired
         assert session_info.is_expired

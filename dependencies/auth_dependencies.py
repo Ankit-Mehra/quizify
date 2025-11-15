@@ -53,17 +53,28 @@ logger.info("Auth helper initialized")
 
 
 async def _validate_request_session(request: Request, user_id: str) -> Optional[str]:
-    """Validate Redis session associated with the request and refresh its TTL."""
+    """
+    Validate Redis session associated with the request and refresh its TTL.
+    
+    SECURITY: Redis is REQUIRED for session management. If Redis is unavailable,
+    all session-based security controls (revocation, limits, logout-all) would be
+    bypassed. Therefore, we fail closed and return 503 Service Unavailable.
+    """
 
     if getattr(request.state, "session_validated", False):
         return getattr(request.state, "session_id", None)
 
     redis_client = getattr(request.app.state, "redis", None)
     if not redis_client:
-        logger.warning("Redis client unavailable; skipping session validation (fallback mode)")
-        request.state.session_validated = True
-        request.state.session_id = None
-        return None
+        logger.error(
+            "Redis client unavailable - cannot validate session for user %s. "
+            "Failing closed to prevent security bypass.",
+            _short_id(user_id, length=8)
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="Session management service temporarily unavailable. Please try again."
+        )
 
     # Check session_id in order of precedence: state → header → query → cookie
     session_id = getattr(request.state, "session_id", None)
