@@ -15,7 +15,7 @@
 - ✅ Server derives session from httpOnly `refresh_token` cookie
 - ✅ `client_session_token` returned for UI display only (HMAC-signed, non-authoritative)
 - ✅ No sensitive identifiers in localStorage or headers
-- ✅ No X-Session-ID header required or supported
+- ✅ X-Session-ID header is **deprecated** (not required), but still accepted for backward compatibility during Phase 1
 
 **What This Means**:
 - All authentication happens via secure httpOnly cookies
