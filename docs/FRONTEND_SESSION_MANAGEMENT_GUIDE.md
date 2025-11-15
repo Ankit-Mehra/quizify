@@ -27,7 +27,7 @@ This guide provides complete implementation details for integrating multi-device
 
 1. **Login Flow**:
    - User logs in via `POST /api/auth/login`
-   - Backend checks session limit (max 10 active sessions per user)
+   - Backend checks session limit (max 5 active sessions per user)
    - If under limit: Creates Redis session with unique `session_id`
    - If limit exceeded: Returns 429 error (user must revoke old sessions)
    - Backend returns `session_id` in response body
@@ -37,18 +37,18 @@ This guide provides complete implementation details for integrating multi-device
 2. **Authenticated Requests**:
    - Frontend sends `session_id` via `X-Session-ID` header (REQUIRED)
    - Backend validates session exists in Redis and belongs to user
-   - Backend refreshes session TTL (resets to 24 hours) on each request
+   - Backend refreshes session TTL (resets to 30 days) on each request
    - Backend returns 401 if session missing, expired, or not found
 
 3. **Multi-Device Support**:
    - Each device has its own `session_id`
    - Backend tracks device type, IP (hashed), user-agent, created_at, last_active timestamps
    - Users can view all active sessions and revoke specific devices
-   - Maximum 10 concurrent sessions per user (security limit)
+   - Maximum 5 concurrent sessions per user (security limit)
 
 4. **Session Expiration**:
-   - Sessions expire after 24 hours of inactivity
-   - Each authenticated request refreshes the TTL (resets to 24 hours)
+   - Sessions expire after 30 days of inactivity
+   - Each authenticated request refreshes the TTL (resets to 30 days)
    - Expired sessions automatically deleted by Redis TTL
    - Backend validates expiration via `is_expired` property before use
 
@@ -56,11 +56,11 @@ This guide provides complete implementation details for integrating multi-device
 
 - **JWT in HTTP-only cookies**: Protects against XSS attacks (access_token: 1hr, refresh_token: 30 days)
 - **Session ID in header**: Allows device-specific tracking and revocation
-- **IP address hashing**: Privacy-preserving location tracking (SHA-256, first 16 chars)
+- **IP address hashing**: Privacy-preserving location tracking (HMAC-SHA256, first 16 chars)
 - **User-agent truncation**: Prevents fingerprinting attacks (max 100 chars)
 - **RLS policies**: Users can only see/revoke their own sessions
-- **Session limits**: Maximum 10 concurrent sessions per user (prevents session flooding attacks)
-- **Automatic cleanup**: Expired sessions removed by Redis TTL (24 hours of inactivity)
+- **Session limits**: Maximum 5 concurrent sessions per user (prevents session flooding attacks)
+- **Automatic cleanup**: Expired sessions removed by Redis TTL (30 days of inactivity)
 - **Fallback mode**: Service remains available even when Redis is down (sessions not tracked)
 
 ---
@@ -97,7 +97,7 @@ This guide provides complete implementation details for integrating multi-device
 }
 ```
 
-**What This Means**: User has 10 or more active sessions. They must either:
+**What This Means**: User has 5 or more active sessions. They must either:
 1. Use `GET /api/auth/sessions` to view active sessions
 2. Use `DELETE /api/auth/sessions/{session_id}` to revoke old/unused devices
 3. Use `POST /api/auth/logout-all-devices` to logout all devices and start fresh
@@ -367,9 +367,9 @@ async function logoutAllDevices() {
 
 ## Session Limits and Expiration
 
-### Session Limit (10 Maximum Sessions)
+### Session Limit (5 Maximum Sessions)
 
-**Limit**: Each user can have maximum **10 active sessions** simultaneously.
+**Limit**: Each user can have maximum **5 active sessions** simultaneously.
 
 **Enforcement**: Checked during login at `POST /api/auth/login`
 
@@ -430,32 +430,32 @@ await fetch('/api/auth/logout-all-devices', {
 
 ---
 
-### Session Expiration (24 Hour TTL)
+### Session Expiration (30 Day TTL)
 
-**Session Lifetime**: 24 hours of inactivity
+**Session Lifetime**: 30 days of inactivity
 
 **How It Works**:
-1. Session created with 24-hour TTL in Redis
-2. Every authenticated request refreshes TTL (resets to 24 hours)
-3. If no requests for 24 hours → Session expires and auto-deleted by Redis
+1. Session created with 30-day TTL in Redis
+2. Every authenticated request refreshes TTL (resets to 30 days)
+3. If no requests for 30 days → Session expires and auto-deleted by Redis
 4. Next request with expired session → 401 Unauthorized
 
 **TTL Refresh Behavior**:
 ```
-Login at 10:00 AM → Session expires at 10:00 AM next day
-User makes request at 2:00 PM → Session expires at 2:00 PM next day (TTL refreshed)
-User makes request at 8:00 PM → Session expires at 8:00 PM next day (TTL refreshed)
+Login at 10:00 AM Jan 1 → Session expires at 10:00 AM Jan 31
+User makes request at 2:00 PM Jan 10 → Session expires at 2:00 PM Feb 9 (TTL refreshed)
+User makes request at 8:00 PM Jan 20 → Session expires at 8:00 PM Feb 19 (TTL refreshed)
 ... and so on
 ```
 
 **Expiration Check**:
 - Backend validates `is_expired` property before using session
-- `is_expired = (datetime.utcnow() - last_active) > 86400 seconds`
+- `is_expired = (datetime.utcnow() - last_active) > 2592000 seconds`
 - If expired, session deleted and 401 returned
 
 **User Experience**:
 - Active users: Never experience expiration (TTL constantly refreshed)
-- Inactive users: Must re-login after 24 hours
+- Inactive users: Must re-login after 30 days
 - No warning before expiration (clean security model)
 
 **Frontend Handling**:
@@ -743,7 +743,7 @@ apiClient.interceptors.response.use(
       // Session limit exceeded
       if (data?.detail?.includes('Too many active sessions')) {
         console.warn('[429] Session limit exceeded - redirecting to session management');
-        alert('You have reached the maximum number of active sessions (10). Please revoke old sessions.');
+        alert('You have reached the maximum number of active sessions (5). Please revoke old sessions.');
         window.location.href = '/settings/sessions';
       }
     } else if (status === 503) {
@@ -1020,7 +1020,7 @@ if (response.status === 429) {
   
   if (data.detail.includes('Too many active sessions')) {
     // Show session management page
-    alert('You have reached the maximum number of active sessions (10). Please revoke old sessions.');
+    alert('You have reached the maximum number of active sessions (5). Please revoke old sessions.');
     window.location.href = '/settings/sessions';
   } else {
     // Generic rate limit

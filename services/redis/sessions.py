@@ -14,13 +14,17 @@ Architecture:
 """
 
 import hashlib
+import hmac
 import logging
+import os
 import uuid
 from datetime import datetime
 from typing import List, Optional
 
 import redis.asyncio as redis
 from pydantic import BaseModel, Field
+
+from config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -38,9 +42,9 @@ class SessionInfo(BaseModel):
 
     @property
     def is_expired(self) -> bool:
-        """Check if session is older than 30 days (aligned with refresh token expiry)"""
+        """Check if session has exceeded configured TTL"""
         age = datetime.utcnow() - self.last_active
-        return age.total_seconds() > 2592000  # 30 days
+        return age.total_seconds() > Config.REDIS_SESSION_TTL
 
 
 class SessionError(Exception):
@@ -64,9 +68,10 @@ class SessionExpiredError(SessionError):
 class TooManySessionsError(SessionError):
     """Raised when user has too many active sessions"""
 
-    def __init__(self, user_id: str, count: int, max_sessions: int = 5):
+    def __init__(self, user_id: str, count: int, max_sessions: int = None):
         self.user_id = user_id
         self.count = count
+        self.max_sessions = max_sessions or Config.MAX_SESSIONS_PER_USER
         self.max_sessions = max_sessions
         super().__init__(
             f"User {user_id} has {count} active sessions (max: {max_sessions})"
@@ -109,7 +114,8 @@ class SessionService:
     return 1
     """
     
-    MAX_SESSIONS_PER_USER = 5  # Lowered from 10 for better security
+    # Module-level flag to log IP_HASH_SECRET warning only once
+    _ip_hash_warning_logged = False
 
     def __init__(self, redis_client: redis.Redis):
         """
@@ -119,7 +125,8 @@ class SessionService:
             redis_client: Async Redis client instance
         """
         self.redis = redis_client
-        self.session_ttl = 2592000  # 30 days (aligned with refresh token expiry)
+        self.session_ttl = Config.REDIS_SESSION_TTL
+        self.MAX_SESSIONS_PER_USER = Config.MAX_SESSIONS_PER_USER
 
     @staticmethod
     def _hash_ip(ip_address: str) -> str:
@@ -136,17 +143,16 @@ class SessionService:
         Returns:
             Salted hash or "redacted" if no secret configured
         """
-        import os
-        
         # Get secret salt from environment (should be set in production)
         secret = os.getenv("IP_HASH_SECRET")
         if not secret:
-            # If no secret configured, don't store IP at all for privacy
-            logger.warning("IP_HASH_SECRET not set - IP addresses will not be stored")
+            # Log warning only once to avoid flooding logs
+            if not SessionService._ip_hash_warning_logged:
+                logger.warning("IP_HASH_SECRET not set - IP addresses will not be stored (logged once)")
+                SessionService._ip_hash_warning_logged = True
             return "redacted"
         
         # Use HMAC for salted hashing (prevents rainbow table attacks)
-        import hmac
         h = hmac.new(secret.encode(), ip_address.encode(), hashlib.sha256)
         return h.hexdigest()[:16]
 
@@ -212,8 +218,12 @@ class SessionService:
                 )
             except Exception as lua_error:
                 # Fallback for test environments using fakeredis (doesn't support Lua)
-                if "unknown command" in str(lua_error).lower() and "eval" in str(lua_error).lower():
-                    logger.warning("Lua script not supported (fakeredis) - using non-atomic fallback for tests")
+                # Only use fallback if this is actually fakeredis or test environment
+                is_fakeredis = hasattr(self.redis, '__class__') and 'fakeredis' in str(self.redis.__class__.__module__).lower()
+                is_testing = os.getenv("TESTING", "false").lower() == "true"
+                
+                if (is_fakeredis or is_testing) and "unknown command" in str(lua_error).lower():
+                    logger.warning("Lua script not supported (fakeredis/testing) - using non-atomic fallback")
                     session_count = await self.redis.scard(user_sessions_key)
                     if session_count >= self.MAX_SESSIONS_PER_USER:
                         result = 0
@@ -221,6 +231,7 @@ class SessionService:
                         await self.redis.sadd(user_sessions_key, session_id)
                         result = 1
                 else:
+                    # Production Redis should support Lua - re-raise the error
                     raise
             
             if result == 0:
