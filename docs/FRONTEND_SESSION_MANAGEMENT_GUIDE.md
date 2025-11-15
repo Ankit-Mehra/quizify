@@ -1,23 +1,165 @@
 # Frontend Session Management Implementation Guide
 
-**Date**: November 14, 2025  
-**Version**: 1.0  
-**Status**: Production Ready
+**Date**: November 15, 2025  
+**Version**: 2.0 - Cookie-Based Authentication (Phase 1)  
+**Status**: Migration In Progress  
+**⚠️ BREAKING CHANGES**: X-Session-ID header now DEPRECATED, migrate to cookie-only authentication
+
+## 🔒 Security Update: XSS-Safe Session Management
+
+**As of November 15, 2025**, this backend implements **Phase 1 of cookie-based authentication** to eliminate XSS session replay vulnerabilities. The `X-Session-ID` header is now **DEPRECATED** but still supported for backward compatibility.
+
+### What Changed?
+
+**BEFORE (Vulnerable to XSS)**:
+- ❌ `session_id` stored in localStorage (XSS can steal it)
+- ❌ `X-Session-ID` header required on every request
+- ❌ Any injected script can replay session
+
+**AFTER (XSS-Safe)**:
+- ✅ Server derives session from httpOnly `refresh_token` cookie
+- ✅ `client_session_token` returned for UI display only (HMAC-signed, non-authoritative)
+- ✅ No sensitive identifiers in localStorage
+- ✅ `X-Session-ID` header **OPTIONAL** (deprecated)
+
+### Migration Timeline
+
+- **Phase 1** (Current): Dual support - X-Session-ID header **OR** refresh_token cookie
+- **Phase 2** (Next 2 weeks): Frontend migration, deprecation warnings
+- **Phase 3** (4 weeks): Remove X-Session-ID requirement entirely
+
+**👉 This guide covers both the OLD (deprecated) and NEW (recommended) implementation patterns.**
+
+---
 
 ## Overview
 
 This guide provides complete implementation details for integrating multi-device session management in the Quizify frontend. The backend supports Redis-based session tracking with device identification, allowing users to view and manage active sessions across all devices.
 
+**🆕 NEW**: Cookie-based authentication eliminates XSS vulnerabilities while maintaining all session management features.
+
 ---
 
 ## Table of Contents
 
-1. [Architecture Overview](#architecture-overview)
-2. [API Endpoints](#api-endpoints)
-3. [Session ID Handling](#session-id-handling)
-4. [Implementation Guide](#implementation-guide)
-5. [Common Pitfalls](#common-pitfalls)
-6. [Testing Checklist](#testing-checklist)
+1. [🆕 Migration Guide - Cookie-Based Authentication](#migration-guide)
+2. [Architecture Overview](#architecture-overview)
+3. [API Endpoints](#api-endpoints)
+4. [Session ID Handling (DEPRECATED)](#session-id-handling-deprecated)
+5. [🆕 Client Session Token Handling (NEW)](#client-session-token-handling-new)
+6. [Implementation Guide](#implementation-guide)
+7. [Common Pitfalls](#common-pitfalls)
+8. [Testing Checklist](#testing-checklist)
+
+---
+
+## 🆕 Migration Guide - Cookie-Based Authentication {#migration-guide}
+
+### Why Migrate?
+
+**Current Vulnerability**: Storing `session_id` in localStorage exposes it to XSS attacks. Any injected script can steal the session_id and replay it to impersonate the user.
+
+**Solution**: Cookie-based authentication using the httpOnly `refresh_token` cookie to derive sessions server-side.
+
+### Step-by-Step Migration
+
+#### Step 1: Update Login Handler (BREAKING CHANGE)
+
+**OLD (Deprecated)**:
+```javascript
+const response = await fetch('/api/auth/login', { /* ... */ });
+const data = await response.json();
+
+// ❌ DEPRECATED: Storing session_id in localStorage
+localStorage.setItem('session_id', data.session_id);
+```
+
+**NEW (Recommended)**:
+```javascript
+const response = await fetch('/api/auth/login', { /* ... */ });
+const data = await response.json();
+
+// ✅ NEW: Store client_session_token for UI only (XSS-safe)
+localStorage.setItem('client_session_token', data.client_session_token);
+
+// ⚠️ For backward compatibility during migration, you can store both:
+localStorage.setItem('session_id', data.session_id);  // Will be removed in Phase 3
+localStorage.setItem('client_session_token', data.client_session_token);
+```
+
+#### Step 2: Remove X-Session-ID Header (BREAKING CHANGE)
+
+**OLD (Deprecated)**:
+```javascript
+fetch('/api/quiz/generate', {
+  headers: {
+    'X-Session-ID': localStorage.getItem('session_id')  // ❌ DEPRECATED
+  },
+  credentials: 'include'
+});
+```
+
+**NEW (Recommended)**:
+```javascript
+fetch('/api/quiz/generate', {
+  // ✅ No X-Session-ID header needed!
+  // Server derives session from refresh_token cookie automatically
+  credentials: 'include'  // ← Just include cookies
+});
+```
+
+#### Step 3: Update Session List UI
+
+**OLD (Deprecated)**:
+```javascript
+const currentSessionId = localStorage.getItem('session_id');
+sessions.forEach(session => {
+  const isCurrent = session.session_id === currentSessionId;  // ❌ Client-side comparison
+  console.log(`${session.device_type} - ${isCurrent ? '(This Device)' : ''}`);
+});
+```
+
+**NEW (Recommended)**:
+```javascript
+// ✅ Backend provides is_current flag (server-computed)
+sessions.forEach(session => {
+  const badge = session.is_current ? '(This Device)' : '';
+  console.log(`${session.device_type} - ${badge}`);
+});
+
+// ✅ Optional: Use client_session_token for UI display
+const myToken = localStorage.getItem('client_session_token');
+const mySession = sessions.find(s => s.client_session_token === myToken);
+```
+
+#### Step 4: Update Session Revocation
+
+**No changes needed** - `DELETE /api/auth/sessions/{session_id}` still works the same way. The `session_id` field is maintained for backward compatibility.
+
+### Migration Checklist
+
+- [ ] Replace `session_id` with `client_session_token` in localStorage
+- [ ] Remove `X-Session-ID` header from all API requests
+- [ ] Keep `credentials: 'include'` on all requests (for cookies)
+- [ ] Update UI to use `session.is_current` flag from backend
+- [ ] Test that authentication still works without X-Session-ID header
+- [ ] Verify `client_session_token` appears in login response
+- [ ] Check that session listing shows correct "This Device" indicator
+
+### Backward Compatibility
+
+**Phase 1** (Current): Both authentication methods work:
+- ✅ Old clients: Send X-Session-ID header → Backend validates → Works (logs deprecation warning)
+- ✅ New clients: No header → Backend uses refresh_token cookie → Works
+
+**Phase 2** (2 weeks): Deprecation warnings become more prominent
+- ⚠️ X-Session-ID header usage triggers deprecation log
+- ⚠️ `session_id` field marked deprecated in API docs
+
+**Phase 3** (4 weeks): X-Session-ID requirement removed
+- ❌ X-Session-ID header ignored
+- ❌ `session_id` field removed from responses
+- ✅ Only `client_session_token` and cookie-based auth supported
 
 ---
 
@@ -25,20 +167,25 @@ This guide provides complete implementation details for integrating multi-device
 
 ### How Sessions Work
 
-1. **Login Flow**:
+1. **Login Flow (Phase 1 - Cookie-Based Authentication)**:
    - User logs in via `POST /api/auth/login`
    - Backend checks session limit (max 5 active sessions per user)
    - If under limit: Creates Redis session with unique `session_id`
    - If limit exceeded: Returns 429 error (user must revoke old sessions)
-   - Backend returns `session_id` in response body
+   - **🆕 Backend creates refresh_token → session_id mapping in Redis**
+   - **🆕 Backend generates HMAC-signed `client_session_token` for UI**
+   - Backend returns **both** `session_id` (deprecated) and `client_session_token` (new) in response body
    - Backend sets `access_token` (1 hour TTL) and `refresh_token` (30 days TTL) in HTTP-only cookies
-   - Frontend stores `session_id` in localStorage/sessionStorage
+   - **🆕 Frontend stores `client_session_token` in localStorage** (XSS-safe, non-authoritative)
+   - **⚠️ DEPRECATED**: Frontend stores `session_id` in localStorage (Phase 3 removal)
 
-2. **Authenticated Requests**:
-   - Frontend sends `session_id` via `X-Session-ID` header (REQUIRED)
+2. **Authenticated Requests (Phase 1 - Cookie-Based)**:
+   - **🆕 NEW (Recommended)**: Frontend includes `credentials: 'include'` → Backend derives session from refresh_token cookie
+   - **⚠️ DEPRECATED**: Frontend sends `session_id` via `X-Session-ID` header (logs deprecation warning)
    - Backend validates session exists in Redis and belongs to user
    - Backend refreshes session TTL (resets to 30 days) on each request
    - Backend returns 401 if session missing, expired, or not found
+   - **🆕 Session lookup priority**: 1) Request state (cached), 2) X-Session-ID header (deprecated), 3) refresh_token cookie (preferred)
 
 3. **Multi-Device Support**:
    - Each device has its own `session_id`
@@ -52,15 +199,19 @@ This guide provides complete implementation details for integrating multi-device
    - Expired sessions automatically deleted by Redis TTL
    - Backend validates expiration via `is_expired` property before use
 
-### Security Model
+### Security Model (Phase 1 Enhanced)
 
 - **JWT in HTTP-only cookies**: Protects against XSS attacks (access_token: 1hr, refresh_token: 30 days)
-- **Session ID in header**: Allows device-specific tracking and revocation
+- **🆕 Cookie-based session derivation**: Server uses refresh_token to find session (XSS-safe, no localStorage)
+- **🆕 Client session token (HMAC-signed)**: Non-authoritative UI identifier, safe to expose to JavaScript
+- **⚠️ DEPRECATED - Session ID in header**: X-Session-ID header optional (Phase 3 removal)
 - **IP address hashing**: Privacy-preserving location tracking (HMAC-SHA256, first 16 chars)
 - **User-agent truncation**: Prevents fingerprinting attacks (max 100 chars)
 - **RLS policies**: Users can only see/revoke their own sessions
 - **Session limits**: Maximum 5 concurrent sessions per user (prevents session flooding attacks)
 - **Automatic cleanup**: Expired sessions removed by Redis TTL (30 days of inactivity)
+- **🆕 XSS Protection**: No sensitive identifiers (session_id) stored in localStorage
+- **🆕 Refresh token mapping**: HMAC-SHA256 hash stored in Redis (32-char truncated)
 - **Fallback mode**: Service remains available even when Redis is down (sessions not tracked)
 
 ---
@@ -86,7 +237,8 @@ This guide provides complete implementation details for integrating multi-device
     "id": "760602fe-...",
     "email": "user@example.com"
   },
-  "session_id": "sess_abc123def456..."  // ← STORE THIS
+  "session_id": "sess_abc123def456...",           // ⚠️ DEPRECATED (Phase 3 removal)
+  "client_session_token": "cst_abc123_a1b2c3d4"   // 🆕 NEW: Store for UI only (XSS-safe)
 }
 ```
 
@@ -135,7 +287,10 @@ try {
 
   const data = await response.json();
 
-  // Store session_id for this device
+  // 🆕 NEW (Recommended): Store client_session_token for UI only
+  localStorage.setItem('client_session_token', data.client_session_token);
+  
+  // ⚠️ DEPRECATED: Store session_id for backward compatibility (Phase 3 removal)
   localStorage.setItem('session_id', data.session_id);
   
   // Redirect to dashboard
@@ -152,9 +307,13 @@ try {
 ### 2. Get Active Sessions
 **Endpoint**: `GET /api/auth/sessions`
 
-**Request Headers**:
+**Request Headers** (Phase 1 - Cookie-Based):
 ```
-X-Session-ID: sess_abc123...  // ← Current device session ID
+// 🆕 NEW (Recommended): No X-Session-ID header needed!
+// Backend derives session from refresh_token cookie
+
+// ⚠️ DEPRECATED: X-Session-ID header still works (logs warning)
+X-Session-ID: sess_abc123...  
 ```
 
 **Note**: JWT authentication happens automatically via HTTP-only cookies. No need to manually set Authorization header.
@@ -163,46 +322,55 @@ X-Session-ID: sess_abc123...  // ← Current device session ID
 ```json
 [
   {
-    "session_id": "sess_desktop_xyz",
+    "session_id": "sess_desktop_xyz",                          // ⚠️ DEPRECATED (Phase 3 removal)
+    "client_session_token": "cst_desktop_a1b2c3d4",            // 🆕 NEW: XSS-safe UI identifier
     "device_type": "browser",
     "created_at": "2025-11-14T10:00:00Z",
     "last_active": "2025-11-14T15:30:00Z",
-    "ip_address": "7868a1769fe3d0c5",  // SHA-256 hash (first 16 chars)
+    "ip_address": "7868a1769fe3d0c5",                          // HMAC-SHA256 hash (first 16 chars)
     "user_agent": "Chrome/120.0.0.0 (Mac OS X 10.15.7)",
     "is_expired": false,
-    "is_current": true  // ← THIS DEVICE (matches X-Session-ID)
+    "is_current": true                                          // 🆕 NEW: Server-computed (no client comparison)
   },
   {
-    "session_id": "sess_mobile_abc",
+    "session_id": "sess_mobile_abc",                           // ⚠️ DEPRECATED (Phase 3 removal)
+    "client_session_token": "cst_mobile_e5f6g7h8",             // 🆕 NEW: XSS-safe UI identifier
     "device_type": "mobile",
     "created_at": "2025-11-14T09:00:00Z",
     "last_active": "2025-11-14T14:00:00Z",
-    "ip_address": "b726760f4a2e8d1c",  // SHA-256 hash (first 16 chars)
+    "ip_address": "b726760f4a2e8d1c",                          // HMAC-SHA256 hash (first 16 chars)
     "user_agent": "Chrome/120.0.0.0 (Android 14)",
     "is_expired": false,
-    "is_current": false  // ← OTHER DEVICE
+    "is_current": false                                         // 🆕 NEW: Server-computed
   }
 ]
 ```
 
-**Frontend Action**:
+**Frontend Action (Phase 1 - Cookie-Based)**:
 ```javascript
-const sessionId = localStorage.getItem('session_id');
+// 🆕 NEW (Recommended): No X-Session-ID header needed
+const response = await fetch('/api/auth/sessions', {
+  method: 'GET',
+  credentials: 'include'  // ← Server derives session from cookie
+});
 
+// ⚠️ DEPRECATED: Using X-Session-ID header (still works, logs warning)
+const sessionId = localStorage.getItem('session_id');
 const response = await fetch('/api/auth/sessions', {
   method: 'GET',
   headers: {
-    'X-Session-ID': sessionId  // ← Include current session
+    'X-Session-ID': sessionId  // ← DEPRECATED
   },
   credentials: 'include'
 });
 
 const sessions = await response.json();
 
-// Display sessions in UI
+// 🆕 Display sessions in UI using server-computed is_current flag
 sessions.forEach(session => {
   const badge = session.is_current ? '(This Device)' : '';
-  console.log(`${session.device_type} - ${badge}`);
+  const token = session.client_session_token;  // XSS-safe UI identifier
+  console.log(`${session.device_type} - ${badge} - Token: ${token}`);
 });
 ```
 
@@ -532,14 +700,16 @@ sessions = await session_service.list_sessions(user_id)
 
 ---
 
-## Session ID Handling
+## Session ID Handling (DEPRECATED) {#session-id-handling-deprecated}
 
-### Where to Store Session ID
+**⚠️ DEPRECATED**: This section describes the OLD authentication method using `X-Session-ID` header. See [Client Session Token Handling](#client-session-token-handling-new) for the NEW method.
 
-**Recommended**: `localStorage` (persists across browser restarts)
+### Where to Store Session ID (DEPRECATED)
+
+**⚠️ DEPRECATED**: Storing `session_id` in localStorage is vulnerable to XSS attacks. Use `client_session_token` instead.
 
 ```javascript
-// After login
+// ⚠️ DEPRECATED - Phase 3 removal
 localStorage.setItem('session_id', sessionId);
 
 // On every authenticated request
@@ -556,32 +726,132 @@ const sessionId = localStorage.getItem('session_id');
 
 ---
 
-### How to Send Session ID
+### How to Send Session ID (DEPRECATED)
 
-**ALWAYS** include `X-Session-ID` header in authenticated requests:
+**⚠️ DEPRECATED**: The `X-Session-ID` header is no longer required. Backend now derives session from `refresh_token` cookie.
 
 ```javascript
-// Fetch API
+// ⚠️ DEPRECATED - Fetch API (logs deprecation warning)
 fetch('/api/quiz/generate', {
   method: 'POST',
   headers: {
     'Content-Type': 'application/json',
-    'X-Session-ID': localStorage.getItem('session_id')
+    'X-Session-ID': localStorage.getItem('session_id')  // ← DEPRECATED
   },
-  credentials: 'include',  // ← For JWT cookies
+  credentials: 'include',  // ← Still required for cookies
   body: JSON.stringify(quizData)
 });
 
-// Axios
+// ⚠️ DEPRECATED - Axios (logs deprecation warning)
 axios.post('/api/quiz/generate', quizData, {
   headers: {
-    'X-Session-ID': localStorage.getItem('session_id')
+    'X-Session-ID': localStorage.getItem('session_id')  // ← DEPRECATED
   },
-  withCredentials: true  // ← For JWT cookies
+  withCredentials: true  // ← Still required for cookies
 });
 ```
 
 ---
+
+## 🆕 Client Session Token Handling (NEW) {#client-session-token-handling-new}
+
+### What is client_session_token?
+
+**Purpose**: XSS-safe, non-authoritative identifier for UI display and "current device" highlighting.
+
+**Format**: `cst_{session_prefix}_{HMAC_signature}`
+- Example: `cst_abc123_a1b2c3d4`
+- HMAC-signed using server secret
+- Cannot be forged or tampered with
+- Safe to expose to JavaScript (non-authoritative)
+
+**NOT Used For**:
+- ❌ Authentication (handled by httpOnly cookies)
+- ❌ Session validation (backend uses refresh_token cookie)
+- ❌ Security checks
+
+**Used For**:
+- ✅ UI display ("This Device" badge)
+- ✅ Local session identification
+- ✅ Client-side session matching
+
+### Where to Store client_session_token
+
+**Recommended**: `localStorage` (persists across browser restarts)
+
+```javascript
+// After login
+localStorage.setItem('client_session_token', data.client_session_token);
+
+// Later use
+const myToken = localStorage.getItem('client_session_token');
+```
+
+**Alternative**: `sessionStorage` (clears when browser closes)
+```javascript
+sessionStorage.setItem('client_session_token', data.client_session_token);
+```
+
+### How to Use client_session_token
+
+**1. Display "This Device" Badge**:
+```javascript
+const myToken = localStorage.getItem('client_session_token');
+
+sessions.forEach(session => {
+  // Option 1: Use server-computed is_current flag (recommended)
+  const badge = session.is_current ? '(This Device)' : '';
+  
+  // Option 2: Match client_session_token locally (optional)
+  const isMyDevice = session.client_session_token === myToken;
+  
+  console.log(`${session.device_type} ${badge}`);
+});
+```
+
+**2. Find Current Session in List**:
+```javascript
+const myToken = localStorage.getItem('client_session_token');
+const currentSession = sessions.find(s => s.client_session_token === myToken);
+
+if (currentSession) {
+  console.log('Current device:', currentSession.device_type);
+}
+```
+
+**3. Validate Token Format (Optional)**:
+```javascript
+function isValidClientSessionToken(token) {
+  // Format: cst_{8_chars}_{16_chars}
+  return /^cst_[a-z0-9]{8}_[a-z0-9]{16}$/i.test(token);
+}
+
+const token = localStorage.getItem('client_session_token');
+if (!isValidClientSessionToken(token)) {
+  console.warn('Invalid client_session_token format');
+}
+```
+
+### How to Send Authenticated Requests (NEW)
+
+**🆕 NEW (Recommended)**: No headers needed! Just include credentials.
+
+```javascript
+// Fetch API - No X-Session-ID header needed
+fetch('/api/quiz/generate', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json'
+  },
+  credentials: 'include',  // ← Server derives session from refresh_token cookie
+  body: JSON.stringify(quizData)
+});
+
+// Axios - No X-Session-ID header needed
+axios.post('/api/quiz/generate', quizData, {
+  withCredentials: true  // ← Server derives session from refresh_token cookie
+});
+```
 
 ### CORS Configuration
 
@@ -589,48 +859,63 @@ axios.post('/api/quiz/generate', quizData, {
 ```
 Access-Control-Allow-Origin: <your-frontend-domain>
 Access-Control-Allow-Credentials: true
-Access-Control-Allow-Headers: Content-Type, Authorization, Accept, X-Session-ID
+Access-Control-Allow-Headers: Content-Type, Authorization, Accept, X-Session-ID  // ⚠️ X-Session-ID kept for backward compat
 ```
 
 **Frontend Must**:
-- Set `credentials: 'include'` (fetch) or `withCredentials: true` (axios)
-- Match exact origin (no wildcards with credentials)
+- ✅ Set `credentials: 'include'` (fetch) or `withCredentials: true` (axios)
+- ✅ Match exact origin (no wildcards with credentials)
+- 🆕 No need to send X-Session-ID header (Phase 1 - Cookie-based auth)
 
 ---
 
 ## Implementation Guide
 
-### Step 1: Setup Session Storage
+### Step 1: Setup Session Storage (Phase 1 - Cookie-Based)
 
 ```javascript
 // utils/session.js
 
 export const SessionManager = {
-  // Store session ID after login
-  setSession(sessionId) {
-    localStorage.setItem('session_id', sessionId);
+  // 🆕 NEW: Store client_session_token after login (XSS-safe)
+  setSession(clientSessionToken, sessionId = null) {
+    localStorage.setItem('client_session_token', clientSessionToken);
+    
+    // ⚠️ DEPRECATED: Store session_id for backward compatibility (Phase 3 removal)
+    if (sessionId) {
+      localStorage.setItem('session_id', sessionId);
+    }
   },
   
-  // Get current session ID
-  getSession() {
+  // 🆕 NEW: Get client_session_token (XSS-safe)
+  getClientToken() {
+    return localStorage.getItem('client_session_token');
+  },
+  
+  // ⚠️ DEPRECATED: Get session_id (Phase 3 removal)
+  getSessionId() {
     return localStorage.getItem('session_id');
   },
   
   // Clear session on logout
   clearSession() {
-    localStorage.removeItem('session_id');
+    localStorage.removeItem('client_session_token');
+    localStorage.removeItem('session_id');  // ⚠️ DEPRECATED
+    localStorage.removeItem('access_token');
+    localStorage.removeItem('refresh_token');
   },
   
   // Check if session exists
   hasSession() {
-    return !!localStorage.getItem('session_id');
+    // Check both for backward compatibility
+    return !!localStorage.getItem('client_session_token') || !!localStorage.getItem('session_id');
   }
 };
 ```
 
 ---
 
-### Step 2A: Create API Client (Fetch-based)
+### Step 2A: Create API Client (Fetch-based) - Phase 1 Cookie-Based
 
 ```javascript
 // api/client.js
@@ -638,30 +923,32 @@ export const SessionManager = {
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 
 export async function apiRequest(endpoint, options = {}) {
-  const sessionId = localStorage.getItem('session_id');
-  
   const headers = {
     'Content-Type': 'application/json',
     ...options.headers
   };
   
-  // ⚠️ CRITICAL: Add session ID to EVERY request
+  // 🆕 NEW (Phase 1): No X-Session-ID header needed!
+  // Backend derives session from refresh_token cookie automatically
+  
+  // ⚠️ OPTIONAL: Add X-Session-ID for backward compatibility (logs deprecation warning)
+  const sessionId = localStorage.getItem('session_id');
   if (sessionId) {
-    headers['X-Session-ID'] = sessionId;
-  } else {
-    console.warn(`Request to ${endpoint} without session_id - will fail with 401`);
+    headers['X-Session-ID'] = sessionId;  // ← DEPRECATED but still works
+    console.debug('Using deprecated X-Session-ID header - migrate to cookie-only auth');
   }
   
   const response = await fetch(`${API_BASE_URL}${endpoint}`, {
     ...options,
     headers,
-    credentials: 'include'  // ← CRITICAL for cookies
+    credentials: 'include'  // ← CRITICAL: Server derives session from refresh_token cookie
   });
   
   // Handle different error scenarios
   if (response.status === 401) {
     // Session expired or invalid
     localStorage.removeItem('session_id');
+    localStorage.removeItem('client_session_token');  // 🆕 NEW
     window.location.href = '/login?message=Session expired';
     throw new Error('Session expired');
   }
@@ -681,7 +968,7 @@ export async function apiRequest(endpoint, options = {}) {
 
 ---
 
-### Step 2B: Create API Client (Axios-based)
+### Step 2B: Create API Client (Axios-based) - Phase 1 Cookie-Based
 
 **If using axios**, configure request/response interceptors:
 
@@ -695,22 +982,26 @@ const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 // Create axios instance
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
-  withCredentials: true,  // ← CRITICAL for cookies
+  withCredentials: true,  // ← CRITICAL: Server derives session from refresh_token cookie
   headers: {
     'Content-Type': 'application/json'
   }
 });
 
-// Request interceptor - Add X-Session-ID to EVERY request
+// Request interceptor - Add X-Session-ID for backward compatibility (OPTIONAL)
 apiClient.interceptors.request.use(
   (config) => {
+    // 🆕 NEW (Phase 1): X-Session-ID header is OPTIONAL
+    // Backend derives session from refresh_token cookie automatically
+    
+    // ⚠️ OPTIONAL: Add X-Session-ID for backward compatibility (logs deprecation warning)
     const sessionId = localStorage.getItem('session_id');
     
     if (sessionId) {
-      config.headers['X-Session-ID'] = sessionId;
-      console.debug(`[Request] ${config.method?.toUpperCase()} ${config.url} - Session: ${sessionId.substring(0, 16)}...`);
+      config.headers['X-Session-ID'] = sessionId;  // ← DEPRECATED but still works
+      console.debug(`[Request] ${config.method?.toUpperCase()} ${config.url} - Using deprecated X-Session-ID`);
     } else {
-      console.warn(`[Request] ${config.method?.toUpperCase()} ${config.url} - NO SESSION ID (will fail with 401)`);
+      console.debug(`[Request] ${config.method?.toUpperCase()} ${config.url} - Cookie-based auth`);
     }
     
     return config;
@@ -736,7 +1027,8 @@ apiClient.interceptors.response.use(
     if (status === 401) {
       // Session expired or invalid
       console.warn('[401] Session expired - redirecting to login');
-      localStorage.removeItem('session_id');
+      localStorage.removeItem('session_id');  // ⚠️ DEPRECATED
+      localStorage.removeItem('client_session_token');  // 🆕 NEW
       localStorage.removeItem('access_token');
       window.location.href = '/login?message=Session expired. Please login again.';
     } else if (status === 429) {
@@ -760,7 +1052,7 @@ export default apiClient;
 
 // Usage:
 // import apiClient from './api/client';
-// const response = await apiClient.get('/api/auth/me');
+// const response = await apiClient.get('/api/auth/me');  // No X-Session-ID needed!
 // const quizzes = await apiClient.get('/api/quiz/my-quizzes');
 ```
 
@@ -784,8 +1076,11 @@ export function Login() {
       
       const data = await response.json();
       
-      // ⚠️ CRITICAL: Store session ID
-      SessionManager.setSession(data.session_id);
+      // 🆕 NEW (Phase 1): Store both tokens for backward compatibility
+      SessionManager.setSession(
+        data.client_session_token,  // XSS-safe UI identifier
+        data.session_id             // DEPRECATED (Phase 3 removal)
+      );
       
       // Redirect to dashboard
       window.location.href = '/dashboard';
