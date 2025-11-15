@@ -155,17 +155,19 @@ async def login(request_body: LoginRequest, response: Response, request: Request
             session_service = SessionService(redis_client)
             user_agent = request.headers.get("user-agent")
             device_type = detect_device_type(user_agent)
-            session_id = await session_service.create_session(
+            session_id, client_session_token = await session_service.create_session(
                 user_id=user_id,
                 device_type=device_type,
                 ip_address=request.client.host if request.client else None,
-                user_agent=user_agent
+                user_agent=user_agent,
+                refresh_token=refresh_token  # Enable cookie-based lookup
             )
             logger.info(
-                "Redis session created for user %s (device: %s, session: %s)",
+                "Redis session created for user %s (device: %s, session: %s, client_token: %s)",
                 _short_user_id(user_id),
                 device_type,
-                session_id[:16] + "..." if len(session_id) > 16 else session_id
+                session_id[:16] + "..." if len(session_id) > 16 else session_id,
+                client_session_token[:16] + "..." if len(client_session_token) > 16 else client_session_token
             )
         except TooManySessionsError as e:
             # Hard fail for session limits - this is a security control
@@ -216,7 +218,8 @@ async def login(request_body: LoginRequest, response: Response, request: Request
                 "id": user_id,
                 "email": result.user.email if result.user else None
             },
-            "session_id": session_id  # Always included now (required for session management)
+            "session_id": session_id,  # DEPRECATED: Will be removed in Phase 3 (use client_session_token)
+            "client_session_token": client_session_token  # NEW: HMAC-signed token for UI only (XSS-safe)
         }
         
         # SECURITY: Only expose token in response body during testing or development
@@ -801,14 +804,15 @@ async def get_active_sessions(
         # Convert to dict for API response
         return [
             {
-                "session_id": session.session_id,
+                "session_id": session.session_id,  # DEPRECATED: Will be removed in Phase 3
+                "client_session_token": session.client_session_token,  # NEW: For UI identification only
                 "device_type": session.device_type,
                 "created_at": session.created_at.isoformat(),
                 "last_active": session.last_active.isoformat(),
                 "ip_address": session.ip_address,  # Already hashed
                 "user_agent": session.user_agent,  # Already truncated
                 "is_expired": session.is_expired,
-                "is_current": session.session_id == current_session_id  # Mark current device
+                "is_current": session.session_id == current_session_id  # Server-computed (no client comparison needed)
             }
             for session in sessions
         ]

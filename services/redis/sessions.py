@@ -39,6 +39,8 @@ class SessionInfo(BaseModel):
     device_type: str = Field(..., description="Device type: browser, mobile, api")
     ip_address: str = Field(..., description="Hashed IP address")
     user_agent: str = Field(..., description="User agent string (truncated)")
+    refresh_token_hash: Optional[str] = Field(None, description="HMAC hash of refresh token (for cookie-based lookup)")
+    client_session_token: Optional[str] = Field(None, description="Optional HMAC-signed token for UI identification only")
 
     @property
     def is_expired(self) -> bool:
@@ -167,6 +169,47 @@ class SessionService:
     def _generate_session_id() -> str:
         """Generate cryptographically secure session ID"""
         return f"sess_{uuid.uuid4()}"
+    
+    @staticmethod
+    def _hash_refresh_token(refresh_token: str) -> str:
+        """
+        Create HMAC hash of refresh token for cookie-based session lookup.
+        
+        Uses IP_HASH_SECRET (or falls back to generic key) to create a one-way
+        hash that can be stored in Redis to map refresh tokens to sessions.
+        
+        Args:
+            refresh_token: The JWT refresh token from Supabase
+            
+        Returns:
+            HMAC-SHA256 hash of the token (first 32 chars for efficiency)
+        """
+        secret = os.getenv("IP_HASH_SECRET", "fallback-session-secret-key")
+        h = hmac.new(secret.encode(), refresh_token.encode(), hashlib.sha256)
+        return h.hexdigest()[:32]
+    
+    @staticmethod
+    def _generate_client_session_token(session_id: str, user_id: str) -> str:
+        """
+        Generate HMAC-signed client session token for UI purposes only.
+        
+        This token is NOT used for authentication - it's purely for frontend
+        to identify which device is "current" in the session list UI without
+        storing the real session_id in localStorage (XSS protection).
+        
+        Args:
+            session_id: The real server-side session identifier
+            user_id: User who owns the session
+            
+        Returns:
+            HMAC-signed token that frontend can safely store
+        """
+        secret = os.getenv("IP_HASH_SECRET", "fallback-session-secret-key")
+        # Combine session_id + user_id for uniqueness, then sign with HMAC
+        payload = f"{session_id}:{user_id}"
+        signature = hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()[:16]
+        # Return a compact token: first 8 chars of session_id + signature
+        return f"cst_{session_id[:8]}_{signature}"
 
     async def create_session(
         self,
@@ -174,33 +217,41 @@ class SessionService:
         device_type: str = "browser",
         ip_address: Optional[str] = None,
         user_agent: Optional[str] = None,
-    ) -> str:
+        refresh_token: Optional[str] = None,
+    ) -> tuple[str, str]:
         """
         Create a new authentication session atomically.
 
         Generates a unique session ID, stores session metadata in Redis,
         and adds session to user's active session set. Uses Lua script
         to ensure atomic check-and-add operation (prevents race conditions).
+        
+        Optionally creates a refresh_token → session_id mapping to enable
+        cookie-based session lookup without requiring X-Session-ID header.
 
         Args:
             user_id: User identifier
             device_type: Type of device ('browser', 'mobile', 'api')
             ip_address: Client IP address (will be hashed with secret salt)
             user_agent: Client user agent string (will be truncated)
+            refresh_token: Optional Supabase refresh token for cookie-based lookup
 
         Returns:
-            session_id: Unique session identifier (UUID)
+            tuple: (session_id, client_session_token)
+                - session_id: Server-side session identifier
+                - client_session_token: Optional HMAC-signed token for UI only
 
         Raises:
             TooManySessionsError: If user has >= MAX_SESSIONS_PER_USER active sessions
             redis.RedisError: If Redis operation fails
 
         Example:
-            >>> session_id = await service.create_session(
+            >>> session_id, client_token = await service.create_session(
             ...     user_id="user_123",
             ...     device_type="browser",
             ...     ip_address="192.168.1.1",
-            ...     user_agent="Mozilla/5.0..."
+            ...     user_agent="Mozilla/5.0...",
+            ...     refresh_token="eyJhbGc..."
             ... )
         """
         try:
@@ -250,6 +301,14 @@ class SessionService:
             truncated_ua = (
                 self._truncate_user_agent(user_agent) if user_agent else "unknown"
             )
+            
+            # Generate client session token for UI purposes (XSS-safe)
+            client_session_token = self._generate_client_session_token(session_id, user_id)
+            
+            # Hash refresh token if provided (for cookie-based session lookup)
+            refresh_token_hash = None
+            if refresh_token:
+                refresh_token_hash = self._hash_refresh_token(refresh_token)
 
             session_data = {
                 "session_id": session_id,
@@ -259,7 +318,12 @@ class SessionService:
                 "device_type": device_type,
                 "ip_address": hashed_ip,
                 "user_agent": truncated_ua,
+                "client_session_token": client_session_token,
             }
+            
+            # Add refresh_token_hash if provided
+            if refresh_token_hash:
+                session_data["refresh_token_hash"] = refresh_token_hash
 
             # Store session in Redis hash
             session_key = f"session:{session_id}"
@@ -268,11 +332,20 @@ class SessionService:
 
             # Set TTL on user sessions set
             await self.redis.expire(user_sessions_key, self.session_ttl)
+            
+            # If refresh token provided, create reverse mapping for cookie-based lookup
+            if refresh_token_hash:
+                refresh_token_key = f"refresh_token:{refresh_token_hash}"
+                await self.redis.set(refresh_token_key, session_id, ex=self.session_ttl)
+                logger.info(
+                    f"Created session for user {user_id[:8]}... on {device_type} device (cookie-based lookup enabled)"
+                )
+            else:
+                logger.info(
+                    f"Created session for user {user_id[:8]}... on {device_type} device (header-based only)"
+                )
 
-            logger.info(
-                f"Created session for user {user_id[:8]}... on {device_type} device"
-            )
-            return session_id
+            return session_id, client_session_token
 
         except TooManySessionsError:
             raise
@@ -305,7 +378,8 @@ class SessionService:
             # Convert bytes to strings if needed
             if isinstance(next(iter(session_data.keys())), bytes):
                 session_data = {
-                    k.decode(): v.decode() for k, v in session_data.items()
+                    k.decode(): v.decode() if isinstance(v, bytes) else v 
+                    for k, v in session_data.items()
                 }
 
             # Parse datetime fields
@@ -315,6 +389,12 @@ class SessionService:
             session_data["last_active"] = datetime.fromisoformat(
                 session_data["last_active"]
             )
+            
+            # Handle optional fields (may not exist in older sessions)
+            if "refresh_token_hash" not in session_data:
+                session_data["refresh_token_hash"] = None
+            if "client_session_token" not in session_data:
+                session_data["client_session_token"] = None
 
             session_info = SessionInfo(**session_data)
 
@@ -328,6 +408,42 @@ class SessionService:
 
         except Exception as e:
             logger.error(f"Failed to validate session {session_id[:12]}...: {e}")
+            return None
+
+    async def find_session_by_refresh_token(self, refresh_token: str) -> Optional[str]:
+        """
+        Find session ID by refresh token (cookie-based lookup).
+        
+        This enables pure cookie-based authentication without requiring
+        the X-Session-ID header. The frontend never stores session_id,
+        eliminating XSS session replay risk.
+        
+        Args:
+            refresh_token: The JWT refresh token from httpOnly cookie
+            
+        Returns:
+            session_id if found, None otherwise
+            
+        Example:
+            >>> session_id = await service.find_session_by_refresh_token(refresh_token)
+            >>> if session_id:
+            ...     session_info = await service.validate_session(session_id)
+        """
+        try:
+            refresh_token_hash = self._hash_refresh_token(refresh_token)
+            refresh_token_key = f"refresh_token:{refresh_token_hash}"
+            session_id = await self.redis.get(refresh_token_key)
+            
+            if session_id:
+                # Convert bytes to string if needed
+                if isinstance(session_id, bytes):
+                    session_id = session_id.decode()
+                return session_id
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Failed to lookup session by refresh token: {e}")
             return None
 
     async def refresh_session(self, session_id: str) -> bool:

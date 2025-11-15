@@ -76,14 +76,42 @@ async def _validate_request_session(request: Request, user_id: str) -> Optional[
             detail="Session management service temporarily unavailable. Please try again."
         )
 
-    # Check session_id in order of precedence: state → header → query → cookie
+    # Check session_id in order of precedence: state → header → query → cookie → refresh_token
     session_id = getattr(request.state, "session_id", None)
+    session_lookup_method = "state"
+    
     if not session_id:
         session_id = request.headers.get(SESSION_HEADER)
+        if session_id:
+            session_lookup_method = "header (deprecated)"
+            logger.debug(
+                "Session lookup via X-Session-ID header (DEPRECATED) for user %s. "
+                "Migrate to cookie-only authentication.",
+                _short_id(user_id, length=8)
+            )
+    
     if not session_id:
         session_id = request.query_params.get("session_id")
+        if session_id:
+            session_lookup_method = "query"
+    
     if not session_id:
         session_id = request.cookies.get("session_id")
+        if session_id:
+            session_lookup_method = "cookie"
+    
+    # NEW: Try cookie-based lookup via refresh_token (preferred method)
+    if not session_id:
+        refresh_token = request.cookies.get("refresh_token")
+        if refresh_token:
+            session_service = SessionService(redis_client)
+            session_id = await session_service.find_session_by_refresh_token(refresh_token)
+            if session_id:
+                session_lookup_method = "refresh_token (cookie-based)"
+                logger.debug(
+                    "Session lookup via refresh_token cookie for user %s (XSS-safe method)",
+                    _short_id(user_id, length=8)
+                )
 
     if not session_id:
         # SECURITY: Session ID is required for session management to work
