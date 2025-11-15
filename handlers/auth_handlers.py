@@ -139,24 +139,35 @@ async def login(request_body: LoginRequest, response: Response, request: Request
         logger.info(f"User logged in: {_short_user_id(user_id)}")
 
         # Create Redis session for multi-device tracking
-        session_id: Optional[str] = None
+        # SECURITY: Redis is REQUIRED for session management. Fail hard if unavailable.
+        redis_client = get_redis_client(request)
+        if not redis_client:
+            logger.error(
+                "Redis unavailable during login for user %s - failing request",
+                _short_user_id(user_id)
+            )
+            raise HTTPException(
+                status_code=503,
+                detail="Session management service temporarily unavailable. Please try again."
+            )
+        
         try:
-            redis_client = get_redis_client(request)
-            if user_id and redis_client:
-                session_service = SessionService(redis_client)
-                user_agent = request.headers.get("user-agent")
-                device_type = detect_device_type(user_agent)
-                session_id = await session_service.create_session(
-                    user_id=user_id,
-                    device_type=device_type,
-                    ip_address=request.client.host if request.client else None,
-                    user_agent=user_agent
-                )
-                logger.info(
-                    "Redis session created for user %s (device: %s)",
-                    _short_user_id(user_id),
-                    device_type,
-                )
+            session_service = SessionService(redis_client)
+            user_agent = request.headers.get("user-agent")
+            device_type = detect_device_type(user_agent)
+            client_session_token = await session_service.create_session(
+                user_id=user_id,
+                device_type=device_type,
+                ip_address=request.client.host if request.client else None,
+                user_agent=user_agent,
+                refresh_token=refresh_token  # Enable cookie-based lookup
+            )
+            logger.info(
+                "Redis session created for user %s (device: %s, client_token: %s)",
+                _short_user_id(user_id),
+                device_type,
+                client_session_token[:16] + "..." if len(client_session_token) > 16 else client_session_token
+            )
         except TooManySessionsError as e:
             # Hard fail for session limits - this is a security control
             # User must explicitly manage their sessions (logout or revoke)
@@ -166,9 +177,15 @@ async def login(request_body: LoginRequest, response: Response, request: Request
                 detail="Too many active sessions. Please logout from other devices or revoke old sessions."
             )
         except Exception as redis_error:
-            # Soft fail for other Redis errors - fallback mode allows login without session
-            # This ensures service availability even when Redis is down
-            logger.warning(f"Failed to create Redis session (fallback mode): {redis_error}")
+            # Hard fail for any Redis errors - prevents unusable token loop
+            # If session creation fails, subsequent requests will fail with 401
+            logger.error(
+                f"Failed to create Redis session for user {_short_user_id(user_id)}: {redis_error}"
+            )
+            raise HTTPException(
+                status_code=503,
+                detail="Session management service temporarily unavailable. Please try again."
+            )
         
         # Set access token cookie
         # Domain allows cookie to be shared across all subdomains (www, api, etc.)
@@ -199,12 +216,9 @@ async def login(request_body: LoginRequest, response: Response, request: Request
             "user": {
                 "id": user_id,
                 "email": result.user.email if result.user else None
-            }
+            },
+            "client_session_token": client_session_token  # HMAC-signed token for UI identification only (XSS-safe)
         }
-        
-        # Include session_id if created
-        if session_id:
-            response_data["session_id"] = session_id
         
         # SECURITY: Only expose token in response body during testing or development
         # In production, token is only available via HttpOnly cookie
@@ -788,14 +802,14 @@ async def get_active_sessions(
         # Convert to dict for API response
         return [
             {
-                "session_id": session.session_id,
+                "client_session_token": session.client_session_token,  # HMAC-signed token for UI identification
                 "device_type": session.device_type,
                 "created_at": session.created_at.isoformat(),
                 "last_active": session.last_active.isoformat(),
                 "ip_address": session.ip_address,  # Already hashed
                 "user_agent": session.user_agent,  # Already truncated
                 "is_expired": session.is_expired,
-                "is_current": session.session_id == current_session_id  # Mark current device
+                "is_current": session.session_id == current_session_id  # Server-computed (no client comparison needed)
             }
             for session in sessions
         ]

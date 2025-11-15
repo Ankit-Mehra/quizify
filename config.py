@@ -80,8 +80,8 @@ class Config:
     MAX_CONCURRENT_BROWSERS: int = int(os.getenv("MAX_CONCURRENT_BROWSERS", "3"))
     
     # Session settings
-    REDIS_SESSION_TTL: int = int(os.getenv("REDIS_SESSION_TTL", "604800"))  # 7 days
-    MAX_SESSIONS_PER_USER: int = int(os.getenv("MAX_SESSIONS_PER_USER", "10"))
+    REDIS_SESSION_TTL: int = int(os.getenv("REDIS_SESSION_TTL", "2592000"))  # 30 days (aligned with refresh token)
+    MAX_SESSIONS_PER_USER: int = int(os.getenv("MAX_SESSIONS_PER_USER", "5"))  # Lowered for security
     
     @classmethod
     def is_testing(cls) -> bool:

@@ -12,8 +12,6 @@ security = HTTPBearer(auto_error=False)
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
-SESSION_HEADER = "X-Session-ID"
-
 # Module-level HTTP client for connection reuse (avoids TLS handshake overhead)
 _http_client: Optional[httpx.AsyncClient] = None
 
@@ -53,26 +51,42 @@ logger.info("Auth helper initialized")
 
 
 async def _validate_request_session(request: Request, user_id: str) -> Optional[str]:
-    """Validate Redis session associated with the request and refresh its TTL."""
+    """
+    Validate Redis session associated with the request and refresh its TTL.
+    
+    SECURITY: Redis is REQUIRED for session management. If Redis is unavailable,
+    all session-based security controls (revocation, limits, logout-all) would be
+    bypassed. Therefore, we fail closed and return 503 Service Unavailable.
+    """
 
     if getattr(request.state, "session_validated", False):
         return getattr(request.state, "session_id", None)
 
     redis_client = getattr(request.app.state, "redis", None)
     if not redis_client:
-        logger.warning("Redis client unavailable; skipping session validation (fallback mode)")
-        request.state.session_validated = True
-        request.state.session_id = None
-        return None
+        logger.error(
+            "Redis client unavailable - cannot validate session for user %s. "
+            "Failing closed to prevent security bypass.",
+            _short_id(user_id, length=8)
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="Session management service temporarily unavailable. Please try again."
+        )
 
-    # Check session_id in order of precedence: state → header → query → cookie
+    # Check session_id: state → refresh_token cookie (XSS-safe)
     session_id = getattr(request.state, "session_id", None)
+    
     if not session_id:
-        session_id = request.headers.get(SESSION_HEADER)
-    if not session_id:
-        session_id = request.query_params.get("session_id")
-    if not session_id:
-        session_id = request.cookies.get("session_id")
+        refresh_token = request.cookies.get("refresh_token")
+        if refresh_token:
+            session_service = SessionService(redis_client)
+            session_id = await session_service.find_session_by_refresh_token(refresh_token)
+            if session_id:
+                logger.debug(
+                    "Session lookup via refresh_token cookie for user %s",
+                    _short_id(user_id, length=8)
+                )
 
     if not session_id:
         # SECURITY: Session ID is required for session management to work

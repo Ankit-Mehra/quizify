@@ -56,6 +56,9 @@ def auth_token():
     data = login_response.json()
     token = data.get("access_token") or data.get("accessToken") or data.get("token")
     
+    # Note: TestClient cookies are maintained automatically across requests
+    # The refresh_token cookie is set during login and should be available for subsequent requests
+    
     return token
 
 @pytest.mark.integration
@@ -74,6 +77,10 @@ class TestQuizGenerationFlow:
         5. Verify all data persisted correctly
         """
         headers = {"Authorization": f"Bearer {auth_token}"}
+        
+        # Extract cookies from the client (they should have been set during login)
+        # TestClient maintains cookies, but we need to ensure they're being sent
+        # Note: Cookies are automatically included by TestClient in subsequent requests
         
         # Step 1: Upload file
         file_content = """

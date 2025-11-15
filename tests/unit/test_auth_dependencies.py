@@ -91,20 +91,24 @@ def credentials():
 @pytest.mark.asyncio
 async def test_get_current_user_id_valid_session(mock_supabase, redis_client, credentials):
     session_service = SessionService(redis_client)
-    session_id = await session_service.create_session(
+    refresh_token = "test_refresh_token_valid"
+    client_session_token = await session_service.create_session(
         user_id="user_123",
         device_type="browser",
         ip_address="10.0.0.1",
         user_agent="Mozilla/5.0",
+        refresh_token=refresh_token,
     )
+    session_id = await session_service.find_session_by_refresh_token(refresh_token)
+    assert session_id is not None
 
     # Short TTL to verify refresh extends it
     await redis_client.expire("user_sessions:user_123", 300)
 
     app = Starlette()
     app.state.redis = redis_client
-    headers = [(auth_deps.SESSION_HEADER.lower().encode(), session_id.encode())]
-    request = _build_request(app, headers=headers)
+    request = _build_request(app)
+    request._cookies = {"refresh_token": refresh_token}
 
     user_id = await auth_deps.get_current_user_id(request, credentials)
 
@@ -137,8 +141,8 @@ async def test_get_current_user_id_missing_session(mock_supabase, redis_client, 
 async def test_get_current_user_id_invalid_session(mock_supabase, redis_client, credentials):
     app = Starlette()
     app.state.redis = redis_client
-    headers = [(auth_deps.SESSION_HEADER.lower().encode(), b"sess_invalid")]
-    request = _build_request(app, headers=headers)
+    request = _build_request(app)
+    request._cookies = {"refresh_token": "invalid_refresh_token"}
 
     with pytest.raises(HTTPException) as exc_info:
         await auth_deps.get_current_user_id(request, credentials)
@@ -148,25 +152,35 @@ async def test_get_current_user_id_invalid_session(mock_supabase, redis_client, 
 
 @pytest.mark.asyncio
 async def test_get_current_user_id_redis_unavailable(mock_supabase, credentials):
+    """Test that Redis unavailable returns 503 (fails closed for security)"""
     app = Starlette()
     app.state.redis = None
-    headers: List[Tuple[bytes, bytes]] = []
-    request = _build_request(app, headers=headers)
+    request = _build_request(app)
 
-    user_id = await auth_deps.get_current_user_id(request, credentials)
-    assert user_id == "user_123"
-    assert getattr(request.state, "session_validated", False) is True
+    # Should fail with 503 when Redis is unavailable (fails closed for session security)
+    with pytest.raises(HTTPException) as exc_info:
+        await auth_deps.get_current_user_id(request, credentials)
+    
+    assert exc_info.value.status_code == 503
+    assert "temporarily unavailable" in exc_info.value.detail.lower()
 
 
 @pytest.mark.asyncio
 async def test_get_current_user_token_uses_cached_auth(mock_supabase, redis_client, credentials, monkeypatch):
     session_service = SessionService(redis_client)
-    session_id = await session_service.create_session(user_id="user_123", device_type="browser")
+    refresh_token = "test_refresh_token_cached"
+    client_session_token = await session_service.create_session(
+        user_id="user_123",
+        device_type="browser",
+        refresh_token=refresh_token,
+    )
+    session_id = await session_service.find_session_by_refresh_token(refresh_token)
+    assert session_id is not None
 
     app = Starlette()
     app.state.redis = redis_client
-    headers = [(auth_deps.SESSION_HEADER.lower().encode(), session_id.encode())]
-    request = _build_request(app, headers=headers)
+    request = _build_request(app)
+    request._cookies = {"refresh_token": refresh_token}
 
     # First call to cache authentication
     await auth_deps.get_current_user_id(request, credentials)
