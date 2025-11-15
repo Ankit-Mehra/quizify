@@ -1703,6 +1703,207 @@ export default apiClient;
 - [ ] Network tab shows <10 failed requests before redirect
 - [ ] No "Maximum update depth exceeded" errors in console
 - [ ] Login page displays "session revoked" message
+ 
+---
+
+## 🔐 Preventing Network Glitches from Logging Users Out
+
+Once the session header flow is stable, the next major stability issue is **false-positive logouts**. Today, `makeAuthenticatedRequest`/`authService.fetchCurrentUser` clear all local state whenever `/api/auth/me` returns anything other than 200—even when the failure is just a transient 502 or a user closing their laptop for a minute. The fix is to classify responses and only destroy local session data on confirmed authentication failures.
+
+### 1. Classify Response Outcomes at the Network Layer
+
+`makeAuthenticatedRequest` should return a discriminated union so callers know whether they are dealing with an auth failure or a flaky network:
+
+```typescript
+type AuthRequestResult<T> =
+  | { kind: 'success'; data: T; response: Response }
+  | { kind: 'auth-error'; status: number; detail?: string }
+  | { kind: 'network-error'; error: Error; status?: number };
+
+export async function makeAuthenticatedRequest<T>(input: RequestInfo, init?: RequestInit): Promise<AuthRequestResult<T>> {
+  try {
+    const response = await fetch(input, init);
+
+    if (response.status === 401 || response.status === 403) {
+      // Confirmed auth failure → let caller clear local state/redirect
+      const detail = await safeJson(response);
+      return { kind: 'auth-error', status: response.status, detail };
+    }
+
+    if (!response.ok) {
+      // 5xx, 429, gateway timeouts, etc. → treat as network/server error
+      const detail = await safeJson(response);
+      return {
+        kind: 'network-error',
+        status: response.status,
+        error: new Error(detail ?? `HTTP ${response.status}`),
+      };
+    }
+
+    const data = (await response.json()) as T;
+    return { kind: 'success', data, response };
+  } catch (error) {
+    return { kind: 'network-error', error: error as Error };
+  }
+}
+
+async function safeJson(response: Response): Promise<string | undefined> {
+  try {
+    const body = await response.clone().json();
+    return typeof body?.detail === 'string' ? body.detail : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+```
+
+### 2. Upgrade `authService.fetchCurrentUser`
+
+`fetchCurrentUser` should only clear storage when it explicitly receives an `auth-error`. For network issues it should bubble the error up so UI layers can show a toast/retry without forcing logout:
+
+```typescript
+export type CurrentUserResult =
+  | { kind: 'authenticated'; user: CurrentUser }
+  | { kind: 'unauthenticated'; reason: 'missing-session' | 'revoked' }
+  | { kind: 'error'; error: Error; status?: number };
+
+export async function fetchCurrentUser(): Promise<CurrentUserResult> {
+  const sessionId = localStorage.getItem('session_id');
+  if (!sessionId) {
+    return { kind: 'unauthenticated', reason: 'missing-session' };
+  }
+
+  const result = await makeAuthenticatedRequest<CurrentUserResponse>('/api/auth/me', {
+    method: 'GET',
+    credentials: 'include',
+    headers: { 'X-Session-ID': sessionId },
+  });
+
+  if (result.kind === 'success') {
+    return { kind: 'authenticated', user: result.data };
+  }
+
+  if (result.kind === 'auth-error') {
+    clearSessionStorage();
+    return { kind: 'unauthenticated', reason: 'revoked' };
+  }
+
+  // Network/server problem – leave session intact so UI can retry
+  return { kind: 'error', error: result.error, status: result.status };
+}
+
+function clearSessionStorage() {
+  localStorage.removeItem('session_id');
+  localStorage.removeItem('access_token');
+  localStorage.removeItem('refresh_token');
+}
+```
+
+### 3. AuthProvider: Only Redirect on Confirmed Auth Failures
+
+Wrap the provider state machine so transient errors show a non-blocking banner instead of redirecting the user out of the app:
+
+```typescript
+type AuthViewState =
+  | { status: 'loading' }
+  | { status: 'ready'; user: CurrentUser }
+  | { status: 'network-error'; error: Error; lastSuccess?: Date }
+  | { status: 'unauthenticated' };
+
+useEffect(() => {
+  let cancelled = false;
+  setState({ status: 'loading' });
+
+  fetchCurrentUser().then((result) => {
+    if (cancelled) return;
+
+    switch (result.kind) {
+      case 'authenticated':
+        setState({ status: 'ready', user: result.user });
+        break;
+      case 'unauthenticated':
+        redirectToLogin('Authentication required');
+        break;
+      case 'error':
+        console.warn('AuthProvider network issue', result.error);
+        setState((prev) => ({
+          status: 'network-error',
+          error: result.error,
+          lastSuccess: prev.status === 'ready' ? new Date() : undefined,
+        }));
+        // Optional: schedule retry/backoff instead of forcing logout
+        break;
+    }
+  });
+
+  return () => {
+    cancelled = true;
+  };
+}, []);
+```
+
+UI recommendation: show a toast such as “We’re having trouble reaching Quizify. Your session is still active—retrying automatically.” Keep the dashboard data cached via React Query so the user can continue reading old data until the next successful `/me` fetch.
+
+### 4. `useSessionCheck`: Respect the New Contract
+
+Background session checks (tab focus, 5-minute intervals, etc.) should mirror the same discriminated union so they only eject the user when `fetchCurrentUser` explicitly reports `unauthenticated`:
+
+```typescript
+export function useSessionCheck({ intervalMs = 300000, onExpired }: Options) {
+  useEffect(() => {
+    let timer: number | null = null;
+    let cancelled = false;
+
+    async function runCheck(source: 'interval' | 'focus') {
+      const result = await fetchCurrentUser();
+      if (cancelled) return;
+
+      if (result.kind === 'unauthenticated') {
+        onExpired?.(result.reason);
+        redirectToLogin('Session expired');
+        return;
+      }
+
+      if (result.kind === 'error') {
+        console.info(`[SessionCheck:${source}] transient issue`, result.error);
+        // Optional: surface banner or exponential backoff before next attempt
+        return;
+      }
+
+      // Success → nothing to do
+    }
+
+    if (intervalMs > 0) {
+      timer = window.setInterval(() => runCheck('interval'), intervalMs);
+    }
+
+    window.addEventListener('focus', () => runCheck('focus'));
+    runCheck('init');
+
+    return () => {
+      cancelled = true;
+      if (timer) window.clearInterval(timer);
+      window.removeEventListener('focus', () => runCheck('focus'));
+    };
+  }, [intervalMs, onExpired]);
+}
+```
+
+### 5. UX Expectations
+
+| Scenario | Expected Behavior |
+| --- | --- |
+| Supabase revokes session (401/403) | Local storage cleared, redirect to `/login`, toast “Session expired”. |
+| User closes laptop → `/me` times out | Stay on page, show “Reconnecting…” banner, auto retry. |
+| Temporary 5xx from `/api/auth/me` | Stay on page, cache remains, retry silently. |
+| Missing `session_id` (manual storage clear) | Redirect immediately with “Please login again”. |
+
+This division ensures **valid sessions survive flaky networks**, while truly invalid sessions still force logout instantly.
+
+---
+
+## Quick Reference - Critical Implementation Checklist
 
 **Visual Flow - What Should Happen**:
 ```
