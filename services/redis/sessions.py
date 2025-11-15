@@ -74,9 +74,8 @@ class TooManySessionsError(SessionError):
         self.user_id = user_id
         self.count = count
         self.max_sessions = max_sessions or Config.MAX_SESSIONS_PER_USER
-        self.max_sessions = max_sessions
         super().__init__(
-            f"User {user_id} has {count} active sessions (max: {max_sessions})"
+            f"User {user_id} has {count} active sessions (max: {self.max_sessions})"
         )
 
 
@@ -175,16 +174,24 @@ class SessionService:
         """
         Create HMAC hash of refresh token for cookie-based session lookup.
         
-        Uses IP_HASH_SECRET (or falls back to generic key) to create a one-way
-        hash that can be stored in Redis to map refresh tokens to sessions.
+        Uses IP_HASH_SECRET to create a one-way hash that can be stored in 
+        Redis to map refresh tokens to sessions. Fails hard if secret not set.
         
         Args:
             refresh_token: The JWT refresh token from Supabase
             
         Returns:
             HMAC-SHA256 hash of the token (first 32 chars for efficiency)
+            
+        Raises:
+            RuntimeError: If IP_HASH_SECRET environment variable is not set
         """
-        secret = os.getenv("IP_HASH_SECRET", "fallback-session-secret-key")
+        secret = os.getenv("IP_HASH_SECRET")
+        if not secret:
+            raise RuntimeError(
+                "IP_HASH_SECRET environment variable must be set for secure session token generation. "
+                "Application cannot start without this security requirement."
+            )
         h = hmac.new(secret.encode(), refresh_token.encode(), hashlib.sha256)
         return h.hexdigest()[:32]
     
@@ -203,8 +210,16 @@ class SessionService:
             
         Returns:
             HMAC-signed token that frontend can safely store
+            
+        Raises:
+            RuntimeError: If IP_HASH_SECRET environment variable is not set
         """
-        secret = os.getenv("IP_HASH_SECRET", "fallback-session-secret-key")
+        secret = os.getenv("IP_HASH_SECRET")
+        if not secret:
+            raise RuntimeError(
+                "IP_HASH_SECRET environment variable must be set for secure session token generation. "
+                "Application cannot start without this security requirement."
+            )
         # Combine session_id + user_id for uniqueness, then sign with HMAC
         payload = f"{session_id}:{user_id}"
         signature = hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()[:16]
@@ -266,13 +281,18 @@ class SessionService:
                     str(self.MAX_SESSIONS_PER_USER),  # ARGV[2]
                 )
             except Exception as lua_error:
-                # Fallback for test environments using fakeredis (doesn't support Lua)
-                # Only use fallback if this is actually fakeredis or test environment
+                # SECURITY: Only allow non-atomic fallback in test environments
+                # Production Redis MUST support Lua scripts for atomic session creation
                 is_fakeredis = hasattr(self.redis, '__class__') and 'fakeredis' in str(self.redis.__class__.__module__).lower()
-                is_testing = os.getenv("TESTING", "false").lower() == "true"
+                is_testing = Config.is_testing()  # Use official testing flag
                 
-                if (is_fakeredis or is_testing) and "unknown command" in str(lua_error).lower():
-                    logger.warning("Lua script not supported (fakeredis/testing) - using non-atomic fallback")
+                # Very strict fallback detection - must be fakeredis AND testing mode
+                if is_fakeredis and is_testing and "unknown command" in str(lua_error).lower():
+                    logger.error(
+                        f"TESTING MODE: Using non-atomic session creation fallback. "
+                        f"This is ONLY acceptable in tests. Error: {lua_error}"
+                    )
+                    # Non-atomic fallback (race condition possible, but acceptable in tests)
                     session_count = await self.redis.scard(user_sessions_key)
                     if session_count >= self.MAX_SESSIONS_PER_USER:
                         result = 0
@@ -280,7 +300,11 @@ class SessionService:
                         await self.redis.sadd(user_sessions_key, session_id)
                         result = 1
                 else:
-                    # Production Redis should support Lua - re-raise the error
+                    # Production: Fail hard if Lua not supported
+                    logger.error(
+                        f"CRITICAL: Lua script failed in production. This breaks atomic session creation. "
+                        f"Error: {lua_error}"
+                    )
                     raise
             
             if result == 0:
