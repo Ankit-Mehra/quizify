@@ -91,7 +91,7 @@ This guide provides complete implementation details for integrating multi-device
 - **Automatic cleanup**: Expired sessions removed by Redis TTL (30 days of inactivity)
 - **XSS Protection**: No sensitive identifiers stored in localStorage
 - **Refresh token mapping**: HMAC-SHA256 hash stored in Redis (32-char truncated)
-- **Fallback mode**: Service remains available even when Redis is down (sessions not tracked)
+- **Fail-closed security**: Service returns 503 when Redis unavailable (prevents security bypass)
 
 ---
 
@@ -518,7 +518,7 @@ try {
 
 **Important**: JWT expiration is SEPARATE from Redis session expiration:
 - JWT: Controls authentication (1 hour access, 30 days refresh)
-- Redis Session: Controls device tracking and revocation (24 hours activity)
+- Redis Session: Controls device tracking and revocation (30 days inactivity)
 - Both must be valid for request to succeed
 
 **Why Two Expiration Systems**:
@@ -530,7 +530,7 @@ try {
 ### Automatic Cleanup
 
 **Redis TTL Cleanup**:
-- Redis automatically deletes expired sessions (24 hours TTL)
+- Redis automatically deletes expired sessions (30 days TTL)
 - No manual cleanup required
 - Memory usage stays bounded
 
@@ -1056,7 +1056,7 @@ if (response.status === 403) {
 
 #### 429 Too Many Requests
 **Scenarios**:
-1. **Session Limit Exceeded**: User has 10+ active sessions during login
+1. **Session Limit Exceeded**: User has 5+ active sessions during login
 2. **Rate Limiting**: Too many requests in short time (future enhancement)
 
 **Backend Message**:
@@ -1084,7 +1084,7 @@ if (response.status === 429) {
 
 #### 503 Service Unavailable
 **Scenarios**:
-1. **Redis Unavailable**: Redis connection failed (rare - fallback mode active)
+1. **Redis Unavailable**: Redis connection failed (fail-closed security pattern)
 2. **Database Unavailable**: Supabase connection failed
 
 **Backend Message**:
@@ -1092,83 +1092,41 @@ if (response.status === 429) {
 { "detail": "Session service temporarily unavailable" }
 ```
 
+**What This Means (Fail-Closed Pattern)**:
+- ❌ Login BLOCKED when Redis unavailable (returns 503)
+- ❌ All session management endpoints return 503
+- ❌ No operations permitted until Redis connectivity restored
+- ✅ Prevents security bypass where session limits aren't enforced
+- ✅ Prevents session tracking gaps that could mask security incidents
+
+**Why Fail-Closed?**:
+- **Security**: Session limits (5 max) must always be enforced
+- **Atomicity**: Race condition prevention requires Redis Lua scripts
+- **Audit Trail**: All sessions must be tracked for security monitoring
+- **No Gaps**: Prevents users from creating unlimited sessions during Redis outage
+
 **Frontend Handling**:
 ```javascript
 if (response.status === 503) {
-  // Service temporarily unavailable
-  alert('Service temporarily unavailable. Please try again in a few moments.');
+  // Service temporarily unavailable - fail-closed mode
+  const data = await response.json();
+  
+  if (data.detail.includes('Session service')) {
+    alert('Authentication service temporarily unavailable. Please try again in a few moments.');
+  } else {
+    alert('Service temporarily unavailable. Please try again later.');
+  }
   
   // Retry with exponential backoff
   setTimeout(() => retryRequest(), 5000);
 }
 ```
 
----
-
-### Fallback Mode (Redis Unavailable)
-
-**What Is Fallback Mode**:
-When Redis is unavailable (connection failed, Redis down, etc.), the backend enters "fallback mode" to keep the service available.
-
-**Login Behavior in Fallback Mode**:
-```javascript
-// Login succeeds, but client_session_token is NOT returned
-{
-  "message": "Successfully logged in",
-  "user": { ... },
-  // ❌ No "client_session_token" field
-}
-```
-
-**Backend Logs** (visible in Railway):
-```
-WARNING - Failed to create Redis session (fallback mode): Connection refused
-```
-
-**What This Means**:
-- Login still works (users can access the app)
-- JWT authentication works (cookies still valid)
-- Session management features disabled:
-  - ❌ Cannot view active sessions (`GET /api/auth/sessions` returns empty array)
-  - ❌ Cannot revoke sessions (`DELETE /api/auth/sessions/{id}` returns 503)
-  - ❌ Session limits not enforced (can create unlimited sessions)
-  - ❌ Device tracking not available
-
-**Frontend Handling**:
-```javascript
-// After login
-const data = await response.json();
-
-if (!data.client_session_token) {
-  console.warn('Session management unavailable (fallback mode)');
-  
-  // Still store user info and proceed
-  // Just don't rely on session features
-  window.location.href = '/dashboard';
-}
-
-// On session management page
-const sessions = await fetch('/api/auth/sessions', {
-  credentials: 'include'
-}).then(r => r.json());
-
-if (sessions.length === 0) {
-  // Could be no sessions OR fallback mode
-  showMessage('Session management temporarily unavailable');
-}
-```
-
-**When Fallback Mode Activates**:
-- Redis container restart
-- Network connectivity issues
-- Redis out of memory
-- Redis configuration error
-
-**When Fallback Mode Ends**:
-- Redis comes back online
-- Backend automatically reconnects
-- New logins create sessions normally
-- Old sessions may still be in Redis (if Redis just restarted)
+**Backend Behavior**:
+- Login endpoint: Returns 503 immediately if Redis client is None
+- Session validation: Returns 503 if Redis unavailable
+- All session endpoints: Return 503 if Redis unavailable
+- Logs: `ERROR - Redis unavailable - refusing operation (fail-closed)`
 
 ---
 
@@ -1529,7 +1487,7 @@ const queryClient = new QueryClient({
 
 ---
 
-### Session Revoked Device Keeps Retrying (401 Loop)
+### Device with Revoked Session Keeps Retrying (401 Loop)
 
 **Symptom**: After revoking Device B from Device A, Device B makes hundreds of 401 requests per second instead of logging out once.
 
