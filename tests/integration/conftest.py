@@ -61,7 +61,15 @@ class MockSupabaseAuth:
         if password != stored_password:
             raise Exception("Invalid login credentials")
         
-        return MockSupabaseAuthResponse(user_id, email)
+        response = MockSupabaseAuthResponse(user_id, email)
+        
+        # Register token mapping for auth verification
+        _token_user_map[response.session.access_token] = {
+            "id": user_id,
+            "email": email
+        }
+        
+        return response
     
     def sign_out(self):
         """Mock user logout."""
@@ -426,6 +434,9 @@ def mock_save_metadata(metadata, user_token=None):
     return {"success": True, "quiz_id": "mock_quiz_123"}
 
 
+# Module-level token-to-user mapping for mock auth
+_token_user_map = {}
+
 def mock_requests_get(url, headers=None, **kwargs):
     """Mock requests.get for auth verification."""
     if "/auth/v1/user" in url:
@@ -440,7 +451,15 @@ def mock_requests_get(url, headers=None, **kwargs):
                     json=lambda: {"error": "Invalid token"},
                     raise_for_status=lambda: None
                 )
-            # Accept all other tokens (should be real-looking tokens from login)
+            # Look up user from token mapping (set during login)
+            if token in _token_user_map:
+                user_data = _token_user_map[token]
+                return Mock(
+                    status_code=200,
+                    json=lambda: {"id": user_data["id"], "email": user_data["email"]},
+                    raise_for_status=lambda: None
+                )
+            # Fallback for tokens not in map (legacy test support)
             return Mock(
                 status_code=200,
                 json=lambda: {"id": "mock_user_123", "email": "test@example.com"},
@@ -510,9 +529,17 @@ def setup_integration_mocks():
     """
     from contextlib import ExitStack
     from dependencies.auth_dependencies import reset_http_client
+    from fakeredis import aioredis as fakeredis
+    from main import app
+    import asyncio
     
     # Reset HTTP client singleton before patching (ensures fresh mock client is used)
     reset_http_client()
+    
+    # Set up fakeredis for session management (module-scoped)
+    loop = asyncio.new_event_loop()
+    redis_client = loop.run_until_complete(fakeredis.FakeRedis(decode_responses=True))
+    app.state.redis = redis_client
     
     # Pass the quiz storage to the mock client so it can access saved quizzes
     mock_supabase = MockSupabaseClient(quiz_storage=_quiz_storage)
@@ -542,3 +569,8 @@ def setup_integration_mocks():
         stack.enter_context(patch("handlers.file_handlers.save_file_to_supabase", side_effect=mock_save_file_to_supabase))
         
         yield mock_supabase
+    
+    # Cleanup
+    loop.run_until_complete(redis_client.close())
+    loop.close()
+    app.state.redis = None

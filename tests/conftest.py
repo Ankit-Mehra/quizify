@@ -1,6 +1,8 @@
 import pytest
+import pytest_asyncio
 from unittest.mock import Mock
 import os
+import asyncio
 
 os.environ["SUPABASE_URL"] = "https://test.supabase.co"
 os.environ["SUPABASE_KEY"] = "test_key"
@@ -8,6 +10,14 @@ os.environ["SUPABASE_STORAGE_NAME"] = "test-bucket"
 os.environ["OPENAI_API_KEY"] = "sk-test123"
 os.environ["IP_HASH_SECRET"] = "test-secret-for-ip-hashing-min-32-chars"
 os.environ["TESTING"] = "true"
+os.environ["REDIS_ENABLED"] = "false"  # Disable real Redis by default for tests
+
+@pytest.fixture(scope="function")
+def event_loop():
+    """Create an event loop for async fixtures."""
+    loop = asyncio.new_event_loop()
+    yield loop
+    loop.close()
 
 class MockSupabaseAuth:
     def __init__(self):
@@ -135,13 +145,31 @@ class MockSupabaseClient:
 def mock_supabase():
     return MockSupabaseClient()
 
-@pytest.fixture
-def mock_supabase_client(mock_supabase, mocker):
+@pytest.fixture(scope="function")
+def mock_redis_client(event_loop):
+    """Provide a fakeredis client for tests that need Redis session management."""
+    from fakeredis import aioredis as fakeredis
+    
+    # Create client synchronously using the event loop
+    redis_client = event_loop.run_until_complete(
+        fakeredis.FakeRedis(decode_responses=True)
+    )
+    
+    yield redis_client
+    
+    # Cleanup is automatic for fakeredis - no need to explicitly close
+
+@pytest.fixture(scope="function")
+def mock_supabase_client(mock_supabase, mocker, mock_redis_client):
     """
     Mock Supabase client with all necessary service patches.
     Uses pytest-mock's mocker fixture for cleaner test setup.
+    Also provides a fakeredis client for session management.
     """
     from main import app
+    
+    # Set up fakeredis for session management
+    app.state.redis = mock_redis_client
     
     # Define mock implementations
     def mock_save_file_to_supabase(*args, **kwargs):
@@ -200,7 +228,8 @@ def mock_supabase_client(mock_supabase, mocker):
     
     yield mock_supabase
     
-    # Clear dependency overrides after test
+    # Cleanup
+    app.state.redis = None
     app.dependency_overrides.clear()
 
 @pytest.fixture
