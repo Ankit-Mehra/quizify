@@ -150,7 +150,7 @@ try {
   });
 
   if (response.status === 429) {
-    // Session limit exceeded - user has 10+ active sessions
+    // Session limit exceeded - user has 5+ active sessions
     const error = await response.json();
     alert(error.detail);
     
