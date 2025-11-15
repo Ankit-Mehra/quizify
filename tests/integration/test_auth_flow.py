@@ -63,8 +63,10 @@ class TestAuthFlow:
         assert access_token is not None, "Login should return access token"
         
         # Step 3: Access protected endpoint (e.g., get user's quizzes)
+        # Note: cookies are automatically handled by TestClient
         headers = {"Authorization": f"Bearer {access_token}"}
         
+        # TestClient automatically forwards cookies from login_response
         protected_response = client.get("/api/quiz/my-quizzes", headers=headers)
         assert protected_response.status_code == 200, \
             f"Protected endpoint should be accessible with valid token: {protected_response.text}"
