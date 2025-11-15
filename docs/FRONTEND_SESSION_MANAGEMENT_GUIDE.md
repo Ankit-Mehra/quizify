@@ -1112,11 +1112,11 @@ When Redis is unavailable (connection failed, Redis down, etc.), the backend ent
 
 **Login Behavior in Fallback Mode**:
 ```javascript
-// Login succeeds, but session_id is NOT returned
+// Login succeeds, but client_session_token is NOT returned
 {
   "message": "Successfully logged in",
   "user": { ... },
-  // ❌ No "session_id" field
+  // ❌ No "client_session_token" field
 }
 ```
 
@@ -1248,8 +1248,8 @@ async function apiRequest(endpoint, options = {}) {
 
 ```javascript
 // ❌ DON'T DO THIS - This logs out YOUR device, not the target device!
-async function logoutDevice(sessionId) {
-  await fetch(`/api/auth/logout?session_id=${sessionId}`, {
+async function logoutDevice(clientToken) {
+  await fetch('/api/auth/logout', {
     method: 'POST',
     credentials: 'include'
   });
@@ -1261,8 +1261,8 @@ async function logoutDevice(sessionId) {
 
 ```javascript
 // ✅ DO THIS - Revokes target device without affecting yours
-async function logoutDevice(sessionId) {
-  await fetch(`/api/auth/sessions/${sessionId}`, {
+async function logoutDevice(clientToken) {
+  await fetch(`/api/auth/sessions/${clientToken}`, {
     method: 'DELETE',
     credentials: 'include'
   });
@@ -1512,7 +1512,7 @@ const queryClient = new QueryClient({
 **Root Cause**: Session revocation takes effect when the target device makes its next authenticated request. The device's JWT cookie remains valid (up to 1 hour) until the next API call.
 
 **How It Works**:
-1. Desktop calls `DELETE /api/auth/sessions/{android_session_id}` → Session deleted from Redis ✅
+1. Desktop calls `DELETE /api/auth/sessions/{android_client_token}` → Session deleted from Redis ✅
 2. Android still has valid JWT cookie (valid for 1 hour) ✅
 3. Android makes next request → Backend validates session → 401 Unauthorized → Device logged out ✅
 
@@ -1537,7 +1537,7 @@ const queryClient = new QueryClient({
 
 **What's Happening**:
 1. Desktop revokes Android session → Session deleted from Redis ✅
-2. Android makes request with revoked `session_id` → Backend returns 401 ✅
+2. Android makes request with revoked session → Backend returns 401 ✅
 3. React Query sees 401 → Retries request → 401 again → Retries again → Infinite loop ❌
 4. Multiple components (profile, quizzes, submissions) all retrying simultaneously
 5. Result: 20+ requests per second, application frozen
@@ -1946,7 +1946,7 @@ Device B (Revoked)                   Backend                    Result
 
 **What's Happening**:
 1. Device A revokes Device B's session → Session deleted from Redis ✅
-2. Device B makes request with now-invalid session_id → Backend returns 401 ✅
+2. Device B makes request with now-invalid session → Backend returns 401 ✅
 3. **React Query retries the request 3 times** (default behavior) ❌
 4. Multiple components use `useQuery` → All retry simultaneously ❌
 5. Error handler eventually triggers → Clears localStorage → Redirects ❌
@@ -1954,10 +1954,10 @@ Device B (Revoked)                   Backend                    Result
 
 **Diagnostic Evidence** (Backend Logs):
 ```
-Session ID missing for user 760602fe... on /api/auth/me - returning 401
-Session ID missing for user 760602fe... on /api/quiz/my-quizzes - returning 401
-Session ID missing for user 760602fe... on /api/submissions - returning 401
-Session ID missing for user 760602fe... on /api/auth/me - returning 401
+Session not found for user 760602fe... on /api/auth/me - returning 401
+Session not found for user 760602fe... on /api/quiz/my-quizzes - returning 401
+Session not found for user 760602fe... on /api/submissions - returning 401
+Session not found for user 760602fe... on /api/auth/me - returning 401
 ... (repeats 20+ times per second)
 ```
 
@@ -2047,9 +2047,7 @@ apiClient.interceptors.response.use(
       
       // Clear auth state immediately
       console.log('401 detected - clearing auth state');
-      localStorage.removeItem('session_id');
-      localStorage.removeItem('access_token');
-      localStorage.removeItem('refresh_token');
+      localStorage.removeItem('client_session_token');
       
       // Redirect to login (only once)
       if (window.location.pathname !== '/login') {
@@ -2111,28 +2109,29 @@ apiClient.interceptors.response.use(
 
 **Check**:
 1. Network tab: Look for OPTIONS request with 400 status
-2. Console: CORS error mentioning `X-Session-ID`
+2. Console: CORS error messages
 
 **Solution**:
-- Backend must include `X-Session-ID` in `allow_headers`
 - Frontend must set `credentials: 'include'`
+- Backend must allow credentials in CORS config
 - Clear browser cache (CORS headers cached aggressively)
 
 ---
 
 ### Session Not Validated
 
-**Symptom**: Backend logs "Session ID missing for user ... - returning 401 (session required)"
+**Symptom**: Backend logs "Session not found for user ... - returning 401"
 
 **Check**:
-1. Network tab: Verify `X-Session-ID` header present in request
-2. localStorage: Check if `session_id` stored
+1. Network tab: Verify cookies being sent (Request Headers → Cookie)
+2. localStorage: Check if `client_session_token` stored
 3. Frontend receives 401 Unauthorized response
 
 **Solution**:
-- Add `X-Session-ID` header to all authenticated requests
-- Verify session_id not null/undefined before sending
-- Ensure session_id stored in localStorage after login
+- Ensure `credentials: 'include'` set on all authenticated requests
+- Verify client_session_token not null/undefined
+- Ensure client_session_token stored in localStorage after login
+- Check that refresh_token cookie is being set on login
 
 ---
 
