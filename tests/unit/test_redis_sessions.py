@@ -875,3 +875,199 @@ class TestCookieBasedAuthentication:
         session_tokens = [s.client_session_token for s in sessions]
         assert client_token1 in session_tokens
         assert client_token2 in session_tokens
+
+
+class TestClientTokenMapping:
+    """Tests for find_session_by_client_token() - O(1) Redis lookup"""
+
+    @pytest.mark.asyncio
+    async def test_find_session_by_valid_client_token(self, session_service, redis_client):
+        """Should find session_id from valid client token using O(1) Redis lookup"""
+        # Create session
+        refresh_token = "test_refresh_token_xyz"
+        client_token = await session_service.create_session(
+            user_id="user_123",
+            device_type="browser",
+            refresh_token=refresh_token
+        )
+        
+        # Get the real session_id
+        session_id = await session_service.find_session_by_refresh_token(refresh_token)
+        
+        # Verify Redis mapping exists
+        client_token_key = f"client_token:{client_token}"
+        stored_session_id = await redis_client.get(client_token_key)
+        assert stored_session_id == session_id
+        
+        # Find session by client token
+        found_session_id = await session_service.find_session_by_client_token(
+            client_token, "user_123"
+        )
+        
+        assert found_session_id == session_id
+
+    @pytest.mark.asyncio
+    async def test_find_session_returns_none_for_invalid_token(self, session_service):
+        """Should return None when client token doesn't match any session"""
+        # Try to find non-existent client token
+        result = await session_service.find_session_by_client_token(
+            "cst_sess_nonexistent", "user_123"
+        )
+        
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_find_session_handles_empty_session_list(self, session_service):
+        """Should return None when user has no sessions"""
+        # User with no sessions
+        result = await session_service.find_session_by_client_token(
+            "cst_sess_test", "user_no_sessions"
+        )
+        
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_find_session_fallback_for_legacy_sessions(self, session_service, redis_client):
+        """Should use O(n) fallback when Redis mapping doesn't exist (legacy sessions)"""
+        # Create session
+        refresh_token = "test_refresh_fallback"
+        client_token = await session_service.create_session(
+            user_id="user_123",
+            device_type="browser",
+            refresh_token=refresh_token
+        )
+        
+        session_id = await session_service.find_session_by_refresh_token(refresh_token)
+        
+        # Delete the Redis mapping to simulate legacy session
+        client_token_key = f"client_token:{client_token}"
+        await redis_client.delete(client_token_key)
+        
+        # Should still find it via O(n) fallback
+        found_session_id = await session_service.find_session_by_client_token(
+            client_token, "user_123"
+        )
+        
+        assert found_session_id == session_id
+        
+        # Verify mapping was recreated
+        stored_session_id = await redis_client.get(client_token_key)
+        assert stored_session_id == session_id
+
+
+class TestRefreshTokenCleanup:
+    """Tests for refresh token and client token mapping cleanup"""
+
+    @pytest.mark.asyncio
+    async def test_logout_deletes_refresh_token_mapping(self, session_service, redis_client):
+        """Should delete refresh_token:{hash} mapping when logging out"""
+        # Create session with refresh token
+        refresh_token = "test_refresh_for_logout"
+        client_token = await session_service.create_session(
+            user_id="user_123",
+            device_type="browser",
+            refresh_token=refresh_token
+        )
+        
+        session_id = await session_service.find_session_by_refresh_token(refresh_token)
+        
+        # Verify refresh token mapping exists
+        from services.redis.sessions import SessionService as SS
+        refresh_token_hash = SS._hash_refresh_token(refresh_token)
+        refresh_token_key = f"refresh_token:{refresh_token_hash}"
+        assert await redis_client.exists(refresh_token_key) == 1
+        
+        # Logout
+        success = await session_service.logout(session_id)
+        assert success
+        
+        # Verify refresh token mapping is deleted
+        assert await redis_client.exists(refresh_token_key) == 0
+
+    @pytest.mark.asyncio
+    async def test_logout_deletes_client_token_mapping(self, session_service, redis_client):
+        """Should delete client_token:{token} mapping when logging out"""
+        # Create session
+        refresh_token = "test_refresh_client_cleanup"
+        client_token = await session_service.create_session(
+            user_id="user_123",
+            device_type="browser",
+            refresh_token=refresh_token
+        )
+        
+        session_id = await session_service.find_session_by_refresh_token(refresh_token)
+        
+        # Verify client token mapping exists
+        client_token_key = f"client_token:{client_token}"
+        assert await redis_client.exists(client_token_key) == 1
+        
+        # Logout
+        success = await session_service.logout(session_id)
+        assert success
+        
+        # Verify client token mapping is deleted
+        assert await redis_client.exists(client_token_key) == 0
+
+    @pytest.mark.asyncio
+    async def test_logout_all_devices_deletes_all_refresh_token_mappings(self, session_service, redis_client):
+        """Should delete all refresh_token:{hash} mappings when logging out all devices"""
+        # Create multiple sessions with refresh tokens
+        refresh_token1 = "refresh_token_1"
+        refresh_token2 = "refresh_token_2"
+        refresh_token3 = "refresh_token_3"
+        
+        await session_service.create_session(
+            user_id="user_123", device_type="browser", refresh_token=refresh_token1
+        )
+        await session_service.create_session(
+            user_id="user_123", device_type="mobile", refresh_token=refresh_token2
+        )
+        await session_service.create_session(
+            user_id="user_123", device_type="tablet", refresh_token=refresh_token3
+        )
+        
+        # Get refresh token hashes
+        from services.redis.sessions import SessionService as SS
+        hash1 = SS._hash_refresh_token(refresh_token1)
+        hash2 = SS._hash_refresh_token(refresh_token2)
+        hash3 = SS._hash_refresh_token(refresh_token3)
+        
+        # Verify all mappings exist
+        assert await redis_client.exists(f"refresh_token:{hash1}") == 1
+        assert await redis_client.exists(f"refresh_token:{hash2}") == 1
+        assert await redis_client.exists(f"refresh_token:{hash3}") == 1
+        
+        # Logout all devices
+        count = await session_service.logout_all_devices("user_123")
+        assert count == 3
+        
+        # Verify all refresh token mappings are deleted
+        assert await redis_client.exists(f"refresh_token:{hash1}") == 0
+        assert await redis_client.exists(f"refresh_token:{hash2}") == 0
+        assert await redis_client.exists(f"refresh_token:{hash3}") == 0
+
+    @pytest.mark.asyncio
+    async def test_logout_all_devices_deletes_all_client_token_mappings(self, session_service, redis_client):
+        """Should delete all client_token:{token} mappings when logging out all devices"""
+        # Create multiple sessions
+        refresh_token1 = "refresh_token_a"
+        refresh_token2 = "refresh_token_b"
+        
+        client_token1 = await session_service.create_session(
+            user_id="user_123", device_type="browser", refresh_token=refresh_token1
+        )
+        client_token2 = await session_service.create_session(
+            user_id="user_123", device_type="mobile", refresh_token=refresh_token2
+        )
+        
+        # Verify all client token mappings exist
+        assert await redis_client.exists(f"client_token:{client_token1}") == 1
+        assert await redis_client.exists(f"client_token:{client_token2}") == 1
+        
+        # Logout all devices
+        count = await session_service.logout_all_devices("user_123")
+        assert count == 2
+        
+        # Verify all client token mappings are deleted
+        assert await redis_client.exists(f"client_token:{client_token1}") == 0
+        assert await redis_client.exists(f"client_token:{client_token2}") == 0
