@@ -825,7 +825,11 @@ async def revoke_session(
     user_id: str = Depends(get_current_user_id)
 ):
     """
-    Revoke a specific session by ID.
+    Revoke a specific session by ID or client token.
+    
+    Accepts either:
+    - Real session_id (starts with sess_)
+    - Client session token (starts with cst_sess_) - will be mapped to real session_id
     
     Security check: Verifies the session belongs to the authenticated user
     before revoking it. Prevents users from revoking other users' sessions.
@@ -848,8 +852,22 @@ async def revoke_session(
         
         session_service = SessionService(redis_client)
         
+        # If it's a client token (starts with cst_sess_), map it to real session_id
+        actual_session_id = session_id_to_revoke
+        if session_id_to_revoke.startswith("cst_sess_"):
+            logger.debug(f"Client token provided, mapping to real session_id")
+            actual_session_id = await session_service.find_session_by_client_token(
+                session_id_to_revoke, user_id
+            )
+            if not actual_session_id:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Session not found for provided client token"
+                )
+            logger.debug(f"Mapped to session: {actual_session_id[:12]}...")
+        
         # SECURITY: Verify session belongs to user
-        session_info = await session_service.validate_session(session_id_to_revoke)
+        session_info = await session_service.validate_session(actual_session_id)
         if not session_info:
             raise HTTPException(
                 status_code=404,
@@ -868,15 +886,15 @@ async def revoke_session(
             )
         
         # Revoke the session
-        success = await session_service.logout(session_id_to_revoke)
+        success = await session_service.logout(actual_session_id)
         
         if not success:
             raise HTTPException(status_code=404, detail="Session not found")
         
-        logger.info(f"Session {session_id_to_revoke[:12]}... revoked successfully")
+        logger.info(f"Session {actual_session_id[:12]}... revoked successfully")
         return {
             "message": "Session revoked successfully",
-            "session_id": session_id_to_revoke
+            "session_id": actual_session_id
         }
         
     except HTTPException:

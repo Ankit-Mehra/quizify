@@ -515,7 +515,8 @@ class SessionService:
         """
         Logout a single session (single device).
 
-        Deletes session metadata and removes from user's session set.
+        Deletes session metadata, removes from user's session set,
+        and cleans up refresh token mapping if exists.
 
         Args:
             session_id: Session identifier to logout
@@ -530,13 +531,20 @@ class SessionService:
         try:
             session_key = f"session:{session_id}"
 
-            # Get user_id before deleting
-            user_id = await self.redis.hget(session_key, "user_id")
-            if not user_id:
+            # Get session data before deleting (need user_id and refresh_token_hash)
+            session_data = await self.redis.hgetall(session_key)
+            if not session_data:
                 return False
 
-            if isinstance(user_id, bytes):
-                user_id = user_id.decode()
+            # Convert bytes to strings if needed
+            if session_data and isinstance(next(iter(session_data.keys())), bytes):
+                session_data = {k.decode(): v.decode() for k, v in session_data.items()}
+
+            user_id = session_data.get("user_id")
+            refresh_token_hash = session_data.get("refresh_token_hash")
+            
+            if not user_id:
+                return False
 
             # Delete session
             deleted = await self.redis.delete(session_key)
@@ -544,6 +552,12 @@ class SessionService:
             # Remove from user's session set
             user_sessions_key = f"user_sessions:{user_id}"
             await self.redis.srem(user_sessions_key, session_id)
+            
+            # Delete refresh token mapping if exists
+            if refresh_token_hash:
+                refresh_token_key = f"refresh_token:{refresh_token_hash}"
+                await self.redis.delete(refresh_token_key)
+                logger.debug(f"Deleted refresh token mapping for session {session_id[:12]}...")
 
             if deleted:
                 logger.info(
@@ -562,7 +576,8 @@ class SessionService:
         Logout all sessions for a user (all devices).
 
         Useful for security actions like password change or account
-        compromise. Deletes all session metadata and clears session set.
+        compromise. Deletes all session metadata, clears session set,
+        and removes all refresh token mappings.
 
         Args:
             user_id: User identifier
@@ -587,18 +602,40 @@ class SessionService:
             if session_ids and isinstance(next(iter(session_ids)), bytes):
                 session_ids = {sid.decode() for sid in session_ids}
 
-            # Batch delete all session keys using a pipeline for efficiency
+            # First, get refresh_token_hashes from all sessions before deleting
+            pipe = self.redis.pipeline()
+            for session_id in session_ids:
+                session_key = f"session:{session_id}"
+                pipe.hget(session_key, "refresh_token_hash")
+            refresh_token_hashes = await pipe.execute()
+            
+            # Batch delete all session keys and their refresh token mappings
             pipe = self.redis.pipeline()
             for session_id in session_ids:
                 session_key = f"session:{session_id}"
                 pipe.delete(session_key)
+            
+            # Delete refresh token mappings
+            refresh_tokens_deleted = 0
+            for token_hash in refresh_token_hashes:
+                if token_hash:
+                    if isinstance(token_hash, bytes):
+                        token_hash = token_hash.decode()
+                    refresh_token_key = f"refresh_token:{token_hash}"
+                    pipe.delete(refresh_token_key)
+                    refresh_tokens_deleted += 1
+            
             results = await pipe.execute()
-            count = sum(1 for result in results if result)
+            # Count only session deletions (not refresh token deletions)
+            count = sum(1 for i, result in enumerate(results) if i < len(session_ids) and result)
 
             # Clear user's session set
             await self.redis.delete(user_sessions_key)
 
-            logger.info(f"Logged out {count} sessions for user {user_id[:8]}...")
+            logger.info(
+                f"Logged out {count} sessions for user {user_id[:8]}... "
+                f"(deleted {refresh_tokens_deleted} refresh token mappings)"
+            )
             return count
 
         except Exception as e:
@@ -738,3 +775,46 @@ class SessionService:
                 f"Failed to cleanup expired sessions for user {user_id[:8]}...: {e}"
             )
             return 0
+    
+    async def find_session_by_client_token(self, client_token: str, user_id: str) -> Optional[str]:
+        """
+        Find the real session_id from a client_session_token.
+        
+        Client tokens are HMAC-signed tokens that frontends can safely store
+        in localStorage. This method searches through the user's sessions to
+        find which one matches the provided client token.
+        
+        Args:
+            client_token: The client_session_token from frontend (starts with cst_sess_)
+            user_id: User ID to limit search scope
+            
+        Returns:
+            Real session_id if found, None otherwise
+            
+        Example:
+            >>> session_id = await service.find_session_by_client_token("cst_sess_abc...", "user_123")
+            >>> if session_id:
+            >>>     await service.logout(session_id)
+        """
+        try:
+            # Get all sessions for this user
+            sessions = await self.list_sessions(user_id)
+            
+            # Find matching session by client token
+            for session in sessions:
+                if session.client_session_token == client_token:
+                    logger.debug(
+                        f"Mapped client token {client_token[:12]}... to session {session.session_id[:12]}..."
+                    )
+                    return session.session_id
+            
+            logger.warning(
+                f"No session found for client token {client_token[:12]}... and user {user_id[:8]}..."
+            )
+            return None
+            
+        except Exception as e:
+            logger.error(
+                f"Failed to find session by client token {client_token[:12]}...: {e}"
+            )
+            return None
