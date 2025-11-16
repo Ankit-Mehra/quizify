@@ -362,6 +362,10 @@ class SessionService:
                 logger.info(
                     f"Created session for user {user_id[:8]}... on {device_type} device (cookie-based)"
                 )
+            
+            # Create reverse mapping for client token (O(1) lookup)
+            client_token_key = f"client_token:{client_session_token}"
+            await self.redis.set(client_token_key, session_id, ex=self.session_ttl)
 
             return client_session_token
 
@@ -494,16 +498,34 @@ class SessionService:
             now = datetime.utcnow()
             await self.redis.hset(session_key, "last_active", now.isoformat())
 
-            # Extend TTL
+            # Extend TTL on session
             await self.redis.expire(session_key, self.session_ttl)
 
-            # Ensure user session set TTL stays in sync
-            user_id = await self.redis.hget(session_key, "user_id")
-            if user_id:
-                if isinstance(user_id, bytes):
-                    user_id = user_id.decode()
-                user_sessions_key = f"user_sessions:{user_id}"
-                await self.redis.expire(user_sessions_key, self.session_ttl)
+            # Get session data to extend TTL on all associated mappings
+            session_data = await self.redis.hgetall(session_key)
+            if session_data:
+                # Convert bytes to strings if needed
+                if isinstance(next(iter(session_data.keys())), bytes):
+                    session_data = {k.decode(): v.decode() for k, v in session_data.items()}
+                
+                user_id = session_data.get("user_id")
+                refresh_token_hash = session_data.get("refresh_token_hash")
+                client_session_token = session_data.get("client_session_token")
+                
+                # Extend TTL on user session set
+                if user_id:
+                    user_sessions_key = f"user_sessions:{user_id}"
+                    await self.redis.expire(user_sessions_key, self.session_ttl)
+                
+                # CRITICAL: Extend TTL on refresh token mapping (prevents expiration-based logout)
+                if refresh_token_hash:
+                    refresh_token_key = f"refresh_token:{refresh_token_hash}"
+                    await self.redis.expire(refresh_token_key, self.session_ttl)
+                
+                # CRITICAL: Extend TTL on client token mapping (prevents expiration-based logout)
+                if client_session_token:
+                    client_token_key = f"client_token:{client_session_token}"
+                    await self.redis.expire(client_token_key, self.session_ttl)
 
             return True
 
@@ -542,6 +564,7 @@ class SessionService:
 
             user_id = session_data.get("user_id")
             refresh_token_hash = session_data.get("refresh_token_hash")
+            client_session_token = session_data.get("client_session_token")
             
             if not user_id:
                 return False
@@ -558,6 +581,12 @@ class SessionService:
                 refresh_token_key = f"refresh_token:{refresh_token_hash}"
                 await self.redis.delete(refresh_token_key)
                 logger.debug(f"Deleted refresh token mapping for session {session_id[:12]}...")
+            
+            # Delete client token mapping if exists
+            if client_session_token:
+                client_token_key = f"client_token:{client_session_token}"
+                await self.redis.delete(client_token_key)
+                logger.debug(f"Deleted client token mapping for session {session_id[:12]}...")
 
             if deleted:
                 logger.info(
@@ -602,12 +631,17 @@ class SessionService:
             if session_ids and isinstance(next(iter(session_ids)), bytes):
                 session_ids = {sid.decode() for sid in session_ids}
 
-            # First, get refresh_token_hashes from all sessions before deleting
+            # First, get refresh_token_hashes and client_session_tokens from all sessions before deleting
             pipe = self.redis.pipeline()
             for session_id in session_ids:
                 session_key = f"session:{session_id}"
                 pipe.hget(session_key, "refresh_token_hash")
-            refresh_token_hashes = await pipe.execute()
+                pipe.hget(session_key, "client_session_token")
+            results = await pipe.execute()
+            
+            # Separate refresh token hashes and client tokens (interleaved results)
+            refresh_token_hashes = [results[i] for i in range(0, len(results), 2)]
+            client_session_tokens = [results[i] for i in range(1, len(results), 2)]
             
             # Batch delete all session keys and their refresh token mappings
             pipe = self.redis.pipeline()
@@ -625,8 +659,18 @@ class SessionService:
                     pipe.delete(refresh_token_key)
                     refresh_tokens_deleted += 1
             
+            # Delete client token mappings
+            client_tokens_deleted = 0
+            for client_token in client_session_tokens:
+                if client_token:
+                    if isinstance(client_token, bytes):
+                        client_token = client_token.decode()
+                    client_token_key = f"client_token:{client_token}"
+                    pipe.delete(client_token_key)
+                    client_tokens_deleted += 1
+            
             results = await pipe.execute()
-            # Count only session deletions (not refresh token deletions)
+            # Count only session deletions (first len(session_ids) results are session deletions)
             count = sum(1 for i, result in enumerate(results) if i < len(session_ids) and result)
 
             # Clear user's session set
@@ -634,7 +678,8 @@ class SessionService:
 
             logger.info(
                 f"Logged out {count} sessions for user {user_id[:8]}... "
-                f"(deleted {refresh_tokens_deleted} refresh token mappings)"
+                f"(deleted {refresh_tokens_deleted} refresh token mappings, "
+                f"{client_tokens_deleted} client token mappings)"
             )
             return count
 
@@ -780,9 +825,9 @@ class SessionService:
         """
         Find the real session_id from a client_session_token.
         
+        Uses O(1) Redis lookup with O(n) fallback for legacy sessions.
         Client tokens are HMAC-signed tokens that frontends can safely store
-        in localStorage. This method searches through the user's sessions to
-        find which one matches the provided client token.
+        in localStorage.
         
         Args:
             client_token: The client_session_token from frontend (starts with cst_sess_)
@@ -794,18 +839,32 @@ class SessionService:
         Example:
             >>> session_id = await service.find_session_by_client_token("cst_sess_abc...", "user_123")
             >>> if session_id:
-            >>>     await service.logout(session_id)
+            ...     await service.logout(session_id)
         """
         try:
-            # Get all sessions for this user
+            # O(1) lookup: try direct Redis mapping first
+            client_token_key = f"client_token:{client_token}"
+            session_id = await self.redis.get(client_token_key)
+            if session_id:
+                if isinstance(session_id, bytes):
+                    session_id = session_id.decode()
+                logger.debug(
+                    f"Mapped client token {client_token[:12]}... to session {session_id[:12]}... (O(1) Redis lookup)"
+                )
+                return session_id
+            
+            # Fallback: O(n) search for legacy sessions without mapping
+            logger.debug(f"Client token not in Redis mapping, trying O(n) fallback search")
             sessions = await self.list_sessions(user_id)
             
             # Find matching session by client token
             for session in sessions:
                 if session.client_session_token == client_token:
                     logger.debug(
-                        f"Mapped client token {client_token[:12]}... to session {session.session_id[:12]}..."
+                        f"Mapped client token {client_token[:12]}... to session {session.session_id[:12]}... (O(n) fallback)"
                     )
+                    # Re-create the mapping for next time
+                    await self.redis.set(client_token_key, session.session_id, ex=self.session_ttl)
                     return session.session_id
             
             logger.warning(
