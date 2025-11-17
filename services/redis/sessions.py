@@ -501,31 +501,33 @@ class SessionService:
             # Extend TTL on session
             await self.redis.expire(session_key, self.session_ttl)
 
-            # Get session data to extend TTL on all associated mappings
-            session_data = await self.redis.hgetall(session_key)
-            if session_data:
-                # Convert bytes to strings if needed
-                if isinstance(next(iter(session_data.keys())), bytes):
-                    session_data = {k.decode(): v.decode() for k, v in session_data.items()}
-                
-                user_id = session_data.get("user_id")
-                refresh_token_hash = session_data.get("refresh_token_hash")
-                client_session_token = session_data.get("client_session_token")
-                
-                # Extend TTL on user session set
-                if user_id:
-                    user_sessions_key = f"user_sessions:{user_id}"
-                    await self.redis.expire(user_sessions_key, self.session_ttl)
-                
-                # CRITICAL: Extend TTL on refresh token mapping (prevents expiration-based logout)
-                if refresh_token_hash:
-                    refresh_token_key = f"refresh_token:{refresh_token_hash}"
-                    await self.redis.expire(refresh_token_key, self.session_ttl)
-                
-                # CRITICAL: Extend TTL on client token mapping (prevents expiration-based logout)
-                if client_session_token:
-                    client_token_key = f"client_token:{client_session_token}"
-                    await self.redis.expire(client_token_key, self.session_ttl)
+            # Get only needed fields to extend TTL on all associated mappings (performance optimization)
+            user_id, refresh_token_hash, client_session_token = await self.redis.hmget(
+                session_key, "user_id", "refresh_token_hash", "client_session_token"
+            )
+            
+            # Convert bytes to strings if needed
+            if isinstance(user_id, bytes):
+                user_id = user_id.decode()
+            if isinstance(refresh_token_hash, bytes):
+                refresh_token_hash = refresh_token_hash.decode()
+            if isinstance(client_session_token, bytes):
+                client_session_token = client_session_token.decode()
+            
+            # Extend TTL on user session set
+            if user_id:
+                user_sessions_key = f"user_sessions:{user_id}"
+                await self.redis.expire(user_sessions_key, self.session_ttl)
+            
+            # CRITICAL: Extend TTL on refresh token mapping (prevents expiration-based logout)
+            if refresh_token_hash:
+                refresh_token_key = f"refresh_token:{refresh_token_hash}"
+                await self.redis.expire(refresh_token_key, self.session_ttl)
+            
+            # CRITICAL: Extend TTL on client token mapping (prevents expiration-based logout)
+            if client_session_token:
+                client_token_key = f"client_token:{client_session_token}"
+                await self.redis.expire(client_token_key, self.session_ttl)
 
             return True
 

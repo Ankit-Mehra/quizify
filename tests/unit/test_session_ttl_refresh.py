@@ -37,7 +37,7 @@ class TestSessionTTLRefresh:
     @pytest.mark.asyncio
     async def test_refresh_session_extends_all_redis_key_ttls(self, session_service, redis_client):
         """
-        CRITICAL: Verify refresh_session() extends TTL on all 3 Redis keys.
+        CRITICAL: Verify refresh_session() extends TTL on all 4 Redis keys.
         
         Bug: Previously only session:{id} got TTL extended, causing
         refresh_token:{hash} and client_token:{token} to expire after 30 days,
@@ -55,7 +55,7 @@ class TestSessionTTLRefresh:
         session_id = await session_service.find_session_by_refresh_token(refresh_token)
         assert session_id is not None
         
-        # Get initial TTLs for all 3 keys
+        # Get initial TTLs for all 4 keys
         session_key = f"session:{session_id}"
         
         from services.redis.sessions import SessionService as SS
@@ -96,7 +96,7 @@ class TestSessionTTLRefresh:
         success = await session_service.refresh_session(session_id)
         assert success is True
         
-        # Verify ALL 3 keys now have extended TTL (~30 days)
+        # Verify ALL 4 keys now have extended TTL (~30 days)
         extended_session_ttl = await redis_client.ttl(session_key)
         extended_refresh_ttl = await redis_client.ttl(refresh_token_key)
         extended_client_ttl = await redis_client.ttl(client_token_key)
