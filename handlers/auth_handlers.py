@@ -220,10 +220,11 @@ async def login(request_body: LoginRequest, response: Response, request: Request
             "client_session_token": client_session_token  # HMAC-signed token for UI identification only (XSS-safe)
         }
         
-        # SECURITY: Only expose token in response body during testing or development
-        # In production, token is only available via HttpOnly cookie
+        # SECURITY: Only expose tokens in response body during testing or development
+        # In production, tokens are only available via HttpOnly cookie
         if app_config.is_testing() or app_config.is_development():
             response_data["access_token"] = access_token
+            response_data["refresh_token"] = refresh_token
         
         return response_data
 
