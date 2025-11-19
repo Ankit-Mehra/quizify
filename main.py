@@ -32,6 +32,11 @@ except json.JSONDecodeError:
     BACKEND_CORS_ORIGINS = ["http://localhost:3000", "http://localhost:3001"]
     logger.warning("Failed to parse CORS origins from env, using defaults")
 
+# Get CORS origin regex for wildcard support (e.g., Vercel previews)
+BACKEND_CORS_ORIGIN_REGEX = os.getenv("BACKEND_CORS_ORIGIN_REGEX", None)
+if BACKEND_CORS_ORIGIN_REGEX:
+    logger.info(f"CORS origin regex enabled: {BACKEND_CORS_ORIGIN_REGEX}")
+
 # Enable docs in development (use ENABLE_DOCS=true in .env)
 enable_docs = os.getenv("ENABLE_DOCS", "false").lower() == "true"
 docs_url = "/docs" if enable_docs else None
@@ -70,9 +75,10 @@ logger.info("FastAPI application initialized")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=BACKEND_CORS_ORIGINS,
+    allow_origin_regex=BACKEND_CORS_ORIGIN_REGEX,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization", "Accept", "X-Session-ID"],
+    allow_headers=["Content-Type", "Authorization", "Accept", "X-Session-ID", "X-Refresh-Token"],
     max_age=3600,
 )
 app.add_middleware(SupabaseAutoRefreshMiddleware)
