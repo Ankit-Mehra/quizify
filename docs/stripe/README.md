@@ -4,10 +4,11 @@
 Integrate Stripe subscription billing into Quizify to monetize the platform through paid tier subscriptions (Basic and Educator).
 
 ## Current State (Before Integration)
-- **Tier System**: `free` (5 quizzes), `basic` (100 quizzes), `educator` (500 quizzes)
+- **Tier System**: `free` (5 quizzes), `basic` (100 quizzes), `pro` (unlimited quizzes)
 - **Tier Management**: Manual admin-only upgrades via `/api/admin/users/{user_id}/tier`
 - **Database**: `public.profiles.account_tier` stores current tier
 - **No Payment System**: Users cannot self-upgrade or pay for tiers
+- **Note**: Database still has legacy `educator` tier (500 quizzes) - will be migrated to `pro` (unlimited)
 
 ## Target State (After Integration)
 - **Self-Service Billing**: Users can subscribe to paid tiers via Stripe Checkout
@@ -15,6 +16,7 @@ Integrate Stripe subscription billing into Quizify to monetize the platform thro
 - **Customer Portal**: Users can manage subscriptions, update payment methods, cancel
 - **Subscription Status Tracking**: Database tracks active/past_due/canceled status
 - **Stripe Integration**: Full webhook-driven subscription lifecycle management
+- **Tier Migration**: `educator` → `pro` with unlimited quota (no breaking changes)
 
 ## Architecture Overview
 
@@ -138,10 +140,11 @@ STRIPE_PUBLISHABLE_KEY=pk_test_...     # Publishable key (frontend safe)
 STRIPE_WEBHOOK_SECRET=whsec_...        # Webhook signature verification
 
 # Stripe Product IDs (created in Dashboard)
-STRIPE_PRICE_BASIC_MONTHLY=price_...   # Basic tier monthly price
-STRIPE_PRICE_BASIC_ANNUAL=price_...    # Basic tier annual price
-STRIPE_PRICE_EDUCATOR_MONTHLY=price_...  # Educator tier monthly price
-STRIPE_PRICE_EDUCATOR_ANNUAL=price_...   # Educator tier annual price
+STRIPE_PRICE_ID_BASIC=price_...   # Basic tier monthly price ($5/mo)
+STRIPE_PRICE_ID_PRO=price_...     # Pro tier monthly price ($15/mo - unlimited quizzes)
+# Optional: Annual pricing (17% discount)
+# STRIPE_PRICE_ID_BASIC_ANNUAL=price_...    # $50/year
+# STRIPE_PRICE_ID_PRO_ANNUAL=price_...      # $150/year
 ```
 
 ## Pricing Structure
@@ -149,8 +152,8 @@ STRIPE_PRICE_EDUCATOR_ANNUAL=price_...   # Educator tier annual price
 | Tier | Monthly | Annual | Features |
 |------|---------|--------|----------|
 | Free | $0 | $0 | 5 quizzes/month |
-| Basic | $9.99 | $99/year (17% off) | 100 quizzes/month |
-| Educator | $19.99 | $199/year (17% off) | 500 quizzes/month |
+| Basic | $5.00 | $50/year (17% off) | 100 quizzes/month |
+| Pro | $15.00 | $150/year (17% off) | Unlimited quizzes/month |
 
 ## Security Considerations
 

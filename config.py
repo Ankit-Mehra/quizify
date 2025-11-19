@@ -94,8 +94,8 @@ class Config:
     
     # Stripe Price IDs for subscription plans
     # These are created in Stripe Dashboard and map to our tier system
-    STRIPE_PRICE_ID_BASIC: str = os.getenv("STRIPE_PRICE_ID_BASIC", "")  # $9.99/mo - 100 quizzes
-    STRIPE_PRICE_ID_EDUCATOR: str = os.getenv("STRIPE_PRICE_ID_EDUCATOR", "")  # $19.99/mo - 500 quizzes
+    STRIPE_PRICE_ID_BASIC: str = os.getenv("STRIPE_PRICE_ID_BASIC", "")  # $5/mo - 100 quizzes
+    STRIPE_PRICE_ID_PRO: str = os.getenv("STRIPE_PRICE_ID_PRO", "")  # $15/mo - unlimited quizzes
     
     # Frontend URLs for Stripe redirects
     STRIPE_SUCCESS_URL: str = os.getenv("STRIPE_SUCCESS_URL", f"{os.getenv('FRONTEND_URL', 'https://www.quizify.ca')}/billing/success")
@@ -222,12 +222,12 @@ class Config:
             price_id: The Stripe price ID to map
             
         Returns:
-            Optional[str]: The tier name ("basic", "educator") or None if not found
+            Optional[str]: The tier name ("basic", "pro") or None if not found
         """
         if price_id == cls.STRIPE_PRICE_ID_BASIC:
             return "basic"
-        elif price_id == cls.STRIPE_PRICE_ID_EDUCATOR:
-            return "educator"
+        elif price_id == cls.STRIPE_PRICE_ID_PRO:
+            return "pro"
         return None
     
     @classmethod
@@ -236,14 +236,16 @@ class Config:
         Map an internal tier name to its Stripe price ID.
         
         Args:
-            tier: The tier name ("basic", "educator")
+            tier: The tier name ("basic", "pro")
             
         Returns:
             Optional[str]: The Stripe price ID or None if not found
         """
         tier_map = {
             "basic": cls.STRIPE_PRICE_ID_BASIC,
-            "educator": cls.STRIPE_PRICE_ID_EDUCATOR,
+            "pro": cls.STRIPE_PRICE_ID_PRO,
+            # Legacy mapping for existing educator users
+            "educator": cls.STRIPE_PRICE_ID_PRO,  # educator → pro migration
         }
         return tier_map.get(tier.lower())
     

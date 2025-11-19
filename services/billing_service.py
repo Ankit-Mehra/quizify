@@ -83,7 +83,7 @@ class BillingService:
         Args:
             user_id: Supabase user UUID
             email: User's email address
-            tier: Subscription tier ("basic" or "educator")
+            tier: Subscription tier ("basic" or "pro")
             
         Returns:
             dict: Checkout session data with keys:

@@ -61,7 +61,7 @@ async def create_checkout_session(
     Create a Stripe Checkout session for subscription purchase.
     
     **Flow:**
-    1. User clicks "Upgrade to Basic" or "Upgrade to Educator" on frontend
+    1. User clicks "Upgrade to Basic ($5/mo)" or "Upgrade to Pro ($15/mo)" on frontend
     2. Frontend calls this endpoint with tier selection
     3. Backend creates Stripe Checkout session
     4. Frontend redirects user to checkout URL

@@ -18,12 +18,12 @@ class CheckoutSessionRequest(BaseModel):
     """
     Request to create a Stripe Checkout session.
     
-    Frontend sends this when user clicks "Upgrade to Basic" or "Upgrade to Educator".
+    Frontend sends this when user clicks "Upgrade to Basic" or "Upgrade to Pro".
     Backend returns a checkout URL to redirect the user to Stripe's hosted payment page.
     """
-    tier: Literal["basic", "educator"] = Field(
+    tier: Literal["basic", "pro"] = Field(
         ...,
-        description="The subscription tier to purchase (basic or educator)"
+        description="The subscription tier to purchase (basic or pro)"
     )
     
     class Config:
@@ -93,9 +93,9 @@ class SubscriptionStatusResponse(BaseModel):
     Returned by GET /api/billing/subscription-status endpoint.
     Frontend uses this to display billing information and subscription details.
     """
-    account_tier: Literal["free", "basic", "educator"] = Field(
+    account_tier: Literal["free", "basic", "pro", "educator"] = Field(
         ...,
-        description="Current account tier"
+        description="Current account tier (educator is legacy, same as pro)"
     )
     subscription_status: Optional[str] = Field(
         None,
