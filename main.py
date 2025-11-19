@@ -32,6 +32,27 @@ except json.JSONDecodeError:
     BACKEND_CORS_ORIGINS = ["http://localhost:3000", "http://localhost:3001"]
     logger.warning("Failed to parse CORS origins from env, using defaults")
 
+# Get CORS origin regex for wildcard support (e.g., Vercel previews)
+import re
+BACKEND_CORS_ORIGIN_REGEX = os.getenv("BACKEND_CORS_ORIGIN_REGEX", None)
+if BACKEND_CORS_ORIGIN_REGEX:
+    # Validate regex compiles correctly
+    try:
+        re.compile(BACKEND_CORS_ORIGIN_REGEX)
+    except re.error as e:
+        logger.error(f"Invalid BACKEND_CORS_ORIGIN_REGEX pattern: {e}")
+        raise RuntimeError(f"BACKEND_CORS_ORIGIN_REGEX must be a valid regex pattern: {e}")
+    
+    # Security check: Warn if pattern appears overly permissive
+    if BACKEND_CORS_ORIGIN_REGEX in [".*", ".+", "^.*$", "^.+$"] or \
+       (".*" in BACKEND_CORS_ORIGIN_REGEX and not ("." in BACKEND_CORS_ORIGIN_REGEX.replace(".*", ""))):
+        logger.warning(
+            f"CORS regex pattern appears overly permissive: {BACKEND_CORS_ORIGIN_REGEX}. "
+            "This may allow requests from any origin. Use specific domain patterns (e.g., ^https://.*\\.vercel\\.app$)"
+        )
+    
+    logger.info(f"CORS origin regex enabled: {BACKEND_CORS_ORIGIN_REGEX}")
+
 # Enable docs in development (use ENABLE_DOCS=true in .env)
 enable_docs = os.getenv("ENABLE_DOCS", "false").lower() == "true"
 docs_url = "/docs" if enable_docs else None
@@ -70,9 +91,10 @@ logger.info("FastAPI application initialized")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=BACKEND_CORS_ORIGINS,
+    allow_origin_regex=BACKEND_CORS_ORIGIN_REGEX,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization", "Accept", "X-Session-ID"],
+    allow_headers=["Content-Type", "Authorization", "Accept", "X-Session-ID", "X-Refresh-Token"],
     max_age=3600,
 )
 app.add_middleware(SupabaseAutoRefreshMiddleware)

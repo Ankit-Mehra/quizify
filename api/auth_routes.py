@@ -70,7 +70,7 @@ router.add_api_route(
 router.add_api_route(
     "/me",
     get_user_info,
-    methods=["GET"],
+    methods=["GET", "OPTIONS"],  # OPTIONS required for CORS preflight when X-Refresh-Token header is sent
     response_model=UserInfoResponse,
     summary="Get Current User Info",
     description="Get authenticated user's profile, tier, role, and quota information",
