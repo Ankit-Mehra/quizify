@@ -83,6 +83,27 @@ class Config:
     REDIS_SESSION_TTL: int = int(os.getenv("REDIS_SESSION_TTL", "2592000"))  # 30 days (aligned with refresh token)
     MAX_SESSIONS_PER_USER: int = int(os.getenv("MAX_SESSIONS_PER_USER", "5"))  # Lowered for security
     
+    # ============================================================================
+    # Stripe Configuration (for subscription billing)
+    # ============================================================================
+    
+    # Stripe API keys
+    STRIPE_SECRET_KEY: str = os.getenv("STRIPE_SECRET_KEY", "")
+    STRIPE_PUBLISHABLE_KEY: str = os.getenv("STRIPE_PUBLISHABLE_KEY", "")
+    STRIPE_WEBHOOK_SECRET: str = os.getenv("STRIPE_WEBHOOK_SECRET", "")
+    
+    # Stripe Price IDs for subscription plans
+    # These are created in Stripe Dashboard and map to our tier system
+    STRIPE_PRICE_ID_BASIC: str = os.getenv("STRIPE_PRICE_ID_BASIC", "")  # $9.99/mo - 100 quizzes
+    STRIPE_PRICE_ID_EDUCATOR: str = os.getenv("STRIPE_PRICE_ID_EDUCATOR", "")  # $19.99/mo - 500 quizzes
+    
+    # Frontend URLs for Stripe redirects
+    STRIPE_SUCCESS_URL: str = os.getenv("STRIPE_SUCCESS_URL", f"{os.getenv('FRONTEND_URL', 'https://www.quizify.ca')}/billing/success")
+    STRIPE_CANCEL_URL: str = os.getenv("STRIPE_CANCEL_URL", f"{os.getenv('FRONTEND_URL', 'https://www.quizify.ca')}/billing")
+    
+    # Stripe webhook endpoint (backend)
+    STRIPE_WEBHOOK_ENDPOINT: str = os.getenv("STRIPE_WEBHOOK_ENDPOINT", "/api/billing/webhook")
+    
     @classmethod
     def is_testing(cls) -> bool:
         """
@@ -172,6 +193,59 @@ class Config:
         # The storage SDK doesn't expose a simple way to set the user token globally
         
         return client
+    
+    @classmethod
+    def validate_stripe_price_id(cls, price_id: str) -> bool:
+        """
+        Validate that a Stripe price ID matches expected format.
+        
+        Stripe price IDs start with 'price_' followed by 24 alphanumeric characters.
+        
+        Args:
+            price_id: The Stripe price ID to validate
+            
+        Returns:
+            bool: True if valid format, False otherwise
+        """
+        if not price_id:
+            return False
+        
+        # Stripe price IDs: price_XXXXXXXXXXXXXXXXXXXX (price_ + 24 chars)
+        return price_id.startswith("price_") and len(price_id) == 30
+    
+    @classmethod
+    def get_tier_from_price_id(cls, price_id: str) -> Optional[str]:
+        """
+        Map a Stripe price ID to our internal tier name.
+        
+        Args:
+            price_id: The Stripe price ID to map
+            
+        Returns:
+            Optional[str]: The tier name ("basic", "educator") or None if not found
+        """
+        if price_id == cls.STRIPE_PRICE_ID_BASIC:
+            return "basic"
+        elif price_id == cls.STRIPE_PRICE_ID_EDUCATOR:
+            return "educator"
+        return None
+    
+    @classmethod
+    def get_price_id_from_tier(cls, tier: str) -> Optional[str]:
+        """
+        Map an internal tier name to its Stripe price ID.
+        
+        Args:
+            tier: The tier name ("basic", "educator")
+            
+        Returns:
+            Optional[str]: The Stripe price ID or None if not found
+        """
+        tier_map = {
+            "basic": cls.STRIPE_PRICE_ID_BASIC,
+            "educator": cls.STRIPE_PRICE_ID_EDUCATOR,
+        }
+        return tier_map.get(tier.lower())
     
     @classmethod
     def validate_config(cls) -> None:
