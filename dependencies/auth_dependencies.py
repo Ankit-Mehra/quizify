@@ -5,6 +5,7 @@ import httpx
 from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from config import config
 from services.logger import app_logger as logger
 from services.redis.sessions import SessionService
 
@@ -74,19 +75,25 @@ async def _validate_request_session(request: Request, user_id: str) -> Optional[
             detail="Session management service temporarily unavailable. Please try again."
         )
 
-    # Check session_id: state → refresh_token cookie (XSS-safe)
-    session_id = getattr(request.state, "session_id", None)
-    
-    if not session_id:
+    # Lookup session_id via refresh_token (header in dev mode, cookie in production)
+    if config.is_development():
+        refresh_token_header = request.headers.get("X-Refresh-Token")
+        refresh_token = refresh_token_header or request.cookies.get("refresh_token")
+        token_source = "header" if refresh_token_header else "cookie"
+    else:
         refresh_token = request.cookies.get("refresh_token")
-        if refresh_token:
-            session_service = SessionService(redis_client)
-            session_id = await session_service.find_session_by_refresh_token(refresh_token)
-            if session_id:
-                logger.debug(
-                    "Session lookup via refresh_token cookie for user %s",
-                    _short_id(user_id, length=8)
-                )
+        token_source = "cookie"
+    
+    session_id = None
+    if refresh_token:
+        session_service = SessionService(redis_client)
+        session_id = await session_service.find_session_by_refresh_token(refresh_token)
+        if session_id:
+            logger.debug(
+                "Session lookup via refresh_token %s for user %s",
+                token_source,
+                _short_id(user_id, length=8)
+            )
 
     if not session_id:
         # SECURITY: Session ID is required for session management to work
