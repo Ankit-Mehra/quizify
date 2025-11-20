@@ -54,7 +54,7 @@ SELECT
     CASE 
         WHEN p.account_tier = 'free' THEN 5
         WHEN p.account_tier = 'basic' THEN 100
-        WHEN p.account_tier = 'pro' THEN 999999    -- Unlimited
+        WHEN p.account_tier = 'pro' THEN 2147483647    -- Unlimited (INT max)
         ELSE 5
     END AS quota_limit,
     -- Quota exceeded flag
@@ -85,8 +85,14 @@ FROM auth.users u
 LEFT JOIN public.profiles p ON u.id = p.id
 -- CRITICAL FIX: Filter quizzes by current period start
 -- If current_period_start is NULL (free tier), use start of current month
+-- Optimization: Use CASE for explicit logic instead of COALESCE
 LEFT JOIN public.quizzes q ON u.id = q.created_by 
-    AND q.created_at >= COALESCE(p.current_period_start, date_trunc('month', now()))
+    AND q.created_at >= (
+        CASE 
+            WHEN p.current_period_start IS NOT NULL THEN p.current_period_start
+            ELSE date_trunc('month', now())
+        END
+    )
 GROUP BY 
     u.id, 
     u.email, 
