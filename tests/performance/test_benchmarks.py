@@ -35,7 +35,7 @@ def sample_user_tier_info() -> UserTierInfo:
     return UserTierInfo(
         id="550e8400-e29b-41d4-a716-446655440000",
         email="benchmark@example.com",
-        account_tier="premium",
+        account_tier="pro",
         quota_limit=1000,
         current_quiz_count=50,
         quota_exceeded=False
@@ -51,7 +51,7 @@ def mock_database_query() -> AsyncMock:
         return {
             "id": "550e8400-e29b-41d4-a716-446655440000",
             "email": "benchmark@example.com",
-            "account_tier": "premium",
+            "account_tier": "pro",
             "quota_limit": 1000,
             "current_quiz_count": 50,
             "quota_exceeded": False
@@ -232,18 +232,19 @@ async def test_benchmark_cache_hit_rate():
     """
     cache_service = get_cache_service(prefix="hit_rate_test")
     
-    # Simulate 10 unique users
-    user_ids = [f"user_{i}" for i in range(10)]
+    # Simulate 10 unique users with valid UUIDs
+    # Using deterministic UUIDs for reproducibility
+    user_ids = [f"00000000-0000-0000-0000-{i:012d}" for i in range(10)]
     users_data = [
         UserTierInfo(
             id=user_id,
-            email=f"{user_id}@example.com",
+            email=f"user_{i}@example.com",
             account_tier="basic",
             quota_limit=20,
             current_quiz_count=5,
             quota_exceeded=False
         )
-        for user_id in user_ids
+        for i, user_id in enumerate(user_ids)
     ]
     
     # Warmup: Cache all users

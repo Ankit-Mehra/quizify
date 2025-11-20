@@ -272,14 +272,14 @@ class TestQuotaEnforcementTextEndpoint:
             
             # Assertions
             assert_quota_exceeded_error(exc_info, 'basic', 100, 100)
-            assert 'Upgrade to educator' in exc_info.value.detail['detail']
+            assert 'Upgrade to pro' in exc_info.value.detail['detail']
         
     @pytest.mark.asyncio
-    async def test_text_endpoint_educator_tier_under_limit_success(
+    async def test_text_endpoint_pro_tier_under_limit_success(
         self, mock_question
     ):
-        """Test text endpoint allows quiz generation for educator tier user under limit."""
-        tier_info = create_tier_info('educator', 450, 500)
+        """Test text endpoint allows quiz generation for pro tier user under limit."""
+        tier_info = create_tier_info('pro', 450, 999999)
         
         # Create request for advanced content
         request_data = TextQuizRequest(
@@ -730,7 +730,7 @@ class TestQuotaEnforcementFileIdEndpoint:
         assert detail['current_count'] == 100
         assert detail['quota_limit'] == 100
         assert detail['user_tier'] == 'basic'
-        assert 'Upgrade to educator' in detail['detail']
+        assert 'Upgrade to pro' in detail['detail']
         
     @pytest.mark.asyncio
     @patch('handlers.quiz_handlers.get_user_tier_info_cached')

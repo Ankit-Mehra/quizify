@@ -60,16 +60,6 @@ def mock_user_tier_data():
             "quota_exceeded": False,
             "created_at": "2025-10-02T10:00:00Z",
             "updated_at": "2025-10-05T14:30:00Z"
-        },
-        {
-            "id": "user-3",
-            "email": "user3@example.com",
-            "account_tier": "educator",
-            "current_quiz_count": 250,
-            "quota_limit": 500,
-            "quota_exceeded": False,
-            "created_at": "2025-09-15T09:00:00Z",
-            "updated_at": "2025-10-08T16:45:00Z"
         }
     ]
     mock_response.error = None
@@ -180,11 +170,10 @@ class TestListAllUsers:
         
         result = await list_all_users(mock_admin_user_id, limit=100, offset=0)
         
-        assert len(result) == 3
+        assert len(result) == 2
         assert result[0].id == "user-1"
         assert result[0].account_tier == "free"
         assert result[1].account_tier == "basic"
-        assert result[2].account_tier == "educator"
         
         # Verify Supabase was called correctly
         mock_supabase.table.assert_called_once_with("user_tier_info")
@@ -524,11 +513,11 @@ class TestUpdateUserTier:
         mock_admin_user_id,
         mock_profile_data
     ):
-        """Test updating to each valid tier (free, basic, educator)"""
+        """Test updating to each valid tier (free, basic, pro)"""
         mock_is_admin.return_value = True
         
-        valid_tiers = ["free", "basic", "educator"]
-        quota_limits = {"free": 5, "basic": 100, "educator": 500}
+        valid_tiers = ["free", "basic", "pro"]
+        quota_limits = {"free": 5, "basic": 100, "pro": 999999}
         
         for tier in valid_tiers:
             # Create fresh mock client for each iteration

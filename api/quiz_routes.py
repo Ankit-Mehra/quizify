@@ -69,7 +69,7 @@ router.add_api_route(
     endpoint=generate_quiz_from_url,
     methods=["POST"],
     summary="Generate Quiz from Web URL",
-    description="Generate a quiz from a web page URL. Available for all tiers with quota limits (Free: 5, Basic: 20, Educator: 500).",
+    description="Generate a quiz from a web page URL. Available for all tiers with quota limits (Free: 5, Basic: 100, Pro: Unlimited).",
     response_model=QuizGenerationResponse,
     status_code=201,
     tags=["Quiz Generation"]

@@ -176,18 +176,18 @@ class TestGenerateQuizFromUrl:
     @patch('handlers.quiz_handlers.scrape_content')
     @patch('handlers.quiz_handlers.validate_user_quota')
     @patch('handlers.quiz_handlers.get_user_tier_info_cached')
-    async def test_educator_tier_user_success(
+    async def test_pro_tier_user_success(
         self, mock_get_tier_info, mock_validate_quota, 
         mock_scrape, mock_generate, mock_save_quiz, mock_save_metadata
     ):
-        """Test that educator tier users can generate quizzes from URLs."""
+        """Test that pro tier users can generate quizzes from URLs."""
         # Mock tier info
         mock_get_tier_info.return_value = {
             'id': 'test-user-id',
-            'email': 'educator@example.com',
-            'account_tier': 'educator',
+            'email': 'pro@example.com',
+            'account_tier': 'pro',
             'current_quiz_count': 50,
-            'quota_limit': 500,
+            'quota_limit': 999999,
             'quizzes_attempted': 200,
             'quota_exceeded': False
         }
