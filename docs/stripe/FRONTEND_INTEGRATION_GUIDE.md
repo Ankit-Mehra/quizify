@@ -128,8 +128,17 @@ const PaymentSuccessPage = () => {
       // CRITICAL: Refresh user profile to update UI with new tier
       await refreshUserProfile(); 
       toast.success("Upgrade successful! You are now a Pro member.");
-    } catch (error) {
-      toast.error("Payment verification failed. Please contact support.");
+    } catch (error: any) {
+      const status = error?.response?.status;
+      if (status === 403) {
+        toast.error("This payment session does not belong to your account. Please log in with the correct user.");
+      } else if (status === 400) {
+        toast.error("Payment incomplete. Please finish the payment process in Stripe.");
+      } else if (status === 404) {
+        toast.error("Payment session not found. Please check your link or try again.");
+      } else {
+        toast.error("Payment verification failed. Please contact support.");
+      }
     }
   };
 

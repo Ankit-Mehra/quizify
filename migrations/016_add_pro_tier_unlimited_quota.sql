@@ -44,7 +44,7 @@ SELECT
         WHEN p.account_tier = 'free' THEN 5
         WHEN p.account_tier = 'basic' THEN 100
         WHEN p.account_tier = 'educator' THEN 500  -- Legacy tier
-        WHEN p.account_tier = 'pro' THEN 999999    -- Unlimited (effectively)
+        WHEN p.account_tier = 'pro' THEN 2147483647    -- Unlimited (INT max)
         ELSE 5
     END AS quota_limit,
     -- Quota exceeded flag (pro tier never exceeds)

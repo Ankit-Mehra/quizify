@@ -31,7 +31,7 @@ async def verify_checkout_session(
         HTTPException: If session invalid or user mismatch
     """
     try:
-        # Note: stripe.api_key is already set by BillingService.__init__
+        # Note: stripe.api_key is set by the injected billing_service instance (BillingService.__init__)
         
         # Retrieve session from Stripe
         session = stripe.checkout.Session.retrieve(
@@ -94,10 +94,11 @@ async def verify_checkout_session(
             logger.info(f"Synchronously provisioned subscription for user {user_id[:8]}")
             
         except Exception as e:
-            # Log but don't fail the verification request if provisioning fails
-            # (Webhooks will retry it later in Epic 3)
-            logger.error(f"Failed to synchronously provision subscription: {e}")
-            # We continue to return success so the frontend sees "Paid"
+            # Log as CRITICAL because until Epic 3 (Webhooks) is implemented, this failure means
+            # the user paid but didn't get the upgrade.
+            logger.critical(f"Failed to synchronously provision subscription for user {user_id}: {e}")
+            # We continue to return success so the frontend sees "Paid", but this requires manual intervention
+            # or the future webhook implementation to fix.
         
         return {
             "session_id": session.id,

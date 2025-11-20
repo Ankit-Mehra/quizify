@@ -241,7 +241,7 @@ class BillingService:
         
         try:
             # 2. Prepare update data
-            from datetime import datetime
+            from datetime import datetime, timezone
             
             update_data = {
                 "stripe_customer_id": customer_id,
@@ -251,7 +251,7 @@ class BillingService:
             }
             
             if current_period_end:
-                update_data["subscription_current_period_end"] = datetime.utcfromtimestamp(current_period_end).isoformat()
+                update_data["subscription_current_period_end"] = datetime.fromtimestamp(current_period_end, tz=timezone.utc).isoformat()
             
             # 3. Update profiles table
             # We use the service role client (self.supabase) which bypasses RLS
