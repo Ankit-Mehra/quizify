@@ -12,7 +12,9 @@ Epic 1: Infrastructure Setup - Skeleton methods with NotImplementedError
 Epic 2-3: Full implementation with Stripe API integration
 """
 
+import stripe
 from typing import Optional
+from fastapi import HTTPException
 from config import Config
 from supabase import Client
 
@@ -34,6 +36,7 @@ class BillingService:
         """
         self.supabase = supabase
         self.config = Config()
+        stripe.api_key = self.config.STRIPE_SECRET_KEY
     
     # ========================================================================
     # Customer Management
@@ -55,14 +58,34 @@ class BillingService:
             
         Raises:
             HTTPException: If customer creation fails
-            
-        Epic 2: Implement Stripe customer creation logic
         """
-        raise NotImplementedError(
-            "Customer management will be implemented in Epic 2. "
-            "This method will query the profiles table for stripe_customer_id, "
-            "create a new Stripe customer if needed, and update the database."
-        )
+        try:
+            # 1. Check if user already has a customer ID
+            response = self.supabase.table("profiles").select("stripe_customer_id").eq("id", user_id).single().execute()
+            
+            if response.data and response.data.get("stripe_customer_id"):
+                return response.data["stripe_customer_id"]
+            
+            # 2. Create new customer in Stripe
+            customer = stripe.Customer.create(
+                email=email,
+                metadata={
+                    "user_id": user_id,
+                    "environment": "production" if not self.config.is_testing() else "test"
+                }
+            )
+            
+            # 3. Update user profile with customer ID
+            self.supabase.table("profiles").update({
+                "stripe_customer_id": customer.id
+            }).eq("id", user_id).execute()
+            
+            return customer.id
+            
+        except stripe.error.StripeError as e:
+            raise HTTPException(status_code=502, detail=f"Stripe error: {str(e)}")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to create customer: {str(e)}")
     
     # ========================================================================
     # Checkout Session
@@ -92,17 +115,51 @@ class BillingService:
             
         Raises:
             HTTPException: If tier is invalid or checkout session creation fails
-            
-        Epic 2: Implement Stripe Checkout session creation
         """
-        raise NotImplementedError(
-            "Checkout session creation will be implemented in Epic 2. "
-            "This method will: "
-            "1. Validate tier and get price_id from config "
-            "2. Get or create Stripe customer "
-            "3. Create Stripe Checkout session with price_id, customer_id, and redirect URLs "
-            "4. Return checkout URL and session ID"
-        )
+        # 1. Validate tier and get price ID
+        price_id = self.config.get_price_id_from_tier(tier)
+        if not price_id:
+            raise HTTPException(status_code=400, detail=f"Invalid subscription tier: {tier}")
+            
+        try:
+            # 2. Get or create customer
+            customer_id = await self.get_or_create_customer(user_id, email)
+            
+            # 3. Create Checkout Session
+            session = stripe.checkout.Session.create(
+                customer=customer_id,
+                payment_method_types=["card"],
+                line_items=[{
+                    "price": price_id,
+                    "quantity": 1,
+                }],
+                mode="subscription",
+                success_url=self.config.STRIPE_SUCCESS_URL + "?session_id={CHECKOUT_SESSION_ID}",
+                cancel_url=self.config.STRIPE_CANCEL_URL,
+                metadata={
+                    "user_id": user_id,
+                    "tier": tier
+                },
+                subscription_data={
+                    "metadata": {
+                        "user_id": user_id,
+                        "tier": tier
+                    }
+                },
+                allow_promotion_codes=True
+            )
+            
+            return {
+                "checkout_url": session.url,
+                "session_id": session.id
+            }
+            
+        except stripe.error.StripeError as e:
+            raise HTTPException(status_code=502, detail=f"Stripe error: {str(e)}")
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to create checkout session: {str(e)}")
     
     # ========================================================================
     # Customer Portal
@@ -171,17 +228,38 @@ class BillingService:
             
         Raises:
             HTTPException: If price_id is invalid or database update fails
-            
-        Epic 3: Implement subscription provisioning logic
         """
-        raise NotImplementedError(
-            "Subscription provisioning will be implemented in Epic 3. "
-            "This method will: "
-            "1. Map price_id to tier using config.get_tier_from_price_id() "
-            "2. Update profiles table with stripe_customer_id, stripe_subscription_id, "
-            "   subscription_status, account_tier, and period dates "
-            "3. Log successful provisioning for monitoring"
-        )
+        # 1. Map price_id to tier
+        tier = self.config.get_tier_from_price_id(price_id)
+        if not tier:
+            # Fallback: if price_id is not in config, check if it's a known tier name passed directly
+            # This handles cases where we might pass "pro" directly instead of price_id
+            if price_id in ["basic", "pro", "educator"]:
+                tier = price_id
+            else:
+                raise HTTPException(status_code=400, detail=f"Invalid price ID or tier: {price_id}")
+        
+        try:
+            # 2. Prepare update data
+            from datetime import datetime
+            
+            update_data = {
+                "stripe_customer_id": customer_id,
+                "stripe_subscription_id": subscription_id,
+                "subscription_status": subscription_status,
+                "account_tier": tier
+            }
+            
+            if current_period_end:
+                update_data["subscription_current_period_end"] = datetime.utcfromtimestamp(current_period_end).isoformat()
+            
+            # 3. Update profiles table
+            # We use the service role client (self.supabase) which bypasses RLS
+            # This is safe because this method is called by trusted internal handlers
+            self.supabase.table("profiles").update(update_data).eq("id", user_id).execute()
+            
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to provision subscription: {str(e)}")
     
     async def handle_failed_payment(self, user_id: str, subscription_id: str) -> None:
         """

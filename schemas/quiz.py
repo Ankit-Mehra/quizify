@@ -111,7 +111,7 @@ class FileQuizRequest(BaseModel):
         "multiple_choice", "true_false", "fill_blank","matching","mixed"]] = ["mixed"]
 
 class WebQuizRequest(BaseModel):
-    """Request to generate quiz from web URL (basic/educator tiers only)"""
+    """Request to generate quiz from web URL (basic/pro tiers only)"""
     model_config = ConfigDict(strict=True, validate_assignment=True)
     title: str = Field(..., description="Title of the quiz")
     url: str = Field(..., description="Web URL to scrape content from")

@@ -244,8 +244,6 @@ class Config:
         tier_map = {
             "basic": cls.STRIPE_PRICE_ID_BASIC,
             "pro": cls.STRIPE_PRICE_ID_PRO,
-            # Legacy mapping for existing educator users
-            "educator": cls.STRIPE_PRICE_ID_PRO,  # educator → pro migration
         }
         return tier_map.get(tier.lower())
     

@@ -82,6 +82,30 @@ class PortalSessionResponse(BaseModel):
         }
 
 
+class CheckoutSessionVerification(BaseModel):
+    """Response from checkout session verification"""
+    session_id: str = Field(..., description="Checkout session ID")
+    customer_id: str = Field(..., description="Stripe customer ID")
+    subscription_id: str = Field(..., description="Stripe subscription ID")
+    tier: str = Field(..., description="Account tier (basic/pro)")
+    status: str = Field(..., description="Subscription status")
+    current_period_end: int = Field(..., description="Unix timestamp of period end")
+    payment_status: str = Field(..., description="Payment status (paid/unpaid)")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "session_id": "cs_test_a1b2c3d4e5f6g7h8i9j0",
+                "customer_id": "cus_ABC123xyz",
+                "subscription_id": "sub_DEF456uvw",
+                "tier": "basic",
+                "status": "active",
+                "current_period_end": 1734566400,
+                "payment_status": "paid"
+            }
+        }
+
+
 # ============================================================================
 # Subscription Status Schemas
 # ============================================================================
@@ -93,9 +117,9 @@ class SubscriptionStatusResponse(BaseModel):
     Returned by GET /api/billing/subscription-status endpoint.
     Frontend uses this to display billing information and subscription details.
     """
-    account_tier: Literal["free", "basic", "pro", "educator"] = Field(
+    account_tier: Literal["free", "basic", "pro"] = Field(
         ...,
-        description="Current account tier (educator is legacy, same as pro)"
+        description="Current account tier"
     )
     subscription_status: Optional[str] = Field(
         None,

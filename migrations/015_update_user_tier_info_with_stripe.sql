@@ -16,7 +16,7 @@ CREATE OR REPLACE VIEW public.user_tier_info AS
 SELECT 
     u.id,
     u.email,
-    p.name,
+    p.display_name,
     p.account_tier,
     -- Stripe subscription fields
     p.stripe_customer_id,
@@ -65,11 +65,11 @@ SELECT
     END AS billing_status
 FROM auth.users u
 LEFT JOIN public.profiles p ON u.id = p.id
-LEFT JOIN public.quizzes q ON u.id = q.user_id
+LEFT JOIN public.quizzes q ON u.id = q.created_by
 GROUP BY 
     u.id, 
     u.email, 
-    p.name,
+    p.display_name,
     p.account_tier, 
     p.stripe_customer_id,
     p.stripe_subscription_id,

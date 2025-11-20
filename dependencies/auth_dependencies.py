@@ -176,6 +176,7 @@ async def _authenticate_request(
         logger.debug("Full user info: %s", user_info)
 
         user_id = user_info.get("id") or user_info.get("email")
+        email = user_info.get("email")
         if not user_id:
             logger.error("No valid user identifier found in token payload")
             raise HTTPException(status_code=401, detail="Invalid user token - no identifier found")
@@ -185,6 +186,7 @@ async def _authenticate_request(
         request.state.auth_cached = True
         request.state.access_token = token
         request.state.auth_user_id = user_id
+        request.state.auth_email = email
         request.state.auth_token = token
 
         logger.debug("Authenticated user %s", _short_id(user_id, 8))
@@ -212,3 +214,11 @@ async def get_current_user_token(
     _, token = await _authenticate_request(request, credentials)
     logger.debug("Retrieved user token for request")
     return token
+
+
+async def get_current_user_email(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+) -> str:
+    await _authenticate_request(request, credentials)
+    return request.state.auth_email

@@ -52,8 +52,11 @@ WHERE subscription_status IS NOT NULL;
 -- Row Level Security (RLS) Policies
 -- ============================================================================
 
+-- Drop policy if exists to avoid error on recreation
+DROP POLICY IF EXISTS "Users can view own Stripe data" ON public.profiles;
+
 -- Users can view their own Stripe data (needed for billing page)
-CREATE POLICY IF NOT EXISTS "Users can view own Stripe data"
+CREATE POLICY "Users can view own Stripe data"
 ON public.profiles
 FOR SELECT
 USING (auth.uid() = id);

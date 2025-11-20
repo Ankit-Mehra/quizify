@@ -30,7 +30,7 @@ CREATE OR REPLACE VIEW public.user_tier_info AS
 SELECT 
     u.id,
     u.email,
-    p.name,
+    p.display_name,
     p.account_tier,
     -- Stripe subscription fields
     p.stripe_customer_id,
@@ -54,7 +54,6 @@ SELECT
     CASE 
         WHEN p.account_tier = 'free' THEN 5
         WHEN p.account_tier = 'basic' THEN 100
-        WHEN p.account_tier = 'educator' THEN 500  -- Legacy tier
         WHEN p.account_tier = 'pro' THEN 999999    -- Unlimited
         ELSE 5
     END AS quota_limit,
@@ -65,7 +64,6 @@ SELECT
             CASE 
                 WHEN p.account_tier = 'free' THEN 5
                 WHEN p.account_tier = 'basic' THEN 100
-                WHEN p.account_tier = 'educator' THEN 500
                 ELSE 5
             END
         THEN TRUE
@@ -87,12 +85,12 @@ FROM auth.users u
 LEFT JOIN public.profiles p ON u.id = p.id
 -- CRITICAL FIX: Filter quizzes by current period start
 -- If current_period_start is NULL (free tier), use start of current month
-LEFT JOIN public.quizzes q ON u.id = q.user_id 
+LEFT JOIN public.quizzes q ON u.id = q.created_by 
     AND q.created_at >= COALESCE(p.current_period_start, date_trunc('month', now()))
 GROUP BY 
     u.id, 
     u.email, 
-    p.name,
+    p.display_name,
     p.account_tier, 
     p.stripe_customer_id,
     p.stripe_subscription_id,

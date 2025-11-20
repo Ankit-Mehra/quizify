@@ -144,17 +144,17 @@ class TestValidateUserQuota:
         assert detail['current_count'] == 100
         assert detail['quota_limit'] == 100
         assert detail['user_tier'] == 'basic'
-        assert 'Upgrade to educator for 500 quizzes' in detail['detail']
+        assert 'Upgrade to pro for unlimited quizzes' in detail['detail']
         
     @patch('handlers.quiz_handlers.get_user_tier_info_cached', new_callable=AsyncMock)
-    async def test_validate_quota_educator_tier_under_limit(self, mock_get_tier_info):
-        """Test quota validation for educator tier user under limit."""
+    async def test_validate_quota_pro_tier_under_limit(self, mock_get_tier_info):
+        """Test quota validation for pro tier user under limit."""
         mock_get_tier_info.return_value = {
             'id': 'test-user-id',
             'email': 'test@example.com',
-            'account_tier': 'educator',
+            'account_tier': 'pro',
             'current_quiz_count': 450,
-            'quota_limit': 500,
+            'quota_limit': 999999,
             'quizzes_attempted': 450,
             'quota_exceeded': False
         }
@@ -163,15 +163,15 @@ class TestValidateUserQuota:
         await validate_user_quota('test-user-id')
         
     @patch('handlers.quiz_handlers.get_user_tier_info_cached', new_callable=AsyncMock)
-    async def test_validate_quota_educator_tier_at_limit(self, mock_get_tier_info):
-        """Test quota validation for educator tier user at limit."""
+    async def test_validate_quota_pro_tier_at_limit(self, mock_get_tier_info):
+        """Test quota validation for pro tier user at limit."""
         mock_get_tier_info.return_value = {
             'id': 'test-user-id',
             'email': 'test@example.com',
-            'account_tier': 'educator',
-            'current_quiz_count': 500,
-            'quota_limit': 500,
-            'quizzes_attempted': 500,
+            'account_tier': 'pro',
+            'current_quiz_count': 999999,
+            'quota_limit': 999999,
+            'quizzes_attempted': 999999,
             'quota_exceeded': True
         }
         
@@ -181,6 +181,6 @@ class TestValidateUserQuota:
         
         assert exc_info.value.status_code == 403
         detail = exc_info.value.detail
-        assert detail['current_count'] == 500
-        assert detail['quota_limit'] == 500
-        assert detail['user_tier'] == 'educator'
+        assert detail['current_count'] == 999999
+        assert detail['quota_limit'] == 999999
+        assert detail['user_tier'] == 'pro'

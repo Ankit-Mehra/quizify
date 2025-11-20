@@ -12,30 +12,31 @@ Epic 2-4: Full implementation with Stripe integration
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from dependencies.auth_dependencies import get_current_user_id, get_current_user_token
+from dependencies.auth_dependencies import get_current_user_id, get_current_user_token, get_current_user_email
 from schemas.billing import (
     CheckoutSessionRequest,
     CheckoutSessionResponse,
     PortalSessionResponse,
     SubscriptionStatusResponse,
+    CheckoutSessionVerification,
 )
 from services.billing_service import BillingService
+from services.db_services.supabase_quiz import get_supabase
 from config import Config
+from handlers.billing_handler import verify_checkout_session
+from services.logger import app_logger as logger
 
 router = APIRouter(prefix="/api/billing", tags=["billing"])
 
-# Placeholder for Supabase client initialization
-# Will be properly initialized in Epic 2
+# Initialize BillingService with Supabase client
 def get_billing_service() -> BillingService:
     """
     Dependency to get BillingService instance.
     
-    Epic 2: Initialize with proper Supabase client
+    Initialized with service role Supabase client for webhook handling
+    and admin operations (like querying profiles).
     """
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Billing service initialization not implemented yet (Epic 2)"
-    )
+    return BillingService(get_supabase())
 
 
 # ============================================================================
@@ -55,6 +56,7 @@ def get_billing_service() -> BillingService:
 async def create_checkout_session(
     request: CheckoutSessionRequest,
     user_id: str = Depends(get_current_user_id),
+    email: str = Depends(get_current_user_email),
     billing_service: BillingService = Depends(get_billing_service),
 ) -> CheckoutSessionResponse:
     """
@@ -69,16 +71,51 @@ async def create_checkout_session(
     6. Stripe webhook notifies backend of successful payment
     7. Backend provisions subscription and upgrades user tier
     8. User is redirected to success URL
-    
-    **Epic 2: Implement checkout session creation**
     """
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail=(
-            "Checkout session creation not implemented yet (Epic 2). "
-            "Will create Stripe Checkout session and return checkout URL."
-        ),
+    return await billing_service.create_checkout_session(
+        user_id=user_id,
+        email=email,
+        tier=request.tier
     )
+
+
+# ============================================================================
+# Checkout Verification Endpoint
+# ============================================================================
+
+@router.get(
+    "/verify-session/{session_id}",
+    response_model=CheckoutSessionVerification,
+    status_code=status.HTTP_200_OK,
+    summary="Verify Checkout Session",
+    description="Verify checkout session after successful payment",
+)
+async def verify_session(
+    session_id: str,
+    user_id: str = Depends(get_current_user_id),
+    billing_service: BillingService = Depends(get_billing_service),
+) -> CheckoutSessionVerification:
+    """
+    Verify checkout session and return subscription details.
+    
+    Called by frontend after user returns from Stripe Checkout.
+    
+    **Returns:**
+    - Subscription details including tier, status, period end
+    
+    **Errors:**
+    - `403`: Session does not belong to authenticated user
+    - `404`: Session ID not found
+    - `400`: Payment not complete
+    - `500`: Stripe API error
+    """
+    logger.info(
+        f"Verifying checkout session {session_id} for user {user_id[:8]}"
+    )
+    
+    result = await verify_checkout_session(session_id, user_id, billing_service)
+    
+    return result
 
 
 # ============================================================================
@@ -145,7 +182,7 @@ async def get_subscription_status(
     Get the user's current subscription and billing status.
     
     **Returns:**
-    - Account tier (free, basic, educator)
+    - Account tier (free, basic, pro)
     - Subscription status (active, canceled, past_due, etc.)
     - Billing status (no_subscription, active, grace_period, etc.)
     - Quota information (current count, limit, exceeded flag)
