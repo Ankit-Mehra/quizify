@@ -90,13 +90,13 @@ GRANT SELECT ON public.user_tier_info TO authenticated;
 
 -- Add comment explaining pro tier
 COMMENT ON VIEW public.user_tier_info IS 
-'Unified view of user tier, quota, and Stripe subscription status. Pro tier has unlimited quota (999999).';
+'Unified view of user tier, quota, and Stripe subscription status. Pro tier has unlimited quota (INT_MAX).';
 
 -- ============================================================================
 -- Migration Notes
 -- ============================================================================
 -- 
--- 1. Pro tier uses quota_limit = 999999 (effectively unlimited)
+-- 1. Pro tier uses quota_limit = 2147483647 (INT_MAX, effectively unlimited)
 -- 2. Pro tier users will never hit quota_exceeded = true
 -- 3. Educator tier (500 quizzes) remains for backward compatibility
 -- 4. New Stripe subscriptions will create "pro" tier users

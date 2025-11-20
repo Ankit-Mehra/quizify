@@ -17,6 +17,7 @@ from typing import Optional
 from fastapi import HTTPException
 from config import Config
 from supabase import Client
+from services.logger import app_logger as logger
 
 
 class BillingService:
@@ -234,7 +235,9 @@ class BillingService:
         if not tier:
             # Fallback: if price_id is not in config, check if it's a known tier name passed directly
             # This handles cases where we might pass "pro" directly instead of price_id
+            # WARNING: This is primarily for testing/legacy support. In production, strict price IDs should be used.
             if price_id in ["basic", "pro", "educator"]:
+                logger.warning(f"Using tier name '{price_id}' as price_id fallback. This should only happen in testing.")
                 tier = price_id
             else:
                 raise HTTPException(status_code=400, detail=f"Invalid price ID or tier: {price_id}")

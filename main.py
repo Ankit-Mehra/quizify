@@ -34,6 +34,29 @@ except json.JSONDecodeError:
 
 # Get CORS origin regex for wildcard support (e.g., Vercel previews)
 import re
+
+def is_overly_permissive_cors_regex(pattern: str) -> bool:
+    """
+    Check if a CORS regex pattern is overly permissive (e.g., allows all domains).
+    
+    Args:
+        pattern: The regex pattern to check
+        
+    Returns:
+        bool: True if the pattern is considered overly permissive
+    """
+    # Check for catch-all patterns
+    if pattern in [".*", ".+", "^.*$", "^.+$"]:
+        return True
+        
+    # Check for patterns that contain ".*" but don't have enough specificity
+    # e.g., ".*" without any literal dots usually means "match anything"
+    # whereas ".*\.example\.com" has a literal dot
+    if ".*" in pattern and not ("." in pattern.replace(".*", "")):
+        return True
+        
+    return False
+
 BACKEND_CORS_ORIGIN_REGEX = os.getenv("BACKEND_CORS_ORIGIN_REGEX", None)
 if BACKEND_CORS_ORIGIN_REGEX:
     # Validate regex compiles correctly
@@ -44,8 +67,7 @@ if BACKEND_CORS_ORIGIN_REGEX:
         raise RuntimeError(f"BACKEND_CORS_ORIGIN_REGEX must be a valid regex pattern: {e}")
     
     # Security check: Warn if pattern appears overly permissive
-    if BACKEND_CORS_ORIGIN_REGEX in [".*", ".+", "^.*$", "^.+$"] or \
-       (".*" in BACKEND_CORS_ORIGIN_REGEX and not ("." in BACKEND_CORS_ORIGIN_REGEX.replace(".*", ""))):
+    if is_overly_permissive_cors_regex(BACKEND_CORS_ORIGIN_REGEX):
         logger.warning(
             f"CORS regex pattern appears overly permissive: {BACKEND_CORS_ORIGIN_REGEX}. "
             "This may allow requests from any origin. Use specific domain patterns (e.g., ^https://.*\\.vercel\\.app$)"

@@ -79,8 +79,23 @@ async def verify_checkout_session(
         # This is safe because we verified payment_status="paid" above.
         # ------------------------------------------------------------------
         try:
-            # Get price ID from subscription items
-            price_id = subscription['items']['data'][0]['price']['id']
+            # Get price ID from subscription items, safely
+            items = subscription.get('items', {})
+            data = items.get('data', [])
+            if not data or not isinstance(data, list):
+                logger.error(f"Subscription items data missing or invalid for user {user_id[:8]}: {items}")
+                raise HTTPException(
+                    status_code=500,
+                    detail="Subscription items data missing or invalid"
+                )
+            price = data[0].get('price', {}) if isinstance(data[0], dict) else {}
+            price_id = price.get('id')
+            if not price_id:
+                logger.error(f"Price ID missing in subscription for user {user_id[:8]}: {price}")
+                raise HTTPException(
+                    status_code=500,
+                    detail="Price ID missing in subscription"
+                )
             
             await billing_service.provision_subscription(
                 user_id=user_id,
