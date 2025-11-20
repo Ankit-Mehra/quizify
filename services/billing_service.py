@@ -147,7 +147,9 @@ class BillingService:
         customer_id: str,
         subscription_id: str,
         subscription_status: str,
-        price_id: str
+        price_id: str,
+        current_period_start: Optional[int] = None,
+        current_period_end: Optional[int] = None
     ) -> None:
         """
         Provision or update a subscription in the database.
@@ -164,6 +166,8 @@ class BillingService:
             subscription_id: Stripe subscription ID (sub_XXXXXXXXX)
             subscription_status: Stripe subscription status (active, trialing, past_due, etc.)
             price_id: Stripe price ID to determine tier
+            current_period_start: Unix timestamp for start of billing period
+            current_period_end: Unix timestamp for end of billing period
             
         Raises:
             HTTPException: If price_id is invalid or database update fails
@@ -175,7 +179,7 @@ class BillingService:
             "This method will: "
             "1. Map price_id to tier using config.get_tier_from_price_id() "
             "2. Update profiles table with stripe_customer_id, stripe_subscription_id, "
-            "   subscription_status, and account_tier "
+            "   subscription_status, account_tier, and period dates "
             "3. Log successful provisioning for monitoring"
         )
     
