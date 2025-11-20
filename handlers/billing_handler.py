@@ -42,9 +42,10 @@ async def verify_checkout_session(
         # Verify session belongs to user
         session_user_id = session.metadata.get("user_id")
         if session_user_id != user_id:
+            safe_session_user_id = session_user_id[:8] if session_user_id else "None"
             logger.warning(
                 f"Session {session_id} user mismatch: "
-                f"expected {user_id[:8]}, got {session_user_id[:8]}"
+                f"expected {user_id[:8]}, got {safe_session_user_id}"
             )
             raise HTTPException(
                 status_code=403,
@@ -80,18 +81,24 @@ async def verify_checkout_session(
         # ------------------------------------------------------------------
         try:
             # Get price ID from subscription items, safely
-            items = subscription.get('items', {})
-            data = items.get('data', [])
+            # Use attribute access for Stripe objects
+            items = getattr(subscription, "items", None)
+            data = getattr(items, "data", None) if items else None
+            
             if not data or not isinstance(data, list):
-                logger.error(f"Subscription items data missing or invalid for user {user_id[:8]}: {items}")
+                logger.error(f"Subscription items data missing or invalid for user {user_id[:8]}")
                 raise HTTPException(
                     status_code=500,
                     detail="Subscription items data missing or invalid"
                 )
-            price = data[0].get('price', {}) if isinstance(data[0], dict) else {}
-            price_id = price.get('id')
+            
+            first_item = data[0]
+            price = getattr(first_item, "price", None)
+            price_id = getattr(price, "id", None) if price else None
+            
             if not price_id:
-                logger.error(f"Price ID missing in subscription for user {user_id[:8]}: {price}")
+                sub_id = getattr(subscription, "id", "unknown")
+                logger.error(f"Price ID missing in subscription {sub_id} for user {user_id[:8]}")
                 raise HTTPException(
                     status_code=500,
                     detail="Price ID missing in subscription"
@@ -112,8 +119,11 @@ async def verify_checkout_session(
             # Log as CRITICAL because until Epic 3 (Webhooks) is implemented, this failure means
             # the user paid but didn't get the upgrade.
             logger.critical(f"Failed to synchronously provision subscription for user {user_id}: {e}")
-            # We continue to return success so the frontend sees "Paid", but this requires manual intervention
-            # or the future webhook implementation to fix.
+            # Raise 500 to inform frontend and trigger retry/support contact
+            raise HTTPException(
+                status_code=500,
+                detail="Payment succeeded but failed to provision subscription. Please contact support."
+            )
         
         return {
             "session_id": session.id,
