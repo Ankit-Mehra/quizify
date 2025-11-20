@@ -5,8 +5,8 @@ from uuid import UUID
 
 # Account tier options
 # IMPORTANT: These values MUST match migrations/001_add_missing_features.sql CHECK constraint
-# Database constraint: CHECK (account_tier IN ('free', 'basic', 'educator'))
-ACCOUNT_TIERS = Literal["free", "basic", "educator"]
+# Database constraint: CHECK (account_tier IN ('free', 'basic', 'educator', 'pro'))
+ACCOUNT_TIERS = Literal["free", "basic", "educator", "pro"]
 
 # User role options  
 # IMPORTANT: These values MUST match migrations/004_add_rbac_roles.sql CHECK constraint
@@ -39,7 +39,7 @@ class UserTierInfo(BaseModel):
 
 class TierUpgradeRequest(BaseModel):
     """Request to upgrade user's account tier"""
-    target_tier: Literal["basic", "educator"] = Field(
+    target_tier: Literal["basic", "educator", "pro"] = Field(
         ..., 
         description="Target tier to upgrade to (cannot downgrade to free)"
     )
