@@ -117,6 +117,14 @@ class SubscriptionStatusResponse(BaseModel):
         None,
         description="Timestamp when subscription was canceled (null if active)"
     )
+    current_period_start: Optional[datetime] = Field(
+        None,
+        description="Start of current billing period (or month for free tier)"
+    )
+    current_period_end: Optional[datetime] = Field(
+        None,
+        description="End of current billing period"
+    )
     in_grace_period: bool = Field(
         ...,
         description="True if subscription is canceled but user still has access"
@@ -143,6 +151,8 @@ class SubscriptionStatusResponse(BaseModel):
                 "stripe_customer_id": "cus_ABC123XYZ789",
                 "stripe_subscription_id": "sub_DEF456UVW012",
                 "subscription_canceled_at": None,
+                "current_period_start": "2025-11-01T00:00:00Z",
+                "current_period_end": "2025-12-01T00:00:00Z",
                 "in_grace_period": False,
                 "current_quiz_count": 42,
                 "quota_limit": 100,
