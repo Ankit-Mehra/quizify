@@ -67,11 +67,17 @@ class BillingService:
             HTTPException: If customer creation fails
         """
         try:
+            logger.info(f"Getting or creating Stripe customer for user {user_id[:8]}")
+            
             # 1. Check if user already has a customer ID
             response = self.supabase.table("profiles").select("stripe_customer_id").eq("id", user_id).single().execute()
             
             if response.data and response.data.get("stripe_customer_id"):
-                return response.data["stripe_customer_id"]
+                customer_id = response.data["stripe_customer_id"]
+                logger.info(f"Found existing Stripe customer: {customer_id}")
+                return customer_id
+            
+            logger.info(f"Creating new Stripe customer for email: {email}")
             
             # 2. Create new customer in Stripe
             customer = stripe.Customer.create(
@@ -82,16 +88,22 @@ class BillingService:
                 }
             )
             
+            logger.info(f"Stripe customer created: {customer.id}")
+            
             # 3. Update user profile with customer ID
             self.supabase.table("profiles").update({
                 "stripe_customer_id": customer.id
             }).eq("id", user_id).execute()
             
+            logger.info(f"Updated profile with Stripe customer ID")
+            
             return customer.id
             
         except stripe.StripeError as e:
+            logger.error(f"Stripe error creating customer: {str(e)}")
             raise HTTPException(status_code=502, detail=f"Stripe error: {str(e)}")
         except Exception as e:
+            logger.error(f"Error in get_or_create_customer: {str(e)}", exc_info=True)
             raise HTTPException(status_code=500, detail=f"Failed to create customer: {str(e)}")
     
     # ========================================================================
