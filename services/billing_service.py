@@ -37,7 +37,13 @@ class BillingService:
         """
         self.supabase = supabase
         self.config = Config()
+        
+        # Validate Stripe API key is set
+        if not self.config.STRIPE_SECRET_KEY:
+            raise RuntimeError("STRIPE_SECRET_KEY environment variable is not set")
+        
         stripe.api_key = self.config.STRIPE_SECRET_KEY
+        logger.info(f"Stripe API initialized with key: {self.config.STRIPE_SECRET_KEY[:7]}...")
     
     # ========================================================================
     # Customer Management
@@ -83,7 +89,7 @@ class BillingService:
             
             return customer.id
             
-        except stripe.error.StripeError as e:
+        except stripe.StripeError as e:
             raise HTTPException(status_code=502, detail=f"Stripe error: {str(e)}")
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to create customer: {str(e)}")
@@ -118,9 +124,13 @@ class BillingService:
             HTTPException: If tier is invalid or checkout session creation fails
         """
         # 1. Validate tier and get price ID
+        logger.info(f"Creating checkout session for user {user_id[:8]} - tier: {tier}")
         price_id = self.config.get_price_id_from_tier(tier)
         if not price_id:
+            logger.error(f"Invalid tier '{tier}' or price ID not configured")
             raise HTTPException(status_code=400, detail=f"Invalid subscription tier: {tier}")
+        
+        logger.info(f"Using Stripe price ID: {price_id}")
             
         try:
             # 2. Get or create customer
@@ -155,11 +165,13 @@ class BillingService:
                 "session_id": session.id
             }
             
-        except stripe.error.StripeError as e:
+        except stripe.StripeError as e:
+            logger.error(f"Stripe API error: {str(e)}")
             raise HTTPException(status_code=502, detail=f"Stripe error: {str(e)}")
         except HTTPException:
             raise
         except Exception as e:
+            logger.error(f"Unexpected error creating checkout session: {str(e)}", exc_info=True)
             raise HTTPException(status_code=500, detail=f"Failed to create checkout session: {str(e)}")
     
     # ========================================================================
@@ -236,7 +248,7 @@ class BillingService:
             # Fallback: if price_id is not in config, check if it's a known tier name passed directly
             # This handles cases where we might pass "pro" directly instead of price_id
             # WARNING: This is primarily for testing/legacy support. In production, strict price IDs should be used.
-            if self.config.is_testing() and price_id in ["basic", "pro", "educator"]:
+            if self.config.is_testing() and price_id in ["basic", "pro"]:
                 logger.warning(f"Using tier name '{price_id}' as price_id fallback. This should only happen in testing.")
                 tier = price_id
             else:

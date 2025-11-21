@@ -990,7 +990,7 @@ class TestUpdateUserRole:
             "id": "user-3",
             "email": "user3@example.com",
             "role": "moderator",
-            "account_tier": "educator"
+            "account_tier": "pro"
         }]
         mock_tier_eq.execute.return_value = tier_response
         mock_tier_info_table.select.return_value = mock_tier_select

@@ -51,6 +51,7 @@ SELECT
     -- For free tier (null start): defaults to start of current month
     -- For paid tier (set start): uses billing period start
     COALESCE(COUNT(q.id), 0)::INTEGER AS current_quiz_count,
+    COALESCE(s.submission_count, 0)::INTEGER AS quizzes_attempted,
     CASE 
         WHEN p.account_tier = 'free' THEN 5
         WHEN p.account_tier = 'basic' THEN 100
@@ -83,6 +84,7 @@ SELECT
     END AS billing_status
 FROM auth.users u
 LEFT JOIN public.profiles p ON u.id = p.id
+LEFT JOIN public.user_submission_counts s ON u.id = s.user_id
 -- CRITICAL FIX: Filter quizzes by current period start
 -- If current_period_start is NULL (free tier), use start of current month
 -- Optimization: Use CASE for explicit logic instead of COALESCE
@@ -103,7 +105,8 @@ GROUP BY
     p.subscription_status,
     p.subscription_canceled_at,
     p.current_period_start,
-    p.current_period_end;
+    p.current_period_end,
+    s.submission_count;
 
 -- Grant permissions
 GRANT SELECT ON public.user_tier_info TO authenticated;
