@@ -104,9 +104,14 @@ class BillingService:
             logger.info(f"Stripe customer created: {customer.id}")
             
             # 3. Update user profile with customer ID
-            self.supabase.table("profiles").update({
+            response = self.supabase.table("profiles").update({
                 "stripe_customer_id": customer.id
             }).eq("id", user_id).execute()
+            
+            # Verify database update succeeded
+            if not response.data:
+                logger.error(f"No profile found for user {user_id[:8]} when storing Stripe customer ID")
+                raise HTTPException(status_code=404, detail="User profile not found")
             
             logger.info(f"Updated profile with Stripe customer ID")
             
