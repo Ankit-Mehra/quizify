@@ -243,8 +243,8 @@ async def stripe_webhook(
     if not config.STRIPE_WEBHOOK_SECRET:
         logger.error("STRIPE_WEBHOOK_SECRET not configured")
         raise HTTPException(
-            status_code=500,
-            detail="Webhook secret not configured"
+            status_code=400,
+            detail="Webhook endpoint not properly configured"
         )
     
     try:

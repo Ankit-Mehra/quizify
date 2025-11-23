@@ -411,6 +411,9 @@ class BillingService:
             return
         
         # Fetch full subscription details
+        # Note: Synchronous Stripe API call acceptable here for webhook reliability.
+        # Alternative would be expanding subscription in webhook event, but this ensures
+        # we always get fresh, complete subscription data including items and metadata.
         subscription = stripe.Subscription.retrieve(subscription_id)
         
         # Extract price_id from subscription items
@@ -523,23 +526,23 @@ class BillingService:
         )
         
         # If subscription was canceled, update the canceled_at timestamp
+        # Critical: This timestamp is used for grace period calculations
         if canceled_at:
-            try:
-                canceled_at_datetime = datetime.fromtimestamp(canceled_at, tz=timezone.utc)
-                self.supabase.table("profiles").update({
-                    "subscription_canceled_at": canceled_at_datetime.isoformat()
-                }).eq("id", user_id).execute()
-                
+            canceled_at_datetime = datetime.fromtimestamp(canceled_at, tz=timezone.utc)
+            response = self.supabase.table("profiles").update({
+                "subscription_canceled_at": canceled_at_datetime.isoformat()
+            }).eq("id", user_id).execute()
+            
+            if response and getattr(response, "data", None):
                 logger.info(f"Updated subscription_canceled_at for user {user_id[:8]} to {canceled_at_datetime.isoformat()}")
-                
-                # Invalidate cache again since we updated canceled_at
-                try:
-                    asyncio.create_task(invalidate_user_tier_cache(user_id))
-                except Exception as cache_error:
-                    logger.warning(f"Failed to invalidate cache after canceled_at update: {cache_error}")
-                    
-            except Exception as e:
-                logger.error(f"Failed to update subscription_canceled_at for user {user_id[:8]}: {e}")
+            else:
+                logger.warning(f"Attempted to update subscription_canceled_at for user {user_id[:8]}, but no profile was updated (user may not exist)")
+            
+            # Invalidate cache again since we updated canceled_at
+            try:
+                asyncio.create_task(invalidate_user_tier_cache(user_id))
+            except Exception as cache_error:
+                logger.warning(f"Failed to invalidate cache after canceled_at update: {cache_error}")
     
     async def handle_subscription_deleted(self, subscription: dict) -> None:
         """
@@ -576,6 +579,8 @@ class BillingService:
             return
         
         # Fetch subscription to get metadata
+        # Note: Synchronous API call is acceptable for webhook handlers (<5s timeout).
+        # Ensures we have current subscription metadata and avoids event expansion complexity.
         subscription = stripe.Subscription.retrieve(subscription_id)
         user_id = subscription.get("metadata", {}).get("user_id")
         
@@ -587,19 +592,32 @@ class BillingService:
         
         # Update subscription status to active (in case it was past_due)
         items = subscription.get("items")
-        if items and items.get("data"):
-            first_item = items.get("data")[0]
-            price_id = first_item.get("price", {}).get("id")
-            
-            await self.provision_subscription(
-                user_id=user_id,
-                customer_id=subscription.get("customer"),
-                subscription_id=subscription_id,
-                subscription_status=STATUS_ACTIVE,
-                price_id=price_id,
-                current_period_start=subscription.get("current_period_start"),
-                current_period_end=subscription.get("current_period_end")
+        data = items.get("data") if items else None
+        
+        if not data or not isinstance(data, list) or len(data) == 0:
+            logger.warning(
+                f"Could not extract price_id for invoice {invoice.get('id')} (subscription {subscription_id}): items.data missing or empty"
             )
+            return
+        
+        first_item = data[0]
+        price_id = first_item.get("price", {}).get("id")
+        
+        if not price_id:
+            logger.warning(
+                f"Could not extract price_id for invoice {invoice.get('id')} (subscription {subscription_id}): price_id missing in first item"
+            )
+            return
+        
+        await self.provision_subscription(
+            user_id=user_id,
+            customer_id=subscription.get("customer"),
+            subscription_id=subscription_id,
+            subscription_status=STATUS_ACTIVE,
+            price_id=price_id,
+            current_period_start=subscription.get("current_period_start"),
+            current_period_end=subscription.get("current_period_end")
+        )
     
     async def handle_invoice_payment_failed(self, invoice: dict) -> None:
         """
@@ -614,6 +632,8 @@ class BillingService:
             return
         
         # Fetch subscription to get metadata
+        # Note: Synchronous API call is acceptable for webhook handlers (<5s timeout).
+        # Ensures we have current subscription metadata and avoids event expansion complexity.
         subscription = stripe.Subscription.retrieve(subscription_id)
         user_id = subscription.get("metadata", {}).get("user_id")
         
@@ -625,11 +645,14 @@ class BillingService:
         
         # Update subscription status to past_due
         try:
-            self.supabase.table("profiles").update({
+            response = self.supabase.table("profiles").update({
                 "subscription_status": STATUS_PAST_DUE
             }).eq("id", user_id).execute()
             
-            logger.info(f"Updated user {user_id[:8]} subscription status to past_due")
+            if not response.data:
+                logger.error(f"No profile found for user {user_id[:8]} during payment failure handling")
+            else:
+                logger.info(f"Updated user {user_id[:8]} subscription status to past_due")
             
             # Invalidate cache
             try:

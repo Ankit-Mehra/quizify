@@ -81,9 +81,9 @@ async def verify_checkout_session(
         # ------------------------------------------------------------------
         try:
             # Get price ID from subscription items
-            # Access Stripe object attributes directly for consistency
-            items = subscription.items if hasattr(subscription, "items") else None
-            data = items.data if items else None
+            # Use dictionary-style .get() access for consistency with webhook handlers
+            items = subscription.get("items")
+            data = items.get("data") if items else None
             
             if not data or not isinstance(data, list) or len(data) == 0:
                 logger.error(f"Subscription items data missing or invalid for user {user_id[:8]}")
@@ -93,11 +93,10 @@ async def verify_checkout_session(
                 )
             
             first_item = data[0]
-            price = first_item.price if hasattr(first_item, "price") else None
-            price_id = price.id if price and hasattr(price, "id") else None
+            price_id = first_item.get("price", {}).get("id")
             
             if not price_id:
-                sub_id = subscription.id if hasattr(subscription, "id") else "unknown"
+                sub_id = subscription.get("id", "unknown")
                 logger.error(f"Price ID missing in subscription {sub_id} for user {user_id[:8]}")
                 raise HTTPException(
                     status_code=500,
@@ -105,8 +104,8 @@ async def verify_checkout_session(
                 )
             
             # Extract billing period dates from subscription object
-            current_period_start = subscription.current_period_start if hasattr(subscription, "current_period_start") else None
-            current_period_end = subscription.current_period_end if hasattr(subscription, "current_period_end") else None
+            current_period_start = subscription.get("current_period_start")
+            current_period_end = subscription.get("current_period_end")
             
             await billing_service.provision_subscription(
                 user_id=user_id,
