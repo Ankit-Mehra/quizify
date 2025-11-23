@@ -339,29 +339,12 @@ class BillingService:
                 # Cache invalidation failure should not break provisioning
                 logger.warning(f"Failed to invalidate cache for user {user_id[:8]}: {cache_error}")
             
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to provision subscription: {str(e)}")
     
-    async def handle_failed_payment(self, user_id: str, subscription_id: str) -> None:
-        """
-        Handle failed payment for a subscription.
-        
-        This method is called by the webhook handler when a payment fails
-        (invoice.payment_failed). It updates the subscription status to 'past_due'.
-        
-        Args:
-            user_id: Supabase user UUID
-            subscription_id: Stripe subscription ID (sub_XXXXXXXXX)
-            
-        Epic 3: Implement failed payment handling
-        """
-        raise NotImplementedError(
-            "Failed payment handling will be implemented in Epic 3. "
-            "This method will: "
-            "1. Update profiles table subscription_status to 'past_due' "
-            "2. Log payment failure for monitoring "
-            "3. Consider sending email notification to user (future enhancement)"
-        )
+
     
     async def cancel_subscription(
         self, 
@@ -439,6 +422,10 @@ class BillingService:
         first_item = items.get("data")[0]
         price_id = first_item.get("price", {}).get("id")
         
+        if not price_id:
+            logger.error(f"No price_id found in subscription item for subscription {subscription_id}, user {user_id[:8]}")
+            return
+        
         logger.info(f"Checkout completed for user {user_id[:8]}, subscription {subscription_id}")
         
         # Provision subscription
@@ -470,8 +457,12 @@ class BillingService:
             logger.error(f"No items in subscription {subscription.get('id')}")
             return
         
-        first_item = items["data"][0]
+        first_item = items.get("data")[0]
         price_id = first_item.get("price", {}).get("id")
+        
+        if not price_id:
+            logger.error(f"No price_id found in subscription item for subscription {subscription.get('id')}")
+            return
         
         logger.info(f"Subscription created: {subscription.get('id')} for user {user_id[:8]}")
         
@@ -508,8 +499,12 @@ class BillingService:
             logger.error(f"No items in subscription {subscription.get('id')}")
             return
         
-        first_item = items["data"][0]
+        first_item = items.get("data")[0]
         price_id = first_item.get("price", {}).get("id")
+        
+        if not price_id:
+            logger.error(f"Missing price_id in subscription {subscription.get('id')} for user {user_id[:8] if user_id else 'unknown'}; cannot provision subscription.")
+            return
         
         subscription_status = subscription.get("status")
         canceled_at = subscription.get("canceled_at")
