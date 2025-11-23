@@ -27,6 +27,7 @@ from config import Config
 from handlers.billing_handler import verify_checkout_session
 from services.logger import app_logger as logger
 
+
 router = APIRouter(prefix="/api/billing", tags=["billing"])
 
 # Initialize BillingService with Supabase client
@@ -135,6 +136,7 @@ async def verify_session(
 )
 async def create_portal_session(
     user_id: str = Depends(get_current_user_id),
+    user_token: str = Depends(get_current_user_token),
     billing_service: BillingService = Depends(get_billing_service),
 ) -> PortalSessionResponse:
     """
@@ -155,7 +157,7 @@ async def create_portal_session(
     """
     logger.info(f"Creating portal session for user {user_id[:8]}")
     
-    portal_url = await billing_service.create_portal_session(user_id)
+    portal_url = await billing_service.create_portal_session(user_id, user_token)
     
     return PortalSessionResponse(portal_url=portal_url)
 

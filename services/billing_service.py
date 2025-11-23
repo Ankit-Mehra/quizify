@@ -21,6 +21,7 @@ from config import Config
 from supabase import Client
 from services.logger import app_logger as logger
 from services.db_services.supabase_quiz import invalidate_user_tier_cache
+from services.db_services.supabase_quiz import get_authed_supabase_client
 
 # Subscription status constants
 STATUS_ACTIVE = "active"
@@ -245,7 +246,7 @@ class BillingService:
     # Customer Portal
     # ========================================================================
     
-    async def create_portal_session(self, user_id: str) -> str:
+    async def create_portal_session(self, user_id: str, user_token: str) -> str:
         """
         Create a Stripe Customer Portal session.
         
@@ -256,6 +257,7 @@ class BillingService:
         
         Args:
             user_id: Supabase user UUID
+            user_token: User's JWT token for authenticated Supabase access
             
         Returns:
             str: Customer Portal URL to redirect user to
@@ -266,8 +268,10 @@ class BillingService:
         Epic 4: Customer Portal session creation IMPLEMENTED
         """
         try:
-            # 1. Get stripe_customer_id from profiles
-            response = self.supabase.table("profiles").select("stripe_customer_id").eq("id", user_id).execute()
+            # 1. Get stripe_customer_id from profiles using authenticated client
+            # This ensures RLS policies are properly enforced for the authenticated user
+            authed_supabase = get_authed_supabase_client(user_token)
+            response = authed_supabase.table("profiles").select("stripe_customer_id").eq("id", user_id).execute()
             
             # Debug logging to diagnose cache vs database mismatch
             logger.info(f"Portal session query result for user {user_id[:8]}: response.data={response.data}")
