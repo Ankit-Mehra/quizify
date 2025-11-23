@@ -372,10 +372,15 @@ class BillingService:
             
             # Update subscription status to canceled
             # Keep account_tier unchanged (grace period maintains access until period_end)
-            self.supabase.table("profiles").update({
+            response = self.supabase.table("profiles").update({
                 "subscription_status": STATUS_CANCELED,
                 "subscription_canceled_at": canceled_at.isoformat()
             }).eq("id", user_id).execute()
+            
+            # Verify database update succeeded
+            if not response.data:
+                logger.error(f"No profile found for user {user_id[:8]} during cancellation")
+                raise HTTPException(status_code=404, detail="User profile not found")
             
             logger.info(f"Subscription {subscription_id} canceled for user {user_id[:8]}")
             
