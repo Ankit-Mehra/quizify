@@ -568,11 +568,11 @@ class BillingService:
             }).eq("id", user_id).execute()
             
             # Verify database update succeeded - critical for grace period logic
-            if response and getattr(response, "data", None):
-                logger.info(f"Updated subscription_canceled_at for user {user_id[:8]} to {canceled_at_datetime.isoformat()}")
-            else:
+            if not response.data:
                 logger.warning(f"Attempted to update subscription_canceled_at for user {user_id[:8]}, but no profile was updated (user may not exist)")
                 # Do not raise exception - provisioning already succeeded above
+            else:
+                logger.info(f"Updated subscription_canceled_at for user {user_id[:8]} to {canceled_at_datetime.isoformat()}")
             
             # Invalidate cache again since we updated canceled_at
             try:
