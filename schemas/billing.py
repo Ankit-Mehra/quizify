@@ -89,7 +89,7 @@ class CheckoutSessionVerification(BaseModel):
     subscription_id: str = Field(..., description="Stripe subscription ID")
     tier: str = Field(..., description="Account tier (basic/pro)")
     status: str = Field(..., description="Subscription status")
-    current_period_end: int = Field(..., description="Unix timestamp of period end")
+    current_period_end: Optional[int] = Field(None, description="Unix timestamp of period end")
     payment_status: str = Field(..., description="Payment status (paid/unpaid)")
     
     class Config:
@@ -137,21 +137,17 @@ class SubscriptionStatusResponse(BaseModel):
         None,
         description="Stripe subscription ID (null for free tier)"
     )
-    subscription_canceled_at: Optional[datetime] = Field(
+    subscription_canceled_at: Optional[str] = Field(
         None,
-        description="Timestamp when subscription was canceled (null if active)"
+        description="ISO timestamp when subscription was canceled (null if active)"
     )
-    current_period_start: Optional[datetime] = Field(
+    current_period_start: Optional[str] = Field(
         None,
-        description="Start of current billing period (or month for free tier)"
+        description="ISO timestamp for start of current billing period"
     )
-    current_period_end: Optional[datetime] = Field(
+    current_period_end: Optional[str] = Field(
         None,
-        description="End of current billing period"
-    )
-    in_grace_period: bool = Field(
-        ...,
-        description="True if subscription is canceled but user still has access"
+        description="ISO timestamp for end of current billing period"
     )
     current_quiz_count: int = Field(
         ...,
