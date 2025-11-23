@@ -81,8 +81,10 @@ async def verify_checkout_session(
         # ------------------------------------------------------------------
         try:
             # Get price ID from subscription items using shared helper
+            # Note: _extract_price_id_from_subscription expects a dict, so convert Stripe object
+            subscription_dict = dict(subscription)
             price_id = billing_service._extract_price_id_from_subscription(
-                subscription,
+                subscription_dict,
                 context=f"session {session_id} for user {user_id[:8]}"
             )
             
@@ -92,9 +94,10 @@ async def verify_checkout_session(
                     detail="Price ID missing in subscription"
                 )
             
-            # Extract billing period dates from subscription object
-            current_period_start = subscription.get("current_period_start")
-            current_period_end = subscription.get("current_period_end")
+            # Extract billing period dates from subscription object using attribute access
+            # (subscription is a Stripe object from API, not a webhook event dict)
+            current_period_start = subscription.current_period_start
+            current_period_end = subscription.current_period_end
             
             await billing_service.provision_subscription(
                 user_id=user_id,
