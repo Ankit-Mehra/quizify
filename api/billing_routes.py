@@ -150,15 +150,13 @@ async def create_portal_session(
     **Requirements:**
     - User must have an active or canceled subscription (stripe_customer_id exists)
     
-    **Epic 4: Implement portal session creation**
+    **Epic 4: Portal session creation IMPLEMENTED**
     """
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail=(
-            "Customer Portal session creation not implemented yet (Epic 4). "
-            "Will create Stripe Portal session and return portal URL."
-        ),
-    )
+    logger.info(f"Creating portal session for user {user_id[:8]}")
+    
+    portal_url = await billing_service.create_portal_session(user_id)
+    
+    return PortalSessionResponse(portal_url=portal_url)
 
 
 # ============================================================================
@@ -177,6 +175,7 @@ async def create_portal_session(
 )
 async def get_subscription_status(
     user_id: str = Depends(get_current_user_id),
+    billing_service: BillingService = Depends(get_billing_service),
 ) -> SubscriptionStatusResponse:
     """
     Get the user's current subscription and billing status.
@@ -188,15 +187,13 @@ async def get_subscription_status(
     - Quota information (current count, limit, exceeded flag)
     - Grace period status (if subscription is canceled but still valid)
     
-    **Epic 5: Implement subscription status query**
+    **Epic 5: Subscription status query IMPLEMENTED**
     """
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail=(
-            "Subscription status query not implemented yet (Epic 5). "
-            "Will query user_tier_info view and return subscription details."
-        ),
-    )
+    logger.info(f"Getting subscription status for user {user_id[:8]}")
+    
+    status_data = await billing_service.get_subscription_status(user_id)
+    
+    return status_data
 
 
 # ============================================================================
@@ -221,25 +218,92 @@ async def stripe_webhook(
     Handle Stripe webhook events.
     
     **Webhook Events Handled:**
+    - checkout.session.completed: Checkout completed (initial subscription)
     - customer.subscription.created: New subscription created
     - customer.subscription.updated: Subscription status changed
     - customer.subscription.deleted: Subscription canceled
-    - invoice.payment_succeeded: Successful payment
+    - invoice.paid: Successful payment
     - invoice.payment_failed: Failed payment
     
     **Security:**
     - Verifies webhook signature using STRIPE_WEBHOOK_SECRET
     - Implements idempotency to prevent duplicate processing
     
-    **Epic 3: Implement webhook processing**
+    **Epic 3: Webhook processing IMPLEMENTED**
     """
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail=(
-            "Webhook processing not implemented yet (Epic 3). "
-            "Will verify signature, parse events, and update subscriptions."
-        ),
-    )
+    import stripe
+    
+    config = Config()
+    payload = await request.body()
+    sig_header = request.headers.get("stripe-signature")
+    
+    if not config.STRIPE_WEBHOOK_SECRET:
+        logger.error("STRIPE_WEBHOOK_SECRET not configured")
+        raise HTTPException(
+            status_code=500,
+            detail="Webhook secret not configured"
+        )
+    
+    try:
+        # Verify webhook signature
+        event = stripe.Webhook.construct_event(
+            payload, sig_header, config.STRIPE_WEBHOOK_SECRET
+        )
+    except ValueError as e:
+        # Invalid payload
+        logger.error(f"Invalid webhook payload: {e}")
+        raise HTTPException(status_code=400, detail="Invalid payload")
+    except stripe.SignatureVerificationError as e:
+        # Invalid signature
+        logger.error(f"Invalid webhook signature: {e}")
+        raise HTTPException(status_code=400, detail="Invalid signature")
+    
+    # Handle the event
+    event_type = event["type"]
+    data_object = event["data"]["object"]
+    
+    logger.info(f"Processing webhook event: {event_type} (ID: {event['id']})")
+    
+    try:
+        if event_type == "checkout.session.completed":
+            # Payment successful, subscription created via Checkout
+            await billing_service.handle_checkout_completed(data_object)
+            
+        elif event_type == "customer.subscription.created":
+            # New subscription created (can also happen outside of Checkout)
+            await billing_service.handle_subscription_created(data_object)
+            
+        elif event_type == "customer.subscription.updated":
+            # Subscription status changed (renewal, upgrade, downgrade)
+            await billing_service.handle_subscription_updated(data_object)
+            
+        elif event_type == "customer.subscription.deleted":
+            # Subscription canceled or expired
+            await billing_service.handle_subscription_deleted(data_object)
+            
+        elif event_type == "invoice.paid":
+            # Successful payment (recurring or initial)
+            await billing_service.handle_invoice_paid(data_object)
+            
+        elif event_type == "invoice.payment_failed":
+            # Payment failed
+            await billing_service.handle_invoice_payment_failed(data_object)
+            
+        else:
+            logger.info(f"Unhandled webhook event type: {event_type}")
+    
+    except Exception as e:
+        logger.error(
+            f"Error processing webhook {event_type} (ID: {event['id']}): {e}",
+            exc_info=True
+        )
+        # Return 500 so Stripe retries the webhook
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to process webhook: {str(e)}"
+        )
+    
+    return {"status": "success", "event_type": event_type}
 
 
 # ============================================================================

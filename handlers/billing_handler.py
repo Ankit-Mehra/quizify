@@ -80,12 +80,12 @@ async def verify_checkout_session(
         # This is safe because we verified payment_status="paid" above.
         # ------------------------------------------------------------------
         try:
-            # Get price ID from subscription items, safely
-            # Use attribute access for Stripe objects
-            items = getattr(subscription, "items", None)
-            data = getattr(items, "data", None) if items else None
+            # Get price ID from subscription items
+            # Access Stripe object attributes directly for consistency
+            items = subscription.items if hasattr(subscription, "items") else None
+            data = items.data if items else None
             
-            if not data or not isinstance(data, list):
+            if not data or not isinstance(data, list) or len(data) == 0:
                 logger.error(f"Subscription items data missing or invalid for user {user_id[:8]}")
                 raise HTTPException(
                     status_code=500,
@@ -93,16 +93,20 @@ async def verify_checkout_session(
                 )
             
             first_item = data[0]
-            price = getattr(first_item, "price", None)
-            price_id = getattr(price, "id", None) if price else None
+            price = first_item.price if hasattr(first_item, "price") else None
+            price_id = price.id if price and hasattr(price, "id") else None
             
             if not price_id:
-                sub_id = getattr(subscription, "id", "unknown")
+                sub_id = subscription.id if hasattr(subscription, "id") else "unknown"
                 logger.error(f"Price ID missing in subscription {sub_id} for user {user_id[:8]}")
                 raise HTTPException(
                     status_code=500,
                     detail="Price ID missing in subscription"
                 )
+            
+            # Extract billing period dates from subscription object
+            current_period_start = subscription.current_period_start if hasattr(subscription, "current_period_start") else None
+            current_period_end = subscription.current_period_end if hasattr(subscription, "current_period_end") else None
             
             await billing_service.provision_subscription(
                 user_id=user_id,
@@ -110,8 +114,8 @@ async def verify_checkout_session(
                 subscription_id=subscription.id,
                 subscription_status=subscription.status,
                 price_id=price_id,
-                current_period_start=subscription.current_period_start,
-                current_period_end=subscription.current_period_end
+                current_period_start=current_period_start,
+                current_period_end=current_period_end
             )
             logger.info(f"Synchronously provisioned subscription for user {user_id[:8]}")
             
@@ -131,17 +135,17 @@ async def verify_checkout_session(
             "subscription_id": subscription.id,
             "tier": tier,
             "status": subscription.status,
-            "current_period_end": subscription.current_period_end,
+            "current_period_end": current_period_end,
             "payment_status": session.payment_status
         }
         
-    except stripe.error.InvalidRequestError as e:
+    except stripe.InvalidRequestError as e:
         logger.error(f"Invalid session ID {session_id}: {e}")
         raise HTTPException(
             status_code=404,
             detail="Checkout session not found"
         )
-    except stripe.error.StripeError as e:
+    except stripe.StripeError as e:
         logger.error(f"Stripe error verifying session {session_id}: {e}")
         raise HTTPException(
             status_code=502,
