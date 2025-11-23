@@ -80,24 +80,13 @@ async def verify_checkout_session(
         # This is safe because we verified payment_status="paid" above.
         # ------------------------------------------------------------------
         try:
-            # Get price ID from subscription items
-            # Use dictionary-style .get() access for consistency with webhook handlers
-            items = subscription.get("items")
-            data = items.get("data") if items else None
-            
-            if not data or not isinstance(data, list) or len(data) == 0:
-                logger.error(f"Subscription items data missing or invalid for user {user_id[:8]}")
-                raise HTTPException(
-                    status_code=500,
-                    detail="Subscription items data missing or invalid"
-                )
-            
-            first_item = data[0]
-            price_id = first_item.get("price", {}).get("id")
+            # Get price ID from subscription items using shared helper
+            price_id = billing_service._extract_price_id_from_subscription(
+                subscription,
+                context=f"session {session_id} for user {user_id[:8]}"
+            )
             
             if not price_id:
-                sub_id = subscription.get("id", "unknown")
-                logger.error(f"Price ID missing in subscription {sub_id} for user {user_id[:8]}")
                 raise HTTPException(
                     status_code=500,
                     detail="Price ID missing in subscription"

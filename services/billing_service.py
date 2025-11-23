@@ -58,6 +58,43 @@ class BillingService:
         logger.info(f"Stripe API initialized with key: {self.config.STRIPE_SECRET_KEY[:7]}...")
     
     # ========================================================================
+    # Helper Methods
+    # ========================================================================
+    
+    def _extract_price_id_from_subscription(self, subscription: dict, context: str = "") -> Optional[str]:
+        """
+        Extract price_id from Stripe subscription items.
+        
+        This helper eliminates duplicated price_id extraction logic across webhook handlers
+        and verification endpoints.
+        
+        Args:
+            subscription: Stripe Subscription object (dict)
+            context: Context for logging (e.g., "invoice inv_xxx", "subscription sub_xxx")
+            
+        Returns:
+            str: Price ID if found, None otherwise
+        """
+        items = subscription.get("items")
+        if not items or not items.get("data"):
+            logger.error(f"No items in subscription{' for ' + context if context else ''}")
+            return None
+        
+        data = items.get("data")
+        if not isinstance(data, list) or len(data) == 0:
+            logger.error(f"Subscription items data missing or empty{' for ' + context if context else ''}")
+            return None
+        
+        first_item = data[0]
+        price_id = first_item.get("price", {}).get("id")
+        
+        if not price_id:
+            logger.error(f"No price_id found in subscription item{' for ' + context if context else ''}")
+            return None
+        
+        return price_id
+    
+    # ========================================================================
     # Customer Management
     # ========================================================================
     
@@ -428,16 +465,11 @@ class BillingService:
         subscription = stripe.Subscription.retrieve(subscription_id)
         
         # Extract price_id from subscription items
-        items = subscription.get("items")
-        if not items or not items.get("data"):
-            logger.error(f"No items in subscription {subscription_id}")
-            return
-        
-        first_item = items.get("data")[0]
-        price_id = first_item.get("price", {}).get("id")
-        
+        price_id = self._extract_price_id_from_subscription(
+            subscription, 
+            context=f"subscription {subscription_id}, user {user_id[:8]}"
+        )
         if not price_id:
-            logger.error(f"No price_id found in subscription item for subscription {subscription_id}, user {user_id[:8]}")
             return
         
         logger.info(f"Checkout completed for user {user_id[:8]}, subscription {subscription_id}")
@@ -466,16 +498,11 @@ class BillingService:
             return
         
         # Extract price_id from subscription items
-        items = subscription.get("items")
-        if not items or not items.get("data"):
-            logger.error(f"No items in subscription {subscription.get('id')}")
-            return
-        
-        first_item = items.get("data")[0]
-        price_id = first_item.get("price", {}).get("id")
-        
+        price_id = self._extract_price_id_from_subscription(
+            subscription,
+            context=f"subscription {subscription.get('id')}"
+        )
         if not price_id:
-            logger.error(f"No price_id found in subscription item for subscription {subscription.get('id')}")
             return
         
         logger.info(f"Subscription created: {subscription.get('id')} for user {user_id[:8]}")
@@ -508,16 +535,12 @@ class BillingService:
             return
         
         # Extract price_id from subscription items
-        items = subscription.get("items")
-        if not items or not items.get("data"):
-            logger.error(f"No items in subscription {subscription.get('id')}")
-            return
-        
-        first_item = items.get("data")[0]
-        price_id = first_item.get("price", {}).get("id")
-        
+        price_id = self._extract_price_id_from_subscription(
+            subscription,
+            context=f"subscription {subscription.get('id')} for user {user_id[:8]}"
+        )
         if not price_id:
-            logger.error(f"Missing price_id in subscription {subscription.get('id')} for user {user_id[:8] if user_id else 'unknown'}; cannot provision subscription.")
+            logger.error(f"Cannot provision subscription {subscription.get('id')} without price_id")
             return
         
         subscription_status = subscription.get("status")
@@ -604,22 +627,11 @@ class BillingService:
         logger.info(f"Invoice paid: {invoice.get('id')} for user {user_id[:8]}")
         
         # Update subscription status to active (in case it was past_due)
-        items = subscription.get("items")
-        data = items.get("data") if items else None
-        
-        if not data or not isinstance(data, list) or len(data) == 0:
-            logger.warning(
-                f"Could not extract price_id for invoice {invoice.get('id')} (subscription {subscription_id}): items.data missing or empty"
-            )
-            return
-        
-        first_item = data[0]
-        price_id = first_item.get("price", {}).get("id")
-        
+        price_id = self._extract_price_id_from_subscription(
+            subscription,
+            context=f"invoice {invoice.get('id')} (subscription {subscription_id})"
+        )
         if not price_id:
-            logger.warning(
-                f"Could not extract price_id for invoice {invoice.get('id')} (subscription {subscription_id}): price_id missing in first item"
-            )
             return
         
         await self.provision_subscription(
