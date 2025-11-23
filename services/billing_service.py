@@ -750,7 +750,13 @@ class BillingService:
                         return "grace_period"
                     else:
                         return "expired"
-                except Exception:
+                except ValueError as e:
+                    # Invalid timestamp format - log and treat as expired
+                    logger.warning(f"Invalid timestamp format for current_period_end: {current_period_end} - {e}")
+                    return "expired"
+                except Exception as e:
+                    # Unexpected error - log with full context for debugging
+                    logger.error(f"Unexpected error parsing period_end timestamp: {e}", exc_info=True)
                     return "expired"
             return "expired"
         
