@@ -85,7 +85,7 @@ class BillingService:
             response = self.supabase.table("profiles").select("stripe_customer_id").eq("id", user_id).execute()
             
             # Check if profile exists and has a customer ID
-            if response.data and response.data[0].get("stripe_customer_id"):
+            if response.data and len(response.data) > 0 and response.data[0].get("stripe_customer_id"):
                 customer_id = response.data[0]["stripe_customer_id"]
                 logger.info(f"Found existing Stripe customer: {customer_id}")
                 return customer_id
@@ -227,7 +227,7 @@ class BillingService:
             # 1. Get stripe_customer_id from profiles
             response = self.supabase.table("profiles").select("stripe_customer_id").eq("id", user_id).execute()
             
-            if not response.data or not response.data[0].get("stripe_customer_id"):
+            if not response.data or len(response.data) == 0 or not response.data[0].get("stripe_customer_id"):
                 logger.warning(f"User {user_id[:8]} has no Stripe customer ID")
                 raise HTTPException(
                     status_code=404,
@@ -321,7 +321,13 @@ class BillingService:
             # 3. Update profiles table
             # We use the service role client (self.supabase) which bypasses RLS
             # This is safe because this method is called by trusted internal handlers
-            self.supabase.table("profiles").update(update_data).eq("id", user_id).execute()
+            response = self.supabase.table("profiles").update(update_data).eq("id", user_id).execute()
+            
+            if not response.data:
+                logger.error(f"No profile found for user {user_id[:8]} during provisioning")
+                raise HTTPException(status_code=404, detail="User profile not found")
+            
+            logger.info(f"Successfully provisioned subscription {subscription_id} for user {user_id[:8]}")
             
             # 4. Invalidate user tier cache after successful provisioning
             # This ensures the next API call fetches fresh data showing the upgraded tier
@@ -426,12 +432,12 @@ class BillingService:
         
         # Extract price_id from subscription items
         items = subscription.get("items")
-        if not items or not items.data:
+        if not items or not items.get("data"):
             logger.error(f"No items in subscription {subscription_id}")
             return
         
-        first_item = items.data[0]
-        price_id = first_item.price.id
+        first_item = items.get("data")[0]
+        price_id = first_item.get("price", {}).get("id")
         
         logger.info(f"Checkout completed for user {user_id[:8]}, subscription {subscription_id}")
         
@@ -440,10 +446,10 @@ class BillingService:
             user_id=user_id,
             customer_id=session.get("customer"),
             subscription_id=subscription_id,
-            subscription_status=subscription.status,
+            subscription_status=subscription.get("status"),
             price_id=price_id,
-            current_period_start=subscription.current_period_start,
-            current_period_end=subscription.current_period_end
+            current_period_start=subscription.get("current_period_start"),
+            current_period_end=subscription.get("current_period_end")
         )
     
     async def handle_subscription_created(self, subscription: dict) -> None:
@@ -586,18 +592,18 @@ class BillingService:
         
         # Update subscription status to active (in case it was past_due)
         items = subscription.get("items")
-        if items and items.data:
-            first_item = items.data[0]
-            price_id = first_item.price.id
+        if items and items.get("data"):
+            first_item = items.get("data")[0]
+            price_id = first_item.get("price", {}).get("id")
             
             await self.provision_subscription(
                 user_id=user_id,
-                customer_id=subscription.customer,
+                customer_id=subscription.get("customer"),
                 subscription_id=subscription_id,
                 subscription_status=STATUS_ACTIVE,
                 price_id=price_id,
-                current_period_start=subscription.current_period_start,
-                current_period_end=subscription.current_period_end
+                current_period_start=subscription.get("current_period_start"),
+                current_period_end=subscription.get("current_period_end")
             )
     
     async def handle_invoice_payment_failed(self, invoice: dict) -> None:

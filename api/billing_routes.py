@@ -12,6 +12,7 @@ Epic 2-4: Full implementation with Stripe integration
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+import stripe
 from dependencies.auth_dependencies import get_current_user_id, get_current_user_token, get_current_user_email
 from schemas.billing import (
     CheckoutSessionRequest,
@@ -227,11 +228,13 @@ async def stripe_webhook(
     
     **Security:**
     - Verifies webhook signature using STRIPE_WEBHOOK_SECRET
-    - Implements idempotency to prevent duplicate processing
+    - Uses database transactions to handle concurrent webhook deliveries
+    
+    **Note:** Stripe has built-in idempotency for webhook retries. For additional 
+    protection against race conditions, consider implementing event ID tracking in future.
     
     **Epic 3: Webhook processing IMPLEMENTED**
     """
-    import stripe
     
     config = Config()
     payload = await request.body()
