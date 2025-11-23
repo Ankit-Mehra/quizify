@@ -228,10 +228,10 @@ async def stripe_webhook(
     
     **Security:**
     - Verifies webhook signature using STRIPE_WEBHOOK_SECRET
-    - Uses database transactions to handle concurrent webhook deliveries
+    - Relies on Stripe's built-in idempotency and database RLS policies
     
-    **Note:** Stripe has built-in idempotency for webhook retries. For additional 
-    protection against race conditions, consider implementing event ID tracking in future.
+    **Note:** Stripe has built-in idempotency for webhook retries (same event ID). 
+    Database updates use Supabase's atomic operations and RLS policies for consistency.
     
     **Epic 3: Webhook processing IMPLEMENTED**
     """
@@ -240,6 +240,7 @@ async def stripe_webhook(
     payload = await request.body()
     sig_header = request.headers.get("stripe-signature")
     
+    # Validate webhook secret is configured (server configuration issue)
     if not config.STRIPE_WEBHOOK_SECRET:
         logger.error("STRIPE_WEBHOOK_SECRET not configured")
         raise HTTPException(

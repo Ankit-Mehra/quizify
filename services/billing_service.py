@@ -323,6 +323,7 @@ class BillingService:
             # This is safe because this method is called by trusted internal handlers
             response = self.supabase.table("profiles").update(update_data).eq("id", user_id).execute()
             
+            # Verify database update succeeded
             if not response.data:
                 logger.error(f"No profile found for user {user_id[:8]} during provisioning")
                 raise HTTPException(status_code=404, detail="User profile not found")
@@ -533,10 +534,12 @@ class BillingService:
                 "subscription_canceled_at": canceled_at_datetime.isoformat()
             }).eq("id", user_id).execute()
             
+            # Verify database update succeeded - critical for grace period logic
             if response and getattr(response, "data", None):
                 logger.info(f"Updated subscription_canceled_at for user {user_id[:8]} to {canceled_at_datetime.isoformat()}")
             else:
                 logger.warning(f"Attempted to update subscription_canceled_at for user {user_id[:8]}, but no profile was updated (user may not exist)")
+                # Do not raise exception - provisioning already succeeded above
             
             # Invalidate cache again since we updated canceled_at
             try:
