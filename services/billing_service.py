@@ -274,7 +274,8 @@ class BillingService:
             response = authed_supabase.table("profiles").select("stripe_customer_id").eq("id", user_id).execute()
             
             # Debug logging to diagnose cache vs database mismatch
-            logger.info(f"Portal session query result for user {user_id[:8]}: response.data={response.data}")
+            has_customer_id = bool(response.data and response.data[0].get("stripe_customer_id"))
+            logger.info(f"Portal session query result for user {user_id[:8]}: has_customer_id={has_customer_id}")
             
             if not response.data or len(response.data) == 0 or not response.data[0].get("stripe_customer_id"):
                 logger.warning(f"User {user_id[:8]} has no Stripe customer ID - response.data: {response.data}")
