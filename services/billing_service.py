@@ -21,6 +21,7 @@ from config import Config
 from supabase import Client
 from services.logger import app_logger as logger
 from services.db_services.supabase_quiz import invalidate_user_tier_cache
+from services.db_services.supabase_quiz import get_authed_supabase_client
 
 # Subscription status constants
 STATUS_ACTIVE = "active"
@@ -245,7 +246,7 @@ class BillingService:
     # Customer Portal
     # ========================================================================
     
-    async def create_portal_session(self, user_id: str) -> str:
+    async def create_portal_session(self, user_id: str, user_token: str) -> str:
         """
         Create a Stripe Customer Portal session.
         
@@ -256,6 +257,7 @@ class BillingService:
         
         Args:
             user_id: Supabase user UUID
+            user_token: User's JWT token for authenticated Supabase access
             
         Returns:
             str: Customer Portal URL to redirect user to
@@ -266,11 +268,19 @@ class BillingService:
         Epic 4: Customer Portal session creation IMPLEMENTED
         """
         try:
-            # 1. Get stripe_customer_id from profiles
-            response = self.supabase.table("profiles").select("stripe_customer_id").eq("id", user_id).execute()
+            # 1. Get stripe_customer_id from profiles using authenticated client
+            # This ensures RLS policies are properly enforced for the authenticated user
+            authed_supabase = get_authed_supabase_client(user_token)
+            response = authed_supabase.table("profiles").select("stripe_customer_id").eq("id", user_id).execute()
+            
+            # Debug logging to diagnose cache vs database mismatch
+            has_customer_id = bool(response.data and response.data[0].get("stripe_customer_id"))
+            logger.info(f"Portal session query result for user {user_id[:8]}: has_customer_id={has_customer_id}")
             
             if not response.data or len(response.data) == 0 or not response.data[0].get("stripe_customer_id"):
-                logger.warning(f"User {user_id[:8]} has no Stripe customer ID")
+                logger.warning(
+                    f"User {user_id[:8]} has no Stripe customer ID - data_present: {bool(response.data)}, data_length: {len(response.data) if response.data else 0}"
+                )
                 raise HTTPException(
                     status_code=404,
                     detail="No subscription found. Please subscribe first."
