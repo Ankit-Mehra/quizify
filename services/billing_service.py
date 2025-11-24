@@ -278,7 +278,9 @@ class BillingService:
             logger.info(f"Portal session query result for user {user_id[:8]}: has_customer_id={has_customer_id}")
             
             if not response.data or len(response.data) == 0 or not response.data[0].get("stripe_customer_id"):
-                logger.warning(f"User {user_id[:8]} has no Stripe customer ID - response.data: {response.data}")
+                logger.warning(
+                    f"User {user_id[:8]} has no Stripe customer ID - data_present: {bool(response.data)}, data_length: {len(response.data) if response.data else 0}"
+                )
                 raise HTTPException(
                     status_code=404,
                     detail="No subscription found. Please subscribe first."
