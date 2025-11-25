@@ -573,8 +573,9 @@ class BillingService:
         
         subscription_status = subscription.get("status")
         canceled_at = subscription.get("canceled_at")
+        cancel_at = subscription.get("cancel_at")  # Scheduled cancellation date (cancel at period end)
         
-        logger.info(f"Subscription updated: {subscription.get('id')} for user {user_id[:8]} - status: {subscription_status}, canceled_at: {canceled_at}")
+        logger.info(f"Subscription updated: {subscription.get('id')} for user {user_id[:8]} - status: {subscription_status}, canceled_at: {canceled_at}, cancel_at: {cancel_at}")
         
         # Update subscription details
         await self.provision_subscription(
@@ -587,10 +588,14 @@ class BillingService:
             current_period_end=subscription.get("current_period_end")
         )
         
-        # If subscription was canceled, update the canceled_at timestamp
-        # Critical: This timestamp is used for grace period calculations
-        if canceled_at:
-            canceled_at_datetime = datetime.fromtimestamp(canceled_at, tz=timezone.utc)
+        # Handle cancellation timestamps
+        # - canceled_at: When subscription was actually canceled (immediate cancellation)
+        # - cancel_at: Scheduled future cancellation date (cancel at period end)
+        # We use whichever is set to track the cancellation
+        cancellation_timestamp = canceled_at or cancel_at
+        
+        if cancellation_timestamp:
+            canceled_at_datetime = datetime.fromtimestamp(cancellation_timestamp, tz=timezone.utc)
             response = self.supabase.table("profiles").update({
                 "subscription_canceled_at": canceled_at_datetime.isoformat()
             }).eq("id", user_id).execute()
