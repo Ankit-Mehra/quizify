@@ -58,6 +58,7 @@ def get_billing_service() -> BillingService:
 async def create_checkout_session(
     request: CheckoutSessionRequest,
     user_id: str = Depends(get_current_user_id),
+    user_token: str = Depends(get_current_user_token),
     email: str = Depends(get_current_user_email),
     billing_service: BillingService = Depends(get_billing_service),
 ) -> CheckoutSessionResponse:
@@ -76,6 +77,7 @@ async def create_checkout_session(
     """
     return await billing_service.create_checkout_session(
         user_id=user_id,
+        user_token=user_token,
         email=email,
         tier=request.tier
     )
