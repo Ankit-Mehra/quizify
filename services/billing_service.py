@@ -62,32 +62,44 @@ class BillingService:
     # Helper Methods
     # ========================================================================
     
-    def _extract_price_id_from_subscription(self, subscription: dict, context: str = "") -> Optional[str]:
+    def _extract_price_id_from_subscription(self, subscription, context: str = "") -> Optional[str]:
         """
         Extract price_id from Stripe subscription items.
         
         This helper eliminates duplicated price_id extraction logic across webhook handlers
         and verification endpoints.
         
+        Handles both dict (from webhook events) and Stripe API objects (from API calls)
+        using a unified access pattern. Avoids deprecated methods like to_dict().
+        
         Args:
-            subscription: Stripe Subscription object (dict)
+            subscription: Stripe Subscription object (dict or Stripe API object)
             context: Context for logging (e.g., "invoice inv_xxx", "subscription sub_xxx")
             
         Returns:
             str: Price ID if found, None otherwise
         """
-        items = subscription.get("items")
-        if not items or not items.get("data"):
+        # Helper to access attributes from both dict and Stripe objects
+        def _get(obj, key, default=None):
+            if obj is None:
+                return default
+            if isinstance(obj, dict):
+                return obj.get(key, default)
+            return getattr(obj, key, default)
+        
+        items = _get(subscription, "items")
+        if not items:
             logger.error(f"No items in subscription{' for ' + context if context else ''}")
             return None
         
-        data = items.get("data")
-        if not isinstance(data, list) or len(data) == 0:
+        data = _get(items, "data")
+        if not data or not isinstance(data, list) or len(data) == 0:
             logger.error(f"Subscription items data missing or empty{' for ' + context if context else ''}")
             return None
         
         first_item = data[0]
-        price_id = first_item.get("price", {}).get("id")
+        price = _get(first_item, "price")
+        price_id = _get(price, "id")
         
         if not price_id:
             logger.error(f"No price_id found in subscription item{' for ' + context if context else ''}")

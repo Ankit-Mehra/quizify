@@ -80,11 +80,9 @@ async def verify_checkout_session(
         # This is safe because we verified payment_status="paid" above.
         # ------------------------------------------------------------------
         try:
-            # Get price ID from subscription items using shared helper
-            # Note: _extract_price_id_from_subscription expects a dict, so convert Stripe object
-            subscription_dict = dict(subscription)
+            # Extract price_id using shared helper (handles both dict and Stripe objects)
             price_id = billing_service._extract_price_id_from_subscription(
-                subscription_dict,
+                subscription,
                 context=f"session {session_id} for user {user_id[:8]}"
             )
             
