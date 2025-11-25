@@ -80,8 +80,11 @@ async def verify_checkout_session(
         # This is safe because we verified payment_status="paid" above.
         # ------------------------------------------------------------------
         try:
-            # Get price ID from subscription items
-            # For API-retrieved Stripe objects, use attribute access directly
+            # Extract price_id from subscription items
+            # Note: Stripe API objects support both attribute access (subscription.items)
+            # and dict-style access (subscription["items"]). We use getattr() with fallback
+            # to .get() to handle both API-retrieved objects and webhook event dicts.
+            # Avoid deprecated methods like to_dict() or to_dict_recursive().
             items = subscription.get("items") if isinstance(subscription, dict) else getattr(subscription, "items", None)
             price_id = None
             
