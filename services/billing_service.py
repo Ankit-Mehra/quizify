@@ -99,7 +99,7 @@ class BillingService:
     # Customer Management
     # ========================================================================
     
-    async def get_or_create_customer(self, user_id: str, email: str, user_token: str) -> str:
+    async def get_or_create_customer(self, user_id: str, user_token: str, email: str) -> str:
         """
         Get existing Stripe customer ID or create a new customer.
         
@@ -108,8 +108,8 @@ class BillingService:
         
         Args:
             user_id: Supabase user UUID
-            email: User's email address
             user_token: User's JWT token for authenticated Supabase access
+            email: User's email address
             
         Returns:
             str: Stripe customer ID (cus_XXXXXXXXX)
@@ -208,7 +208,7 @@ class BillingService:
             
         try:
             # 2. Get or create customer
-            customer_id = await self.get_or_create_customer(user_id, email, user_token)
+            customer_id = await self.get_or_create_customer(user_id, user_token, email)
             
             # 3. Create Checkout Session
             session = stripe.checkout.Session.create(
