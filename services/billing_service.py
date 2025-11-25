@@ -99,7 +99,7 @@ class BillingService:
     # Customer Management
     # ========================================================================
     
-    async def get_or_create_customer(self, user_id: str, email: str) -> str:
+    async def get_or_create_customer(self, user_id: str, email: str, user_token: str) -> str:
         """
         Get existing Stripe customer ID or create a new customer.
         
@@ -109,6 +109,7 @@ class BillingService:
         Args:
             user_id: Supabase user UUID
             email: User's email address
+            user_token: User's JWT token for authenticated Supabase access
             
         Returns:
             str: Stripe customer ID (cus_XXXXXXXXX)
@@ -119,8 +120,11 @@ class BillingService:
         try:
             logger.info(f"Getting or creating Stripe customer for user {user_id[:8]}")
             
+            # Use authenticated Supabase client to comply with RLS policies
+            authed_supabase = get_authed_supabase_client(user_token)
+            
             # 1. Check if user already has a customer ID
-            response = self.supabase.table("profiles").select("stripe_customer_id").eq("id", user_id).execute()
+            response = authed_supabase.table("profiles").select("stripe_customer_id").eq("id", user_id).execute()
             
             # Check if profile exists and has a customer ID
             if response.data and len(response.data) > 0 and response.data[0].get("stripe_customer_id"):
@@ -141,8 +145,8 @@ class BillingService:
             
             logger.info(f"Stripe customer created: {customer.id}")
             
-            # 3. Update user profile with customer ID
-            response = self.supabase.table("profiles").update({
+            # 3. Update user profile with customer ID using authenticated client
+            response = authed_supabase.table("profiles").update({
                 "stripe_customer_id": customer.id
             }).eq("id", user_id).execute()
             
@@ -169,6 +173,7 @@ class BillingService:
     async def create_checkout_session(
         self, 
         user_id: str, 
+        user_token: str,
         email: str, 
         tier: str
     ) -> dict:
@@ -180,6 +185,7 @@ class BillingService:
         
         Args:
             user_id: Supabase user UUID
+            user_token: User's JWT token for authenticated Supabase access
             email: User's email address
             tier: Subscription tier ("basic" or "pro")
             
@@ -202,7 +208,7 @@ class BillingService:
             
         try:
             # 2. Get or create customer
-            customer_id = await self.get_or_create_customer(user_id, email)
+            customer_id = await self.get_or_create_customer(user_id, email, user_token)
             
             # 3. Create Checkout Session
             session = stripe.checkout.Session.create(

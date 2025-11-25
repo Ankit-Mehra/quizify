@@ -87,10 +87,13 @@ class TestBillingAPI:
         """
         with patch("stripe.Customer.create") as mock_customer_create, \
              patch("stripe.checkout.Session.create") as mock_session_create, \
-             patch("services.billing_service.Config") as MockConfig:
+             patch("services.billing_service.Config") as MockConfig, \
+             patch("services.billing_service.get_authed_supabase_client") as mock_authed_client:
             
             # Setup mocks
             mock_supabase = MagicMock()
+            # Mock authenticated Supabase client for RLS
+            mock_authed_client.return_value = mock_supabase
             # Mock get_or_create_customer DB check (return None to trigger creation)
             mock_supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value.data = None
             
@@ -108,8 +111,8 @@ class TestBillingAPI:
             # Initialize service
             service = BillingService(mock_supabase)
             
-            # Call method
-            result = await service.create_checkout_session("user_123", "test@example.com", "pro")
+            # Call method - include user_token for RLS (order: user_id, user_token, email, tier)
+            result = await service.create_checkout_session("user_123", "test_token", "test@example.com", "pro")
             
             # Verify result
             assert result["checkout_url"] == "https://checkout.stripe.com/test"
