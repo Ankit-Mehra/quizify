@@ -379,12 +379,21 @@ class BillingService:
             # 3. Update profiles table
             # We use the service role client (self.supabase) which bypasses RLS
             # This is safe because this method is called by trusted internal handlers
+            
+            # First, verify the profile exists (helps diagnose RLS vs missing profile issues)
+            check_response = self.supabase.table("profiles").select("id").eq("id", user_id).execute()
+            logger.info(f"Profile check for user {user_id[:8]}: found={len(check_response.data) if check_response.data else 0} rows")
+            
+            if not check_response.data:
+                logger.error(f"Profile does not exist for user {user_id} - cannot provision subscription")
+                raise HTTPException(status_code=404, detail="User profile not found")
+            
             response = self.supabase.table("profiles").update(update_data).eq("id", user_id).execute()
             
             # Verify database update succeeded
             if not response.data:
-                logger.error(f"No profile found for user {user_id[:8]} during provisioning")
-                raise HTTPException(status_code=404, detail="User profile not found")
+                logger.error(f"Profile update returned no data for user {user_id[:8]} during provisioning (profile exists but update failed)")
+                raise HTTPException(status_code=500, detail="Failed to update profile")
             
             logger.info(f"Successfully provisioned subscription {subscription_id} for user {user_id[:8]}")
             
@@ -428,6 +437,14 @@ class BillingService:
         try:
             canceled_at = datetime.fromtimestamp(canceled_at_timestamp, tz=timezone.utc)
             
+            # First, verify the profile exists (helps diagnose RLS vs missing profile issues)
+            check_response = self.supabase.table("profiles").select("id, subscription_status").eq("id", user_id).execute()
+            logger.info(f"Profile check for user {user_id[:8]}: found={len(check_response.data) if check_response.data else 0} rows")
+            
+            if not check_response.data:
+                logger.error(f"Profile does not exist for user {user_id} - cannot cancel subscription")
+                raise HTTPException(status_code=404, detail="User profile not found")
+            
             # Update subscription status to canceled
             # Keep account_tier unchanged (grace period maintains access until period_end)
             response = self.supabase.table("profiles").update({
@@ -437,8 +454,8 @@ class BillingService:
             
             # Verify database update succeeded
             if not response.data:
-                logger.error(f"No profile found for user {user_id[:8]} during cancellation")
-                raise HTTPException(status_code=404, detail="User profile not found")
+                logger.error(f"Profile update returned no data for user {user_id[:8]} during cancellation (profile exists but update failed)")
+                raise HTTPException(status_code=500, detail="Failed to update profile")
             
             logger.info(f"Subscription {subscription_id} canceled for user {user_id[:8]}")
             
