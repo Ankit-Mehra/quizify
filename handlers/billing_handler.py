@@ -80,24 +80,13 @@ async def verify_checkout_session(
         # This is safe because we verified payment_status="paid" above.
         # ------------------------------------------------------------------
         try:
-            # Extract price_id from subscription items
-            # Note: Stripe API objects support both attribute access (subscription.items)
-            # and dict-style access (subscription["items"]). We use getattr() with fallback
-            # to .get() to handle both API-retrieved objects and webhook event dicts.
-            # Avoid deprecated methods like to_dict() or to_dict_recursive().
-            items = subscription.get("items") if isinstance(subscription, dict) else getattr(subscription, "items", None)
-            price_id = None
-            
-            if items:
-                data = items.get("data") if isinstance(items, dict) else getattr(items, "data", None)
-                if data and len(data) > 0:
-                    first_item = data[0]
-                    price = first_item.get("price") if isinstance(first_item, dict) else getattr(first_item, "price", None)
-                    if price:
-                        price_id = price.get("id") if isinstance(price, dict) else getattr(price, "id", None)
+            # Extract price_id using shared helper (handles both dict and Stripe objects)
+            price_id = billing_service._extract_price_id_from_subscription(
+                subscription,
+                context=f"session {session_id} for user {user_id[:8]}"
+            )
             
             if not price_id:
-                logger.error(f"No price_id found in subscription for session {session_id}")
                 raise HTTPException(
                     status_code=500,
                     detail="Price ID missing in subscription"
