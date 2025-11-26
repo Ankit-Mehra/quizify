@@ -202,3 +202,130 @@ class TestExtractPriceIdFromSubscription:
             context="test"
         )
         assert price_id is None
+
+
+class TestExtractPeriodDatesFromSubscription:
+    """Test billing period extraction from Stripe subscription objects.
+    
+    Per Stripe API docs, current_period_start and current_period_end are
+    on subscription ITEMS (items.data[].current_period_start/end), NOT on
+    the subscription object itself.
+    """
+    
+    def test_extract_period_dates_from_dict_subscription(self):
+        """Should extract period dates from dict-style subscription (webhook data)."""
+        subscription = {
+            "id": "sub_123",
+            "items": {
+                "data": [
+                    {
+                        "current_period_start": 1700000000,
+                        "current_period_end": 1702678400,
+                        "price": {"id": "price_abc123"}
+                    }
+                ]
+            }
+        }
+        
+        mock_self = MagicMock()
+        mock_self._get_attr = BillingService._get_attr
+        
+        start, end = BillingService._extract_period_dates_from_subscription(
+            mock_self,
+            subscription,
+            context="test"
+        )
+        assert start == 1700000000
+        assert end == 1702678400
+    
+    def test_extract_period_dates_from_object_subscription(self):
+        """Should extract period dates from Stripe API object subscription."""
+        # Create mock item
+        mock_item = MagicMock()
+        mock_item.current_period_start = 1700000000
+        mock_item.current_period_end = 1702678400
+        
+        # Create mock items container
+        mock_items = MagicMock()
+        mock_items.data = [mock_item]
+        
+        # Create mock subscription
+        mock_subscription = MagicMock()
+        mock_subscription.id = "sub_456"
+        mock_subscription.items = mock_items
+        
+        mock_self = MagicMock()
+        mock_self._get_attr = BillingService._get_attr
+        
+        start, end = BillingService._extract_period_dates_from_subscription(
+            mock_self,
+            mock_subscription,
+            context="test"
+        )
+        assert start == 1700000000
+        assert end == 1702678400
+    
+    def test_extract_period_dates_returns_none_for_empty_items(self):
+        """Should return (None, None) when subscription has no items."""
+        subscription = {
+            "id": "sub_123",
+            "items": {"data": []}
+        }
+        
+        mock_self = MagicMock()
+        mock_self._get_attr = BillingService._get_attr
+        
+        start, end = BillingService._extract_period_dates_from_subscription(
+            mock_self,
+            subscription,
+            context="test"
+        )
+        assert start is None
+        assert end is None
+    
+    def test_extract_period_dates_returns_none_for_missing_items(self):
+        """Should return (None, None) when subscription has no items key."""
+        subscription = {"id": "sub_123"}
+        
+        mock_self = MagicMock()
+        mock_self._get_attr = BillingService._get_attr
+        
+        start, end = BillingService._extract_period_dates_from_subscription(
+            mock_self,
+            subscription,
+            context="test"
+        )
+        assert start is None
+        assert end is None
+    
+    def test_extract_period_dates_handles_multiple_items(self):
+        """Should extract period dates from first subscription item when multiple exist."""
+        subscription = {
+            "id": "sub_123",
+            "items": {
+                "data": [
+                    {
+                        "current_period_start": 1700000000,
+                        "current_period_end": 1702678400,
+                        "price": {"id": "price_first"}
+                    },
+                    {
+                        "current_period_start": 1705000000,
+                        "current_period_end": 1707678400,
+                        "price": {"id": "price_second"}
+                    }
+                ]
+            }
+        }
+        
+        mock_self = MagicMock()
+        mock_self._get_attr = BillingService._get_attr
+        
+        start, end = BillingService._extract_period_dates_from_subscription(
+            mock_self,
+            subscription,
+            context="test"
+        )
+        # Should use first item's period dates
+        assert start == 1700000000
+        assert end == 1702678400

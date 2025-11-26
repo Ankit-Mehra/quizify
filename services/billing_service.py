@@ -125,6 +125,40 @@ class BillingService:
         
         return price_id
     
+    def _extract_period_dates_from_subscription(self, subscription, context: str = "") -> tuple[Optional[int], Optional[int]]:
+        """
+        Extract current_period_start and current_period_end from Stripe subscription.
+        
+        IMPORTANT: Per Stripe API documentation, the billing period dates are stored on
+        subscription ITEMS (items.data[].current_period_start/end), NOT on the subscription
+        object itself. This is a common source of confusion.
+        
+        Args:
+            subscription: Stripe Subscription object (dict or Stripe API object)
+            context: Context for logging
+            
+        Returns:
+            tuple: (current_period_start, current_period_end) as Unix timestamps, or (None, None)
+        """
+        _get = self._get_attr
+        
+        items = _get(subscription, "items")
+        if not items:
+            logger.error(f"No items in subscription{' for ' + context if context else ''}, cannot extract period dates")
+            return None, None
+        
+        data = _get(items, "data")
+        if not data or not isinstance(data, list) or len(data) == 0:
+            logger.error(f"Subscription items data missing or empty{' for ' + context if context else ''}")
+            return None, None
+        
+        # Get period dates from the first subscription item
+        first_item = data[0]
+        current_period_start = _get(first_item, "current_period_start")
+        current_period_end = _get(first_item, "current_period_end")
+        
+        return current_period_start, current_period_end
+    
     # ========================================================================
     # Customer Management
     # ========================================================================
@@ -524,16 +558,20 @@ class BillingService:
         
         logger.info(f"Checkout completed for user {user_id[:8]}, subscription {subscription_id}")
         
+        # Extract period dates from subscription items (NOT from subscription object itself)
+        current_period_start, current_period_end = self._extract_period_dates_from_subscription(
+            subscription, context=f"checkout session for user {user_id[:8]}"
+        )
+        
         # Provision subscription
-        # Use _get_attr for Stripe API objects (supports both dict and object access)
         await self.provision_subscription(
             user_id=user_id,
             customer_id=session.get("customer"),
             subscription_id=subscription_id,
             subscription_status=self._get_attr(subscription, "status"),
             price_id=price_id,
-            current_period_start=self._get_attr(subscription, "current_period_start"),
-            current_period_end=self._get_attr(subscription, "current_period_end")
+            current_period_start=current_period_start,
+            current_period_end=current_period_end
         )
     
     async def handle_subscription_created(self, subscription: dict) -> None:
@@ -558,6 +596,11 @@ class BillingService:
         
         logger.info(f"Subscription created: {subscription.get('id')} for user {user_id[:8]}")
         
+        # Extract period dates from subscription items (NOT from subscription object itself)
+        current_period_start, current_period_end = self._extract_period_dates_from_subscription(
+            subscription, context=f"subscription {subscription.get('id')}"
+        )
+        
         # Provision subscription
         await self.provision_subscription(
             user_id=user_id,
@@ -565,8 +608,8 @@ class BillingService:
             subscription_id=subscription.get("id"),
             subscription_status=subscription.get("status"),
             price_id=price_id,
-            current_period_start=subscription.get("current_period_start"),
-            current_period_end=subscription.get("current_period_end")
+            current_period_start=current_period_start,
+            current_period_end=current_period_end
         )
     
     async def handle_subscription_updated(self, subscription: dict) -> None:
@@ -600,6 +643,11 @@ class BillingService:
         
         logger.info(f"Subscription updated: {subscription.get('id')} for user {user_id[:8]} - status: {subscription_status}, canceled_at: {canceled_at}, cancel_at: {cancel_at}")
         
+        # Extract period dates from subscription items (NOT from subscription object itself)
+        current_period_start, current_period_end = self._extract_period_dates_from_subscription(
+            subscription, context=f"subscription {subscription.get('id')} for user {user_id[:8]}"
+        )
+        
         # Update subscription details
         await self.provision_subscription(
             user_id=user_id,
@@ -607,8 +655,8 @@ class BillingService:
             subscription_id=subscription.get("id"),
             subscription_status=subscription_status,
             price_id=price_id,
-            current_period_start=subscription.get("current_period_start"),
-            current_period_end=subscription.get("current_period_end")
+            current_period_start=current_period_start,
+            current_period_end=current_period_end
         )
         
         # Handle cancellation timestamps
@@ -709,14 +757,19 @@ class BillingService:
         if not price_id:
             return
         
+        # Extract period dates from subscription items (NOT from subscription object itself)
+        current_period_start, current_period_end = self._extract_period_dates_from_subscription(
+            subscription, context=f"invoice {invoice.get('id')} for user {user_id[:8]}"
+        )
+        
         await self.provision_subscription(
             user_id=user_id,
             customer_id=self._get_attr(subscription, "customer"),
             subscription_id=subscription_id,
             subscription_status=STATUS_ACTIVE,
             price_id=price_id,
-            current_period_start=self._get_attr(subscription, "current_period_start"),
-            current_period_end=self._get_attr(subscription, "current_period_end")
+            current_period_start=current_period_start,
+            current_period_end=current_period_end
         )
     
     async def handle_invoice_payment_failed(self, invoice: dict) -> None:

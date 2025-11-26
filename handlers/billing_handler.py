@@ -96,15 +96,13 @@ async def verify_checkout_session(
                     detail="Price ID missing in subscription"
                 )
             
-            # Extract billing period dates - use direct attribute access since we fetched fresh
-            # Stripe Subscription objects have these as direct attributes
-            current_period_start = getattr(subscription, "current_period_start", None)
-            current_period_end = getattr(subscription, "current_period_end", None)
-            
-            # Debug logging - remove after confirming fix works
-            logger.info(f"Subscription ID: {subscription.id}, status: {subscription.status}, "
-                       f"current_period_start={current_period_start}, "
-                       f"current_period_end={current_period_end}")
+            # Extract billing period dates from subscription items
+            # Per Stripe API docs, current_period_start/end are on items.data[].current_period_start/end
+            # NOT on the subscription object itself
+            current_period_start, current_period_end = billing_service._extract_period_dates_from_subscription(
+                subscription,
+                context=f"session {session_id} for user {user_id[:8]}"
+            )
             
             await billing_service.provision_subscription(
                 user_id=user_id,
