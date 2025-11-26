@@ -96,6 +96,11 @@ async def verify_checkout_session(
             current_period_start = billing_service._get_attr(subscription, "current_period_start")
             current_period_end = billing_service._get_attr(subscription, "current_period_end")
             
+            # Debug logging - remove after confirming fix works
+            logger.info(f"Subscription type: {type(subscription).__name__}, "
+                       f"current_period_start={current_period_start}, "
+                       f"current_period_end={current_period_end}")
+            
             await billing_service.provision_subscription(
                 user_id=user_id,
                 customer_id=session.customer,
