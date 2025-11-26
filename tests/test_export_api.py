@@ -423,48 +423,19 @@ class TestExportHandler:
         assert exc_info.value.status_code == 403
     
     @pytest.mark.asyncio
-    async def test_handle_export_format_not_implemented(self):
-        """Export handler should return 500 for unimplemented formats (wrapped ExportError)."""
-        from handlers.export_handler import handle_export
-        from services.exporters.quiz_loader import load_quiz_for_export
+    async def test_handle_export_all_formats_implemented(self):
+        """All export formats should now be implemented and working."""
+        from handlers.export_handler import _ensure_exporters_loaded, _EXPORTER_REGISTRY
+        from schemas.export import ExportFormat
+        from services.exporters.placeholder import PlaceholderExporter
         
-        quiz_id = str(uuid4())
-        user_id = str(uuid4())
+        _ensure_exporters_loaded()
         
-        # Create mock quiz data
-        mock_quiz_data = QuizExportData(
-            quiz_id=uuid4(),
-            title="Test Quiz",
-            created_at=datetime.now(),
-            questions=[
-                ExportQuestionMCQ(
-                    id=uuid4(),
-                    type="multiple_choice",
-                    question="Test?",
-                    options=["A", "B"],
-                    correct_answer="A"
-                )
-            ]
-        )
-        
-        # Use QTI format which is not yet implemented
-        # Using 'pro' tier to bypass tier validation
-        request = ExportRequest(format=ExportFormat.QTI)
-        
-        with patch("handlers.export_handler.load_quiz_for_export", return_value=mock_quiz_data):
-            with pytest.raises(HTTPException) as exc_info:
-                await handle_export(
-                    quiz_id=quiz_id,
-                    user_id=user_id,
-                    user_tier="pro",  # Pro tier to bypass tier check
-                    request=request,
-                    user_token="fake_token"
-                )
-            
-            # PlaceholderExporter raises ExportNotImplementedError which is an ExportError
-            # This gets caught and returns 500 with "not yet implemented" message
-            assert exc_info.value.status_code == 500
-            assert "not yet implemented" in exc_info.value.detail.lower()
+        # Verify no placeholder exporters remain
+        for fmt in ExportFormat:
+            exporter_class = _EXPORTER_REGISTRY.get(fmt)
+            assert exporter_class is not None, f"Format {fmt} not registered"
+            assert exporter_class != PlaceholderExporter, f"Format {fmt} still using placeholder"
 
 
 class TestGetExportFormats:
