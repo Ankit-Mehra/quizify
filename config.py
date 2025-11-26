@@ -104,6 +104,10 @@ class Config:
     # Stripe webhook endpoint (backend)
     STRIPE_WEBHOOK_ENDPOINT: str = os.getenv("STRIPE_WEBHOOK_ENDPOINT", "/api/billing/webhook")
     
+    # Billing strict mode - when True, webhooks fail if Redis is unavailable (for multi-instance prod)
+    # Set to "true" in production with multiple instances to prevent duplicate processing
+    BILLING_REQUIRE_REDIS: bool = os.getenv("BILLING_REQUIRE_REDIS", "false").lower() == "true"
+    
     @classmethod
     def is_testing(cls) -> bool:
         """

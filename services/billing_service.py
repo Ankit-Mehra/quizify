@@ -710,7 +710,7 @@ class BillingService:
         """
         user_id = subscription.get("metadata", {}).get("user_id")
         if not user_id:
-            logger.error(f"No user_id in subscription {subscription.get('id')}")
+            logger.error(f"No user_id in subscription {_short_stripe_id(subscription.get('id'))}")
             return
         
         customer_id = subscription.get("customer")
@@ -719,15 +719,15 @@ class BillingService:
         if not await self._validate_webhook_user_authorization(
             user_id=user_id,
             customer_id=customer_id,
-            context=f"subscription created {subscription.get('id')}"
+            context=f"subscription created {_short_stripe_id(subscription.get('id'))}"
         ):
-            logger.error(f"SECURITY: Webhook authorization failed for subscription {subscription.get('id')}")
+            logger.error(f"SECURITY: Webhook authorization failed for subscription {_short_stripe_id(subscription.get('id'))}")
             return
         
         # Extract price_id from subscription items
         price_id = self._extract_price_id_from_subscription(
             subscription,
-            context=f"subscription {subscription.get('id')}"
+            context=f"subscription {_short_stripe_id(subscription.get('id'))}"
         )
         if not price_id:
             return
@@ -736,7 +736,7 @@ class BillingService:
         
         # Extract period dates from subscription items (NOT from subscription object itself)
         current_period_start, current_period_end = self._extract_period_dates_from_subscription(
-            subscription, context=f"subscription {subscription.get('id')}"
+            subscription, context=f"subscription {_short_stripe_id(subscription.get('id'))}"
         )
         
         # Provision subscription
@@ -763,7 +763,7 @@ class BillingService:
         """
         user_id = subscription.get("metadata", {}).get("user_id")
         if not user_id:
-            logger.warning(f"No user_id in subscription {subscription.get('id')}, skipping update")
+            logger.warning(f"No user_id in subscription {_short_stripe_id(subscription.get('id'))}, skipping update")
             return
         
         customer_id = subscription.get("customer")
@@ -772,29 +772,29 @@ class BillingService:
         if not await self._validate_webhook_user_authorization(
             user_id=user_id,
             customer_id=customer_id,
-            context=f"subscription updated {subscription.get('id')}"
+            context=f"subscription updated {_short_stripe_id(subscription.get('id'))}"
         ):
-            logger.error(f"SECURITY: Webhook authorization failed for subscription {subscription.get('id')}")
+            logger.error(f"SECURITY: Webhook authorization failed for subscription {_short_stripe_id(subscription.get('id'))}")
             return
         
         # Extract price_id from subscription items
         price_id = self._extract_price_id_from_subscription(
             subscription,
-            context=f"subscription {subscription.get('id')} for user {user_id[:8]}"
+            context=f"subscription {_short_stripe_id(subscription.get('id'))} for user {user_id[:8]}"
         )
         if not price_id:
-            logger.error(f"Cannot provision subscription {subscription.get('id')} without price_id")
+            logger.error(f"Cannot provision subscription {_short_stripe_id(subscription.get('id'))} without price_id")
             return
         
         subscription_status = subscription.get("status")
         canceled_at = subscription.get("canceled_at")
         cancel_at = subscription.get("cancel_at")  # Scheduled cancellation date (cancel at period end)
         
-        logger.info(f"Subscription updated: {subscription.get('id')} for user {user_id[:8]} - status: {subscription_status}, canceled_at: {canceled_at}, cancel_at: {cancel_at}")
+        logger.info(f"Subscription updated: {_short_stripe_id(subscription.get('id'))} for user {user_id[:8]} - status: {subscription_status}, canceled_at: {canceled_at}, cancel_at: {cancel_at}")
         
         # Extract period dates from subscription items (NOT from subscription object itself)
         current_period_start, current_period_end = self._extract_period_dates_from_subscription(
-            subscription, context=f"subscription {subscription.get('id')} for user {user_id[:8]}"
+            subscription, context=f"subscription {_short_stripe_id(subscription.get('id'))} for user {user_id[:8]}"
         )
         
         # Update subscription details
@@ -859,7 +859,7 @@ class BillingService:
         """
         user_id = subscription.get("metadata", {}).get("user_id")
         if not user_id:
-            logger.warning(f"No user_id in subscription {subscription.get('id')}, skipping deletion")
+            logger.warning(f"No user_id in subscription {_short_stripe_id(subscription.get('id'))}, skipping deletion")
             return
         
         customer_id = subscription.get("customer")
@@ -868,9 +868,9 @@ class BillingService:
         if not await self._validate_webhook_user_authorization(
             user_id=user_id,
             customer_id=customer_id,
-            context=f"subscription deleted {subscription.get('id')}"
+            context=f"subscription deleted {_short_stripe_id(subscription.get('id'))}"
         ):
-            logger.error(f"SECURITY: Webhook authorization failed for subscription {subscription.get('id')}")
+            logger.error(f"SECURITY: Webhook authorization failed for subscription {_short_stripe_id(subscription.get('id'))}")
             return
         
         canceled_at = subscription.get("canceled_at", int(datetime.now(timezone.utc).timestamp()))

@@ -13,6 +13,52 @@ Branch: stripe-integration
 
 ---
 
+# ROUND 4 REVIEW (Final Hardening - Approve with Changes)
+
+## Verdict: **Approve with changes** - Low/Medium residual risk
+
+---
+
+## ISSUES ADDRESSED
+
+### R4-1. ✅ Add Alert/Metric When Fallback Toggles On
+- **Issue**: No alerting when Redis-backed components fall back to memory mode
+- **Fix**: 
+  - Added `BILLING_FALLBACK:` log prefix for state transitions
+  - Logs when entering fallback mode (WARNING level)
+  - Logs when recovering from fallback mode (INFO level)
+  - Applied to both `WebhookIdempotencyStore` and `BillingRateLimiter`
+- **Status**: ✅ Completed
+
+### R4-2. ✅ Health Endpoint Returns Degraded Status
+- **Issue**: Health endpoint always returns 200 "ok" even in fallback mode
+- **Fix**: 
+  - Returns `status: "degraded"` when in memory fallback mode
+  - Returns `status: "ok"` only when Redis is connected
+  - Updated message to indicate fallback status
+  - Still returns 200 so Stripe webhook validation passes (monitoring should alert on status != "ok")
+- **Status**: ✅ Completed
+
+### R4-3. ✅ Configurable Strict Mode for Webhooks
+- **Issue**: In multi-instance prod, duplicate webhooks can slip through during Redis outage
+- **Fix**: 
+  - Added `BILLING_REQUIRE_REDIS` env var (default: false)
+  - When true, webhooks return 503 if Redis is unavailable
+  - Logs with `BILLING_STRICT:` prefix when rejecting webhooks
+  - Enables "fail closed" behavior for production environments
+- **Status**: ✅ Completed
+
+### R4-4. ✅ Ensure All Stripe IDs Truncated in Logs
+- **Issue**: Some INFO logs still had full Stripe IDs
+- **Fix**: Applied `_short_stripe_id()` to all remaining locations:
+  - "No user_id in subscription" logs (3 locations)
+  - "SECURITY: Webhook authorization failed" logs (3 locations)
+  - Context strings passed to internal functions
+  - Subscription updated/created/deleted logs
+- **Status**: ✅ Completed
+
+---
+
 # ROUND 3 REVIEW (Distributed Systems Hardening)
 
 ## Verdict: Additional hardening completed
@@ -262,6 +308,15 @@ Branch: stripe-integration
   - R3-3: Added health flags exposing Redis fallback status
   - R3-4: Ensured consistent Stripe ID truncation in all webhook logs
 
+### Session 4 - November 26, 2025 (Round 4 - Final Approval)
+- Received final review: **"Approve with changes"** - Low/Medium residual risk
+- Expert confirmed billing stack is "well-hardened" with no blocking issues
+- ✅ Completed final hardening:
+  - R4-1: Added BILLING_FALLBACK alerts when entering/exiting memory fallback mode
+  - R4-2: Health endpoint now returns "degraded" status when in fallback mode
+  - R4-3: Added BILLING_REQUIRE_REDIS env var for strict mode (fail closed)
+  - R4-4: Truncated all remaining full Stripe IDs in log messages
+
 ---
 
 ## Testing Checklist
@@ -276,6 +331,9 @@ Branch: stripe-integration
 - [x] First-time mapping monitoring (BILLING_AUDIT: log prefix)
 - [x] Redis-backed webhook idempotency with memory fallback
 - [x] Health endpoint exposes Redis fallback status
+- [x] Fallback state transitions logged with BILLING_FALLBACK prefix
+- [x] Strict mode available via BILLING_REQUIRE_REDIS env var
+- [x] All Stripe IDs truncated in all log messages
 - [ ] Manual: Checkout flow works end-to-end
 - [ ] Manual: Cancellation flow works
 - [ ] Manual: Rate limiting triggers on 11th request
@@ -299,3 +357,9 @@ Branch: stripe-integration
 1. `api/billing_routes.py` - Redis-backed WebhookIdempotencyStore, health flags, consistent ID truncation
 2. `middleware/auto_refresh.py` - Added close_http_client() function for graceful shutdown
 3. `main.py` - Import and call close_http_client in app_lifespan shutdown
+
+## Files Modified (Round 4)
+1. `api/billing_routes.py` - BILLING_FALLBACK alerts, degraded health status, BILLING_STRICT mode
+2. `services/billing_service.py` - Truncated all remaining full Stripe IDs in logs
+3. `config.py` - Added BILLING_REQUIRE_REDIS configuration option
+4. `docs/SECURITY_FIXES_TRACKER.md` - Updated with Round 4 fixes

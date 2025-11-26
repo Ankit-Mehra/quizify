@@ -87,12 +87,19 @@ class WebhookIdempotencyStore:
         if redis_client:
             try:
                 result = await self._check_redis(redis_client, event_id)
+                if self._using_fallback:
+                    # Log recovery from fallback mode
+                    logger.info("BILLING_FALLBACK: Idempotency store recovered - Redis connection restored")
                 self._using_fallback = False
                 return result
             except Exception as e:
-                logger.warning(f"Redis idempotency check failed, using memory fallback: {e}")
+                if not self._using_fallback:
+                    # Log transition to fallback mode (alert-worthy event)
+                    logger.warning(f"BILLING_FALLBACK: Idempotency store entering memory fallback mode - {e}")
                 self._using_fallback = True
         else:
+            if not self._using_fallback:
+                logger.warning("BILLING_FALLBACK: Idempotency store starting in memory fallback mode - Redis unavailable")
             self._using_fallback = True
         
         return self._check_memory(event_id)
@@ -228,12 +235,19 @@ class BillingRateLimiter:
         if redis_client:
             try:
                 result = await self._check_redis(redis_client, user_id)
+                if self._using_fallback:
+                    # Log recovery from fallback mode
+                    logger.info("BILLING_FALLBACK: Rate limiter recovered - Redis connection restored")
                 self._using_fallback = False
                 return result
             except Exception as e:
-                logger.warning(f"Redis rate limit check failed, using memory fallback: {e}")
+                if not self._using_fallback:
+                    # Log transition to fallback mode (alert-worthy event)
+                    logger.warning(f"BILLING_FALLBACK: Rate limiter entering memory fallback mode - {e}")
                 self._using_fallback = True
         else:
+            if not self._using_fallback:
+                logger.warning("BILLING_FALLBACK: Rate limiter starting in memory fallback mode - Redis unavailable")
             self._using_fallback = True
         
         return self._check_memory(user_id)
@@ -561,6 +575,16 @@ async def stripe_webhook(
     # Idempotency check - prevent duplicate processing (Redis-backed)
     event_id = event["id"]
     event_id_short = event_id[:12] if len(event_id) > 12 else event_id
+    
+    # Strict mode: Fail closed if Redis is required but unavailable
+    # This prevents duplicate processing in multi-instance deployments
+    if config.BILLING_REQUIRE_REDIS and _webhook_idempotency_store.is_using_fallback:
+        logger.error("BILLING_STRICT: Webhook rejected - Redis unavailable but BILLING_REQUIRE_REDIS=true")
+        raise HTTPException(
+            status_code=503,
+            detail="Service temporarily unavailable - distributed lock service offline"
+        )
+    
     if await _webhook_idempotency_store.is_duplicate_async(event_id):
         logger.info(f"Webhook event {event_id_short}... already processed, skipping")
         return {"status": "already_processed", "event_id": event_id}
@@ -629,6 +653,13 @@ async def billing_health_check():
     
     Used by Stripe to validate webhook endpoint URL during setup.
     Also reports Redis fallback status for distributed components.
+    
+    Returns:
+        - 200 with status "ok" when fully operational (Redis connected)
+        - 200 with status "degraded" when running in memory fallback mode
+    
+    Note: Returns 200 even in degraded mode so Stripe webhook validation passes.
+    Monitoring systems should alert on status != "ok".
     """
     # Check Redis fallback status for billing components
     rate_limiter_fallback = _billing_rate_limiter.is_using_fallback
@@ -636,13 +667,21 @@ async def billing_health_check():
     
     using_redis = not (rate_limiter_fallback or idempotency_fallback)
     
+    # Determine health status
+    if using_redis:
+        health_status = "ok"
+        message = "Billing service is fully operational"
+    else:
+        health_status = "degraded"
+        message = "Billing service is operational but running in memory fallback mode (Redis unavailable)"
+    
     return {
-        "status": "ok",
+        "status": health_status,
         "service": "billing",
         "redis": {
             "connected": using_redis,
             "rate_limiter_fallback": rate_limiter_fallback,
             "idempotency_fallback": idempotency_fallback,
         },
-        "message": "Billing service is operational",
+        "message": message,
     }
