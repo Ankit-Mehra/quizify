@@ -691,7 +691,7 @@ class BillingService:
         subscription = stripe.Subscription.retrieve(subscription_id)
         # Use _get_attr for Stripe API objects (supports both dict and object access)
         metadata = self._get_attr(subscription, "metadata", {})
-        user_id = metadata.get("user_id") if isinstance(metadata, dict) else getattr(metadata, "user_id", None)
+        user_id = self._get_attr(metadata, "user_id")
         
         if not user_id:
             logger.warning(f"No user_id in subscription {subscription_id}, skipping invoice handling")
@@ -735,7 +735,7 @@ class BillingService:
         subscription = stripe.Subscription.retrieve(subscription_id)
         # Use _get_attr for Stripe API objects (supports both dict and object access)
         metadata = self._get_attr(subscription, "metadata", {})
-        user_id = metadata.get("user_id") if isinstance(metadata, dict) else getattr(metadata, "user_id", None)
+        user_id = self._get_attr(metadata, "user_id")
         
         if not user_id:
             logger.warning(f"No user_id in subscription {subscription_id}, skipping invoice handling")
