@@ -19,7 +19,6 @@ import zipfile
 from typing import TYPE_CHECKING, List
 from uuid import uuid4
 from xml.etree import ElementTree as ET
-from xml.dom import minidom
 
 from services.exporters.base import BaseExporter, ExportError
 from schemas.export import ExportResult
@@ -543,7 +542,10 @@ class QtiExporter(BaseExporter):
         return 0
     
     def _prettify_xml(self, elem: ET.Element) -> str:
-        """Convert ElementTree element to pretty-printed XML string."""
-        rough_string = ET.tostring(elem, encoding="unicode")
-        reparsed = minidom.parseString(rough_string)
-        return reparsed.toprettyxml(indent="  ", encoding="UTF-8").decode("utf-8")
+        """Convert ElementTree element to pretty-printed XML string.
+        
+        Uses ET.indent() (Python 3.9+) for efficient in-place indentation
+        instead of double-parsing through minidom.
+        """
+        ET.indent(elem, space="  ")
+        return ET.tostring(elem, encoding="unicode", xml_declaration=True)
