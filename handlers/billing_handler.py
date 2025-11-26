@@ -63,10 +63,15 @@ async def verify_checkout_session(
             )
         
         # Extract subscription details
-        subscription = session.subscription
-        if isinstance(subscription, str):
-            # Subscription not expanded, fetch it
-            subscription = stripe.Subscription.retrieve(subscription)
+        # Always fetch the full subscription to ensure we have all fields
+        # (expanded subscription from session may be partial)
+        subscription_id = session.subscription
+        if hasattr(subscription_id, 'id'):
+            # Already expanded to an object, get the ID
+            subscription_id = subscription_id.id
+        
+        # Fetch fresh subscription with all fields
+        subscription = stripe.Subscription.retrieve(subscription_id)
         
         tier = session.metadata.get("tier", "free")
         
@@ -91,13 +96,13 @@ async def verify_checkout_session(
                     detail="Price ID missing in subscription"
                 )
             
-            # Extract billing period dates from subscription object using unified accessor
-            # (handles both Stripe API objects and dicts, just in case)
-            current_period_start = billing_service._get_attr(subscription, "current_period_start")
-            current_period_end = billing_service._get_attr(subscription, "current_period_end")
+            # Extract billing period dates - use direct attribute access since we fetched fresh
+            # Stripe Subscription objects have these as direct attributes
+            current_period_start = getattr(subscription, "current_period_start", None)
+            current_period_end = getattr(subscription, "current_period_end", None)
             
             # Debug logging - remove after confirming fix works
-            logger.info(f"Subscription type: {type(subscription).__name__}, "
+            logger.info(f"Subscription ID: {subscription.id}, status: {subscription.status}, "
                        f"current_period_start={current_period_start}, "
                        f"current_period_end={current_period_end}")
             
