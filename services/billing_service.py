@@ -440,11 +440,13 @@ class BillingService:
         try:
             canceled_at = datetime.fromtimestamp(canceled_at_timestamp, tz=timezone.utc)
             
-            # Update subscription status to canceled
-            # Keep account_tier unchanged (grace period maintains access until period_end)
+            # Update subscription status to canceled AND downgrade tier to free
+            # When subscription.deleted fires, the subscription has truly ended
+            # (either immediately or after the grace period expired)
             response = self.supabase.table("profiles").update({
                 "subscription_status": STATUS_CANCELED,
-                "subscription_canceled_at": canceled_at.isoformat()
+                "subscription_canceled_at": canceled_at.isoformat(),
+                "account_tier": "free"  # Downgrade to free tier
             }).eq("id", user_id).execute()
             
             # Verify database update succeeded
@@ -595,6 +597,7 @@ class BillingService:
         cancellation_timestamp = canceled_at or cancel_at
         
         if cancellation_timestamp:
+            # Subscription has pending or completed cancellation
             canceled_at_datetime = datetime.fromtimestamp(cancellation_timestamp, tz=timezone.utc)
             response = self.supabase.table("profiles").update({
                 "subscription_canceled_at": canceled_at_datetime.isoformat()
@@ -612,6 +615,22 @@ class BillingService:
                 asyncio.create_task(invalidate_user_tier_cache(user_id))
             except Exception as cache_error:
                 logger.warning(f"Failed to invalidate cache after canceled_at update: {cache_error}")
+        else:
+            # No cancellation pending - clear any stale subscription_canceled_at
+            # This handles reactivation scenarios where a previously canceled subscription
+            # is reactivated (e.g., user "undoes" cancellation before period end)
+            if subscription_status == STATUS_ACTIVE:
+                response = self.supabase.table("profiles").update({
+                    "subscription_canceled_at": None
+                }).eq("id", user_id).execute()
+                
+                if response.data:
+                    logger.info(f"Cleared subscription_canceled_at for reactivated subscription for user {user_id[:8]}")
+                
+                try:
+                    asyncio.create_task(invalidate_user_tier_cache(user_id))
+                except Exception as cache_error:
+                    logger.warning(f"Failed to invalidate cache after reactivation: {cache_error}")
     
     async def handle_subscription_deleted(self, subscription: dict) -> None:
         """
@@ -788,14 +807,18 @@ class BillingService:
             user_data: User data from user_tier_info view
             
         Returns:
-            str: Billing status (no_subscription, active, grace_period, past_due, expired)
+            str: Billing status (no_subscription, active, canceling, grace_period, past_due, expired)
         """
         subscription_status = user_data.get("subscription_status")
+        subscription_canceled_at = user_data.get("subscription_canceled_at")
         
         if not subscription_status:
             return "no_subscription"
         
         if subscription_status == STATUS_ACTIVE:
+            # Check if subscription is scheduled for cancellation (cancel at period end)
+            if subscription_canceled_at:
+                return "canceling"  # Active but will cancel at period end
             return "active"
         
         if subscription_status == STATUS_CANCELED:

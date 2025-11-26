@@ -188,9 +188,14 @@ async def get_subscription_status(
     **Returns:**
     - Account tier (free, basic, pro)
     - Subscription status (active, canceled, past_due, etc.)
-    - Billing status (no_subscription, active, grace_period, etc.)
+    - Billing status:
+        - no_subscription: User has never subscribed
+        - active: Subscription is active and not scheduled for cancellation
+        - canceling: Subscription is active but scheduled to cancel at period end
+        - grace_period: Subscription is canceled but still within paid period
+        - past_due: Payment failed, subscription at risk
+        - expired: Subscription ended and grace period passed
     - Quota information (current count, limit, exceeded flag)
-    - Grace period status (if subscription is canceled but still valid)
     
     **Epic 5: Subscription status query IMPLEMENTED**
     """
