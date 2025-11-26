@@ -44,12 +44,18 @@ def register_exporter(format: ExportFormat, exporter_class: Type[BaseExporter]):
     logger.debug(f"Registered exporter for format: {format.value}")
 
 
-def get_exporter(format: ExportFormat) -> BaseExporter:
+def get_exporter(
+    format: ExportFormat,
+    user_id: Optional[str] = None,
+    user_token: Optional[str] = None
+) -> BaseExporter:
     """
     Get an exporter instance for the specified format.
     
     Args:
         format: The export format
+        user_id: User ID (required for share_link export)
+        user_token: JWT token (optional, for authenticated operations)
         
     Returns:
         Exporter instance
@@ -64,6 +70,14 @@ def get_exporter(format: ExportFormat) -> BaseExporter:
     
     if exporter_class is None:
         raise ExportNotImplementedError(format.value)
+    
+    # ShareLinkExporter requires user_id and user_token
+    if format == ExportFormat.SHARE_LINK:
+        from uuid import UUID
+        return exporter_class(
+            user_id=UUID(user_id) if user_id else None,
+            user_token=user_token
+        )
     
     return exporter_class()
 
@@ -103,10 +117,11 @@ def _register_implemented_exporters():
     _EXPORTER_REGISTRY[ExportFormat.CSV_QUIZIFY] = CsvQuizifyExporter
     _EXPORTER_REGISTRY[ExportFormat.CSV_ANKI] = CsvAnkiExporter
     
-    # Share Link (Epic 5) - TODO
-    # SHARE_LINK
+    # Share Link (Epic 5)
+    from services.exporters.share_link_exporter import ShareLinkExporter
+    _EXPORTER_REGISTRY[ExportFormat.SHARE_LINK] = ShareLinkExporter
     
-    # LMS Formats (Epic 6) - TODO
+    # LMS Formats (Epic 6 & 7) - TODO
     # QTI, MOODLE_XML
 
 
@@ -180,7 +195,7 @@ async def handle_export(
     
     # Step 3: Get appropriate exporter
     try:
-        exporter = get_exporter(export_format)
+        exporter = get_exporter(export_format, user_id, user_token)
     except ExportNotImplementedError as e:
         logger.warning(f"Export format not implemented: {export_format.value}")
         raise HTTPException(
@@ -206,9 +221,9 @@ async def handle_export(
     
     # Step 6: Return appropriate response
     if export_format == ExportFormat.SHARE_LINK:
-        # Share link returns JSON
+        # Share link returns JSON with the URL
         return JSONResponse(
-            content={"share_url": result.filename},  # filename contains URL for share_link
+            content={"share_url": result.share_url},
             status_code=200
         )
     else:

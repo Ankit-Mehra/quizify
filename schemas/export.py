@@ -183,6 +183,7 @@ class ExportResult(BaseModel):
     """Result returned by an exporter."""
     content: bytes = Field(..., description="File content as bytes")
     content_type: str = Field(..., description="MIME type of the content")
-    filename: str = Field(..., description="Suggested filename for download")
+    filename: Optional[str] = Field(None, description="Suggested filename for download (None for non-file exports)")
+    share_url: Optional[str] = Field(None, description="Share URL for share_link exports")
     
     model_config = ConfigDict(arbitrary_types_allowed=True)

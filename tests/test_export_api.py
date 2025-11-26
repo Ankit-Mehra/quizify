@@ -447,21 +447,22 @@ class TestExportHandler:
             ]
         )
         
-        # Use SHARE_LINK format which is not yet implemented but available for all tiers
-        request = ExportRequest(format=ExportFormat.SHARE_LINK)
+        # Use QTI format which is not yet implemented
+        # Using 'pro' tier to bypass tier validation
+        request = ExportRequest(format=ExportFormat.QTI)
         
         with patch("handlers.export_handler.load_quiz_for_export", return_value=mock_quiz_data):
             with pytest.raises(HTTPException) as exc_info:
                 await handle_export(
                     quiz_id=quiz_id,
                     user_id=user_id,
-                    user_tier="free",
+                    user_tier="pro",  # Pro tier to bypass tier check
                     request=request,
                     user_token="fake_token"
                 )
             
-            # Placeholder exporter raises ExportNotImplementedError -> 500
-            # (ExportError subclass caught by handler)
+            # PlaceholderExporter raises ExportNotImplementedError which is an ExportError
+            # This gets caught and returns 500 with "not yet implemented" message
             assert exc_info.value.status_code == 500
             assert "not yet implemented" in exc_info.value.detail.lower()
 
