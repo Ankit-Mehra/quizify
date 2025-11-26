@@ -481,7 +481,23 @@ class PdfExporter(BaseExporter):
         return f"<b>{number}.</b> (Unknown format)"
 
     def _escape_text(self, text: str) -> str:
-        """Escape special XML characters for ReportLab."""
+        """
+        Escape XML special characters for ReportLab's Paragraph markup.
+        
+        ReportLab's Paragraph class uses XML-like markup for formatting
+        (e.g., <b>, <i>, <font>). This method escapes user content to prevent
+        it from being interpreted as markup, avoiding rendering issues.
+        
+        Note: This escapes &, <, > which are sufficient for ReportLab's
+        XML parser. Single quotes and other chars don't need escaping
+        in this context as they're not special in ReportLab's markup.
+        
+        Args:
+            text: Raw text that may contain special characters
+            
+        Returns:
+            Text safe for use in ReportLab Paragraph elements
+        """
         if not text:
             return ""
         text = str(text)

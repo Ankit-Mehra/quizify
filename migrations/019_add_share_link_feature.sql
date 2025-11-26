@@ -113,18 +113,25 @@ USING (
 -- 6. Create helper function to generate unique slugs
 -- ============================================================================
 
--- Function to generate a random slug (8 characters, alphanumeric)
+-- Ensure pgcrypto extension is available for cryptographically secure random
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+-- Function to generate a cryptographically secure slug (16 characters, URL-safe)
+-- Uses gen_random_bytes() from pgcrypto for unpredictable slugs
 CREATE OR REPLACE FUNCTION generate_quiz_slug() 
 RETURNS TEXT AS $$
 DECLARE
-    chars TEXT := 'abcdefghijklmnopqrstuvwxyz0123456789';
-    result TEXT := '';
-    i INTEGER;
+    raw_bytes BYTEA;
+    b64 TEXT;
+    slug TEXT;
 BEGIN
-    FOR i IN 1..8 LOOP
-        result := result || substr(chars, floor(random() * length(chars) + 1)::int, 1);
-    END LOOP;
-    RETURN result;
+    -- Generate 12 random bytes (96 bits of entropy), base64-encode
+    raw_bytes := gen_random_bytes(12);
+    b64 := encode(raw_bytes, 'base64');
+    -- Remove non-alphanumeric characters (base64 can include +, /, =)
+    slug := regexp_replace(b64, '[^a-zA-Z0-9]', '', 'g');
+    -- Return first 16 characters, lowercase for URL-friendliness
+    RETURN lower(substr(slug, 1, 16));
 END;
 $$ LANGUAGE plpgsql;
 
@@ -134,12 +141,20 @@ RETURNS TEXT AS $$
 DECLARE
     new_slug TEXT;
     slug_exists BOOLEAN;
+    max_attempts INTEGER := 10;
+    attempt INTEGER := 0;
 BEGIN
     LOOP
+        attempt := attempt + 1;
         new_slug := generate_quiz_slug();
         SELECT EXISTS(SELECT 1 FROM quizzes WHERE public_slug = new_slug) INTO slug_exists;
-        EXIT WHEN NOT slug_exists;
+        EXIT WHEN NOT slug_exists OR attempt >= max_attempts;
     END LOOP;
+    
+    IF slug_exists THEN
+        RAISE EXCEPTION 'Unable to generate unique slug after % attempts', max_attempts;
+    END IF;
+    
     RETURN new_slug;
 END;
 $$ LANGUAGE plpgsql;

@@ -15,7 +15,8 @@ from services.db_services.supabase_quiz import get_supabase, get_authed_supabase
 
 
 # Constants for slug generation
-SLUG_LENGTH = 8
+# Using 16 characters for ~95 bits of entropy (prevents brute-force attacks)
+SLUG_LENGTH = 16
 SLUG_CHARS = string.ascii_lowercase + string.digits
 
 
