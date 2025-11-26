@@ -447,8 +447,8 @@ class TestExportHandler:
             ]
         )
         
-        # Use CSV_QUIZIFY format which is not yet implemented (PDF, DOCX are now implemented)
-        request = ExportRequest(format=ExportFormat.CSV_QUIZIFY)
+        # Use SHARE_LINK format which is not yet implemented but available for all tiers
+        request = ExportRequest(format=ExportFormat.SHARE_LINK)
         
         with patch("handlers.export_handler.load_quiz_for_export", return_value=mock_quiz_data):
             with pytest.raises(HTTPException) as exc_info:

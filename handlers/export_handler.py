@@ -97,8 +97,11 @@ def _register_implemented_exporters():
     from services.exporters.docx_exporter import DocxExporter
     _EXPORTER_REGISTRY[ExportFormat.DOCX] = DocxExporter
     
-    # CSV Exporters (Epic 4) - TODO
-    # CSV_QUIZIFY, CSV_ANKI
+    # CSV Exporters (Epic 4)
+    from services.exporters.csv_quizify_exporter import CsvQuizifyExporter
+    from services.exporters.csv_anki_exporter import CsvAnkiExporter
+    _EXPORTER_REGISTRY[ExportFormat.CSV_QUIZIFY] = CsvQuizifyExporter
+    _EXPORTER_REGISTRY[ExportFormat.CSV_ANKI] = CsvAnkiExporter
     
     # Share Link (Epic 5) - TODO
     # SHARE_LINK
