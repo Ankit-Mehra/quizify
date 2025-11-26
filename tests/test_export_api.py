@@ -447,7 +447,8 @@ class TestExportHandler:
             ]
         )
         
-        request = ExportRequest(format=ExportFormat.PDF)
+        # Use DOCX format which is not yet implemented (PDF is now implemented)
+        request = ExportRequest(format=ExportFormat.DOCX)
         
         with patch("handlers.export_handler.load_quiz_for_export", return_value=mock_quiz_data):
             with pytest.raises(HTTPException) as exc_info:

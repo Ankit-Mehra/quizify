@@ -77,9 +77,34 @@ def _ensure_exporters_loaded():
     """
     # Only import if registry is empty (first call)
     if not _EXPORTER_REGISTRY:
-        # Import placeholder exporter for now
-        # Real exporters will be added in subsequent epics
+        # Import implemented exporters first
+        _register_implemented_exporters()
+        # Register placeholders for remaining formats
         _register_placeholder_exporters()
+
+
+def _register_implemented_exporters():
+    """
+    Register all implemented exporters.
+    
+    Add new exporters here as they are implemented.
+    """
+    # PDF Exporter (Epic 2)
+    from services.exporters.pdf_exporter import PdfExporter
+    _EXPORTER_REGISTRY[ExportFormat.PDF] = PdfExporter
+    
+    # DOCX Exporter (Epic 3) - TODO
+    # from services.exporters.docx_exporter import DocxExporter
+    # _EXPORTER_REGISTRY[ExportFormat.DOCX] = DocxExporter
+    
+    # CSV Exporters (Epic 4) - TODO
+    # CSV_QUIZIFY, CSV_ANKI
+    
+    # Share Link (Epic 5) - TODO
+    # SHARE_LINK
+    
+    # LMS Formats (Epic 6) - TODO
+    # QTI, MOODLE_XML
 
 
 def _register_placeholder_exporters():
