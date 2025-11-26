@@ -20,7 +20,7 @@ from schemas.export import (
     ExportQuestionMatching,
 )
 from services.exporters.base import BaseExporter
-from services.exporters.csv_utils import generate_tsv_bytes, format_multiline_text
+from services.exporters.csv_utils import generate_tsv_bytes
 
 logger = logging.getLogger(__name__)
 

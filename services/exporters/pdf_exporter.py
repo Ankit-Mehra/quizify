@@ -11,7 +11,6 @@ Uses ReportLab to generate professional PDF documents with:
 import io
 import logging
 from datetime import datetime
-from typing import Optional
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
@@ -24,11 +23,7 @@ from reportlab.platypus import (
     Table,
     TableStyle,
     PageBreak,
-    ListFlowable,
-    ListItem,
 )
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
 
 from schemas.export import (
     QuizExportData,

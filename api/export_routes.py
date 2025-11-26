@@ -12,7 +12,7 @@ Authentication is required for all endpoints.
 from fastapi import APIRouter, Depends, HTTPException, Path
 from fastapi.responses import Response
 
-from schemas.export import ExportRequest, ExportFormat
+from schemas.export import ExportRequest
 from handlers.export_handler import handle_export, get_export_formats_for_user
 from dependencies.auth_dependencies import (
     get_current_user_id,

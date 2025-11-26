@@ -15,9 +15,7 @@ from fastapi.responses import Response, JSONResponse
 from schemas.export import (
     ExportFormat,
     ExportRequest,
-    ExportOptions,
-    ExportResult,
-    QuizExportData
+    ExportOptions
 )
 from services.exporters.base import BaseExporter, ExportError, ExportNotImplementedError
 from services.exporters.tier_validator import validate_export_tier_access
@@ -199,7 +197,7 @@ async def handle_export(
     # Step 3: Get appropriate exporter
     try:
         exporter = get_exporter(export_format, user_id, user_token)
-    except ExportNotImplementedError as e:
+    except ExportNotImplementedError:
         logger.warning(f"Export format not implemented: {export_format.value}")
         raise HTTPException(
             status_code=422,

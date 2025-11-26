@@ -5,7 +5,7 @@ This module handles loading quiz data from the database and transforming
 it into the QuizExportData format used by all exporters.
 """
 
-from typing import Optional, Union
+from typing import Optional
 from uuid import UUID
 from datetime import datetime
 from fastapi import HTTPException
@@ -24,7 +24,7 @@ from services.logger import app_logger as logger
 def get_supabase():
     """Get Supabase client (lazy loaded)"""
     from config import config
-    from supabase import create_client, Client
+    from supabase import create_client
     return create_client(config.SUPABASE_URL, config.SUPABASE_KEY)
 
 

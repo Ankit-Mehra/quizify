@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from services.exporters.base import BaseExporter, ExportError
-from services.share_service import create_share_link, build_share_url
+from services.share_service import create_share_link
 from schemas.export import ExportResult
 
 if TYPE_CHECKING:

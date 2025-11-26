@@ -8,8 +8,7 @@ These endpoints handle:
 - Accessing public quizzes (anonymous access)
 """
 
-from fastapi import APIRouter, HTTPException, Depends, Request
-from typing import Optional
+from fastapi import APIRouter, HTTPException, Depends
 from uuid import UUID
 
 from schemas.share import (
@@ -227,5 +226,5 @@ async def get_public_quiz(slug: str):
             shared_at=quiz_data["shared_at"],
         )
         
-    except ValueError as e:
+    except ValueError:
         raise HTTPException(status_code=404, detail="Quiz not found or not public")

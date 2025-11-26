@@ -16,7 +16,6 @@ Reference: https://www.imsglobal.org/question/qtiv2p1/imsqti_implv2p1.html
 
 import io
 import zipfile
-from datetime import datetime
 from typing import TYPE_CHECKING, List
 from uuid import uuid4
 from xml.etree import ElementTree as ET
@@ -209,7 +208,7 @@ class QtiExporter(BaseExporter):
         
         # Response processing (scoring)
         if options.include_answer_key:
-            response_processing = ET.SubElement(root, "responseProcessing", {
+            ET.SubElement(root, "responseProcessing", {
                 "template": "http://www.imsglobal.org/question/qti_v2p1/rptemplates/match_correct"
             })
         

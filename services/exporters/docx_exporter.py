@@ -12,7 +12,6 @@ Uses python-docx to generate editable Word documents with:
 import io
 import logging
 from datetime import datetime
-from typing import Optional
 
 from docx import Document
 from docx.shared import Inches, Pt, RGBColor

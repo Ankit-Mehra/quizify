@@ -12,7 +12,6 @@ CSV Structure:
 """
 
 import logging
-from datetime import datetime
 from typing import List
 
 from schemas.export import (
