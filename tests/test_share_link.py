@@ -11,7 +11,7 @@ Tests cover:
 
 import pytest
 from datetime import datetime, timezone
-from uuid import uuid4, UUID
+from uuid import uuid4
 
 from services.share_service import (
     generate_slug,

@@ -257,7 +257,7 @@ async def get_export_formats_for_user(user_tier: str) -> dict:
     )
     
     formats = {}
-    for fmt in ExportFormat:
+    for fmt in list(ExportFormat):
         formats[fmt.value] = {
             "available": is_format_available_for_tier(user_tier, fmt),
             "requires_pro": fmt in PRO_ONLY_FORMATS,

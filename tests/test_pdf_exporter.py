@@ -13,14 +13,6 @@ Tests cover:
 import pytest
 from datetime import datetime
 from uuid import uuid4
-from io import BytesIO
-
-# Attempt to import PyPDF2 for PDF validation (optional)
-try:
-    import PyPDF2
-    HAS_PYPDF2 = True
-except ImportError:
-    HAS_PYPDF2 = False
 
 from schemas.export import (
     QuizExportData,
@@ -32,7 +24,6 @@ from schemas.export import (
     ExportQuestionMatching,
 )
 from services.exporters.pdf_exporter import PdfExporter
-from services.exporters.base import BaseExporter
 
 
 # ============================================================================

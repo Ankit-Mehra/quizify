@@ -147,7 +147,7 @@ def get_available_formats_for_tier(user_tier: str) -> list[ExportFormat]:
         return []
     
     available = []
-    for fmt in ExportFormat:
+    for fmt in list(ExportFormat):
         if is_format_available_for_tier(user_tier, fmt):
             available.append(fmt)
     

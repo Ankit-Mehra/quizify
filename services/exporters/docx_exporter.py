@@ -126,7 +126,7 @@ class DocxExporter(BaseExporter):
             desc_style.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.CENTER
             desc_style.paragraph_format.space_after = Pt(20)
         except ValueError:
-            pass
+            pass  # Style already exists
         
         # Question Number style
         try:
@@ -137,7 +137,7 @@ class DocxExporter(BaseExporter):
             qnum_style.paragraph_format.space_before = Pt(16)
             qnum_style.paragraph_format.space_after = Pt(4)
         except ValueError:
-            pass
+            pass  # Style already exists
         
         # Answer Key Header style
         try:
@@ -149,7 +149,7 @@ class DocxExporter(BaseExporter):
             answer_style.paragraph_format.space_before = Pt(24)
             answer_style.paragraph_format.space_after = Pt(16)
         except ValueError:
-            pass
+            pass  # Style already exists
 
     def _add_cover_section(
         self,

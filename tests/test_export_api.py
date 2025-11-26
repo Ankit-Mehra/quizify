@@ -128,7 +128,7 @@ class TestTierValidator:
     
     def test_pro_tier_can_access_all_formats(self):
         """Pro tier users should be able to access all export formats."""
-        for fmt in ExportFormat:
+        for fmt in list(ExportFormat):
             # Should not raise for any format
             validate_export_tier_access("pro", fmt)
     
@@ -198,7 +198,7 @@ class TestFormatAvailability:
         """Pro tier should have all formats available."""
         formats = get_available_formats_for_tier("pro")
         assert len(formats) == len(ExportFormat)
-        for fmt in ExportFormat:
+        for fmt in list(ExportFormat):
             assert fmt in formats
 
 
@@ -473,7 +473,7 @@ class TestExportHandler:
         _ensure_exporters_loaded()
         
         # Verify no placeholder exporters remain
-        for fmt in ExportFormat:
+        for fmt in list(ExportFormat):
             exporter_class = _EXPORTER_REGISTRY.get(fmt)
             assert exporter_class is not None, f"Format {fmt} not registered"
             assert exporter_class != PlaceholderExporter, f"Format {fmt} still using placeholder"
