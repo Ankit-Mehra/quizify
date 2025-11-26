@@ -4,10 +4,9 @@ Author: GitHub Copilot
 Date: 2025-11-19
 """
 
-from typing import Dict, Optional
+from typing import Dict
 import stripe
 from fastapi import HTTPException
-from config import config
 from services.logger import app_logger as logger
 from services.billing_service import BillingService
 
@@ -92,10 +91,10 @@ async def verify_checkout_session(
                     detail="Price ID missing in subscription"
                 )
             
-            # Extract billing period dates from subscription object using attribute access
-            # (subscription is a Stripe object from API, not a webhook event dict)
-            current_period_start = subscription.current_period_start
-            current_period_end = subscription.current_period_end
+            # Extract billing period dates from subscription object using unified accessor
+            # (handles both Stripe API objects and dicts, just in case)
+            current_period_start = billing_service._get_attr(subscription, "current_period_start")
+            current_period_end = billing_service._get_attr(subscription, "current_period_end")
             
             await billing_service.provision_subscription(
                 user_id=user_id,
