@@ -2,19 +2,18 @@
 Unit Tests for Export API - Epic 1: Export Infrastructure
 
 Tests cover:
-- Tier validation (free/basic can't access QTI/Moodle)
+- Tier validation (free has no export, basic/pro can export)
 - Quiz loading and transformation
 - Export handler routing
 - Error handling (401, 403, 404, 422, 500)
 """
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 from datetime import datetime
 
 from fastapi import HTTPException
-from fastapi.testclient import TestClient
 
 from schemas.export import (
     ExportFormat,
@@ -30,8 +29,7 @@ from services.exporters.tier_validator import (
     validate_export_tier_access,
     is_format_available_for_tier,
     get_available_formats_for_tier,
-    TierInsufficientError,
-    PRO_ONLY_FORMATS
+    TierInsufficientError
 )
 from services.exporters.base import BaseExporter, ExportError, ExportNotImplementedError
 
@@ -43,26 +41,33 @@ from services.exporters.base import BaseExporter, ExportError, ExportNotImplemen
 class TestTierValidator:
     """Tests for tier-based export access control."""
     
-    def test_free_tier_can_access_pdf(self):
-        """Free tier users should be able to export PDF."""
-        # Should not raise
-        validate_export_tier_access("free", ExportFormat.PDF)
+    def test_free_tier_cannot_access_pdf(self):
+        """Free tier users should NOT be able to export PDF."""
+        with pytest.raises(TierInsufficientError) as exc_info:
+            validate_export_tier_access("free", ExportFormat.PDF)
+        assert exc_info.value.status_code == 403
+        assert exc_info.value.detail["required_tier"] == "basic"
+        assert exc_info.value.detail["current_tier"] == "free"
     
-    def test_free_tier_can_access_docx(self):
-        """Free tier users should be able to export DOCX."""
-        validate_export_tier_access("free", ExportFormat.DOCX)
+    def test_free_tier_cannot_access_docx(self):
+        """Free tier users should NOT be able to export DOCX."""
+        with pytest.raises(TierInsufficientError):
+            validate_export_tier_access("free", ExportFormat.DOCX)
     
-    def test_free_tier_can_access_csv_quizify(self):
-        """Free tier users should be able to export CSV (Quizify)."""
-        validate_export_tier_access("free", ExportFormat.CSV_QUIZIFY)
+    def test_free_tier_cannot_access_csv_quizify(self):
+        """Free tier users should NOT be able to export CSV (Quizify)."""
+        with pytest.raises(TierInsufficientError):
+            validate_export_tier_access("free", ExportFormat.CSV_QUIZIFY)
     
-    def test_free_tier_can_access_csv_anki(self):
-        """Free tier users should be able to export CSV (Anki)."""
-        validate_export_tier_access("free", ExportFormat.CSV_ANKI)
+    def test_free_tier_cannot_access_csv_anki(self):
+        """Free tier users should NOT be able to export CSV (Anki)."""
+        with pytest.raises(TierInsufficientError):
+            validate_export_tier_access("free", ExportFormat.CSV_ANKI)
     
-    def test_free_tier_can_access_share_link(self):
-        """Free tier users should be able to create share links."""
-        validate_export_tier_access("free", ExportFormat.SHARE_LINK)
+    def test_free_tier_cannot_access_share_link(self):
+        """Free tier users should NOT be able to create share links."""
+        with pytest.raises(TierInsufficientError):
+            validate_export_tier_access("free", ExportFormat.SHARE_LINK)
     
     def test_free_tier_cannot_access_qti(self):
         """Free tier users should NOT be able to export QTI."""
@@ -71,7 +76,7 @@ class TestTierValidator:
         
         assert exc_info.value.status_code == 403
         assert exc_info.value.detail["error"] == "tier_insufficient"
-        assert exc_info.value.detail["required_tier"] == "pro"
+        assert exc_info.value.detail["required_tier"] == "basic"
         assert exc_info.value.detail["current_tier"] == "free"
     
     def test_free_tier_cannot_access_moodle_xml(self):
@@ -81,6 +86,26 @@ class TestTierValidator:
         
         assert exc_info.value.status_code == 403
         assert exc_info.value.detail["requested_format"] == "moodle_xml"
+    
+    def test_basic_tier_can_access_pdf(self):
+        """Basic tier users should be able to export PDF."""
+        validate_export_tier_access("basic", ExportFormat.PDF)  # Should not raise
+    
+    def test_basic_tier_can_access_docx(self):
+        """Basic tier users should be able to export DOCX."""
+        validate_export_tier_access("basic", ExportFormat.DOCX)
+    
+    def test_basic_tier_can_access_csv_quizify(self):
+        """Basic tier users should be able to export CSV (Quizify)."""
+        validate_export_tier_access("basic", ExportFormat.CSV_QUIZIFY)
+    
+    def test_basic_tier_can_access_csv_anki(self):
+        """Basic tier users should be able to export CSV (Anki)."""
+        validate_export_tier_access("basic", ExportFormat.CSV_ANKI)
+    
+    def test_basic_tier_can_access_share_link(self):
+        """Basic tier users should be able to create share links."""
+        validate_export_tier_access("basic", ExportFormat.SHARE_LINK)
     
     def test_basic_tier_cannot_access_qti(self):
         """Basic tier users should NOT be able to export QTI."""
@@ -109,14 +134,15 @@ class TestTierValidator:
     
     def test_tier_case_insensitive(self):
         """Tier validation should be case-insensitive."""
-        validate_export_tier_access("FREE", ExportFormat.PDF)
-        validate_export_tier_access("Free", ExportFormat.PDF)
+        validate_export_tier_access("BASIC", ExportFormat.PDF)
+        validate_export_tier_access("Basic", ExportFormat.PDF)
         validate_export_tier_access("PRO", ExportFormat.QTI)
         validate_export_tier_access("Pro", ExportFormat.QTI)
     
     def test_none_tier_defaults_to_free(self):
-        """None tier should default to free (most restrictive)."""
-        validate_export_tier_access(None, ExportFormat.PDF)  # OK
+        """None tier should default to free (most restrictive - no export)."""
+        with pytest.raises(TierInsufficientError):
+            validate_export_tier_access(None, ExportFormat.PDF)  # Free tier has no export
         with pytest.raises(TierInsufficientError):
             validate_export_tier_access(None, ExportFormat.QTI)
     
@@ -131,20 +157,35 @@ class TestFormatAvailability:
     """Tests for format availability checking."""
     
     def test_is_format_available_free_pdf(self):
-        """PDF should be available for free tier."""
-        assert is_format_available_for_tier("free", ExportFormat.PDF) is True
+        """PDF should NOT be available for free tier."""
+        assert is_format_available_for_tier("free", ExportFormat.PDF) is False
     
     def test_is_format_available_free_qti(self):
         """QTI should NOT be available for free tier."""
         assert is_format_available_for_tier("free", ExportFormat.QTI) is False
+    
+    def test_is_format_available_basic_pdf(self):
+        """PDF should be available for basic tier."""
+        assert is_format_available_for_tier("basic", ExportFormat.PDF) is True
+    
+    def test_is_format_available_basic_qti(self):
+        """QTI should NOT be available for basic tier (Pro only)."""
+        assert is_format_available_for_tier("basic", ExportFormat.QTI) is False
     
     def test_is_format_available_pro_qti(self):
         """QTI should be available for pro tier."""
         assert is_format_available_for_tier("pro", ExportFormat.QTI) is True
     
     def test_get_available_formats_free(self):
-        """Free tier should have 5 formats available."""
+        """Free tier should have NO formats available."""
         formats = get_available_formats_for_tier("free")
+        assert len(formats) == 0
+        assert ExportFormat.PDF not in formats
+        assert ExportFormat.QTI not in formats
+    
+    def test_get_available_formats_basic(self):
+        """Basic tier should have 5 formats available (all except LMS)."""
+        formats = get_available_formats_for_tier("basic")
         assert ExportFormat.PDF in formats
         assert ExportFormat.DOCX in formats
         assert ExportFormat.CSV_QUIZIFY in formats
@@ -443,17 +484,40 @@ class TestGetExportFormats:
     
     @pytest.mark.asyncio
     async def test_get_formats_free_tier(self):
-        """Free tier should see correct format availability."""
+        """Free tier should have NO formats available."""
         from handlers.export_handler import get_export_formats_for_user
         
         formats = await get_export_formats_for_user("free")
         
-        assert formats["pdf"]["available"] is True
+        # Free tier has no export access at all
+        assert formats["pdf"]["available"] is False
         assert formats["pdf"]["requires_pro"] is False
+        assert formats["docx"]["available"] is False
+        assert formats["csv_quizify"]["available"] is False
+        assert formats["csv_anki"]["available"] is False
+        assert formats["share_link"]["available"] is False
         assert formats["qti"]["available"] is False
         assert formats["qti"]["requires_pro"] is True
         assert formats["moodle_xml"]["available"] is False
         assert formats["moodle_xml"]["requires_pro"] is True
+    
+    @pytest.mark.asyncio
+    async def test_get_formats_basic_tier(self):
+        """Basic tier should have non-LMS formats available."""
+        from handlers.export_handler import get_export_formats_for_user
+        
+        formats = await get_export_formats_for_user("basic")
+        
+        # Basic formats available
+        assert formats["pdf"]["available"] is True
+        assert formats["docx"]["available"] is True
+        assert formats["csv_quizify"]["available"] is True
+        assert formats["csv_anki"]["available"] is True
+        assert formats["share_link"]["available"] is True
+        
+        # LMS formats not available
+        assert formats["qti"]["available"] is False
+        assert formats["moodle_xml"]["available"] is False
     
     @pytest.mark.asyncio
     async def test_get_formats_pro_tier(self):

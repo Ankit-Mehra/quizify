@@ -2,9 +2,9 @@
 Export Routes - API endpoints for quiz export functionality.
 
 This module provides the REST API for exporting quizzes to various formats:
-- PDF, DOCX, CSV (Quizify Native), CSV (Anki) - All tiers
+- PDF, DOCX, CSV (Quizify Native), CSV (Anki), Share Link - Basic & Pro tiers
 - QTI 2.1, Moodle XML - Pro tier only
-- Share Link - All tiers
+- Free tier has no export access
 
 Authentication is required for all endpoints.
 """
