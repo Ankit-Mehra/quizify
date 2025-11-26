@@ -62,6 +62,29 @@ class BillingService:
     # Helper Methods
     # ========================================================================
     
+    @staticmethod
+    def _get_attr(obj, key, default=None):
+        """
+        Unified accessor for both dict and Stripe API objects.
+        
+        Stripe objects from API calls (e.g., stripe.Subscription.retrieve()) use
+        attribute access (obj.key), while webhook event data comes as dicts (obj["key"]).
+        This helper handles both cases transparently.
+        
+        Args:
+            obj: Dict or Stripe API object
+            key: Attribute/key name to access
+            default: Default value if not found
+            
+        Returns:
+            The value or default
+        """
+        if obj is None:
+            return default
+        if isinstance(obj, dict):
+            return obj.get(key, default)
+        return getattr(obj, key, default)
+    
     def _extract_price_id_from_subscription(self, subscription, context: str = "") -> Optional[str]:
         """
         Extract price_id from Stripe subscription items.
@@ -79,13 +102,8 @@ class BillingService:
         Returns:
             str: Price ID if found, None otherwise
         """
-        # Helper to access attributes from both dict and Stripe objects
-        def _get(obj, key, default=None):
-            if obj is None:
-                return default
-            if isinstance(obj, dict):
-                return obj.get(key, default)
-            return getattr(obj, key, default)
+        # Use unified accessor for both dict and Stripe objects
+        _get = self._get_attr
         
         items = _get(subscription, "items")
         if not items:
@@ -167,7 +185,7 @@ class BillingService:
                 logger.error(f"No profile found for user {user_id[:8]} when storing Stripe customer ID")
                 raise HTTPException(status_code=404, detail="User profile not found")
             
-            logger.info(f"Updated profile with Stripe customer ID")
+            logger.info("Updated profile with Stripe customer ID")
             
             return customer.id
             
@@ -505,14 +523,15 @@ class BillingService:
         logger.info(f"Checkout completed for user {user_id[:8]}, subscription {subscription_id}")
         
         # Provision subscription
+        # Use _get_attr for Stripe API objects (supports both dict and object access)
         await self.provision_subscription(
             user_id=user_id,
             customer_id=session.get("customer"),
             subscription_id=subscription_id,
-            subscription_status=subscription.get("status"),
+            subscription_status=self._get_attr(subscription, "status"),
             price_id=price_id,
-            current_period_start=subscription.get("current_period_start"),
-            current_period_end=subscription.get("current_period_end")
+            current_period_start=self._get_attr(subscription, "current_period_start"),
+            current_period_end=self._get_attr(subscription, "current_period_end")
         )
     
     async def handle_subscription_created(self, subscription: dict) -> None:
@@ -670,7 +689,9 @@ class BillingService:
         # Note: Synchronous API call is acceptable for webhook handlers (<5s timeout).
         # Ensures we have current subscription metadata and avoids event expansion complexity.
         subscription = stripe.Subscription.retrieve(subscription_id)
-        user_id = subscription.get("metadata", {}).get("user_id")
+        # Use _get_attr for Stripe API objects (supports both dict and object access)
+        metadata = self._get_attr(subscription, "metadata", {})
+        user_id = metadata.get("user_id") if isinstance(metadata, dict) else getattr(metadata, "user_id", None)
         
         if not user_id:
             logger.warning(f"No user_id in subscription {subscription_id}, skipping invoice handling")
@@ -688,12 +709,12 @@ class BillingService:
         
         await self.provision_subscription(
             user_id=user_id,
-            customer_id=subscription.get("customer"),
+            customer_id=self._get_attr(subscription, "customer"),
             subscription_id=subscription_id,
             subscription_status=STATUS_ACTIVE,
             price_id=price_id,
-            current_period_start=subscription.get("current_period_start"),
-            current_period_end=subscription.get("current_period_end")
+            current_period_start=self._get_attr(subscription, "current_period_start"),
+            current_period_end=self._get_attr(subscription, "current_period_end")
         )
     
     async def handle_invoice_payment_failed(self, invoice: dict) -> None:
@@ -712,7 +733,9 @@ class BillingService:
         # Note: Synchronous API call is acceptable for webhook handlers (<5s timeout).
         # Ensures we have current subscription metadata and avoids event expansion complexity.
         subscription = stripe.Subscription.retrieve(subscription_id)
-        user_id = subscription.get("metadata", {}).get("user_id")
+        # Use _get_attr for Stripe API objects (supports both dict and object access)
+        metadata = self._get_attr(subscription, "metadata", {})
+        user_id = metadata.get("user_id") if isinstance(metadata, dict) else getattr(metadata, "user_id", None)
         
         if not user_id:
             logger.warning(f"No user_id in subscription {subscription_id}, skipping invoice handling")
