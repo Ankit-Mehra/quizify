@@ -13,6 +13,9 @@ Epic 2-4: Full implementation with Stripe integration
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 import stripe
+import time
+from collections import OrderedDict
+from threading import Lock
 from dependencies.auth_dependencies import get_current_user_id, get_current_user_token, get_current_user_email
 from schemas.billing import (
     CheckoutSessionRequest,
@@ -29,6 +32,204 @@ from services.logger import app_logger as logger
 
 
 router = APIRouter(prefix="/api/billing", tags=["billing"])
+
+
+# ============================================================================
+# Webhook Idempotency Store
+# ============================================================================
+
+class WebhookIdempotencyStore:
+    """
+    Thread-safe in-memory store for tracking processed webhook event IDs.
+    
+    Prevents duplicate webhook processing by storing event IDs with timestamps.
+    Uses LRU eviction with TTL to prevent memory bloat.
+    
+    Note: For horizontal scaling, this should be replaced with Redis.
+    """
+    
+    def __init__(self, max_size: int = 10000, ttl_seconds: int = 86400):
+        """
+        Initialize the idempotency store.
+        
+        Args:
+            max_size: Maximum number of event IDs to store (LRU eviction)
+            ttl_seconds: Time-to-live for event IDs (default: 24 hours)
+        """
+        self._store: OrderedDict[str, float] = OrderedDict()
+        self._max_size = max_size
+        self._ttl_seconds = ttl_seconds
+        self._lock = Lock()
+    
+    def is_duplicate(self, event_id: str) -> bool:
+        """
+        Check if an event ID has been processed before.
+        
+        Args:
+            event_id: Stripe event ID (e.g., evt_xxx)
+            
+        Returns:
+            True if event was already processed, False otherwise
+        """
+        with self._lock:
+            self._cleanup_expired()
+            
+            if event_id in self._store:
+                return True
+            
+            # Add event ID with current timestamp
+            self._store[event_id] = time.time()
+            
+            # LRU eviction if store is full
+            while len(self._store) > self._max_size:
+                self._store.popitem(last=False)
+            
+            return False
+    
+    def _cleanup_expired(self) -> None:
+        """Remove expired event IDs from the store."""
+        current_time = time.time()
+        expired_keys = [
+            key for key, timestamp in self._store.items()
+            if current_time - timestamp > self._ttl_seconds
+        ]
+        for key in expired_keys:
+            del self._store[key]
+
+
+# Global idempotency store instance
+_webhook_idempotency_store = WebhookIdempotencyStore()
+
+
+# ============================================================================
+# Rate Limiter for Billing Endpoints (Redis-backed with memory fallback)
+# ============================================================================
+
+class BillingRateLimiter:
+    """
+    Redis-backed rate limiter with automatic memory fallback.
+    
+    Uses Redis INCR with TTL for distributed rate limiting across instances.
+    Falls back to in-memory tracking if Redis is unavailable.
+    
+    Rate limiting strategy: Sliding window using Redis sorted sets.
+    """
+    
+    def __init__(self, max_requests: int = 10, window_seconds: int = 60):
+        """
+        Initialize the rate limiter.
+        
+        Args:
+            max_requests: Maximum requests per window
+            window_seconds: Time window in seconds
+        """
+        self._max_requests = max_requests
+        self._window_seconds = window_seconds
+        self._prefix = "billing:rate_limit:"
+        
+        # Memory fallback storage
+        self._memory_requests: dict[str, list[float]] = {}
+        self._memory_lock = Lock()
+    
+    async def is_rate_limited(self, user_id: str) -> bool:
+        """
+        Check if a user is rate limited.
+        
+        Uses Redis if available, falls back to memory otherwise.
+        
+        Args:
+            user_id: User ID to check
+            
+        Returns:
+            True if rate limited, False otherwise
+        """
+        from services.redis.client import get_redis_client
+        
+        redis_client = get_redis_client()
+        
+        if redis_client:
+            try:
+                return await self._check_redis(redis_client, user_id)
+            except Exception as e:
+                logger.warning(f"Redis rate limit check failed, using memory fallback: {e}")
+        
+        return self._check_memory(user_id)
+    
+    async def _check_redis(self, redis_client, user_id: str) -> bool:
+        """
+        Redis-based rate limiting using sorted sets for sliding window.
+        
+        Uses ZADD with timestamp as score, ZREMRANGEBYSCORE to cleanup,
+        and ZCARD to count requests in window.
+        """
+        key = f"{self._prefix}{user_id}"
+        current_time = time.time()
+        window_start = current_time - self._window_seconds
+        
+        # Use pipeline for atomic operations
+        pipe = redis_client.pipeline()
+        
+        # Remove old entries outside the window
+        pipe.zremrangebyscore(key, 0, window_start)
+        
+        # Count current requests in window
+        pipe.zcard(key)
+        
+        # Add current request with timestamp as score
+        pipe.zadd(key, {str(current_time): current_time})
+        
+        # Set expiry on key (cleanup if user goes inactive)
+        pipe.expire(key, self._window_seconds * 2)
+        
+        results = await pipe.execute()
+        current_count = results[1]  # ZCARD result
+        
+        if current_count >= self._max_requests:
+            logger.debug(f"Rate limit exceeded for user {user_id[:8]} (Redis): {current_count}/{self._max_requests}")
+            return True
+        
+        return False
+    
+    def _check_memory(self, user_id: str) -> bool:
+        """Memory fallback for rate limiting."""
+        with self._memory_lock:
+            current_time = time.time()
+            window_start = current_time - self._window_seconds
+            
+            if user_id not in self._memory_requests:
+                self._memory_requests[user_id] = []
+            
+            # Remove old requests
+            self._memory_requests[user_id] = [
+                ts for ts in self._memory_requests[user_id]
+                if ts > window_start
+            ]
+            
+            # Check limit
+            if len(self._memory_requests[user_id]) >= self._max_requests:
+                logger.debug(f"Rate limit exceeded for user {user_id[:8]} (memory): {len(self._memory_requests[user_id])}/{self._max_requests}")
+                return True
+            
+            # Record request
+            self._memory_requests[user_id].append(current_time)
+            return False
+
+
+# Global rate limiter for billing endpoints
+# 10 requests per minute per user for checkout/portal sessions
+_billing_rate_limiter = BillingRateLimiter(max_requests=10, window_seconds=60)
+
+
+async def check_rate_limit(user_id: str = Depends(get_current_user_id)):
+    """FastAPI dependency to check rate limit before processing."""
+    if await _billing_rate_limiter.is_rate_limited(user_id):
+        logger.warning(f"Rate limit exceeded for user {user_id[:8]}")
+        raise HTTPException(
+            status_code=429,
+            detail="Too many requests. Please wait before trying again."
+        )
+    return user_id
+
 
 # Initialize BillingService with Supabase client
 def get_billing_service() -> BillingService:
@@ -57,7 +258,7 @@ def get_billing_service() -> BillingService:
 )
 async def create_checkout_session(
     request: CheckoutSessionRequest,
-    user_id: str = Depends(get_current_user_id),
+    user_id: str = Depends(check_rate_limit),  # Rate limit before processing
     user_token: str = Depends(get_current_user_token),
     email: str = Depends(get_current_user_email),
     billing_service: BillingService = Depends(get_billing_service),
@@ -137,7 +338,7 @@ async def verify_session(
     ),
 )
 async def create_portal_session(
-    user_id: str = Depends(get_current_user_id),
+    user_id: str = Depends(check_rate_limit),  # Rate limit before processing
     user_token: str = Depends(get_current_user_token),
     billing_service: BillingService = Depends(get_billing_service),
 ) -> PortalSessionResponse:
@@ -237,10 +438,8 @@ async def stripe_webhook(
     
     **Security:**
     - Verifies webhook signature using STRIPE_WEBHOOK_SECRET
-    - Relies on Stripe's built-in idempotency and database RLS policies
-    
-    **Note:** Stripe has built-in idempotency for webhook retries (same event ID). 
-    Database updates use Supabase's atomic operations and RLS policies for consistency.
+    - Checks event ID for idempotency (prevents duplicate processing)
+    - Database updates use Supabase's atomic operations and RLS policies for consistency
     
     **Epic 3: Webhook processing IMPLEMENTED**
     """
@@ -271,11 +470,17 @@ async def stripe_webhook(
         logger.error(f"Invalid webhook signature: {e}")
         raise HTTPException(status_code=400, detail="Invalid signature")
     
+    # Idempotency check - prevent duplicate processing
+    event_id = event["id"]
+    if _webhook_idempotency_store.is_duplicate(event_id):
+        logger.info(f"Webhook event {event_id} already processed, skipping")
+        return {"status": "already_processed", "event_id": event_id}
+    
     # Handle the event
     event_type = event["type"]
     data_object = event["data"]["object"]
     
-    logger.info(f"Processing webhook event: {event_type} (ID: {event['id']})")
+    logger.info(f"Processing webhook event: {event_type} (ID: {event_id})")
     
     try:
         if event_type == "checkout.session.completed":
@@ -307,7 +512,7 @@ async def stripe_webhook(
     
     except Exception as e:
         logger.error(
-            f"Error processing webhook {event_type} (ID: {event['id']}): {e}",
+            f"Error processing webhook {event_type} (ID: {event_id}): {e}",
             exc_info=True
         )
         # Return 500 so Stripe retries the webhook

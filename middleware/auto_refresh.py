@@ -4,7 +4,7 @@ from fastapi.responses import JSONResponse
 from starlette.status import HTTP_401_UNAUTHORIZED
 from starlette.datastructures import MutableHeaders
 import os
-import requests
+import httpx
 from services.logger import app_logger as logger
 from config import config as app_config
 
@@ -12,6 +12,17 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 ACCESS_TOKEN_EXPIRE = 3600  # 1 hour
 REFRESH_TOKEN_EXPIRE = 60 * 60 * 24 * 30  # 30 days, mirror auth handler
+
+# Module-level async HTTP client for connection reuse
+_http_client: httpx.AsyncClient | None = None
+
+
+def _get_http_client() -> httpx.AsyncClient:
+    """Get or create the shared async HTTP client."""
+    global _http_client
+    if _http_client is None:
+        _http_client = httpx.AsyncClient(timeout=10.0)
+    return _http_client
 
 
 def _extract_refresh_token(request: Request) -> str | None:
@@ -58,7 +69,8 @@ class SupabaseAutoRefreshMiddleware(BaseHTTPMiddleware):
             }
 
             try:
-                user_resp = requests.get(f"{SUPABASE_URL}/auth/v1/user", headers=headers)
+                client = _get_http_client()
+                user_resp = await client.get(f"{SUPABASE_URL}/auth/v1/user", headers=headers)
                 if user_resp.status_code == 200:
                     return await call_next(request)
                 logger.info("Access token invalid, attempting refresh", extra={"status": user_resp.status_code})
@@ -69,7 +81,8 @@ class SupabaseAutoRefreshMiddleware(BaseHTTPMiddleware):
         if refresh_token:
             try:
                 logger.debug("Attempting token refresh via Supabase")
-                refresh_resp = requests.post(
+                client = _get_http_client()
+                refresh_resp = await client.post(
                     f"{SUPABASE_URL}/auth/v1/token?grant_type=refresh_token",
                     headers={
                         "apikey": SUPABASE_KEY,
@@ -137,7 +150,7 @@ class SupabaseAutoRefreshMiddleware(BaseHTTPMiddleware):
                         path="/"
                     )
                     return response
-            except Exception as e:
+            except Exception:
                 logger.exception("Token refresh failed - clearing cookies")
                 response = JSONResponse(
                     status_code=HTTP_401_UNAUTHORIZED,

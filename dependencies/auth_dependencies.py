@@ -173,7 +173,9 @@ async def _authenticate_request(
             raise HTTPException(status_code=401, detail="Invalid or expired token")
 
         user_info = response.json()
-        logger.debug("Full user info: %s", user_info)
+        # Log only non-sensitive fields for debugging (avoid PII leakage)
+        user_id_preview = user_info.get("id", "")[:8] if user_info.get("id") else "N/A"
+        logger.debug("User auth successful for id=%s...", user_id_preview)
 
         user_id = user_info.get("id") or user_info.get("email")
         email = user_info.get("email")

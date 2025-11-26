@@ -106,6 +106,7 @@ class TestBillingAPI:
             mock_config_instance.get_price_id_from_tier.return_value = "price_test_123"
             mock_config_instance.STRIPE_SUCCESS_URL = "http://localhost:3000/success"
             mock_config_instance.STRIPE_CANCEL_URL = "http://localhost:3000/cancel"
+            mock_config_instance.FRONTEND_URL = "http://localhost:3000"
             mock_config_instance.is_testing.return_value = True
             
             # Initialize service
