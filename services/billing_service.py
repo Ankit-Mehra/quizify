@@ -144,12 +144,12 @@ class BillingService:
         
         items = _get(subscription, "items")
         if not items:
-            logger.warning(f"No items in subscription{' for ' + context if context else ''}, cannot extract period dates")
+            logger.error(f"No items in subscription{' for ' + context if context else ''}, cannot extract period dates")
             return None, None
         
         data = _get(items, "data")
         if not data or not isinstance(data, list) or len(data) == 0:
-            logger.warning(f"Subscription items data missing or empty{' for ' + context if context else ''}")
+            logger.error(f"Subscription items data missing or empty{' for ' + context if context else ''}")
             return None, None
         
         # Get period dates from the first subscription item
