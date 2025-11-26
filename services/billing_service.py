@@ -656,7 +656,7 @@ class BillingService:
         """
         user_id = session.get("metadata", {}).get("user_id")
         if not user_id:
-            logger.error(f"No user_id in checkout session {session.get('id')}")
+            logger.error(f"No user_id in checkout session {_short_stripe_id(session.get('id'))}")
             return
         
         customer_id = session.get("customer")
@@ -666,15 +666,15 @@ class BillingService:
         if not await self._validate_webhook_user_authorization(
             user_id=user_id,
             customer_id=customer_id,
-            context=f"checkout session {session.get('id')}"
+            context=f"checkout session {_short_stripe_id(session.get('id'))}"
         ):
-            logger.error(f"SECURITY: Webhook authorization failed for checkout {session.get('id')}")
+            logger.error(f"SECURITY: Webhook authorization failed for checkout {_short_stripe_id(session.get('id'))}")
             return
         
         # Get subscription details
         subscription_id = session.get("subscription")
         if not subscription_id:
-            logger.warning(f"No subscription in checkout session {session.get('id')}")
+            logger.warning(f"No subscription in checkout session {_short_stripe_id(session.get('id'))}")
             return
         
         # Fetch full subscription details
@@ -900,7 +900,7 @@ class BillingService:
         """
         subscription_id = invoice.get("subscription")
         if not subscription_id:
-            logger.info(f"Invoice {invoice.get('id')} not associated with subscription")
+            logger.info(f"Invoice {_short_stripe_id(invoice.get('id'))} not associated with subscription")
             return
         
         # Fetch subscription to get metadata
@@ -922,24 +922,24 @@ class BillingService:
         if not await self._validate_webhook_user_authorization(
             user_id=user_id,
             customer_id=customer_id,
-            context=f"invoice paid {invoice.get('id')}"
+            context=f"invoice paid {_short_stripe_id(invoice.get('id'))}"
         ):
-            logger.error(f"SECURITY: Webhook authorization failed for invoice {invoice.get('id')}")
+            logger.error(f"SECURITY: Webhook authorization failed for invoice {_short_stripe_id(invoice.get('id'))}")
             return
         
-        logger.info(f"Invoice paid: {invoice.get('id')} for user {user_id[:8]}")
+        logger.info(f"Invoice paid: {_short_stripe_id(invoice.get('id'))} for user {user_id[:8]}")
         
         # Update subscription status to active (in case it was past_due)
         price_id = self._extract_price_id_from_subscription(
             subscription,
-            context=f"invoice {invoice.get('id')} (subscription {subscription_id})"
+            context=f"invoice {_short_stripe_id(invoice.get('id'))} (subscription {_short_stripe_id(subscription_id)})"
         )
         if not price_id:
             return
         
         # Extract period dates from subscription items (NOT from subscription object itself)
         current_period_start, current_period_end = self._extract_period_dates_from_subscription(
-            subscription, context=f"invoice {invoice.get('id')} for user {user_id[:8]}"
+            subscription, context=f"invoice {_short_stripe_id(invoice.get('id'))} for user {user_id[:8]}"
         )
         
         await self.provision_subscription(
@@ -961,7 +961,7 @@ class BillingService:
         """
         subscription_id = invoice.get("subscription")
         if not subscription_id:
-            logger.info(f"Invoice {invoice.get('id')} not associated with subscription")
+            logger.info(f"Invoice {_short_stripe_id(invoice.get('id'))} not associated with subscription")
             return
         
         # Fetch subscription to get metadata
@@ -983,12 +983,12 @@ class BillingService:
         if not await self._validate_webhook_user_authorization(
             user_id=user_id,
             customer_id=customer_id,
-            context=f"invoice payment failed {invoice.get('id')}"
+            context=f"invoice payment failed {_short_stripe_id(invoice.get('id'))}"
         ):
-            logger.error(f"SECURITY: Webhook authorization failed for invoice {invoice.get('id')}")
+            logger.error(f"SECURITY: Webhook authorization failed for invoice {_short_stripe_id(invoice.get('id'))}")
             return
         
-        logger.warning(f"Invoice payment failed: {invoice.get('id')} for user {user_id[:8]}")
+        logger.warning(f"Invoice payment failed: {_short_stripe_id(invoice.get('id'))} for user {user_id[:8]}")
         
         # Update subscription status to past_due
         try:

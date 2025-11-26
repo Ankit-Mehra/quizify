@@ -63,9 +63,14 @@ class WebhookIdempotencyStore:
         
         # Memory fallback storage
         self._memory_store: OrderedDict[str, float] = OrderedDict()
+        # Note: threading.Lock is appropriate here because _check_memory() is synchronous
+        # (no await statements inside the lock context). asyncio.Lock would require making
+        # _check_memory() async, but it's also called from sync is_duplicate() method.
         self._memory_lock = Lock()
         
         # Track if we're using fallback (for health checks)
+        # Note: Race condition on this flag is benign - worst case is duplicate log messages
+        # when transitioning between Redis and fallback modes. No data corruption possible.
         self._using_fallback = False
     
     async def is_duplicate_async(self, event_id: str) -> bool:
@@ -211,9 +216,14 @@ class BillingRateLimiter:
         
         # Memory fallback storage
         self._memory_requests: dict[str, list[float]] = {}
+        # Note: threading.Lock is appropriate here because _check_memory() is synchronous
+        # (no await statements inside the lock context). The lock protects the in-memory
+        # dict from concurrent access when multiple async handlers fall back to memory mode.
         self._memory_lock = Lock()
         
         # Track if we're using fallback (for health checks)
+        # Note: Race condition on this flag is benign - worst case is duplicate log messages
+        # when transitioning between Redis and fallback modes. No data corruption possible.
         self._using_fallback = False
     
     async def is_rate_limited(self, user_id: str) -> bool:

@@ -88,7 +88,7 @@ class TestBillingRateLimiter:
             assert await fast_rate_limiter.is_rate_limited(user_id) is True
             
             # Wait for window to expire
-            time.sleep(1.1)
+            await asyncio.sleep(1.1)
             
             # Should be allowed again
             assert await fast_rate_limiter.is_rate_limited(user_id) is False
