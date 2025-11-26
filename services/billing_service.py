@@ -396,7 +396,9 @@ class BillingService:
                 "stripe_customer_id": customer_id,
                 "stripe_subscription_id": subscription_id,
                 "subscription_status": subscription_status,
-                "account_tier": tier
+                "account_tier": tier,
+                # Clear any stale cancellation timestamp when provisioning a new/active subscription
+                "subscription_canceled_at": None
             }
             
             # Update billing period for quota tracking (Migration 017)
