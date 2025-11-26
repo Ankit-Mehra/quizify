@@ -45,7 +45,7 @@ else:
     logger.debug("Supabase client initialized")
 
 def get_authed_supabase_client(user_token: str):
-    logger.debug(f"Creating authenticated Supabase client with token: {user_token[:10]}...")
+    logger.debug("Creating authenticated Supabase client")
     return app_config.get_authenticated_supabase_client(user_token)
 
 def save_quiz_to_database(
@@ -60,8 +60,7 @@ def save_quiz_to_database(
         # Use authenticated client if token provided, otherwise use service role
         if user_token:
             supabase = get_authed_supabase_client(user_token)
-            logger.debug(f"Using authenticated client for user {created_by}")
-            logger.debug(f"Token being used: {user_token[:20]}...")
+            logger.debug(f"Using authenticated client for user {created_by[:8]}...")
         else:
             supabase = get_supabase()
             logger.debug("Using service role client")

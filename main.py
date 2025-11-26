@@ -21,7 +21,7 @@ app_config.validate_config()
 # Import modules that depend on environment variables
 from services.logger import app_logger as logger  # noqa: E402
 from api import auth_routes, quiz_routes, file_routes, submission_routes, admin_routes, health_routes, billing_routes  # noqa: E402
-from middleware.auto_refresh import SupabaseAutoRefreshMiddleware  # noqa: E402
+from middleware.auto_refresh import SupabaseAutoRefreshMiddleware, close_http_client  # noqa: E402
 from services.redis.client import lifespan as redis_lifespan  # noqa: E402
 
 # Get the CORS origins from environment variable or use default
@@ -96,7 +96,11 @@ async def app_lifespan(app: FastAPI):
         logger.info("Application startup complete")
         yield
     
+    # Cleanup on shutdown
     logger.info("Application shutdown: cleaning up resources...")
+    
+    # Close HTTP client used for token refresh
+    await close_http_client()
 
 
 app = FastAPI(

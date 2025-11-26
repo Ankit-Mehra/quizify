@@ -1,14 +1,14 @@
 """
-Billing Handler - Business Logic
-Author: GitHub Copilot
-Date: 2025-11-19
+Billing Handler - Business Logic for checkout session verification
 """
 
+import asyncio
 from typing import Dict
 import stripe
 from fastapi import HTTPException
 from services.logger import app_logger as logger
-from services.billing_service import BillingService
+from services.billing_service import BillingService, _short_stripe_id
+
 
 async def verify_checkout_session(
     session_id: str, 
@@ -32,8 +32,9 @@ async def verify_checkout_session(
     try:
         # Note: stripe.api_key is set by the injected billing_service instance (BillingService.__init__)
         
-        # Retrieve session from Stripe
-        session = stripe.checkout.Session.retrieve(
+        # Retrieve session from Stripe (wrapped to avoid blocking event loop)
+        session = await asyncio.to_thread(
+            stripe.checkout.Session.retrieve,
             session_id,
             expand=["subscription"]
         )
@@ -43,7 +44,7 @@ async def verify_checkout_session(
         if session_user_id != user_id:
             safe_session_user_id = session_user_id[:8] if session_user_id else "None"
             logger.warning(
-                f"Session {session_id} user mismatch: "
+                f"Session {_short_stripe_id(session_id)} user mismatch: "
                 f"expected {user_id[:8]}, got {safe_session_user_id}"
             )
             raise HTTPException(
@@ -54,7 +55,7 @@ async def verify_checkout_session(
         # Verify payment status
         if session.payment_status != "paid":
             logger.warning(
-                f"Session {session_id} payment not complete: "
+                f"Session {_short_stripe_id(session_id)} payment not complete: "
                 f"status={session.payment_status}"
             )
             raise HTTPException(
@@ -70,8 +71,11 @@ async def verify_checkout_session(
             # Already expanded to an object, get the ID
             subscription_id = subscription_id.id
         
-        # Fetch fresh subscription with all fields
-        subscription = stripe.Subscription.retrieve(subscription_id)
+        # Fetch fresh subscription with all fields (wrapped to avoid blocking event loop)
+        subscription = await asyncio.to_thread(
+            stripe.Subscription.retrieve,
+            subscription_id
+        )
         
         tier = session.metadata.get("tier", "free")
         
@@ -136,13 +140,13 @@ async def verify_checkout_session(
         }
         
     except stripe.InvalidRequestError as e:
-        logger.error(f"Invalid session ID {session_id}: {e}")
+        logger.error(f"Invalid session ID {_short_stripe_id(session_id)}: {e}")
         raise HTTPException(
             status_code=404,
             detail="Checkout session not found"
         )
     except stripe.StripeError as e:
-        logger.error(f"Stripe error verifying session {session_id}: {e}")
+        logger.error(f"Stripe error verifying session {_short_stripe_id(session_id)}: {e}")
         raise HTTPException(
             status_code=502,
             detail="Failed to verify checkout session with Stripe"
@@ -152,7 +156,7 @@ async def verify_checkout_session(
         raise
     except Exception as e:
         logger.error(
-            f"Unexpected error verifying session {session_id}: {e}",
+            f"Unexpected error verifying session {_short_stripe_id(session_id)}: {e}",
             exc_info=True
         )
         raise HTTPException(

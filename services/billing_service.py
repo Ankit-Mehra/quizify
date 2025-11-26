@@ -33,6 +33,27 @@ STATUS_INCOMPLETE_EXPIRED = "incomplete_expired"
 STATUS_UNPAID = "unpaid"
 
 
+def _short_stripe_id(stripe_id: str, max_len: int = 12) -> str:
+    """
+    Truncate Stripe IDs for logging to reduce verbosity.
+    
+    Stripe IDs are prefixed (e.g., sub_, cus_, cs_) followed by a long random string.
+    This keeps the prefix and first few characters for debugging while reducing log noise.
+    
+    Args:
+        stripe_id: Full Stripe ID (e.g., sub_1aBcDeFgHiJkLmNoP)
+        max_len: Maximum length of truncated ID
+        
+    Returns:
+        Truncated ID (e.g., sub_1aBcDe...)
+    """
+    if not stripe_id:
+        return "N/A"
+    if len(stripe_id) <= max_len:
+        return stripe_id
+    return f"{stripe_id[:max_len]}..."
+
+
 class BillingService:
     """
     Service for managing Stripe billing operations.
@@ -56,7 +77,7 @@ class BillingService:
             raise RuntimeError("STRIPE_SECRET_KEY environment variable is not set")
         
         stripe.api_key = self.config.STRIPE_SECRET_KEY
-        logger.info(f"Stripe API initialized with key: {self.config.STRIPE_SECRET_KEY[:7]}...")
+        logger.info("Stripe API initialized successfully")
     
     # ========================================================================
     # Helper Methods
@@ -159,6 +180,71 @@ class BillingService:
         
         return current_period_start, current_period_end
     
+    async def _validate_webhook_user_authorization(
+        self, 
+        user_id: str, 
+        customer_id: str, 
+        context: str = ""
+    ) -> bool:
+        """
+        Validate that a user_id from webhook metadata matches the database mapping.
+        
+        This is a critical security check to prevent spoofed metadata attacks.
+        Even though Stripe signature verification ensures the webhook is legitimate,
+        the metadata could be set incorrectly or maliciously by API misuse.
+        
+        Args:
+            user_id: User ID from Stripe metadata
+            customer_id: Stripe customer ID from the webhook event
+            context: Context for logging (e.g., "checkout session cs_xxx")
+            
+        Returns:
+            bool: True if validation passes, False otherwise
+        """
+        if not user_id or not customer_id:
+            logger.error(f"Missing user_id or customer_id for validation{' in ' + context if context else ''}")
+            return False
+        
+        try:
+            # Query database for the user's stripe_customer_id
+            response = self.supabase.table("profiles").select("stripe_customer_id").eq("id", user_id).execute()
+            
+            if not response.data or len(response.data) == 0:
+                # User doesn't exist - could be a race condition or attack
+                logger.warning(f"User {user_id[:8]} not found during webhook validation{' for ' + context if context else ''}")
+                return False
+            
+            db_customer_id = response.data[0].get("stripe_customer_id")
+            
+            # If user has no stored customer_id, this might be the first checkout
+            # In that case, we allow it (the checkout handler will store the customer_id)
+            if not db_customer_id:
+                # MONITORING: Log first-time customer mapping for audit trail
+                # This is expected for new subscribers but should be monitored
+                # for unusual patterns (e.g., same user_id with different customer_ids)
+                logger.info(
+                    f"BILLING_AUDIT: First-time customer mapping - "
+                    f"user={user_id[:8]} customer={_short_stripe_id(customer_id)} "
+                    f"context={context or 'unknown'}"
+                )
+                return True
+            
+            # Validate customer_id matches
+            if db_customer_id != customer_id:
+                logger.error(
+                    f"SECURITY: Customer ID mismatch for user {user_id[:8]}: "
+                    f"webhook has {_short_stripe_id(customer_id)}, database has {_short_stripe_id(db_customer_id)}"
+                    f"{' in ' + context if context else ''}"
+                )
+                return False
+            
+            logger.debug(f"Webhook user authorization validated for user {user_id[:8]}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error validating webhook user authorization: {e}", exc_info=True)
+            return False
+
     # ========================================================================
     # Customer Management
     # ========================================================================
@@ -193,13 +279,15 @@ class BillingService:
             # Check if profile exists and has a customer ID
             if response.data and len(response.data) > 0 and response.data[0].get("stripe_customer_id"):
                 customer_id = response.data[0]["stripe_customer_id"]
-                logger.info(f"Found existing Stripe customer: {customer_id}")
+                logger.info(f"Found existing Stripe customer: {_short_stripe_id(customer_id)}")
                 return customer_id
             
             logger.info(f"Creating new Stripe customer for email: {email}")
             
             # 2. Create new customer in Stripe
-            customer = stripe.Customer.create(
+            # Run synchronous Stripe API call in thread pool to avoid blocking event loop
+            customer = await asyncio.to_thread(
+                stripe.Customer.create,
                 email=email,
                 metadata={
                     "user_id": user_id,
@@ -268,14 +356,47 @@ class BillingService:
             logger.error(f"Invalid tier '{tier}' or price ID not configured")
             raise HTTPException(status_code=400, detail=f"Invalid subscription tier: {tier}")
         
-        logger.info(f"Using Stripe price ID: {price_id}")
+        logger.info(f"Using Stripe price ID: {_short_stripe_id(price_id)}")
+        
+        # Validate success/cancel URLs are configured and point to our frontend
+        success_url = self.config.STRIPE_SUCCESS_URL
+        cancel_url = self.config.STRIPE_CANCEL_URL
+        frontend_url = self.config.FRONTEND_URL
+        
+        if not success_url or not cancel_url:
+            logger.error("STRIPE_SUCCESS_URL or STRIPE_CANCEL_URL not configured")
+            raise HTTPException(status_code=500, detail="Checkout URLs not properly configured")
+        
+        # Security: Validate URLs are on the allowed domain
+        if frontend_url:
+            from urllib.parse import urlparse
+            frontend_domain = urlparse(frontend_url).netloc
+            success_domain = urlparse(success_url).netloc
+            cancel_domain = urlparse(cancel_url).netloc
+            
+            # Explicitly check all domains are non-empty to prevent bypass
+            if not frontend_domain or not success_domain or not cancel_domain:
+                logger.error(
+                    f"SECURITY: URL parsing failed - empty domain detected. "
+                    f"Frontend: '{frontend_domain}', Success: '{success_domain}', Cancel: '{cancel_domain}'"
+                )
+                raise HTTPException(status_code=500, detail="Checkout URL configuration error")
+            
+            if success_domain != frontend_domain or cancel_domain != frontend_domain:
+                logger.error(
+                    f"SECURITY: Checkout URLs must match frontend domain. "
+                    f"Frontend: {frontend_domain}, Success: {success_domain}, Cancel: {cancel_domain}"
+                )
+                raise HTTPException(status_code=500, detail="Checkout URL configuration error")
             
         try:
             # 2. Get or create customer
             customer_id = await self.get_or_create_customer(user_id, user_token, email)
             
             # 3. Create Checkout Session
-            session = stripe.checkout.Session.create(
+            # Run synchronous Stripe API call in thread pool to avoid blocking event loop
+            session = await asyncio.to_thread(
+                stripe.checkout.Session.create,
                 customer=customer_id,
                 payment_method_types=["card"],
                 line_items=[{
@@ -283,8 +404,8 @@ class BillingService:
                     "quantity": 1,
                 }],
                 mode="subscription",
-                success_url=f"{self.config.STRIPE_SUCCESS_URL.rstrip('/')}?session_id={{CHECKOUT_SESSION_ID}}",
-                cancel_url=self.config.STRIPE_CANCEL_URL.rstrip('/'),
+                success_url=f"{success_url.rstrip('/')}?session_id={{CHECKOUT_SESSION_ID}}",
+                cancel_url=cancel_url.rstrip('/'),
                 metadata={
                     "user_id": user_id,
                     "tier": tier
@@ -357,10 +478,12 @@ class BillingService:
                 )
             
             customer_id = response.data[0]["stripe_customer_id"]
-            logger.info(f"Creating portal session for customer {customer_id}")
+            logger.info(f"Creating portal session for customer {_short_stripe_id(customer_id)}")
             
             # 2. Create portal session with return URL
-            portal_session = stripe.billing_portal.Session.create(
+            # Run synchronous Stripe API call in thread pool to avoid blocking event loop
+            portal_session = await asyncio.to_thread(
+                stripe.billing_portal.Session.create,
                 customer=customer_id,
                 return_url=f"{self.config.FRONTEND_URL.rstrip('/')}/billing"
             )
@@ -452,7 +575,7 @@ class BillingService:
                 logger.error(f"No profile found for user {user_id[:8]} during provisioning")
                 raise HTTPException(status_code=404, detail="User profile not found")
             
-            logger.info(f"Successfully provisioned subscription {subscription_id} for user {user_id[:8]}")
+            logger.info(f"Successfully provisioned subscription {_short_stripe_id(subscription_id)} for user {user_id[:8]}")
             
             # 4. Invalidate user tier cache after successful provisioning
             # This ensures the next API call fetches fresh data showing the upgraded tier
@@ -508,7 +631,7 @@ class BillingService:
                 logger.error(f"No profile found for user {user_id[:8]} during cancellation")
                 raise HTTPException(status_code=404, detail="User profile not found")
             
-            logger.info(f"Subscription {subscription_id} canceled for user {user_id[:8]}")
+            logger.info(f"Subscription {_short_stripe_id(subscription_id)} canceled for user {user_id[:8]}")
             
             # Invalidate cache
             try:
@@ -533,20 +656,32 @@ class BillingService:
         """
         user_id = session.get("metadata", {}).get("user_id")
         if not user_id:
-            logger.error(f"No user_id in checkout session {session.get('id')}")
+            logger.error(f"No user_id in checkout session {_short_stripe_id(session.get('id'))}")
+            return
+        
+        customer_id = session.get("customer")
+        
+        # Security: Validate user_id matches customer_id in database
+        # This prevents spoofed metadata attacks
+        if not await self._validate_webhook_user_authorization(
+            user_id=user_id,
+            customer_id=customer_id,
+            context=f"checkout session {_short_stripe_id(session.get('id'))}"
+        ):
+            logger.error(f"SECURITY: Webhook authorization failed for checkout {_short_stripe_id(session.get('id'))}")
             return
         
         # Get subscription details
         subscription_id = session.get("subscription")
         if not subscription_id:
-            logger.warning(f"No subscription in checkout session {session.get('id')}")
+            logger.warning(f"No subscription in checkout session {_short_stripe_id(session.get('id'))}")
             return
         
         # Fetch full subscription details
-        # Note: Synchronous Stripe API call acceptable here for webhook reliability.
-        # Alternative would be expanding subscription in webhook event, but this ensures
-        # we always get fresh, complete subscription data including items and metadata.
-        subscription = stripe.Subscription.retrieve(subscription_id)
+        # Run synchronous Stripe API call in thread pool to avoid blocking event loop
+        subscription = await asyncio.to_thread(
+            stripe.Subscription.retrieve, subscription_id
+        )
         
         # Extract price_id from subscription items
         price_id = self._extract_price_id_from_subscription(
@@ -556,7 +691,7 @@ class BillingService:
         if not price_id:
             return
         
-        logger.info(f"Checkout completed for user {user_id[:8]}, subscription {subscription_id}")
+        logger.info(f"Checkout completed for user {user_id[:8]}, subscription {_short_stripe_id(subscription_id)}")
         
         # Extract period dates from subscription items (NOT from subscription object itself)
         current_period_start, current_period_end = self._extract_period_dates_from_subscription(
@@ -566,7 +701,7 @@ class BillingService:
         # Provision subscription
         await self.provision_subscription(
             user_id=user_id,
-            customer_id=session.get("customer"),
+            customer_id=customer_id,
             subscription_id=subscription_id,
             subscription_status=self._get_attr(subscription, "status"),
             price_id=price_id,
@@ -583,28 +718,39 @@ class BillingService:
         """
         user_id = subscription.get("metadata", {}).get("user_id")
         if not user_id:
-            logger.error(f"No user_id in subscription {subscription.get('id')}")
+            logger.error(f"No user_id in subscription {_short_stripe_id(subscription.get('id'))}")
+            return
+        
+        customer_id = subscription.get("customer")
+        
+        # Security: Validate user_id matches customer_id in database
+        if not await self._validate_webhook_user_authorization(
+            user_id=user_id,
+            customer_id=customer_id,
+            context=f"subscription created {_short_stripe_id(subscription.get('id'))}"
+        ):
+            logger.error(f"SECURITY: Webhook authorization failed for subscription {_short_stripe_id(subscription.get('id'))}")
             return
         
         # Extract price_id from subscription items
         price_id = self._extract_price_id_from_subscription(
             subscription,
-            context=f"subscription {subscription.get('id')}"
+            context=f"subscription {_short_stripe_id(subscription.get('id'))}"
         )
         if not price_id:
             return
         
-        logger.info(f"Subscription created: {subscription.get('id')} for user {user_id[:8]}")
+        logger.info(f"Subscription created: {_short_stripe_id(subscription.get('id'))} for user {user_id[:8]}")
         
         # Extract period dates from subscription items (NOT from subscription object itself)
         current_period_start, current_period_end = self._extract_period_dates_from_subscription(
-            subscription, context=f"subscription {subscription.get('id')}"
+            subscription, context=f"subscription {_short_stripe_id(subscription.get('id'))}"
         )
         
         # Provision subscription
         await self.provision_subscription(
             user_id=user_id,
-            customer_id=subscription.get("customer"),
+            customer_id=customer_id,
             subscription_id=subscription.get("id"),
             subscription_status=subscription.get("status"),
             price_id=price_id,
@@ -625,33 +771,44 @@ class BillingService:
         """
         user_id = subscription.get("metadata", {}).get("user_id")
         if not user_id:
-            logger.warning(f"No user_id in subscription {subscription.get('id')}, skipping update")
+            logger.warning(f"No user_id in subscription {_short_stripe_id(subscription.get('id'))}, skipping update")
+            return
+        
+        customer_id = subscription.get("customer")
+        
+        # Security: Validate user_id matches customer_id in database
+        if not await self._validate_webhook_user_authorization(
+            user_id=user_id,
+            customer_id=customer_id,
+            context=f"subscription updated {_short_stripe_id(subscription.get('id'))}"
+        ):
+            logger.error(f"SECURITY: Webhook authorization failed for subscription {_short_stripe_id(subscription.get('id'))}")
             return
         
         # Extract price_id from subscription items
         price_id = self._extract_price_id_from_subscription(
             subscription,
-            context=f"subscription {subscription.get('id')} for user {user_id[:8]}"
+            context=f"subscription {_short_stripe_id(subscription.get('id'))} for user {user_id[:8]}"
         )
         if not price_id:
-            logger.error(f"Cannot provision subscription {subscription.get('id')} without price_id")
+            logger.error(f"Cannot provision subscription {_short_stripe_id(subscription.get('id'))} without price_id")
             return
         
         subscription_status = subscription.get("status")
         canceled_at = subscription.get("canceled_at")
         cancel_at = subscription.get("cancel_at")  # Scheduled cancellation date (cancel at period end)
         
-        logger.info(f"Subscription updated: {subscription.get('id')} for user {user_id[:8]} - status: {subscription_status}, canceled_at: {canceled_at}, cancel_at: {cancel_at}")
+        logger.info(f"Subscription updated: {_short_stripe_id(subscription.get('id'))} for user {user_id[:8]} - status: {subscription_status}, canceled_at: {canceled_at}, cancel_at: {cancel_at}")
         
         # Extract period dates from subscription items (NOT from subscription object itself)
         current_period_start, current_period_end = self._extract_period_dates_from_subscription(
-            subscription, context=f"subscription {subscription.get('id')} for user {user_id[:8]}"
+            subscription, context=f"subscription {_short_stripe_id(subscription.get('id'))} for user {user_id[:8]}"
         )
         
         # Update subscription details
         await self.provision_subscription(
             user_id=user_id,
-            customer_id=subscription.get("customer"),
+            customer_id=customer_id,
             subscription_id=subscription.get("id"),
             subscription_status=subscription_status,
             price_id=price_id,
@@ -710,12 +867,23 @@ class BillingService:
         """
         user_id = subscription.get("metadata", {}).get("user_id")
         if not user_id:
-            logger.warning(f"No user_id in subscription {subscription.get('id')}, skipping deletion")
+            logger.warning(f"No user_id in subscription {_short_stripe_id(subscription.get('id'))}, skipping deletion")
+            return
+        
+        customer_id = subscription.get("customer")
+        
+        # Security: Validate user_id matches customer_id in database
+        if not await self._validate_webhook_user_authorization(
+            user_id=user_id,
+            customer_id=customer_id,
+            context=f"subscription deleted {_short_stripe_id(subscription.get('id'))}"
+        ):
+            logger.error(f"SECURITY: Webhook authorization failed for subscription {_short_stripe_id(subscription.get('id'))}")
             return
         
         canceled_at = subscription.get("canceled_at", int(datetime.now(timezone.utc).timestamp()))
         
-        logger.info(f"Subscription deleted: {subscription.get('id')} for user {user_id[:8]}")
+        logger.info(f"Subscription deleted: {_short_stripe_id(subscription.get('id'))} for user {user_id[:8]}")
         
         await self.cancel_subscription(
             user_id=user_id,
@@ -732,39 +900,51 @@ class BillingService:
         """
         subscription_id = invoice.get("subscription")
         if not subscription_id:
-            logger.info(f"Invoice {invoice.get('id')} not associated with subscription")
+            logger.info(f"Invoice {_short_stripe_id(invoice.get('id'))} not associated with subscription")
             return
         
         # Fetch subscription to get metadata
-        # Note: Synchronous API call is acceptable for webhook handlers (<5s timeout).
-        # Ensures we have current subscription metadata and avoids event expansion complexity.
-        subscription = stripe.Subscription.retrieve(subscription_id)
+        # Run synchronous Stripe API call in thread pool to avoid blocking event loop
+        subscription = await asyncio.to_thread(
+            stripe.Subscription.retrieve, subscription_id
+        )
         # Use _get_attr for Stripe API objects (supports both dict and object access)
         metadata = self._get_attr(subscription, "metadata", {})
         user_id = self._get_attr(metadata, "user_id")
         
         if not user_id:
-            logger.warning(f"No user_id in subscription {subscription_id}, skipping invoice handling")
+            logger.warning(f"No user_id in subscription {_short_stripe_id(subscription_id)}, skipping invoice handling")
             return
         
-        logger.info(f"Invoice paid: {invoice.get('id')} for user {user_id[:8]}")
+        customer_id = self._get_attr(subscription, "customer")
+        
+        # Security: Validate user_id matches customer_id in database
+        if not await self._validate_webhook_user_authorization(
+            user_id=user_id,
+            customer_id=customer_id,
+            context=f"invoice paid {_short_stripe_id(invoice.get('id'))}"
+        ):
+            logger.error(f"SECURITY: Webhook authorization failed for invoice {_short_stripe_id(invoice.get('id'))}")
+            return
+        
+        logger.info(f"Invoice paid: {_short_stripe_id(invoice.get('id'))} for user {user_id[:8]}")
         
         # Update subscription status to active (in case it was past_due)
         price_id = self._extract_price_id_from_subscription(
             subscription,
-            context=f"invoice {invoice.get('id')} (subscription {subscription_id})"
+            context=f"invoice {_short_stripe_id(invoice.get('id'))} (subscription {_short_stripe_id(subscription_id)})"
         )
         if not price_id:
             return
         
         # Extract period dates from subscription items (NOT from subscription object itself)
         current_period_start, current_period_end = self._extract_period_dates_from_subscription(
-            subscription, context=f"invoice {invoice.get('id')} for user {user_id[:8]}"
+            subscription, context=f"invoice {_short_stripe_id(invoice.get('id'))} for user {user_id[:8]}"
         )
         
         await self.provision_subscription(
             user_id=user_id,
-            customer_id=self._get_attr(subscription, "customer"),
+            customer_id=customer_id,
             subscription_id=subscription_id,
             subscription_status=STATUS_ACTIVE,
             price_id=price_id,
@@ -781,22 +961,34 @@ class BillingService:
         """
         subscription_id = invoice.get("subscription")
         if not subscription_id:
-            logger.info(f"Invoice {invoice.get('id')} not associated with subscription")
+            logger.info(f"Invoice {_short_stripe_id(invoice.get('id'))} not associated with subscription")
             return
         
         # Fetch subscription to get metadata
-        # Note: Synchronous API call is acceptable for webhook handlers (<5s timeout).
-        # Ensures we have current subscription metadata and avoids event expansion complexity.
-        subscription = stripe.Subscription.retrieve(subscription_id)
+        # Run synchronous Stripe API call in thread pool to avoid blocking event loop
+        subscription = await asyncio.to_thread(
+            stripe.Subscription.retrieve, subscription_id
+        )
         # Use _get_attr for Stripe API objects (supports both dict and object access)
         metadata = self._get_attr(subscription, "metadata", {})
         user_id = self._get_attr(metadata, "user_id")
         
         if not user_id:
-            logger.warning(f"No user_id in subscription {subscription_id}, skipping invoice handling")
+            logger.warning(f"No user_id in subscription {_short_stripe_id(subscription_id)}, skipping invoice handling")
             return
         
-        logger.warning(f"Invoice payment failed: {invoice.get('id')} for user {user_id[:8]}")
+        customer_id = self._get_attr(subscription, "customer")
+        
+        # Security: Validate user_id matches customer_id in database
+        if not await self._validate_webhook_user_authorization(
+            user_id=user_id,
+            customer_id=customer_id,
+            context=f"invoice payment failed {_short_stripe_id(invoice.get('id'))}"
+        ):
+            logger.error(f"SECURITY: Webhook authorization failed for invoice {_short_stripe_id(invoice.get('id'))}")
+            return
+        
+        logger.warning(f"Invoice payment failed: {_short_stripe_id(invoice.get('id'))} for user {user_id[:8]}")
         
         # Update subscription status to past_due
         try:
