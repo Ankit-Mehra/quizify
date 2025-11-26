@@ -7,14 +7,7 @@ from typing import Dict
 import stripe
 from fastapi import HTTPException
 from services.logger import app_logger as logger
-from services.billing_service import BillingService
-
-
-def _short_stripe_id(stripe_id: str | None, length: int = 12) -> str:
-    """Truncate Stripe IDs for safe logging."""
-    if not stripe_id:
-        return "None"
-    return stripe_id[:length] if len(stripe_id) > length else stripe_id
+from services.billing_service import BillingService, _short_stripe_id
 
 
 async def verify_checkout_session(

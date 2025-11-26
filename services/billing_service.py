@@ -374,7 +374,15 @@ class BillingService:
             success_domain = urlparse(success_url).netloc
             cancel_domain = urlparse(cancel_url).netloc
             
-            if frontend_domain and (success_domain != frontend_domain or cancel_domain != frontend_domain):
+            # Explicitly check all domains are non-empty to prevent bypass
+            if not frontend_domain or not success_domain or not cancel_domain:
+                logger.error(
+                    f"SECURITY: URL parsing failed - empty domain detected. "
+                    f"Frontend: '{frontend_domain}', Success: '{success_domain}', Cancel: '{cancel_domain}'"
+                )
+                raise HTTPException(status_code=500, detail="Checkout URL configuration error")
+            
+            if success_domain != frontend_domain or cancel_domain != frontend_domain:
                 logger.error(
                     f"SECURITY: Checkout URLs must match frontend domain. "
                     f"Frontend: {frontend_domain}, Success: {success_domain}, Cancel: {cancel_domain}"

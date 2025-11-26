@@ -263,6 +263,12 @@ class BillingRateLimiter:
         
         Uses ZADD with timestamp as score, ZREMRANGEBYSCORE to cleanup,
         and ZCARD to count requests in window.
+        
+        Pipeline order matters for correct counting:
+        1. ZREMRANGEBYSCORE - Remove expired entries
+        2. ZADD - Add current request FIRST
+        3. ZCARD - Count INCLUDING current request
+        4. EXPIRE - Set TTL for cleanup
         """
         key = f"{self._prefix}{user_id}"
         current_time = time.time()
@@ -274,19 +280,20 @@ class BillingRateLimiter:
         # Remove old entries outside the window
         pipe.zremrangebyscore(key, 0, window_start)
         
-        # Count current requests in window
-        pipe.zcard(key)
-        
-        # Add current request with timestamp as score
+        # Add current request FIRST (before counting)
         pipe.zadd(key, {str(current_time): current_time})
+        
+        # Count current requests in window (INCLUDING the one we just added)
+        pipe.zcard(key)
         
         # Set expiry on key (cleanup if user goes inactive)
         pipe.expire(key, self._window_seconds * 2)
         
         results = await pipe.execute()
-        current_count = results[1]  # ZCARD result
+        current_count = results[2]  # ZCARD result (index 2 after reorder)
         
-        if current_count >= self._max_requests:
+        # Check if count EXCEEDS limit (> not >=, since current request is included)
+        if current_count > self._max_requests:
             logger.debug(f"Rate limit exceeded for user {user_id[:8]} (Redis): {current_count}/{self._max_requests}")
             return True
         

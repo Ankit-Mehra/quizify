@@ -4,6 +4,7 @@ Unit tests for BillingRateLimiter
 Tests both Redis-backed and memory fallback rate limiting.
 """
 
+import asyncio
 import pytest
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -102,10 +103,11 @@ class TestBillingRateLimiter:
         # Create mock Redis client
         mock_redis = MagicMock()
         mock_pipeline = MagicMock()
+        # Pipeline order: ZREMRANGEBYSCORE, ZADD, ZCARD, EXPIRE
         mock_pipeline.execute = AsyncMock(return_value=[
             None,  # ZREMRANGEBYSCORE result
-            0,     # ZCARD result (0 previous requests)
             None,  # ZADD result
+            1,     # ZCARD result (1 request = current request)
             None,  # EXPIRE result
         ])
         mock_redis.pipeline.return_value = mock_pipeline
@@ -122,10 +124,11 @@ class TestBillingRateLimiter:
         """Should block requests when limit is exceeded (Redis mode)."""
         mock_redis = MagicMock()
         mock_pipeline = MagicMock()
+        # Pipeline order: ZREMRANGEBYSCORE, ZADD, ZCARD, EXPIRE
         mock_pipeline.execute = AsyncMock(return_value=[
             None,  # ZREMRANGEBYSCORE result
-            3,     # ZCARD result (3 requests = at limit)
             None,  # ZADD result
+            4,     # ZCARD result (4 requests > 3 limit)
             None,  # EXPIRE result
         ])
         mock_redis.pipeline.return_value = mock_pipeline
@@ -137,11 +140,33 @@ class TestBillingRateLimiter:
             assert result is True
 
     @pytest.mark.asyncio
+    async def test_redis_mode_allows_at_exactly_limit(self, rate_limiter):
+        """Should allow requests when exactly at limit (not exceeded)."""
+        mock_redis = MagicMock()
+        mock_pipeline = MagicMock()
+        # Pipeline order: ZREMRANGEBYSCORE, ZADD, ZCARD, EXPIRE
+        mock_pipeline.execute = AsyncMock(return_value=[
+            None,  # ZREMRANGEBYSCORE result
+            None,  # ZADD result
+            3,     # ZCARD result (3 requests = exactly at limit)
+            None,  # EXPIRE result
+        ])
+        mock_redis.pipeline.return_value = mock_pipeline
+        
+        with patch("services.redis.client.get_redis_client", return_value=mock_redis):
+            user_id = "redis-user-exact"
+            result = await rate_limiter.is_rate_limited(user_id)
+            
+            # At exactly limit should be allowed (> check, not >=)
+            assert result is False
+
+    @pytest.mark.asyncio
     async def test_redis_mode_uses_correct_key(self, rate_limiter):
         """Should use correct Redis key format with user ID."""
         mock_redis = MagicMock()
         mock_pipeline = MagicMock()
-        mock_pipeline.execute = AsyncMock(return_value=[None, 0, None, None])
+        # Pipeline order: ZREMRANGEBYSCORE, ZADD, ZCARD, EXPIRE
+        mock_pipeline.execute = AsyncMock(return_value=[None, None, 1, None])
         mock_redis.pipeline.return_value = mock_pipeline
         
         with patch("services.redis.client.get_redis_client", return_value=mock_redis):
@@ -186,8 +211,6 @@ class TestBillingRateLimiter:
     @pytest.mark.asyncio
     async def test_concurrent_requests_memory(self, rate_limiter):
         """Should handle concurrent requests with thread safety (memory mode)."""
-        import asyncio
-        
         with patch("services.redis.client.get_redis_client", return_value=None):
             user_id = "concurrent-user"
             
@@ -288,6 +311,116 @@ class TestWebhookIdempotencyStore:
         # Exactly one should be False (first), rest should be True
         false_count = results.count(False)
         assert false_count == 1
+
+    # =========================================================================
+    # Redis Mode Tests (is_duplicate_async)
+    # =========================================================================
+
+    @pytest.mark.asyncio
+    async def test_redis_async_first_event_not_duplicate(self, idempotency_store):
+        """First occurrence via Redis should not be duplicate."""
+        mock_redis = MagicMock()
+        mock_redis.set = AsyncMock(return_value=True)  # SET NX returns True for new key
+        
+        with patch("services.redis.client.get_redis_client", return_value=mock_redis):
+            event_id = "evt_redis_001"
+            result = await idempotency_store.is_duplicate_async(event_id)
+            
+            assert result is False
+            mock_redis.set.assert_called_once()
+            # Verify SET was called with nx=True
+            call_kwargs = mock_redis.set.call_args[1]
+            assert call_kwargs.get("nx") is True
+
+    @pytest.mark.asyncio
+    async def test_redis_async_second_event_is_duplicate(self, idempotency_store):
+        """Second occurrence via Redis should be marked as duplicate."""
+        mock_redis = MagicMock()
+        # SET NX returns False (or None) when key already exists
+        mock_redis.set = AsyncMock(return_value=False)
+        
+        with patch("services.redis.client.get_redis_client", return_value=mock_redis):
+            event_id = "evt_redis_002"
+            result = await idempotency_store.is_duplicate_async(event_id)
+            
+            assert result is True
+
+    @pytest.mark.asyncio
+    async def test_redis_async_none_response_is_duplicate(self, idempotency_store):
+        """SET NX returning None should be treated as duplicate."""
+        mock_redis = MagicMock()
+        # Some Redis clients return None instead of False
+        mock_redis.set = AsyncMock(return_value=None)
+        
+        with patch("services.redis.client.get_redis_client", return_value=mock_redis):
+            event_id = "evt_redis_003"
+            result = await idempotency_store.is_duplicate_async(event_id)
+            
+            assert result is True
+
+    @pytest.mark.asyncio
+    async def test_redis_async_uses_correct_key_and_ttl(self, idempotency_store):
+        """Should use correct Redis key format and TTL."""
+        mock_redis = MagicMock()
+        mock_redis.set = AsyncMock(return_value=True)
+        
+        with patch("services.redis.client.get_redis_client", return_value=mock_redis):
+            event_id = "evt_key_test"
+            await idempotency_store.is_duplicate_async(event_id)
+            
+            expected_key = f"webhook:idempotency:{event_id}"
+            call_args = mock_redis.set.call_args
+            assert call_args[0][0] == expected_key
+            assert call_args[1].get("ex") == idempotency_store._ttl_seconds
+
+    @pytest.mark.asyncio
+    async def test_redis_async_fallback_on_error(self, idempotency_store):
+        """Should fallback to memory when Redis fails."""
+        mock_redis = MagicMock()
+        mock_redis.set = AsyncMock(side_effect=Exception("Redis connection lost"))
+        
+        with patch("services.redis.client.get_redis_client", return_value=mock_redis):
+            event_id = "evt_fallback"
+            
+            # Should not raise, should use memory fallback
+            result = await idempotency_store.is_duplicate_async(event_id)
+            
+            # First time should not be duplicate
+            assert result is False
+            assert idempotency_store._using_fallback is True
+
+    @pytest.mark.asyncio
+    async def test_redis_async_fallback_when_no_redis(self, idempotency_store):
+        """Should use memory fallback when Redis client is None."""
+        with patch("services.redis.client.get_redis_client", return_value=None):
+            event_id = "evt_no_redis"
+            
+            # First call - not duplicate
+            result1 = await idempotency_store.is_duplicate_async(event_id)
+            assert result1 is False
+            
+            # Second call - should be duplicate (memory fallback working)
+            result2 = await idempotency_store.is_duplicate_async(event_id)
+            assert result2 is True
+            
+            assert idempotency_store._using_fallback is True
+
+    @pytest.mark.asyncio
+    async def test_redis_async_recovery_from_fallback(self, idempotency_store):
+        """Should recover from fallback when Redis becomes available."""
+        mock_redis = MagicMock()
+        mock_redis.set = AsyncMock(return_value=True)
+        
+        # First, simulate fallback mode
+        with patch("services.redis.client.get_redis_client", return_value=None):
+            await idempotency_store.is_duplicate_async("evt_fallback_test")
+            assert idempotency_store._using_fallback is True
+        
+        # Now Redis is back
+        with patch("services.redis.client.get_redis_client", return_value=mock_redis):
+            await idempotency_store.is_duplicate_async("evt_recovery_test")
+            # Should have recovered
+            assert idempotency_store._using_fallback is False
 
 
 class TestRateLimitDependency:
