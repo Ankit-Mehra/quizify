@@ -602,7 +602,18 @@ async def stripe_webhook(
             detail="Service temporarily unavailable - distributed lock service offline"
         )
     
-    if await _webhook_idempotency_store.is_duplicate_async(event_id):
+    is_duplicate = await _webhook_idempotency_store.is_duplicate_async(event_id)
+    
+    # Re-check strict mode after idempotency check - Redis may have failed during the call
+    # This closes the race condition window where Redis fails between pre-check and is_duplicate_async
+    if config.BILLING_REQUIRE_REDIS and _webhook_idempotency_store.is_using_fallback:
+        logger.error("BILLING_STRICT: Webhook rejected - Redis failed during idempotency check")
+        raise HTTPException(
+            status_code=503,
+            detail="Service temporarily unavailable - distributed lock service offline"
+        )
+    
+    if is_duplicate:
         logger.info(f"Webhook event {event_id_short}... already processed, skipping")
         return {"status": "already_processed", "event_id": event_id}
     

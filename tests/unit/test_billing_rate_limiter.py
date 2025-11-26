@@ -1,7 +1,9 @@
 """
-Unit tests for BillingRateLimiter
+Unit tests for BillingRateLimiter and WebhookIdempotencyStore
 
-Tests both Redis-backed and memory fallback rate limiting.
+Tests both Redis-backed and memory fallback implementations for:
+- Rate limiting on billing endpoints
+- Webhook idempotency to prevent duplicate processing
 """
 
 import asyncio
