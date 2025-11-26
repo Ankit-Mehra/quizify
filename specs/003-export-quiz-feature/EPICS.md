@@ -18,12 +18,12 @@ Implement a comprehensive quiz export system supporting multiple formats for dif
 ## Tier-Based Feature Access
 
 | Feature | Free | Basic | Pro |
-|---------|------|-------|-----|
-| PDF Export | ✅ | ✅ | ✅ |
-| DOCX Export | ✅ | ✅ | ✅ |
-| CSV (Quizify Native) | ✅ | ✅ | ✅ |
-| CSV (Anki) | ✅ | ✅ | ✅ |
-| Share Link | ✅ | ✅ | ✅ |
+|---------|------|----------|-----|
+| PDF Export | ❌ | ✅ | ✅ |
+| DOCX Export | ❌ | ✅ | ✅ |
+| CSV (Quizify Native) | ❌ | ✅ | ✅ |
+| CSV (Anki) | ❌ | ✅ | ✅ |
+| Share Link | ❌ | ✅ | ✅ |
 | **QTI 2.1 Export (LMS)** | ❌ | ❌ | ✅ |
 | **Moodle XML Export (LMS)** | ❌ | ❌ | ✅ |
 

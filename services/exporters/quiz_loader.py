@@ -19,28 +19,7 @@ from schemas.export import (
     ExportQuestionMatching
 )
 from services.logger import app_logger as logger
-
-
-def get_supabase():
-    """Get Supabase client (lazy loaded)"""
-    from config import config
-    from supabase import create_client
-    return create_client(config.SUPABASE_URL, config.SUPABASE_KEY)
-
-
-def get_authed_supabase_client(user_token: str):
-    """Get authenticated Supabase client with user JWT"""
-    from config import config
-    from supabase import create_client
-    
-    client = create_client(
-        config.SUPABASE_URL,
-        config.SUPABASE_ANON_KEY,
-        options={
-            "headers": {"Authorization": f"Bearer {user_token}"}
-        }
-    )
-    return client
+from services.db_services.supabase_quiz import get_supabase, get_authed_supabase_client
 
 
 async def load_quiz_for_export(
