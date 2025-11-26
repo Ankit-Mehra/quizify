@@ -185,7 +185,7 @@ class BillingService:
                 logger.error(f"No profile found for user {user_id[:8]} when storing Stripe customer ID")
                 raise HTTPException(status_code=404, detail="User profile not found")
             
-            logger.info("Updated profile with Stripe customer ID")
+            logger.info(f"Updated profile with Stripe customer ID for user {user_id[:8]}")
             
             return customer.id
             
