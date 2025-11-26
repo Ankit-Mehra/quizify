@@ -93,9 +93,9 @@ def _register_implemented_exporters():
     from services.exporters.pdf_exporter import PdfExporter
     _EXPORTER_REGISTRY[ExportFormat.PDF] = PdfExporter
     
-    # DOCX Exporter (Epic 3) - TODO
-    # from services.exporters.docx_exporter import DocxExporter
-    # _EXPORTER_REGISTRY[ExportFormat.DOCX] = DocxExporter
+    # DOCX Exporter (Epic 3)
+    from services.exporters.docx_exporter import DocxExporter
+    _EXPORTER_REGISTRY[ExportFormat.DOCX] = DocxExporter
     
     # CSV Exporters (Epic 4) - TODO
     # CSV_QUIZIFY, CSV_ANKI

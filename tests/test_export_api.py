@@ -447,8 +447,8 @@ class TestExportHandler:
             ]
         )
         
-        # Use DOCX format which is not yet implemented (PDF is now implemented)
-        request = ExportRequest(format=ExportFormat.DOCX)
+        # Use CSV_QUIZIFY format which is not yet implemented (PDF, DOCX are now implemented)
+        request = ExportRequest(format=ExportFormat.CSV_QUIZIFY)
         
         with patch("handlers.export_handler.load_quiz_for_export", return_value=mock_quiz_data):
             with pytest.raises(HTTPException) as exc_info:
