@@ -25,6 +25,19 @@ def _get_http_client() -> httpx.AsyncClient:
     return _http_client
 
 
+async def close_http_client() -> None:
+    """
+    Close the shared HTTP client gracefully.
+    
+    Should be called during application shutdown to prevent resource leaks.
+    """
+    global _http_client
+    if _http_client is not None:
+        await _http_client.aclose()
+        _http_client = None
+        logger.debug("Auto-refresh HTTP client closed")
+
+
 def _extract_refresh_token(request: Request) -> str | None:
     """Return the last refresh_token value from the Cookie header."""
     cookie_header = request.headers.get("cookie")

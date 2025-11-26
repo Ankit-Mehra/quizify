@@ -35,17 +35,18 @@ router = APIRouter(prefix="/api/billing", tags=["billing"])
 
 
 # ============================================================================
-# Webhook Idempotency Store
+# Webhook Idempotency Store (Redis-backed with memory fallback)
 # ============================================================================
 
 class WebhookIdempotencyStore:
     """
-    Thread-safe in-memory store for tracking processed webhook event IDs.
+    Redis-backed idempotency store for tracking processed webhook event IDs.
     
-    Prevents duplicate webhook processing by storing event IDs with timestamps.
-    Uses LRU eviction with TTL to prevent memory bloat.
+    Prevents duplicate webhook processing by storing event IDs with TTL.
+    Uses Redis SET with NX (set if not exists) for atomic idempotency checks.
+    Falls back to in-memory LRU store if Redis is unavailable.
     
-    Note: For horizontal scaling, this should be replaced with Redis.
+    Redis pattern: webhook:idempotency:{event_id} -> timestamp
     """
     
     def __init__(self, max_size: int = 10000, ttl_seconds: int = 86400):
@@ -53,17 +54,25 @@ class WebhookIdempotencyStore:
         Initialize the idempotency store.
         
         Args:
-            max_size: Maximum number of event IDs to store (LRU eviction)
+            max_size: Maximum number of event IDs for memory fallback (LRU eviction)
             ttl_seconds: Time-to-live for event IDs (default: 24 hours)
         """
-        self._store: OrderedDict[str, float] = OrderedDict()
+        self._prefix = "webhook:idempotency:"
         self._max_size = max_size
         self._ttl_seconds = ttl_seconds
-        self._lock = Lock()
+        
+        # Memory fallback storage
+        self._memory_store: OrderedDict[str, float] = OrderedDict()
+        self._memory_lock = Lock()
+        
+        # Track if we're using fallback (for health checks)
+        self._using_fallback = False
     
-    def is_duplicate(self, event_id: str) -> bool:
+    async def is_duplicate_async(self, event_id: str) -> bool:
         """
-        Check if an event ID has been processed before.
+        Async check if an event ID has been processed before.
+        
+        Uses Redis if available, falls back to memory otherwise.
         
         Args:
             event_id: Stripe event ID (e.g., evt_xxx)
@@ -71,30 +80,96 @@ class WebhookIdempotencyStore:
         Returns:
             True if event was already processed, False otherwise
         """
-        with self._lock:
+        from services.redis.client import get_redis_client
+        
+        redis_client = get_redis_client()
+        
+        if redis_client:
+            try:
+                result = await self._check_redis(redis_client, event_id)
+                self._using_fallback = False
+                return result
+            except Exception as e:
+                logger.warning(f"Redis idempotency check failed, using memory fallback: {e}")
+                self._using_fallback = True
+        else:
+            self._using_fallback = True
+        
+        return self._check_memory(event_id)
+    
+    def is_duplicate(self, event_id: str) -> bool:
+        """
+        Synchronous check for backward compatibility.
+        Uses memory-only store (for non-async contexts).
+        
+        Args:
+            event_id: Stripe event ID (e.g., evt_xxx)
+            
+        Returns:
+            True if event was already processed, False otherwise
+        """
+        return self._check_memory(event_id)
+    
+    async def _check_redis(self, redis_client, event_id: str) -> bool:
+        """
+        Redis-based idempotency check using SET with NX.
+        
+        SET NX is atomic: returns True only if key was set (new event),
+        returns False if key already exists (duplicate).
+        """
+        key = f"{self._prefix}{event_id}"
+        
+        # SET with NX returns True if set, False if already exists
+        was_set = await redis_client.set(
+            key,
+            str(time.time()),
+            nx=True,  # Only set if not exists
+            ex=self._ttl_seconds  # Auto-expire after TTL
+        )
+        
+        # was_set is True if this is a NEW event (we just set it)
+        # was_set is False/None if this is a DUPLICATE (key already existed)
+        is_duplicate = not was_set
+        
+        if is_duplicate:
+            event_id_short = event_id[:12] if len(event_id) > 12 else event_id
+            logger.debug(f"Duplicate webhook event detected (Redis): {event_id_short}...")
+        
+        return is_duplicate
+    
+    def _check_memory(self, event_id: str) -> bool:
+        """Memory fallback for idempotency check."""
+        with self._memory_lock:
             self._cleanup_expired()
             
-            if event_id in self._store:
+            if event_id in self._memory_store:
+                event_id_short = event_id[:12] if len(event_id) > 12 else event_id
+                logger.debug(f"Duplicate webhook event detected (memory): {event_id_short}...")
                 return True
             
             # Add event ID with current timestamp
-            self._store[event_id] = time.time()
+            self._memory_store[event_id] = time.time()
             
             # LRU eviction if store is full
-            while len(self._store) > self._max_size:
-                self._store.popitem(last=False)
+            while len(self._memory_store) > self._max_size:
+                self._memory_store.popitem(last=False)
             
             return False
     
     def _cleanup_expired(self) -> None:
-        """Remove expired event IDs from the store."""
+        """Remove expired event IDs from the memory store."""
         current_time = time.time()
         expired_keys = [
-            key for key, timestamp in self._store.items()
+            key for key, timestamp in self._memory_store.items()
             if current_time - timestamp > self._ttl_seconds
         ]
         for key in expired_keys:
-            del self._store[key]
+            del self._memory_store[key]
+    
+    @property
+    def is_using_fallback(self) -> bool:
+        """Check if currently using memory fallback instead of Redis."""
+        return self._using_fallback
 
 
 # Global idempotency store instance
@@ -130,6 +205,9 @@ class BillingRateLimiter:
         # Memory fallback storage
         self._memory_requests: dict[str, list[float]] = {}
         self._memory_lock = Lock()
+        
+        # Track if we're using fallback (for health checks)
+        self._using_fallback = False
     
     async def is_rate_limited(self, user_id: str) -> bool:
         """
@@ -149,11 +227,21 @@ class BillingRateLimiter:
         
         if redis_client:
             try:
-                return await self._check_redis(redis_client, user_id)
+                result = await self._check_redis(redis_client, user_id)
+                self._using_fallback = False
+                return result
             except Exception as e:
                 logger.warning(f"Redis rate limit check failed, using memory fallback: {e}")
+                self._using_fallback = True
+        else:
+            self._using_fallback = True
         
         return self._check_memory(user_id)
+    
+    @property
+    def is_using_fallback(self) -> bool:
+        """Check if currently using memory fallback instead of Redis."""
+        return self._using_fallback
     
     async def _check_redis(self, redis_client, user_id: str) -> bool:
         """
@@ -470,17 +558,18 @@ async def stripe_webhook(
         logger.error(f"Invalid webhook signature: {e}")
         raise HTTPException(status_code=400, detail="Invalid signature")
     
-    # Idempotency check - prevent duplicate processing
+    # Idempotency check - prevent duplicate processing (Redis-backed)
     event_id = event["id"]
-    if _webhook_idempotency_store.is_duplicate(event_id):
-        logger.info(f"Webhook event {event_id} already processed, skipping")
+    event_id_short = event_id[:12] if len(event_id) > 12 else event_id
+    if await _webhook_idempotency_store.is_duplicate_async(event_id):
+        logger.info(f"Webhook event {event_id_short}... already processed, skipping")
         return {"status": "already_processed", "event_id": event_id}
     
     # Handle the event
     event_type = event["type"]
     data_object = event["data"]["object"]
     
-    logger.info(f"Processing webhook event: {event_type} (ID: {event_id})")
+    logger.info(f"Processing webhook event: {event_type} (ID: {event_id_short}...)")
     
     try:
         if event_type == "checkout.session.completed":
@@ -512,7 +601,7 @@ async def stripe_webhook(
     
     except Exception as e:
         logger.error(
-            f"Error processing webhook {event_type} (ID: {event_id}): {e}",
+            f"Error processing webhook {event_type} (ID: {event_id_short}...): {e}",
             exc_info=True
         )
         # Return 500 so Stripe retries the webhook
@@ -539,9 +628,21 @@ async def billing_health_check():
     Health check for billing service.
     
     Used by Stripe to validate webhook endpoint URL during setup.
+    Also reports Redis fallback status for distributed components.
     """
+    # Check Redis fallback status for billing components
+    rate_limiter_fallback = _billing_rate_limiter.is_using_fallback
+    idempotency_fallback = _webhook_idempotency_store.is_using_fallback
+    
+    using_redis = not (rate_limiter_fallback or idempotency_fallback)
+    
     return {
         "status": "ok",
         "service": "billing",
-        "message": "Billing service is operational (Epic 1: Infrastructure setup complete)",
+        "redis": {
+            "connected": using_redis,
+            "rate_limiter_fallback": rate_limiter_fallback,
+            "idempotency_fallback": idempotency_fallback,
+        },
+        "message": "Billing service is operational",
     }
