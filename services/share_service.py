@@ -394,10 +394,10 @@ async def get_public_quiz_by_slug(slug: str) -> dict:
     quiz = quiz_result.data
     
     # SECURITY: Use sanitized view - excludes correct_answer field at DB level
-    # View columns: id, quiz_id, type, question, options, left, right, explanation
+    # View columns: id, quiz_id, type, question, options, left, right
     questions_result = (
         supabase.table("public_quiz_questions")
-        .select("id, quiz_id, type, question, options, left, right, explanation")
+        .select("id, quiz_id, type, question, options, left, right")
         .eq("quiz_id", quiz["id"])
         .execute()
     )
@@ -419,12 +419,12 @@ async def get_public_quiz_by_slug(slug: str) -> dict:
         }
         
         # Include options without marking correct answer
+        # Always include options field for API consistency (empty list if null)
         if q["type"] in ("multiple_choice", "true_false"):
-            if q.get("options"):
-                public_q["options"] = [
-                    {"id": opt.get("id", str(i)), "text": opt.get("text", "")}
-                    for i, opt in enumerate(q["options"])
-                ]
+            public_q["options"] = [
+                {"id": opt.get("id", str(i)), "text": opt.get("text", "")}
+                for i, opt in enumerate(q.get("options") or [])
+            ]
         elif q["type"] == "matching":
             # SECURITY: For matching, return left and right columns separately
             # Right column is shuffled to prevent answer leakage via ordering
