@@ -4,14 +4,24 @@ Service for managing quiz share links.
 Handles slug generation, share link creation, revocation, and public quiz retrieval.
 """
 
+import random
 import secrets
 import string
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, List
 from uuid import UUID
 
 from config import Config
 from services.db_services.supabase_quiz import get_supabase, get_authed_supabase_client
+
+
+def _shuffle_list(items: List) -> None:
+    """
+    Shuffle a list in place using random.shuffle.
+    
+    Module-level helper to avoid importing random inside loops.
+    """
+    random.shuffle(items)
 
 
 # Constants for slug generation
@@ -403,12 +413,11 @@ async def get_public_quiz_by_slug(slug: str) -> dict:
             elif q["question_type"] == "matching":
                 # SECURITY: For matching, return left and right columns separately
                 # Right column is shuffled to prevent answer leakage
-                import random
                 left_items = [opt.get("left", "") for opt in q["options"]]
                 right_items = [opt.get("right", "") for opt in q["options"]]
                 # Shuffle right items so order doesn't reveal answers
                 shuffled_right = right_items.copy()
-                random.shuffle(shuffled_right)
+                _shuffle_list(shuffled_right)
                 public_q["matching_left"] = left_items
                 public_q["matching_right"] = shuffled_right
         

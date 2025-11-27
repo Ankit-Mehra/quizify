@@ -14,7 +14,9 @@ blocking the event loop during doc.build() calls.
 import asyncio
 import io
 import logging
+import random
 from datetime import datetime
+from typing import Dict, List
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
@@ -58,6 +60,9 @@ class PdfExporter(BaseExporter):
         """Initialize PDF exporter with styles."""
         self.styles = getSampleStyleSheet()
         self._setup_custom_styles()
+        # Stores shuffle mappings for matching questions: {question_number: shuffled_indices}
+        # Used to translate correct answers in the answer key section
+        self._matching_shuffle_maps: Dict[int, List[int]] = {}
 
     def _setup_custom_styles(self) -> None:
         """Set up custom paragraph styles for quiz elements."""
@@ -216,6 +221,9 @@ class PdfExporter(BaseExporter):
         Returns:
             Tuple of (pdf_bytes, filename)
         """
+        # Clear shuffle mappings from any previous builds
+        self._matching_shuffle_maps.clear()
+        
         # Create PDF buffer
         buffer = io.BytesIO()
         
@@ -409,9 +417,9 @@ class PdfExporter(BaseExporter):
         
         SECURITY: Right column is shuffled to prevent answer leakage.
         The correct pairing is only shown in the answer key section.
+        The shuffle mapping is stored in self._matching_shuffle_maps for
+        translating answer indices in the answer key.
         """
-        import random
-        
         story.append(Paragraph(
             f"<b>Question {number}</b> (Matching)",
             self.styles['QuestionNumber']
@@ -431,6 +439,14 @@ class PdfExporter(BaseExporter):
         shuffled_indices = list(range(len(right_items)))
         random.shuffle(shuffled_indices)
         shuffled_right = [right_items[i] for i in shuffled_indices]
+        
+        # Store the shuffle mapping for answer key generation
+        # shuffled_indices[new_position] = original_index
+        # We need inverse: original_index -> new_position for answer key
+        inverse_mapping = [0] * len(shuffled_indices)
+        for new_pos, orig_idx in enumerate(shuffled_indices):
+            inverse_mapping[orig_idx] = new_pos
+        self._matching_shuffle_maps[number] = inverse_mapping
         
         # Prepare table data
         table_data = [["Column A", "Column B"]]  # Header
@@ -492,7 +508,11 @@ class PdfExporter(BaseExporter):
                     ))
 
     def _get_answer_text(self, question, number: int) -> str:
-        """Get formatted answer text for answer key."""
+        """Get formatted answer text for answer key.
+        
+        For matching questions, uses the shuffle mapping stored during
+        question rendering to translate original indices to shuffled positions.
+        """
         if isinstance(question, ExportQuestionMCQ):
             # Find the correct answer letter
             correct = question.correct_answer
@@ -512,13 +532,20 @@ class PdfExporter(BaseExporter):
             return f"<b>{number}.</b> {self._escape_text(question.correct_answer)}"
         
         elif isinstance(question, ExportQuestionMatching):
-            # Format matching pairs
+            # Format matching pairs using the shuffle mapping
+            # The mapping translates original right-column indices to shuffled positions
+            shuffle_map = self._matching_shuffle_maps.get(number, [])
             pairs = []
             for i, left in enumerate(question.left):
                 if i < len(question.correct_answer):
-                    right_idx = question.correct_answer[i]
-                    if right_idx < len(question.right):
-                        pairs.append(f"{i + 1}-{chr(97 + right_idx)}")
+                    original_right_idx = question.correct_answer[i]
+                    # Translate to shuffled position if mapping exists
+                    if shuffle_map and original_right_idx < len(shuffle_map):
+                        shuffled_pos = shuffle_map[original_right_idx]
+                        pairs.append(f"{i + 1}-{chr(97 + shuffled_pos)}")
+                    elif original_right_idx < len(question.right):
+                        # Fallback if no mapping (shouldn't happen)
+                        pairs.append(f"{i + 1}-{chr(97 + original_right_idx)}")
             return f"<b>{number}.</b> {', '.join(pairs)}"
         
         return f"<b>{number}.</b> (Unknown format)"

@@ -98,13 +98,6 @@ class PublicQuestionOption(BaseModel):
     text: str = Field(..., description="Option text")
 
 
-class PublicMatchingPair(BaseModel):
-    """A matching pair for public matching questions."""
-
-    left: str = Field(..., description="Left side item")
-    right: str = Field(..., description="Right side item (shuffled in display)")
-
-
 class PublicQuestion(BaseModel):
     """A question as shown in public quiz view."""
 
@@ -115,8 +108,13 @@ class PublicQuestion(BaseModel):
     options: Optional[List[PublicQuestionOption]] = Field(
         None, description="Options for MCQ/true_false"
     )
-    matching_pairs: Optional[List[PublicMatchingPair]] = Field(
-        None, description="Pairs for matching questions (left side only for display)"
+    # Matching question fields - left and right columns shown separately
+    # Right column is shuffled to prevent answer leakage
+    matching_left: Optional[List[str]] = Field(
+        None, description="Left column items for matching questions (numbered 1, 2, 3...)"
+    )
+    matching_right: Optional[List[str]] = Field(
+        None, description="Right column items for matching questions (shuffled, lettered a, b, c...)"
     )
     difficulty: Optional[str] = Field(None, description="easy, medium, hard")
 
