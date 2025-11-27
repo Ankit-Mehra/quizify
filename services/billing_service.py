@@ -603,9 +603,16 @@ class BillingService:
         """
         Cancel a subscription (from webhook).
         
-        This method is called by the webhook handler when a subscription is canceled
-        (customer.subscription.deleted). It updates the database to reflect the cancellation
-        and records the cancellation timestamp for grace period calculation.
+        This method is called by the webhook handler when customer.subscription.deleted
+        fires. IMPORTANT: Stripe sends this event AFTER the subscription period ends,
+        not when the user requests cancellation. The grace period is automatically
+        handled by Stripe - users retain access until their paid period expires,
+        and only then does this webhook fire to downgrade them.
+        
+        Flow:
+        1. User cancels in Customer Portal → subscription.updated (cancel_at_period_end=True)
+        2. User retains Pro access until period ends (Stripe handles this)
+        3. Period ends → subscription.deleted fires → this method downgrades to free
         
         Args:
             user_id: Supabase user UUID

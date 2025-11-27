@@ -307,6 +307,12 @@ async def invalidate_quiz_cache(quiz_id: str, user_id: Optional[str] = None) -> 
 
 
 def get_user_quizzes(user_id: str, user_token: Optional[str] = None):
+    """
+    Get all quizzes for a user with question counts.
+    
+    PERFORMANCE: Uses a single query with embedded count to avoid N+1 issue.
+    Previously made one query per quiz to count questions.
+    """
     try:
         # Use authenticated client if token provided, otherwise use service role
         if user_token:
@@ -316,24 +322,29 @@ def get_user_quizzes(user_id: str, user_token: Optional[str] = None):
             supabase = get_supabase()
             logger.debug(f"Using service role to fetch quizzes for user: {user_id}")
         
-        # Get all quizzes for a user
-        quizzes_data = supabase.table("quizzes").select("*").eq("created_by", user_id).execute()
+        # PERFORMANCE FIX: Get quizzes with question count in single query
+        # Uses Supabase's embedded count feature to avoid N+1 queries
+        quizzes_data = supabase.table("quizzes").select(
+            "id, title, created_at, created_by, questions(count)"
+        ).eq("created_by", user_id).execute()
         
         if not quizzes_data.data:
             logger.debug(f"No quizzes found for user: {user_id}")
             return []
         
-        # Process the results and add question_count
+        # Process the results - extract count from embedded relation
         quizzes = []
         for quiz in quizzes_data.data:
-            questions = supabase.table("questions").select("id", count="exact").eq("quiz_id", quiz["id"]).execute()  # type: ignore
-
+            # Supabase returns questions as [{"count": N}] for count queries
+            questions_data = quiz.get("questions", [])
+            question_count = questions_data[0].get("count", 0) if questions_data else 0
+            
             quizzes.append({
                 "id": quiz["id"],
                 "title": quiz["title"],
                 "created_at": quiz["created_at"],
                 "created_by": quiz["created_by"],
-                "question_count": questions.count or 0
+                "question_count": question_count
             })
 
         logger.debug(f"Found {len(quizzes)} quizzes for user: {user_id}")
