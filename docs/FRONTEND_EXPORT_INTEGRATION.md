@@ -200,7 +200,7 @@ Authorization: Bearer <jwt_token>
   "total_questions": 10,
   "questions": [
     {
-      "id": "question-uuid",
+      "id": "question-uuid-1",
       "question_number": 1,
       "question_type": "mcq",
       "question_text": "What is 2+2?",
@@ -211,6 +211,15 @@ Authorization: Bearer <jwt_token>
         {"id": "d", "text": "6"}
       ],
       "difficulty": "easy"
+    },
+    {
+      "id": "question-uuid-2",
+      "question_number": 2,
+      "question_type": "matching",
+      "question_text": "Match the capitals:",
+      "matching_left": ["USA", "UK", "France"],
+      "matching_right": ["Paris", "London", "Washington DC"],
+      "difficulty": "medium"
     }
   ],
   "shared_at": "2025-11-26T10:30:00Z"
@@ -218,6 +227,7 @@ Authorization: Bearer <jwt_token>
 ```
 
 > **Note:** Public quiz does NOT include correct answers to prevent cheating.
+> **Note:** For matching questions, `matching_right` is shuffled server-side so the order does not reveal the correct pairings.
 
 ---
 
@@ -277,18 +287,16 @@ export interface PublicQuestionOption {
   text: string;
 }
 
-export interface PublicMatchingPair {
-  left: string;
-  right: string;
-}
-
 export interface PublicQuizQuestion {
   id: string;
   question_number: number;
   question_type: 'mcq' | 'true_false' | 'fill_blank' | 'matching';
   question_text: string;
   options?: PublicQuestionOption[];  // For MCQ/true_false
-  matching_pairs?: PublicMatchingPair[];  // For matching questions
+  // Matching question fields - left and right columns shown separately
+  // Right column is shuffled server-side to prevent answer leakage
+  matching_left?: string[];   // Left column items (numbered 1, 2, 3...)
+  matching_right?: string[];  // Right column items (shuffled, lettered a, b, c...)
   difficulty?: 'easy' | 'medium' | 'hard';
 }
 
@@ -1215,4 +1223,5 @@ export const mockShareStatus = {
 
 | Date | Version | Changes |
 |------|---------|---------|
+| 2025-11-26 | 1.1.0 | **Breaking:** Matching questions now use `matching_left`/`matching_right` arrays instead of `matching_pairs`. Right column is shuffled server-side for security. |
 | 2025-11-26 | 1.0.0 | Initial integration guide |
