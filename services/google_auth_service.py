@@ -1,0 +1,296 @@
+"""
+Google Auth Service - OAuth2 authentication for Google APIs.
+
+This module handles:
+- Generating OAuth2 authorization URLs
+- Exchanging authorization codes for tokens
+- Storing and retrieving refresh tokens
+- Refreshing expired access tokens
+- Revoking user authorization
+
+The OAuth flow:
+1. User requests Google Forms export
+2. If not connected, redirect to Google OAuth consent
+3. User authorizes Quizify
+4. Callback receives auth code, exchanges for tokens
+5. Refresh token stored in database
+6. Access token used for API calls
+"""
+
+import os
+from typing import Optional, Tuple
+from datetime import datetime, timezone
+
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import Flow
+from google.auth.transport.requests import Request as GoogleRequest
+
+from services.logger import app_logger as logger
+
+# Google OAuth2 Configuration
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
+GOOGLE_REDIRECT_URI = os.getenv(
+    "GOOGLE_REDIRECT_URI",
+    "http://localhost:8000/api/auth/google/callback"
+)
+
+# Scopes required for Google Forms API
+GOOGLE_FORMS_SCOPES = [
+    "https://www.googleapis.com/auth/forms.body"
+]
+
+# OAuth2 client config structure
+def _get_client_config() -> dict:
+    """Build OAuth2 client configuration from environment variables."""
+    return {
+        "web": {
+            "client_id": GOOGLE_CLIENT_ID,
+            "client_secret": GOOGLE_CLIENT_SECRET,
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "redirect_uris": [GOOGLE_REDIRECT_URI],
+        }
+    }
+
+
+class GoogleAuthError(Exception):
+    """Exception raised for Google auth errors."""
+    
+    def __init__(self, message: str, error_code: str = "google_auth_error"):
+        self.message = message
+        self.error_code = error_code
+        super().__init__(message)
+
+
+def is_google_auth_configured() -> bool:
+    """
+    Check if Google OAuth is properly configured.
+    
+    Returns:
+        True if client ID and secret are set
+    """
+    return bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET)
+
+
+def generate_auth_url(state: Optional[str] = None) -> Tuple[str, str]:
+    """
+    Generate Google OAuth2 authorization URL.
+    
+    Args:
+        state: Optional state parameter for CSRF protection
+        
+    Returns:
+        Tuple of (authorization_url, state)
+        
+    Raises:
+        GoogleAuthError: If OAuth is not configured
+    """
+    if not is_google_auth_configured():
+        raise GoogleAuthError(
+            "Google OAuth is not configured. "
+            "Please set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET.",
+            "oauth_not_configured"
+        )
+    
+    flow = Flow.from_client_config(
+        _get_client_config(),
+        scopes=GOOGLE_FORMS_SCOPES,
+        redirect_uri=GOOGLE_REDIRECT_URI
+    )
+    
+    authorization_url, state = flow.authorization_url(
+        access_type="offline",  # Request refresh token
+        include_granted_scopes="true",
+        prompt="consent",  # Force consent to always get refresh token
+        state=state
+    )
+    
+    logger.info("Generated Google OAuth authorization URL")
+    return authorization_url, state
+
+
+def exchange_code_for_tokens(code: str) -> Credentials:
+    """
+    Exchange authorization code for OAuth2 tokens.
+    
+    Args:
+        code: Authorization code from Google OAuth callback
+        
+    Returns:
+        Google OAuth2 Credentials object
+        
+    Raises:
+        GoogleAuthError: If token exchange fails
+    """
+    if not is_google_auth_configured():
+        raise GoogleAuthError(
+            "Google OAuth is not configured",
+            "oauth_not_configured"
+        )
+    
+    try:
+        flow = Flow.from_client_config(
+            _get_client_config(),
+            scopes=GOOGLE_FORMS_SCOPES,
+            redirect_uri=GOOGLE_REDIRECT_URI
+        )
+        
+        flow.fetch_token(code=code)
+        credentials = flow.credentials
+        
+        logger.info("Successfully exchanged authorization code for tokens")
+        return credentials
+        
+    except Exception as e:
+        logger.error(f"Failed to exchange code for tokens: {str(e)}")
+        raise GoogleAuthError(
+            f"Failed to exchange authorization code: {str(e)}",
+            "token_exchange_failed"
+        )
+
+
+def build_credentials_from_refresh_token(refresh_token: str) -> Optional[Credentials]:
+    """
+    Build Credentials object from a stored refresh token.
+    
+    Args:
+        refresh_token: Stored refresh token
+        
+    Returns:
+        Credentials object with refreshed access token, or None if refresh fails
+    """
+    if not is_google_auth_configured():
+        return None
+    
+    try:
+        credentials = Credentials(
+            token=None,  # Will be refreshed
+            refresh_token=refresh_token,
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=GOOGLE_CLIENT_ID,
+            client_secret=GOOGLE_CLIENT_SECRET,
+            scopes=GOOGLE_FORMS_SCOPES
+        )
+        
+        # Refresh the access token
+        credentials.refresh(GoogleRequest())
+        
+        logger.debug("Refreshed Google OAuth access token")
+        return credentials
+        
+    except Exception as e:
+        logger.error(f"Failed to refresh Google token: {str(e)}")
+        return None
+
+
+async def store_google_tokens(user_id: str, credentials: Credentials) -> None:
+    """
+    Store Google OAuth tokens in the database.
+    
+    Args:
+        user_id: User ID to store tokens for
+        credentials: Google Credentials object
+    """
+    import asyncio
+    from services.db_services.supabase_quiz import get_supabase
+    
+    supabase = get_supabase()
+    
+    def update_profile():
+        return supabase.table("profiles").update({
+            "google_refresh_token": credentials.refresh_token,
+            "google_connected_at": datetime.now(timezone.utc).isoformat()
+        }).eq("id", user_id).execute()
+    
+    try:
+        await asyncio.to_thread(update_profile)
+        logger.info(f"Stored Google OAuth tokens for user {user_id[:8]}...")
+    except Exception as e:
+        logger.error(f"Failed to store Google tokens: {str(e)}")
+        raise GoogleAuthError(
+            "Failed to save Google connection",
+            "storage_failed"
+        )
+
+
+async def get_google_credentials(user_id: str) -> Optional[Credentials]:
+    """
+    Get Google OAuth credentials for a user.
+    
+    Args:
+        user_id: User ID to get credentials for
+        
+    Returns:
+        Credentials object if user is connected, None otherwise
+    """
+    import asyncio
+    from services.db_services.supabase_quiz import get_supabase
+    
+    supabase = get_supabase()
+    
+    def get_profile():
+        response = supabase.table("profiles").select(
+            "google_refresh_token"
+        ).eq("id", user_id).single().execute()
+        return response.data
+    
+    try:
+        profile = await asyncio.to_thread(get_profile)
+        
+        if not profile or not profile.get("google_refresh_token"):
+            return None
+        
+        refresh_token = profile["google_refresh_token"]
+        credentials = build_credentials_from_refresh_token(refresh_token)
+        
+        return credentials
+        
+    except Exception as e:
+        logger.error(f"Failed to get Google credentials: {str(e)}")
+        return None
+
+
+async def disconnect_google(user_id: str) -> bool:
+    """
+    Disconnect Google account by removing stored tokens.
+    
+    Args:
+        user_id: User ID to disconnect
+        
+    Returns:
+        True if successful
+    """
+    import asyncio
+    from services.db_services.supabase_quiz import get_supabase
+    
+    supabase = get_supabase()
+    
+    def clear_tokens():
+        return supabase.table("profiles").update({
+            "google_refresh_token": None,
+            "google_connected_at": None
+        }).eq("id", user_id).execute()
+    
+    try:
+        await asyncio.to_thread(clear_tokens)
+        logger.info(f"Disconnected Google account for user {user_id[:8]}...")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to disconnect Google: {str(e)}")
+        return False
+
+
+async def is_user_connected(user_id: str) -> bool:
+    """
+    Check if a user has connected their Google account.
+    
+    Args:
+        user_id: User ID to check
+        
+    Returns:
+        True if user has valid Google connection
+    """
+    credentials = await get_google_credentials(user_id)
+    return credentials is not None and credentials.valid
+

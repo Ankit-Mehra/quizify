@@ -52,7 +52,7 @@ def get_exporter(
     
     Args:
         format: The export format
-        user_id: User ID (required for share_link export)
+        user_id: User ID (required for share_link and google_forms export)
         user_token: JWT token (optional, for authenticated operations)
         
     Returns:
@@ -76,6 +76,10 @@ def get_exporter(
             user_id=UUID(user_id) if user_id else None,
             user_token=user_token
         )
+    
+    # GoogleFormsExporter requires user_id for OAuth credentials
+    if format == ExportFormat.GOOGLE_FORMS:
+        return exporter_class(user_id=user_id)
     
     return exporter_class()
 
@@ -124,6 +128,10 @@ def _register_implemented_exporters():
     from services.exporters.moodle_xml_exporter import MoodleXmlExporter
     _EXPORTER_REGISTRY[ExportFormat.QTI] = QtiExporter
     _EXPORTER_REGISTRY[ExportFormat.MOODLE_XML] = MoodleXmlExporter
+    
+    # Google Forms (Epic QUIZ-002) - Pro only
+    from services.exporters.google_forms_exporter import GoogleFormsExporter
+    _EXPORTER_REGISTRY[ExportFormat.GOOGLE_FORMS] = GoogleFormsExporter
 
 
 def _register_placeholder_exporters():
@@ -253,7 +261,8 @@ async def get_export_formats_for_user(user_tier: str) -> dict:
     """
     from services.exporters.tier_validator import (
         is_format_available_for_tier,
-        PRO_ONLY_FORMATS
+        PRO_ONLY_FORMATS,
+        PAID_TIER_FORMATS
     )
     
     formats = {}
@@ -261,6 +270,7 @@ async def get_export_formats_for_user(user_tier: str) -> dict:
         formats[fmt.value] = {
             "available": is_format_available_for_tier(user_tier, fmt),
             "requires_pro": fmt in PRO_ONLY_FORMATS,
+            "requires_paid": fmt in PAID_TIER_FORMATS,  # Basic or Pro tier
             "name": _get_format_display_name(fmt)
         }
     
@@ -276,6 +286,7 @@ def _get_format_display_name(format: ExportFormat) -> str:
         ExportFormat.CSV_ANKI: "CSV (Anki Flashcards)",
         ExportFormat.QTI: "QTI 2.1 (LMS)",
         ExportFormat.MOODLE_XML: "Moodle XML (LMS)",
-        ExportFormat.SHARE_LINK: "Shareable Link"
+        ExportFormat.SHARE_LINK: "Shareable Link",
+        ExportFormat.GOOGLE_FORMS: "Google Forms"
     }
     return names.get(format, format.value)

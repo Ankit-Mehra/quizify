@@ -20,6 +20,7 @@ class ExportFormat(str, Enum):
     
     Tier Access:
     - All tiers: pdf, docx, csv_quizify, csv_anki, share_link
+    - Paid tiers (Basic, Pro): google_forms
     - Pro only: qti, moodle_xml
     """
     PDF = "pdf"
@@ -29,10 +30,14 @@ class ExportFormat(str, Enum):
     QTI = "qti"
     MOODLE_XML = "moodle_xml"
     SHARE_LINK = "share_link"
+    GOOGLE_FORMS = "google_forms"
 
 
-# Pro-only export formats
+# Pro-only export formats (LMS integrations)
 PRO_ONLY_FORMATS = {ExportFormat.QTI, ExportFormat.MOODLE_XML}
+
+# Paid-tier formats (available to Basic and Pro, not Free)
+PAID_TIER_FORMATS = {ExportFormat.GOOGLE_FORMS}
 
 
 class ExportRequest(BaseModel):
@@ -185,5 +190,32 @@ class ExportResult(BaseModel):
     content_type: str = Field(..., description="MIME type of the content")
     filename: Optional[str] = Field(None, description="Suggested filename for download (None for non-file exports)")
     share_url: Optional[str] = Field(None, description="Share URL for share_link exports")
+    # Google Forms specific fields
+    form_url: Optional[str] = Field(None, description="Google Forms responder URL")
+    edit_url: Optional[str] = Field(None, description="Google Forms edit URL")
+    form_id: Optional[str] = Field(None, description="Google Forms ID")
+    questions_exported: Optional[int] = Field(None, description="Number of questions exported")
+    questions_skipped: Optional[int] = Field(None, description="Number of questions skipped")
+    warnings: Optional[List[str]] = Field(None, description="Warnings during export")
     
     model_config = ConfigDict(arbitrary_types_allowed=True)
+
+
+class GoogleFormsExportResponse(BaseModel):
+    """Response for google_forms export format."""
+    form_url: str = Field(..., description="Google Forms URL for responders")
+    edit_url: str = Field(..., description="Google Forms URL for editing")
+    form_id: str = Field(..., description="Google Forms unique ID")
+    questions_exported: int = Field(default=0, description="Number of questions exported")
+    questions_skipped: int = Field(default=0, description="Number of questions skipped")
+    warnings: Optional[List[str]] = Field(None, description="Warnings about skipped questions")
+
+
+class GoogleAuthRequiredResponse(BaseModel):
+    """Response when Google OAuth is required for export."""
+    error: Literal["google_auth_required"] = "google_auth_required"
+    message: str = Field(
+        default="Please connect your Google account to export to Google Forms"
+    )
+    auth_url: str = Field(..., description="URL to initiate Google OAuth")
+    current_tier: str = Field(..., description="User's current tier")
