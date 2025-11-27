@@ -195,14 +195,14 @@ Authorization: Bearer <jwt_token>
 {
   "id": "uuid-of-quiz",
   "title": "My Quiz",
-  "description": "Quiz description",
-  "topic": "General Knowledge",
+  "description": null,
+  "topic": null,
   "total_questions": 10,
   "questions": [
     {
       "id": "question-uuid-1",
       "question_number": 1,
-      "question_type": "mcq",
+      "question_type": "multiple_choice",
       "question_text": "What is 2+2?",
       "options": [
         {"id": "a", "text": "3"},
@@ -210,7 +210,7 @@ Authorization: Bearer <jwt_token>
         {"id": "c", "text": "5"},
         {"id": "d", "text": "6"}
       ],
-      "difficulty": "easy"
+      "difficulty": null
     },
     {
       "id": "question-uuid-2",
@@ -219,7 +219,7 @@ Authorization: Bearer <jwt_token>
       "question_text": "Match the capitals:",
       "matching_left": ["USA", "UK", "France"],
       "matching_right": ["Paris", "London", "Washington DC"],
-      "difficulty": "medium"
+      "difficulty": null
     }
   ],
   "shared_at": "2025-11-26T10:30:00Z"
@@ -228,6 +228,7 @@ Authorization: Bearer <jwt_token>
 
 > **Note:** Public quiz does NOT include correct answers to prevent cheating.
 > **Note:** For matching questions, `matching_right` is shuffled server-side so the order does not reveal the correct pairings.
+> **Note:** `description`, `topic`, and `difficulty` are always `null` as these fields are not stored in the database.
 
 ---
 
@@ -290,21 +291,21 @@ export interface PublicQuestionOption {
 export interface PublicQuizQuestion {
   id: string;
   question_number: number;
-  question_type: 'mcq' | 'true_false' | 'fill_blank' | 'matching';
+  question_type: 'multiple_choice' | 'true_false' | 'fill_blank' | 'matching';
   question_text: string;
-  options?: PublicQuestionOption[];  // For MCQ/true_false
+  options?: PublicQuestionOption[];  // For multiple_choice/true_false
   // Matching question fields - left and right columns shown separately
   // Right column is shuffled server-side to prevent answer leakage
   matching_left?: string[];   // Left column items (numbered 1, 2, 3...)
   matching_right?: string[];  // Right column items (shuffled, lettered a, b, c...)
-  difficulty?: 'easy' | 'medium' | 'hard';
+  difficulty: null;  // Always null - not stored in DB
 }
 
 export interface PublicQuizView {
   id: string;  // Note: 'id' not 'quiz_id'
   title: string;
-  description?: string;
-  topic?: string;
+  description: null;  // Always null - column doesn't exist in DB
+  topic: null;  // Always null - column doesn't exist in DB
   total_questions: number;  // Note: 'total_questions' not 'question_count'
   questions: PublicQuizQuestion[];
   shared_at: string;
@@ -1158,6 +1159,17 @@ function QuizCard({ quiz }) {
 
 ### Public Quiz Page (for share links)
 
+> ⚠️ **SECURITY WARNING: XSS Prevention Required**
+> 
+> Public quiz responses contain **user-authored content** (quiz titles, question text, options).
+> This content is NOT sanitized server-side and MUST be treated as untrusted input.
+> 
+> **Required mitigations:**
+> - Use React's built-in JSX escaping (automatic for `{variable}` in JSX)
+> - Never use `dangerouslySetInnerHTML` with quiz content
+> - Sanitize with DOMPurify if you MUST render HTML (not recommended)
+> - Same applies to: `quiz.title`, `quiz.description`, `question.question_text`, `option.text`
+
 ```tsx
 // pages/share/[slug].tsx
 import { useQuery } from '@tanstack/react-query';
@@ -1174,9 +1186,10 @@ export default function PublicQuizPage({ params }: { params: { slug: string } })
 
   return (
     <div className="container max-w-3xl py-8">
+      {/* React JSX auto-escapes these values - safe from XSS */}
       <h1 className="text-2xl font-bold">{quiz.title}</h1>
-      <p className="text-muted-foreground">{quiz.description}</p>
-      <p className="text-sm">{quiz.question_count} questions</p>
+      {/* Note: description and topic are always null */}
+      <p className="text-sm">{quiz.total_questions} questions</p>
       
       <div className="mt-8 space-y-6">
         {quiz.questions.map((q, i) => (
@@ -1223,5 +1236,6 @@ export const mockShareStatus = {
 
 | Date | Version | Changes |
 |------|---------|---------|
+| 2025-11-26 | 1.2.0 | **Updated:** `description`, `topic`, and `difficulty` are now always `null` (not stored in DB). `question_type` uses `multiple_choice` instead of `mcq`. Added XSS security warning for frontend. |
 | 2025-11-26 | 1.1.0 | **Breaking:** Matching questions now use `matching_left`/`matching_right` arrays instead of `matching_pairs`. Right column is shuffled server-side for security. |
 | 2025-11-26 | 1.0.0 | Initial integration guide |
