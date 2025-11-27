@@ -72,16 +72,30 @@ ON quizzes FOR DELETE
 USING (created_by = auth.uid());
 
 -- ============================================================================
--- 4. Allow anonymous access for public quiz viewing
+-- 4. Create sanitized views for anonymous access (security best practice)
 -- ============================================================================
+-- NOTE: Instead of granting anon direct access to quizzes/questions tables,
+-- we use sanitized views that exclude sensitive fields like created_by.
+-- This prevents user enumeration attacks via the anon key.
 
--- Create policy for anonymous users to view public quizzes
--- Note: This requires anon role to have SELECT permission on quizzes table
-DROP POLICY IF EXISTS quizzes_anon_public_policy ON quizzes;
-CREATE POLICY quizzes_anon_public_policy 
-ON quizzes FOR SELECT 
-TO anon
-USING (is_public = TRUE);
+-- Drop view if exists to recreate
+DROP VIEW IF EXISTS public_quizzes;
+
+-- Create view with only safe fields - no created_by or internal metadata
+CREATE VIEW public_quizzes AS
+SELECT 
+    id,
+    title,
+    public_slug,
+    shared_at,
+    created_at
+FROM quizzes
+WHERE is_public = TRUE AND public_slug IS NOT NULL;
+
+COMMENT ON VIEW public_quizzes IS 'Sanitized view for anonymous access - excludes user identifiers';
+
+-- Grant SELECT on sanitized view to anon role
+GRANT SELECT ON public_quizzes TO anon;
 
 -- ============================================================================
 -- 5. Update questions table RLS for public quiz access
@@ -100,14 +114,32 @@ USING (
     )
 );
 
--- Policy for anonymous users to view questions of public quizzes
-DROP POLICY IF EXISTS questions_anon_public_policy ON questions;
-CREATE POLICY questions_anon_public_policy 
-ON questions FOR SELECT 
-TO anon
-USING (
-    quiz_id IN (SELECT id FROM quizzes WHERE is_public = TRUE)
-);
+-- ============================================================================
+-- 5b. Create sanitized view for public quiz questions
+-- ============================================================================
+
+DROP VIEW IF EXISTS public_quiz_questions;
+
+-- Questions view for anonymous access - excludes correct_answer
+CREATE VIEW public_quiz_questions AS
+SELECT 
+    q.id,
+    q.quiz_id,
+    q.type,
+    q.question,
+    q.options,
+    q."left",
+    q."right",
+    q.explanation
+    -- Note: correct_answer intentionally excluded for public view
+FROM questions q
+INNER JOIN quizzes qz ON q.quiz_id = qz.id
+WHERE qz.is_public = TRUE AND qz.public_slug IS NOT NULL;
+
+COMMENT ON VIEW public_quiz_questions IS 'Sanitized questions view for anonymous access - excludes correct answers';
+
+-- Grant SELECT on sanitized view to anon role
+GRANT SELECT ON public_quiz_questions TO anon;
 
 -- ============================================================================
 -- 6. Create helper function to generate unique slugs
@@ -169,6 +201,8 @@ BEGIN
     RAISE NOTICE 'Added: is_public, public_slug, shared_at columns to quizzes';
     RAISE NOTICE 'Added: Unique index on public_slug, index on is_public';
     RAISE NOTICE 'Updated: RLS policies for public quiz access';
-    RAISE NOTICE 'Added: Anonymous user access for public quizzes';
+    RAISE NOTICE 'Added: public_quizzes view (sanitized, excludes created_by)';
+    RAISE NOTICE 'Added: public_quiz_questions view (sanitized, excludes correct_answer)';
+    RAISE NOTICE 'Security: Anonymous users access sanitized views only';
     RAISE NOTICE 'Added: Helper functions for slug generation';
 END $$;
