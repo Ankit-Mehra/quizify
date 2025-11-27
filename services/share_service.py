@@ -420,11 +420,23 @@ async def get_public_quiz_by_slug(slug: str) -> dict:
         
         # Include options without marking correct answer
         # Always include options field for API consistency (empty list if null)
+        # Handle both formats: list of strings OR list of dicts with id/text
         if q["type"] in ("multiple_choice", "true_false"):
-            public_q["options"] = [
-                {"id": opt.get("id", str(i)), "text": opt.get("text", "")}
-                for i, opt in enumerate(q.get("options") or [])
-            ]
+            raw_options = q.get("options") or []
+            public_q["options"] = []
+            for i, opt in enumerate(raw_options):
+                if isinstance(opt, dict):
+                    # Format: {"id": "a", "text": "Option A"}
+                    public_q["options"].append({
+                        "id": opt.get("id", chr(ord('a') + i)),
+                        "text": opt.get("text", "")
+                    })
+                else:
+                    # Format: plain string "Option A"
+                    public_q["options"].append({
+                        "id": chr(ord('a') + i),  # Generate id: a, b, c, d...
+                        "text": str(opt)
+                    })
         elif q["type"] == "matching":
             # SECURITY: For matching, return left and right columns separately
             # Right column is shuffled to prevent answer leakage via ordering
