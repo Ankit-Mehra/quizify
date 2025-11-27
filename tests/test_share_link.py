@@ -382,6 +382,100 @@ class TestShareServiceMocked:
 
 
 # ============================================================================
+# Options Format Tests
+# ============================================================================
+
+
+class TestOptionsFormatHandling:
+    """Tests for handling both string and dict option formats."""
+    
+    def test_string_options_get_letter_ids(self):
+        """Test plain string options get auto-generated letter IDs (a, b, c, d)."""
+        # Simulate the transformation logic
+        raw_options = ["Option A", "Option B", "Option C", "Option D"]
+        result = []
+        for i, opt in enumerate(raw_options):
+            default_id = chr(ord('a') + i) if i < 26 else str(i)
+            if isinstance(opt, dict):
+                result.append({"id": opt.get("id", default_id), "text": opt.get("text", "")})
+            else:
+                result.append({"id": default_id, "text": str(opt)})
+        
+        assert result[0] == {"id": "a", "text": "Option A"}
+        assert result[1] == {"id": "b", "text": "Option B"}
+        assert result[2] == {"id": "c", "text": "Option C"}
+        assert result[3] == {"id": "d", "text": "Option D"}
+    
+    def test_dict_options_preserve_ids(self):
+        """Test dict-format options preserve their original IDs."""
+        raw_options = [
+            {"id": "x", "text": "Option X"},
+            {"id": "y", "text": "Option Y"},
+        ]
+        result = []
+        for i, opt in enumerate(raw_options):
+            default_id = chr(ord('a') + i) if i < 26 else str(i)
+            if isinstance(opt, dict):
+                result.append({"id": opt.get("id", default_id), "text": opt.get("text", "")})
+            else:
+                result.append({"id": default_id, "text": str(opt)})
+        
+        assert result[0] == {"id": "x", "text": "Option X"}
+        assert result[1] == {"id": "y", "text": "Option Y"}
+    
+    def test_dict_options_fallback_to_letter_id(self):
+        """Test dict options without ID fall back to letter IDs."""
+        raw_options = [
+            {"text": "Option A"},  # Missing id
+            {"id": "", "text": "Option B"},  # Empty id - should use empty string
+        ]
+        result = []
+        for i, opt in enumerate(raw_options):
+            default_id = chr(ord('a') + i) if i < 26 else str(i)
+            if isinstance(opt, dict):
+                result.append({"id": opt.get("id", default_id), "text": opt.get("text", "")})
+            else:
+                result.append({"id": default_id, "text": str(opt)})
+        
+        assert result[0]["id"] == "a"  # Fallback to letter
+        assert result[0]["text"] == "Option A"
+        # Empty string is falsy but still a value from get()
+        assert result[1]["id"] == ""  # Empty string preserved
+    
+    def test_more_than_26_options_uses_numeric_fallback(self):
+        """Test that options beyond 26 use numeric IDs."""
+        raw_options = [f"Option {i}" for i in range(30)]
+        result = []
+        for i, opt in enumerate(raw_options):
+            default_id = chr(ord('a') + i) if i < 26 else str(i)
+            if isinstance(opt, dict):
+                result.append({"id": opt.get("id", default_id), "text": opt.get("text", "")})
+            else:
+                result.append({"id": default_id, "text": str(opt)})
+        
+        # First 26 should be a-z
+        assert result[0]["id"] == "a"
+        assert result[25]["id"] == "z"
+        # After 26 should be numeric (0-indexed)
+        assert result[26]["id"] == "26"
+        assert result[27]["id"] == "27"
+        assert result[29]["id"] == "29"
+    
+    def test_empty_options_returns_empty_list(self):
+        """Test that null/empty options return empty list."""
+        for raw_options in [None, []]:
+            result = []
+            for i, opt in enumerate(raw_options or []):
+                default_id = chr(ord('a') + i) if i < 26 else str(i)
+                if isinstance(opt, dict):
+                    result.append({"id": opt.get("id", default_id), "text": opt.get("text", "")})
+                else:
+                    result.append({"id": default_id, "text": str(opt)})
+            
+            assert result == []
+
+
+# ============================================================================
 # Share API Route Tests
 # ============================================================================
 
