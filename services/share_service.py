@@ -330,37 +330,46 @@ async def get_public_quiz_by_slug(slug: str) -> dict:
     Retrieve a public quiz by its share slug.
     
     This is used for anonymous access to shared quizzes.
-    Does NOT include answer keys to prevent cheating.
+    Uses sanitized views (public_quizzes, public_quiz_questions) for defense-in-depth:
+    - Views exclude sensitive fields (created_by, correct_answer) at DB level
+    - Even though service-role bypasses RLS, views provide schema-level protection
+    
+    SECURITY: Does NOT include answer keys to prevent cheating.
     
     Args:
         slug: The quiz's public slug
         
     Returns:
-        Dict with quiz data and questions (without answers)
+        Dict with quiz data and questions (without answers).
+        Question fields are mapped from DB columns to API format:
+        - type -> question_type
+        - question -> question_text
+        - (question_number is generated from array index + 1)
         
     Raises:
         ValueError: If quiz not found or not public
     """
     if Config.is_testing():
         # Return mock public quiz in testing mode
+        # Uses API field names (question_type, question_text, question_number)
         from uuid import uuid4
         return {
             "id": str(uuid4()),
             "title": "Test Public Quiz",
-            "description": "A test quiz",
-            "topic": "Testing",
+            "description": None,
+            "topic": None,
             "total_questions": 1,
             "questions": [
                 {
                     "id": str(uuid4()),
                     "question_number": 1,
-                    "question_type": "mcq",
+                    "question_type": "multiple_choice",
                     "question_text": "Test question?",
                     "options": [
                         {"id": "a", "text": "Option A"},
                         {"id": "b", "text": "Option B"},
                     ],
-                    "difficulty": "easy",
+                    "difficulty": None,
                 }
             ],
             "shared_at": datetime.now(timezone.utc).isoformat(),
@@ -368,12 +377,13 @@ async def get_public_quiz_by_slug(slug: str) -> dict:
     
     supabase = get_supabase()
     
-    # Get public quiz by slug
+    # SECURITY: Use sanitized view for defense-in-depth
+    # The public_quizzes view excludes created_by and other sensitive fields
+    # Note: quizzes table doesn't have description/topic columns - they're in schema but not DB
     quiz_result = (
-        supabase.table("quizzes")
-        .select("id, title, description, topic, is_public, shared_at")
+        supabase.table("public_quizzes")
+        .select("id, title, public_slug, shared_at, created_at")
         .eq("public_slug", slug)
-        .eq("is_public", True)
         .single()
         .execute()
     )
@@ -383,51 +393,60 @@ async def get_public_quiz_by_slug(slug: str) -> dict:
     
     quiz = quiz_result.data
     
-    # Get questions without correct answers
+    # SECURITY: Use sanitized view - excludes correct_answer field at DB level
+    # View columns: id, quiz_id, type, question, options, left, right
     questions_result = (
-        supabase.table("questions")
-        .select("id, question_number, question_type, question_text, options, difficulty")
+        supabase.table("public_quiz_questions")
+        .select("id, quiz_id, type, question, options, left, right")
         .eq("quiz_id", quiz["id"])
-        .order("question_number")
         .execute()
     )
     
-    # Transform questions to hide correct answers
+    # Transform questions for public consumption
+    # Map DB column names to API field names for schema compatibility
     public_questions = []
-    for q in questions_result.data or []:
+    for idx, q in enumerate(questions_result.data or []):
+        # Map DB columns to API fields:
+        # - type -> question_type
+        # - question -> question_text  
+        # - question_number generated from index
         public_q = {
             "id": q["id"],
-            "question_number": q["question_number"],
-            "question_type": q["question_type"],
-            "question_text": q["question_text"],
-            "difficulty": q.get("difficulty"),
+            "question_number": idx + 1,
+            "question_type": q["type"],
+            "question_text": q["question"],
+            "difficulty": None,  # Not stored in view
         }
         
         # Include options without marking correct answer
-        if q.get("options"):
-            if q["question_type"] in ("mcq", "true_false"):
-                public_q["options"] = [
-                    {"id": opt.get("id", str(i)), "text": opt.get("text", "")}
-                    for i, opt in enumerate(q["options"])
-                ]
-            elif q["question_type"] == "matching":
-                # SECURITY: For matching, return left and right columns separately
-                # Right column is shuffled to prevent answer leakage
-                left_items = [opt.get("left", "") for opt in q["options"]]
-                right_items = [opt.get("right", "") for opt in q["options"]]
-                # Shuffle right items so order doesn't reveal answers
-                shuffled_right = right_items.copy()
-                _shuffle_list(shuffled_right)
-                public_q["matching_left"] = left_items
-                public_q["matching_right"] = shuffled_right
+        # Always include options field for API consistency (empty list if null)
+        if q["type"] in ("multiple_choice", "true_false"):
+            public_q["options"] = [
+                {"id": opt.get("id", str(i)), "text": opt.get("text", "")}
+                for i, opt in enumerate(q.get("options") or [])
+            ]
+        elif q["type"] == "matching":
+            # SECURITY: For matching, return left and right columns separately
+            # Right column is shuffled to prevent answer leakage via ordering
+            left_items = q.get("left", []) or []
+            right_items = q.get("right", []) or []
+            # Shuffle right items so order doesn't reveal answers
+            shuffled_right = right_items.copy()
+            _shuffle_list(shuffled_right)
+            public_q["matching_left"] = left_items
+            public_q["matching_right"] = shuffled_right
+        elif q["type"] == "fill_blank":
+            # Fill-in-blank just shows the question with blank placeholder
+            # No options exposed (correct_answer excluded by view)
+            pass
         
         public_questions.append(public_q)
     
     return {
         "id": quiz["id"],
         "title": quiz["title"],
-        "description": quiz.get("description"),
-        "topic": quiz.get("topic"),
+        "description": None,  # Column doesn't exist in quizzes table
+        "topic": None,  # Column doesn't exist in quizzes table
         "total_questions": len(public_questions),
         "questions": public_questions,
         "shared_at": quiz.get("shared_at"),
