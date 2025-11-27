@@ -425,16 +425,18 @@ async def get_public_quiz_by_slug(slug: str) -> dict:
             raw_options = q.get("options") or []
             public_q["options"] = []
             for i, opt in enumerate(raw_options):
+                # Generate option ID: a-z for first 26, then numeric fallback
+                default_id = chr(ord('a') + i) if i < 26 else str(i + 1)
                 if isinstance(opt, dict):
                     # Format: {"id": "a", "text": "Option A"}
                     public_q["options"].append({
-                        "id": opt.get("id", chr(ord('a') + i)),
+                        "id": opt.get("id", default_id),
                         "text": opt.get("text", "")
                     })
                 else:
                     # Format: plain string "Option A"
                     public_q["options"].append({
-                        "id": chr(ord('a') + i),  # Generate id: a, b, c, d...
+                        "id": default_id,
                         "text": str(opt)
                     })
         elif q["type"] == "matching":
