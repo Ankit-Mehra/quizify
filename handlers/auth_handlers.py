@@ -33,6 +33,39 @@ def _short_user_id(user_id: Optional[str]) -> str:
     return f"{user_id[:8]}..."
 
 
+def _mask_email(email: Optional[str]) -> str:
+    """
+    Mask email for logging to prevent PII exposure.
+    
+    Examples:
+        "john.doe@example.com" -> "j***e@e***.com"
+        "ab@cd.org" -> "a*b@c*.org"
+    """
+    if not email or "@" not in email:
+        return "[no-email]"
+    
+    local, domain = email.split("@", 1)
+    
+    # Mask local part: show first and last char if long enough
+    if len(local) <= 2:
+        masked_local = local[0] + "*"
+    else:
+        masked_local = local[0] + "***" + local[-1]
+    
+    # Mask domain: show first char and TLD
+    domain_parts = domain.rsplit(".", 1)
+    if len(domain_parts) == 2:
+        domain_name, tld = domain_parts
+        if len(domain_name) <= 2:
+            masked_domain = domain_name[0] + "*." + tld
+        else:
+            masked_domain = domain_name[0] + "***." + tld
+    else:
+        masked_domain = domain[0] + "***"
+    
+    return f"{masked_local}@{masked_domain}"
+
+
 def get_redis_client(request: Request) -> Optional[Any]:
     """
     Get Redis client from request app state.
@@ -75,13 +108,13 @@ def detect_device_type(user_agent: Optional[str]) -> str:
 async def signup(request: SignupRequest):
     try:
         supabase = get_supabase()
-        logger.info(f"Attempting to sign up user with email: {request.email}")
+        logger.info(f"Attempting to sign up user with email: {_mask_email(request.email)}")
 
         # Pydantic already validates min_length=8, but double-check for defense-in-depth
         # Don't strip() - whitespace is valid in passwords
         raw_password = request.password or ""
         if len(raw_password) < 8:
-            logger.warning("Signup rejected for %s due to weak password", request.email)
+            logger.warning("Signup rejected for %s due to weak password", _mask_email(request.email))
             raise HTTPException(status_code=400, detail="Password must be at least 8 characters long")
         
         # Sign up user - name goes to raw_user_meta_data
@@ -100,7 +133,7 @@ async def signup(request: SignupRequest):
             content={"message": "User created successfully. Please check your email for verification.", "user_id": response.user.id if response.user else None}
         )
     except Exception as e:
-        logger.error(f"Error during signup for {request.email}: {str(e)}")
+        logger.error(f"Error during signup for {_mask_email(request.email)}: {str(e)}")
         error_message = str(e)
         
         # Handle specific Supabase errors with appropriate status codes
@@ -120,7 +153,7 @@ async def signup(request: SignupRequest):
 async def login(request_body: LoginRequest, response: Response, request: Request):
     try:
         supabase = get_supabase()
-        logger.info(f"Login attempt for user: {request_body.email}")
+        logger.info(f"Login attempt for user: {_mask_email(request_body.email)}")
         result = supabase.auth.sign_in_with_password({
             "email": request_body.email,
             "password": request_body.password
@@ -129,7 +162,7 @@ async def login(request_body: LoginRequest, response: Response, request: Request
         session = result.session
 
         if session is None:
-            logger.warning(f"Login failed: No session returned for {request_body.email}")
+            logger.warning(f"Login failed: No session returned for {_mask_email(request_body.email)}")
             raise HTTPException(status_code=401, detail="Invalid credentials")
 
         access_token = session.access_token
@@ -232,7 +265,7 @@ async def login(request_body: LoginRequest, response: Response, request: Request
         raise
     except Exception as e:
         error_message = str(e).lower()
-        logger.warning(f"Failed login for {request_body.email}: {e}")
+        logger.warning(f"Failed login for {_mask_email(request_body.email)}: {e}")
         
         # Provide specific error messages for common issues
         if "email not confirmed" in error_message or "email confirmation" in error_message:
@@ -329,16 +362,47 @@ async def change_password(request: ChangePasswordRequest,
                            user_id: str = Depends(get_current_user_id)):
     """
     Change password for authenticated user.
+    
+    SECURITY: Requires current password verification to prevent unauthorized
+    password changes with stolen tokens.
+    
     User is identified by JWT token (user_id), not by email in request body.
     """
     try:
         supabase = get_supabase()
-        logger.info(f"Password change requested for user ID: {user_id}")
+        logger.info(f"Password change requested for user ID: {_short_user_id(user_id)}")
+        
+        # SECURITY: Get user's email for current password verification
+        user_response = supabase.auth.admin.get_user_by_id(user_id)
+        if not user_response or not user_response.user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        user_email = user_response.user.email
+        if not user_email:
+            raise HTTPException(status_code=400, detail="User has no email configured")
+        
+        # SECURITY: Verify current password by attempting sign-in
+        try:
+            supabase.auth.sign_in_with_password({
+                "email": user_email,
+                "password": request.current_password
+            })
+        except Exception as auth_error:
+            error_msg = str(auth_error).lower()
+            if "invalid" in error_msg or "credentials" in error_msg or "password" in error_msg:
+                logger.warning(f"Password change failed: incorrect current password for user {_short_user_id(user_id)}")
+                raise HTTPException(status_code=401, detail="Current password is incorrect")
+            # Re-raise unexpected auth errors
+            raise
+        
+        # Current password verified, now update to new password
         supabase.auth.admin.update_user_by_id(user_id, {"password": request.new_password})
-        logger.info(f"Password updated successfully for user ID: {user_id}")
+        logger.info(f"Password updated successfully for user ID: {_short_user_id(user_id)}")
         return {"message": "Password updated successfully"}
+    except HTTPException:
+        raise  # Re-raise HTTP exceptions as-is
     except Exception as e:
-        logger.error(f"Error during password change for user {user_id}: {str(e)}", exc_info=True)
+        logger.error(f"Error during password change for user {_short_user_id(user_id)}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 async def delete_account(user_id: str = Depends(get_current_user_id)):
@@ -377,7 +441,8 @@ async def update_email(request: UpdateEmailRequest,
             raise HTTPException(status_code=401, detail="Authentication required")
         
         new_email = request.new_email
-        logger.info(f"Email update requested to: {new_email}")
+        # SECURITY: Log masked email to prevent PII exposure
+        logger.info(f"Email update requested to: {_mask_email(new_email)}")
         
         # Create authenticated Supabase client with user's token
         # This ensures the update is made on behalf of the authenticated user
@@ -388,7 +453,8 @@ async def update_email(request: UpdateEmailRequest,
         
         current_email = response.user.email if response.user else None
         logger.info("Email change initiated. Confirmation emails being sent.")
-        logger.info(f"Update response: email={current_email}, new_email={response.user.new_email if response.user else None}")
+        # SECURITY: Log masked emails to prevent PII exposure
+        logger.info(f"Update response: email={_mask_email(current_email)}, new_email={_mask_email(response.user.new_email if response.user else None)}")
         
         return {
             "message": f"Email change initiated. Please check BOTH email addresses: (1) Confirm the change from your NEW email ({new_email}) (2) Then confirm from your CURRENT email ({current_email}). Both confirmations are required to complete the email change.",
@@ -481,7 +547,8 @@ async def confirm_email(
         
         user_id = response.user.id
         user_email = response.user.email
-        logger.info(f"Email confirmed successfully for user: {user_id} ({user_email})")
+        # SECURITY: Use masked email and short user ID to prevent PII exposure
+        logger.info(f"Email confirmed successfully for user: {_short_user_id(user_id)} ({_mask_email(user_email)})")
         
         # Handle different confirmation types
         if type == "signup":

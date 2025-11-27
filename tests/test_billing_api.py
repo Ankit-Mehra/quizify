@@ -26,11 +26,8 @@ mock_billing_service.create_checkout_session = AsyncMock(return_value={
 def mock_get_billing_service_dependency():
     return mock_billing_service
 
-# Override dependencies
-app.dependency_overrides[get_current_user_id] = mock_get_current_user_id
-app.dependency_overrides[get_current_user_email] = mock_get_current_user_email
-app.dependency_overrides[get_current_user_token] = mock_get_current_user_token
-app.dependency_overrides[get_billing_service] = mock_get_billing_service_dependency
+# NOTE: Dependency overrides are set in setup_method() and cleaned in teardown_method()
+# to prevent test contamination. Do NOT set them at module level.
 
 client = TestClient(app)
 
@@ -42,6 +39,11 @@ class TestBillingAPI:
         app.dependency_overrides[get_current_user_email] = mock_get_current_user_email
         app.dependency_overrides[get_current_user_token] = mock_get_current_user_token
         app.dependency_overrides[get_billing_service] = mock_get_billing_service_dependency
+    
+    def teardown_method(self):
+        # CRITICAL: Clean up dependency overrides to prevent test contamination
+        # Without this, subsequent tests will still have these overrides active
+        app.dependency_overrides.clear()
     
     def test_create_checkout_session_success(self):
         """Test successful checkout session creation"""

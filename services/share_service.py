@@ -27,7 +27,7 @@ def generate_slug(length: int = SLUG_LENGTH) -> str:
     Uses cryptographically secure random choice for unpredictable slugs.
     
     Args:
-        length: Length of slug to generate (default: 8)
+        length: Length of slug to generate (default: 16)
         
     Returns:
         Random alphanumeric slug (lowercase)
@@ -401,11 +401,16 @@ async def get_public_quiz_by_slug(slug: str) -> dict:
                     for i, opt in enumerate(q["options"])
                 ]
             elif q["question_type"] == "matching":
-                # For matching, show left side only (right side shuffled by client)
-                public_q["matching_pairs"] = [
-                    {"left": opt.get("left", ""), "right": opt.get("right", "")}
-                    for opt in q["options"]
-                ]
+                # SECURITY: For matching, return left and right columns separately
+                # Right column is shuffled to prevent answer leakage
+                import random
+                left_items = [opt.get("left", "") for opt in q["options"]]
+                right_items = [opt.get("right", "") for opt in q["options"]]
+                # Shuffle right items so order doesn't reveal answers
+                shuffled_right = right_items.copy()
+                random.shuffle(shuffled_right)
+                public_q["matching_left"] = left_items
+                public_q["matching_right"] = shuffled_right
         
         public_questions.append(public_q)
     

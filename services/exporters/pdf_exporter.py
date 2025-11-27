@@ -6,8 +6,12 @@ Uses ReportLab to generate professional PDF documents with:
 - Numbered questions with proper formatting for all types
 - Optional answer key on separate pages
 - Optional explanations
+
+PERFORMANCE: PDF generation is CPU-bound; uses asyncio.to_thread to avoid
+blocking the event loop during doc.build() calls.
 """
 
+import asyncio
 import io
 import logging
 from datetime import datetime
@@ -179,6 +183,39 @@ class PdfExporter(BaseExporter):
         """
         logger.info(f"Exporting quiz '{quiz_data.title}' to PDF with {len(quiz_data.questions)} questions")
         
+        # Run CPU-bound PDF generation in thread to avoid blocking event loop
+        pdf_bytes, filename = await asyncio.to_thread(
+            self._build_pdf_sync,
+            quiz_data,
+            options
+        )
+        
+        logger.info(f"PDF generated: {len(pdf_bytes)} bytes, filename: {filename}")
+        
+        return ExportResult(
+            content=pdf_bytes,
+            content_type="application/pdf",
+            filename=filename
+        )
+
+    def _build_pdf_sync(
+        self,
+        quiz_data: QuizExportData,
+        options: ExportOptions
+    ) -> tuple[bytes, str]:
+        """
+        Synchronous PDF building logic.
+        
+        This method is CPU-bound and should be called via asyncio.to_thread()
+        to avoid blocking the event loop.
+        
+        Args:
+            quiz_data: Quiz data with questions
+            options: Export options
+            
+        Returns:
+            Tuple of (pdf_bytes, filename)
+        """
         # Create PDF buffer
         buffer = io.BytesIO()
         
@@ -206,7 +243,7 @@ class PdfExporter(BaseExporter):
             story.append(PageBreak())
             self._add_answer_key_section(story, quiz_data, options.include_explanations)
         
-        # Build PDF
+        # Build PDF (CPU-bound operation)
         doc.build(story)
         
         # Get bytes
@@ -216,13 +253,7 @@ class PdfExporter(BaseExporter):
         # Generate filename
         filename = self._sanitize_filename(quiz_data.title) + ".pdf"
         
-        logger.info(f"PDF generated: {len(pdf_bytes)} bytes, filename: {filename}")
-        
-        return ExportResult(
-            content=pdf_bytes,
-            content_type="application/pdf",
-            filename=filename
-        )
+        return pdf_bytes, filename
 
     def _add_cover_section(
         self,
@@ -374,7 +405,13 @@ class PdfExporter(BaseExporter):
         question: ExportQuestionMatching,
         number: int
     ) -> None:
-        """Add matching question with two-column layout."""
+        """Add matching question with two-column layout.
+        
+        SECURITY: Right column is shuffled to prevent answer leakage.
+        The correct pairing is only shown in the answer key section.
+        """
+        import random
+        
         story.append(Paragraph(
             f"<b>Question {number}</b> (Matching)",
             self.styles['QuestionNumber']
@@ -385,19 +422,25 @@ class PdfExporter(BaseExporter):
         ))
         
         # Create two-column table
-        # Left column: numbered items, Right column: lettered options
+        # Left column: numbered items, Right column: SHUFFLED lettered options
         left_items = question.left
-        right_items = question.right
+        right_items = list(question.right)  # Make a copy
+        
+        # SECURITY: Shuffle right column to prevent answer leakage
+        # Store shuffle order for answer key reference
+        shuffled_indices = list(range(len(right_items)))
+        random.shuffle(shuffled_indices)
+        shuffled_right = [right_items[i] for i in shuffled_indices]
         
         # Prepare table data
         table_data = [["Column A", "Column B"]]  # Header
         
-        max_len = max(len(left_items), len(right_items))
+        max_len = max(len(left_items), len(shuffled_right))
         letters = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']
         
         for i in range(max_len):
-            left_text = f"___ {i + 1}. {left_items[i]}" if i < len(left_items) else ""
-            right_text = f"{letters[i]}. {right_items[i]}" if i < len(right_items) else ""
+            left_text = f"___ {i + 1}. {self._escape_text(left_items[i])}" if i < len(left_items) else ""
+            right_text = f"{letters[i]}. {self._escape_text(shuffled_right[i])}" if i < len(shuffled_right) else ""
             table_data.append([left_text, right_text])
         
         # Create table
