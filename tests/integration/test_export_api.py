@@ -9,7 +9,7 @@ Tests the export API endpoint tier gating at the HTTP layer:
 
 import pytest
 from fastapi.testclient import TestClient
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 from uuid import uuid4
 import os
 
