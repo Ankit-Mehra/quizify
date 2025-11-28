@@ -109,10 +109,9 @@ class GoogleFormsExporter(BaseExporter):
         credentials = await get_google_credentials(self._user_id)
         
         if not credentials:
-            raise ExportError(
-                "Please connect your Google account first. Go to Settings > Integrations > Connect Google to enable Google Forms export.",
-                self.FORMAT_NAME
-            )
+            # Import here to avoid circular import
+            from services.exporters.base import GoogleConnectionRequiredError
+            raise GoogleConnectionRequiredError()
         
         try:
             # Build the Forms API service
