@@ -85,6 +85,7 @@ redis[hiredis]>=5.0.0
 regex==2024.11.6
 reportlab==4.4.4
 requests==2.32.3
+resend==2.19.0
 rich==13.9.4
 rich-toolkit==0.14.0
 rsa==4.9

@@ -124,6 +124,13 @@ class Config:
     # CRITICAL: Set this in production! Tokens stored without encryption if not set.
     GOOGLE_TOKEN_ENCRYPTION_KEY: str = os.getenv("GOOGLE_TOKEN_ENCRYPTION_KEY", "")
     
+    # ============================================================================
+    # Resend Configuration (for contact form emails)
+    # ============================================================================
+    
+    RESEND_API_KEY: str = os.getenv("RESEND_API_KEY", "")
+    CONTACT_EMAIL: str = os.getenv("CONTACT_EMAIL", "admin@quizify.ca")
+    
     @classmethod
     def is_testing(cls) -> bool:
         """
