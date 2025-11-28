@@ -19,6 +19,7 @@ from services.exporters.tier_validator import (
     validate_export_tier_access,
     TierInsufficientError,
     is_format_available_for_tier,
+    is_format_coming_soon,
     get_available_formats_for_tier,
     PRO_ONLY_FORMATS,
     PAID_TIER_FORMATS
@@ -34,15 +35,22 @@ class TestGoogleFormsExportFormat:
         assert ExportFormat.GOOGLE_FORMS.value == "google_forms"
     
     def test_google_forms_in_paid_tier_formats(self):
-        """GOOGLE_FORMS should be in PAID_TIER_FORMATS (available to Basic and Pro)."""
+        """GOOGLE_FORMS should be in PAID_TIER_FORMATS (available to Premium and Pro)."""
         assert ExportFormat.GOOGLE_FORMS in PAID_TIER_FORMATS
         assert ExportFormat.GOOGLE_FORMS not in PRO_ONLY_FORMATS
     
     def test_pro_only_formats_contains_lms_formats(self):
-        """PRO_ONLY_FORMATS should contain only LMS formats (QTI, Moodle)."""
+        """PRO_ONLY_FORMATS should contain only LMS formats (QTI, Moodle) - Coming Soon."""
         assert ExportFormat.QTI in PRO_ONLY_FORMATS
         assert ExportFormat.MOODLE_XML in PRO_ONLY_FORMATS
         assert len(PRO_ONLY_FORMATS) == 2
+    
+    def test_pro_formats_are_coming_soon(self):
+        """Pro-only formats should be marked as coming soon."""
+        assert is_format_coming_soon(ExportFormat.QTI) is True
+        assert is_format_coming_soon(ExportFormat.MOODLE_XML) is True
+        assert is_format_coming_soon(ExportFormat.PDF) is False
+        assert is_format_coming_soon(ExportFormat.GOOGLE_FORMS) is False
 
 
 class TestTierValidationForGoogleForms:
@@ -56,9 +64,14 @@ class TestTierValidationForGoogleForms:
         assert exc_info.value.status_code == 403
         assert "tier_insufficient" in str(exc_info.value.detail)
     
-    def test_basic_tier_can_access_google_forms(self):
-        """Basic tier users should access Google Forms export."""
+    def test_premium_tier_can_access_google_forms(self):
+        """Premium tier users should access Google Forms export."""
         # Should not raise - Google Forms is available to paid tiers
+        validate_export_tier_access("premium", ExportFormat.GOOGLE_FORMS)
+    
+    def test_basic_tier_maps_to_premium(self):
+        """Legacy 'basic' tier should map to 'premium' and work."""
+        # Should not raise - legacy mapping
         validate_export_tier_access("basic", ExportFormat.GOOGLE_FORMS)
     
     def test_pro_tier_can_access_google_forms(self):
@@ -69,17 +82,18 @@ class TestTierValidationForGoogleForms:
     def test_is_format_available_for_tier(self):
         """Test is_format_available_for_tier helper."""
         assert is_format_available_for_tier("free", ExportFormat.GOOGLE_FORMS) is False
-        assert is_format_available_for_tier("basic", ExportFormat.GOOGLE_FORMS) is True
+        assert is_format_available_for_tier("premium", ExportFormat.GOOGLE_FORMS) is True
+        assert is_format_available_for_tier("basic", ExportFormat.GOOGLE_FORMS) is True  # Legacy mapping
         assert is_format_available_for_tier("pro", ExportFormat.GOOGLE_FORMS) is True
     
     def test_get_available_formats_for_tier(self):
         """Test get_available_formats_for_tier includes/excludes Google Forms."""
         free_formats = get_available_formats_for_tier("free")
-        basic_formats = get_available_formats_for_tier("basic")
+        premium_formats = get_available_formats_for_tier("premium")
         pro_formats = get_available_formats_for_tier("pro")
         
         assert ExportFormat.GOOGLE_FORMS not in free_formats
-        assert ExportFormat.GOOGLE_FORMS in basic_formats
+        assert ExportFormat.GOOGLE_FORMS in premium_formats
         assert ExportFormat.GOOGLE_FORMS in pro_formats
 
 

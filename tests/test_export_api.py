@@ -46,7 +46,7 @@ class TestTierValidator:
         with pytest.raises(TierInsufficientError) as exc_info:
             validate_export_tier_access("free", ExportFormat.PDF)
         assert exc_info.value.status_code == 403
-        assert exc_info.value.detail["required_tier"] == "basic"
+        assert exc_info.value.detail["required_tier"] == "premium"
         assert exc_info.value.detail["current_tier"] == "free"
     
     def test_free_tier_cannot_access_docx(self):
@@ -75,8 +75,10 @@ class TestTierValidator:
             validate_export_tier_access("free", ExportFormat.QTI)
         
         assert exc_info.value.status_code == 403
+        # Free tier gets generic tier_insufficient, not coming_soon 
+        # (fails on first check before reaching coming_soon logic)
         assert exc_info.value.detail["error"] == "tier_insufficient"
-        assert exc_info.value.detail["required_tier"] == "basic"
+        assert exc_info.value.detail["required_tier"] == "premium"
         assert exc_info.value.detail["current_tier"] == "free"
     
     def test_free_tier_cannot_access_moodle_xml(self):
@@ -117,27 +119,38 @@ class TestTierValidator:
         with pytest.raises(TierInsufficientError):
             validate_export_tier_access("basic", ExportFormat.MOODLE_XML)
     
-    def test_pro_tier_can_access_qti(self):
-        """Pro tier users should be able to export QTI."""
-        # Should not raise
-        validate_export_tier_access("pro", ExportFormat.QTI)
+    def test_pro_tier_cannot_access_qti_coming_soon(self):
+        """Pro tier users should NOT access QTI (coming soon)."""
+        with pytest.raises(TierInsufficientError) as exc_info:
+            validate_export_tier_access("pro", ExportFormat.QTI)
+        assert exc_info.value.detail["error"] == "feature_coming_soon"
+        assert exc_info.value.detail["coming_soon"] is True
     
-    def test_pro_tier_can_access_moodle_xml(self):
-        """Pro tier users should be able to export Moodle XML."""
-        validate_export_tier_access("pro", ExportFormat.MOODLE_XML)
+    def test_pro_tier_cannot_access_moodle_xml_coming_soon(self):
+        """Pro tier users should NOT access Moodle XML (coming soon)."""
+        with pytest.raises(TierInsufficientError) as exc_info:
+            validate_export_tier_access("pro", ExportFormat.MOODLE_XML)
+        assert exc_info.value.detail["error"] == "feature_coming_soon"
+        assert exc_info.value.detail["coming_soon"] is True
     
-    def test_pro_tier_can_access_all_formats(self):
-        """Pro tier users should be able to access all export formats."""
+    def test_pro_tier_can_access_non_coming_soon_formats(self):
+        """Pro tier users should be able to access all non-coming-soon formats."""
+        from services.exporters.tier_validator import is_format_coming_soon
         for fmt in list(ExportFormat):
-            # Should not raise for any format
-            validate_export_tier_access("pro", fmt)
+            if not is_format_coming_soon(fmt):
+                # Should not raise for non-coming-soon formats
+                validate_export_tier_access("pro", fmt)
     
     def test_tier_case_insensitive(self):
         """Tier validation should be case-insensitive."""
+        # Basic/premium tiers - PDF should work
         validate_export_tier_access("BASIC", ExportFormat.PDF)
         validate_export_tier_access("Basic", ExportFormat.PDF)
-        validate_export_tier_access("PRO", ExportFormat.QTI)
-        validate_export_tier_access("Pro", ExportFormat.QTI)
+        validate_export_tier_access("PREMIUM", ExportFormat.PDF)
+        validate_export_tier_access("Premium", ExportFormat.PDF)
+        # Pro tier - PDF should work (but QTI is coming_soon)
+        validate_export_tier_access("PRO", ExportFormat.PDF)
+        validate_export_tier_access("Pro", ExportFormat.PDF)
     
     def test_none_tier_defaults_to_free(self):
         """None tier should default to free (most restrictive - no export)."""
@@ -173,8 +186,8 @@ class TestFormatAvailability:
         assert is_format_available_for_tier("basic", ExportFormat.QTI) is False
     
     def test_is_format_available_pro_qti(self):
-        """QTI should be available for pro tier."""
-        assert is_format_available_for_tier("pro", ExportFormat.QTI) is True
+        """QTI should NOT be available for pro tier (coming soon)."""
+        assert is_format_available_for_tier("pro", ExportFormat.QTI) is False
     
     def test_get_available_formats_free(self):
         """Free tier should have NO formats available."""
@@ -195,11 +208,18 @@ class TestFormatAvailability:
         assert ExportFormat.MOODLE_XML not in formats
     
     def test_get_available_formats_pro(self):
-        """Pro tier should have all formats available."""
+        """Pro tier should have all formats except coming_soon available."""
         formats = get_available_formats_for_tier("pro")
-        assert len(formats) == len(ExportFormat)
-        for fmt in list(ExportFormat):
-            assert fmt in formats
+        # Pro has same formats as premium (LMS formats are coming_soon)
+        assert ExportFormat.PDF in formats
+        assert ExportFormat.DOCX in formats
+        assert ExportFormat.CSV_QUIZIFY in formats
+        assert ExportFormat.CSV_ANKI in formats
+        assert ExportFormat.SHARE_LINK in formats
+        assert ExportFormat.GOOGLE_FORMS in formats
+        # LMS formats are coming_soon, not available
+        assert ExportFormat.QTI not in formats
+        assert ExportFormat.MOODLE_XML not in formats
 
 
 # ============================================================================
@@ -521,13 +541,24 @@ class TestGetExportFormats:
     
     @pytest.mark.asyncio
     async def test_get_formats_pro_tier(self):
-        """Pro tier should see all formats available."""
+        """Pro tier should see non-coming-soon formats available, LMS as coming_soon."""
         from handlers.export_handler import get_export_formats_for_user
         
         formats = await get_export_formats_for_user("pro")
         
-        for fmt_name, fmt_info in formats.items():
-            assert fmt_info["available"] is True
+        # Regular formats should be available
+        assert formats["pdf"]["available"] is True
+        assert formats["docx"]["available"] is True
+        assert formats["csv_quizify"]["available"] is True
+        assert formats["csv_anki"]["available"] is True
+        assert formats["share_link"]["available"] is True
+        assert formats["google_forms"]["available"] is True
+        
+        # LMS formats are coming_soon
+        assert formats["qti"]["available"] is False
+        assert formats["qti"]["coming_soon"] is True
+        assert formats["moodle_xml"]["available"] is False
+        assert formats["moodle_xml"]["coming_soon"] is True
 
 
 # ============================================================================

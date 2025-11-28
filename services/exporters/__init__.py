@@ -10,7 +10,8 @@ from services.exporters.tier_validator import (
     validate_export_tier_access,
     PRO_ONLY_FORMATS,
     PAID_TIER_FORMATS,
-    TierInsufficientError
+    TierInsufficientError,
+    is_format_coming_soon
 )
 from services.exporters.google_forms_exporter import GoogleFormsExporter
 
@@ -22,5 +23,6 @@ __all__ = [
     "PRO_ONLY_FORMATS",
     "PAID_TIER_FORMATS",
     "TierInsufficientError",
+    "is_format_coming_soon",
     "GoogleFormsExporter"
 ]

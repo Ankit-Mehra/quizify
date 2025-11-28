@@ -19,9 +19,9 @@ class ExportFormat(str, Enum):
     Supported export formats.
     
     Tier Access:
-    - All tiers: pdf, docx, csv_quizify, csv_anki, share_link
-    - Paid tiers (Basic, Pro): google_forms
-    - Pro only: qti, moodle_xml
+    - Free: No export access
+    - Premium ($7/mo): PDF, DOCX, CSV (Quizify), CSV (Anki), Share Link, Google Forms
+    - Pro (Coming Soon): All Premium formats + QTI 2.1, Moodle XML
     """
     PDF = "pdf"
     DOCX = "docx"
@@ -33,10 +33,10 @@ class ExportFormat(str, Enum):
     GOOGLE_FORMS = "google_forms"
 
 
-# Pro-only export formats (LMS integrations)
+# Pro-only export formats (LMS integrations) - COMING SOON
 PRO_ONLY_FORMATS = {ExportFormat.QTI, ExportFormat.MOODLE_XML}
 
-# Paid-tier formats (available to Basic and Pro, not Free)
+# Paid-tier formats (available to Premium and Pro, not Free)
 PAID_TIER_FORMATS = {ExportFormat.GOOGLE_FORMS}
 
 
