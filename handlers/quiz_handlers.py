@@ -74,9 +74,9 @@ async def validate_user_quota(user_id: str, user_token: str = None):
         # Create upgrade suggestion based on current tier
         upgrade_suggestion = ""
         if user_tier == "free":
-            upgrade_suggestion = "Upgrade to basic for 100 quizzes."
-        elif user_tier == "basic":
-            upgrade_suggestion = "Upgrade to pro for unlimited quizzes."
+            upgrade_suggestion = "Upgrade to Premium for 100 quizzes."
+        elif user_tier in ("basic", "premium"):  # Support both legacy and new naming
+            upgrade_suggestion = "Upgrade to Pro for unlimited quizzes."
         
         detail_message = f"Quiz quota exceeded for {user_tier} tier ({current_count}/{quota_limit}). {upgrade_suggestion}".strip()
         

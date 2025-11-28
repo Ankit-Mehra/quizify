@@ -252,7 +252,7 @@ class TestQuotaEnforcementTextEndpoint:
             
             # Assertions
             assert_quota_exceeded_error(exc_info, 'free', 5, 5)
-            assert 'Upgrade to basic' in exc_info.value.detail['detail']
+            assert 'Upgrade to Premium' in exc_info.value.detail['detail']
         
     @pytest.mark.asyncio
     async def test_text_endpoint_basic_tier_at_limit_forbidden(
@@ -272,7 +272,7 @@ class TestQuotaEnforcementTextEndpoint:
             
             # Assertions
             assert_quota_exceeded_error(exc_info, 'basic', 100, 100)
-            assert 'Upgrade to pro' in exc_info.value.detail['detail']
+            assert 'Upgrade to Pro' in exc_info.value.detail['detail']
         
     @pytest.mark.asyncio
     async def test_text_endpoint_pro_tier_under_limit_success(
@@ -679,7 +679,7 @@ class TestQuotaEnforcementFileIdEndpoint:
         assert detail['current_count'] == 5
         assert detail['quota_limit'] == 5
         assert detail['user_tier'] == 'free'
-        assert 'Upgrade to basic' in detail['detail']
+        assert 'Upgrade to Premium' in detail['detail']
         
     @pytest.mark.asyncio
     @patch('handlers.quiz_handlers.get_user_tier_info_cached')
@@ -730,7 +730,7 @@ class TestQuotaEnforcementFileIdEndpoint:
         assert detail['current_count'] == 100
         assert detail['quota_limit'] == 100
         assert detail['user_tier'] == 'basic'
-        assert 'Upgrade to pro' in detail['detail']
+        assert 'Upgrade to Pro' in detail['detail']
         
     @pytest.mark.asyncio
     @patch('handlers.quiz_handlers.get_user_tier_info_cached')

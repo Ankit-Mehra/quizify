@@ -4,9 +4,10 @@ from typing import Optional, Literal
 from uuid import UUID
 
 # Account tier options
-# IMPORTANT: These values MUST match migrations/001_add_missing_features.sql CHECK constraint
-# Database constraint: CHECK (account_tier IN ('free', 'basic', 'pro'))
-ACCOUNT_TIERS = Literal["free", "basic", "pro"]
+# IMPORTANT: These values MUST match the database CHECK constraint
+# Database constraint: CHECK (account_tier IN ('free', 'premium', 'pro'))
+# Note: 'basic' was renamed to 'premium' in migration 020
+ACCOUNT_TIERS = Literal["free", "premium", "pro"]
 
 # User role options  
 # IMPORTANT: These values MUST match migrations/004_add_rbac_roles.sql CHECK constraint
@@ -39,7 +40,7 @@ class UserTierInfo(BaseModel):
 
 class TierUpgradeRequest(BaseModel):
     """Request to upgrade user's account tier"""
-    target_tier: Literal["basic", "pro"] = Field(
+    target_tier: Literal["premium", "pro"] = Field(
         ..., 
         description="Target tier to upgrade to (cannot downgrade to free)"
     )
@@ -48,7 +49,7 @@ class UserTierUpdate(BaseModel):
     """Admin request to update a user's tier"""
     new_tier: ACCOUNT_TIERS = Field(
         ...,
-        description="New tier for the user (free, basic, pro)"
+        description="New tier for the user (free, premium, pro)"
     )
     reason: Optional[str] = Field(
         None,

@@ -229,7 +229,7 @@ async def update_user_tier(
     
     try:
         # Validate tier
-        valid_tiers = ["free", "basic", "pro"]
+        valid_tiers = ["free", "premium", "pro"]
         if tier_update.new_tier not in valid_tiers:
             raise HTTPException(
                 status_code=400,

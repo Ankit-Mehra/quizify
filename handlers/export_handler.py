@@ -168,7 +168,7 @@ async def handle_export(
     Args:
         quiz_id: UUID of the quiz to export
         user_id: UUID of the requesting user
-        user_tier: User's subscription tier ('free', 'basic', 'pro')
+        user_tier: User's subscription tier ('free', 'premium', 'pro')
         request: Export request with format and options
         user_token: Optional JWT token for authenticated queries
         

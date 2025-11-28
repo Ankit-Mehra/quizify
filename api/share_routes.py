@@ -65,8 +65,8 @@ async def _validate_share_tier_access(user_id: str) -> str:
             status_code=403,
             detail={
                 "error": "tier_insufficient",
-                "message": "Share link feature requires a Basic or Pro subscription",
-                "required_tier": "basic",
+                "message": "Share link feature requires a Premium or Pro subscription",
+                "required_tier": "premium",
                 "current_tier": user_tier,
                 "upgrade_url": "/billing/upgrade"
             }

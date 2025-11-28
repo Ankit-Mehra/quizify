@@ -18,18 +18,18 @@ class CheckoutSessionRequest(BaseModel):
     """
     Request to create a Stripe Checkout session.
     
-    Frontend sends this when user clicks "Upgrade to Basic" or "Upgrade to Pro".
+    Frontend sends this when user clicks "Upgrade to Premium" or "Upgrade to Pro".
     Backend returns a checkout URL to redirect the user to Stripe's hosted payment page.
     """
-    tier: Literal["basic", "pro"] = Field(
+    tier: Literal["premium", "pro"] = Field(
         ...,
-        description="The subscription tier to purchase (basic or pro)"
+        description="The subscription tier to purchase (premium or pro)"
     )
     
     class Config:
         json_schema_extra = {
             "example": {
-                "tier": "basic"
+                "tier": "premium"
             }
         }
 
@@ -87,7 +87,7 @@ class CheckoutSessionVerification(BaseModel):
     session_id: str = Field(..., description="Checkout session ID")
     customer_id: str = Field(..., description="Stripe customer ID")
     subscription_id: str = Field(..., description="Stripe subscription ID")
-    tier: str = Field(..., description="Account tier (basic/pro)")
+    tier: str = Field(..., description="Account tier (premium/pro)")
     status: str = Field(..., description="Subscription status")
     current_period_end: Optional[int] = Field(None, description="Unix timestamp of period end")
     payment_status: str = Field(..., description="Payment status (paid/unpaid)")
@@ -98,7 +98,7 @@ class CheckoutSessionVerification(BaseModel):
                 "session_id": "cs_test_a1b2c3d4e5f6g7h8i9j0",
                 "customer_id": "cus_ABC123xyz",
                 "subscription_id": "sub_DEF456uvw",
-                "tier": "basic",
+                "tier": "premium",
                 "status": "active",
                 "current_period_end": 1734566400,
                 "payment_status": "paid"
@@ -117,7 +117,7 @@ class SubscriptionStatusResponse(BaseModel):
     Returned by GET /api/billing/subscription-status endpoint.
     Frontend uses this to display billing information and subscription details.
     """
-    account_tier: Literal["free", "basic", "pro"] = Field(
+    account_tier: Literal["free", "premium", "pro"] = Field(
         ...,
         description="Current account tier"
     )
@@ -165,7 +165,7 @@ class SubscriptionStatusResponse(BaseModel):
     class Config:
         json_schema_extra = {
             "example": {
-                "account_tier": "basic",
+                "account_tier": "premium",
                 "subscription_status": "active",
                 "billing_status": "active",
                 "stripe_customer_id": "cus_ABC123XYZ789",
