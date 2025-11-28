@@ -1,14 +1,23 @@
-from fastapi import HTTPException, Body, Response, Request, Query
+from typing import Any, Dict, List, Optional
+
+from fastapi import Depends, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from services.logger import app_logger as logger
-from fastapi import Depends
-from dependencies.auth_dependencies import get_current_user_id, get_current_user_token
-from services.db_services.supabase_quiz import get_user_tier_info_cached
-from services.redis.sessions import SessionService, SessionInfo, TooManySessionsError
-from typing import Dict, Any, List, Optional
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+
 from config import config as app_config
-from schemas.auth import SignupRequest, LoginRequest, LogoutRequest, UpdateEmailRequest, ChangePasswordRequest, ForgotPasswordRequest, ResetPasswordRequest, ResendVerificationRequest
+from dependencies.auth_dependencies import get_current_user_id, get_current_user_token
+from schemas.auth import (
+    ChangePasswordRequest,
+    ForgotPasswordRequest,
+    LoginRequest,
+    ResendVerificationRequest,
+    ResetPasswordRequest,
+    SignupRequest,
+    UpdateEmailRequest,
+)
+from services.db_services.supabase_quiz import get_user_tier_info_cached
+from services.logger import app_logger as logger
+from services.redis.sessions import SessionInfo, SessionService, TooManySessionsError
 
 security = HTTPBearer(auto_error=False)
 
@@ -923,7 +932,7 @@ async def revoke_session(
         # If it's a client token (starts with cst_sess_), map it to real session_id
         actual_session_id = session_id_to_revoke
         if session_id_to_revoke.startswith("cst_sess_"):
-            logger.debug(f"Client token provided, mapping to real session_id")
+            logger.debug("Client token provided, mapping to real session_id")
             actual_session_id = await session_service.find_session_by_client_token(
                 session_id_to_revoke, user_id
             )
@@ -987,12 +996,12 @@ async def google_connect(
     
     Requires Pro tier for access.
     """
+    from services.db_services.supabase_quiz import get_user_tier_info_cached
     from services.google_auth_service import (
+        GoogleAuthError,
         generate_auth_url,
         is_google_auth_configured,
-        GoogleAuthError
     )
-    from services.db_services.supabase_quiz import get_user_tier_info_cached
     
     logger.info(f"Google connect initiated for user {_short_user_id(user_id)}")
     
@@ -1052,12 +1061,12 @@ async def google_callback(
     
     SECURITY: Validates Pro tier before storing tokens to prevent bypass of google_connect check.
     """
+    from services.db_services.supabase_quiz import get_user_tier_info_cached
     from services.google_auth_service import (
+        GoogleAuthError,
         exchange_code_for_tokens,
         store_google_tokens,
-        GoogleAuthError
     )
-    from services.db_services.supabase_quiz import get_user_tier_info_cached
     
     # Check for OAuth errors from Google
     if error:
@@ -1170,7 +1179,10 @@ async def google_status(
     
     Returns connection status and whether Google Forms export is available.
     """
-    from services.google_auth_service import is_user_connected, is_google_auth_configured
+    from services.google_auth_service import (
+        is_google_auth_configured,
+        is_user_connected,
+    )
     
     logger.debug(f"Google status check for user {_short_user_id(user_id)}")
     

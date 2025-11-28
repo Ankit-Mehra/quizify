@@ -23,15 +23,15 @@ Security:
 """
 
 import os
-from typing import Optional, Tuple
 from datetime import datetime, timezone
+from typing import Optional, Tuple
 
+from google.auth.transport.requests import Request as GoogleRequest
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
-from google.auth.transport.requests import Request as GoogleRequest
 
-from services.logger import app_logger as logger
 from config import config as app_config
+from services.logger import app_logger as logger
 
 # Google OAuth2 Configuration
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
@@ -287,6 +287,7 @@ async def store_google_tokens(user_id: str, credentials: Credentials) -> None:
         Refresh token is encrypted before storage if GOOGLE_TOKEN_ENCRYPTION_KEY is set.
     """
     import asyncio
+
     from services.db_services.supabase_quiz import get_supabase
     
     supabase = get_supabase()
@@ -325,6 +326,7 @@ async def get_google_credentials(user_id: str) -> Optional[Credentials]:
         Decrypts the stored refresh token if GOOGLE_TOKEN_ENCRYPTION_KEY is set.
     """
     import asyncio
+
     from services.db_services.supabase_quiz import get_supabase
     
     supabase = get_supabase()
@@ -365,6 +367,7 @@ async def disconnect_google(user_id: str) -> bool:
         True if successful
     """
     import asyncio
+
     from services.db_services.supabase_quiz import get_supabase
     
     supabase = get_supabase()
@@ -399,6 +402,7 @@ async def is_user_connected(user_id: str) -> bool:
         True if user has valid Google connection, False otherwise
     """
     import asyncio
+
     from services.db_services.supabase_quiz import get_supabase
     
     supabase = get_supabase()
