@@ -199,6 +199,51 @@ class TestExportTierGating:
         assert detail.get("error") == "tier_insufficient"
         assert detail.get("required_tier") == "pro"
 
+    def test_pro_tier_can_initiate_google_forms_export(self, pro_tier_auth):
+        """
+        Pro tier users CAN initiate Google Forms export (passes tier check).
+        
+        This tests that the tier gating passes for Pro tier. The export will fail
+        with a 500 error because no Google account is connected (no credentials),
+        but the key assertion is that we DON'T get a 403 tier_insufficient error.
+        
+        Note: A fully successful Google Forms export requires:
+        1. Pro tier (tested here - passes)
+        2. Connected Google account with valid credentials (not tested here)
+        """
+        headers = {"Authorization": f"Bearer {pro_tier_auth}"}
+        quiz_id = str(uuid4())
+        
+        with patch("api.export_routes.get_user_tier_info", side_effect=mock_tier_info("pro")):
+            # Patch at the import location in the handler
+            with patch("handlers.export_handler.load_quiz_for_export",
+                       return_value=mock_quiz_for_export()):
+                # Mock get_google_credentials to return None (no credentials)
+                with patch("services.google_auth_service.get_google_credentials", return_value=None):
+                    
+                    response = client.post(
+                        f"/api/quizzes/{quiz_id}/export",
+                        headers=headers,
+                        json={"format": "google_forms"}
+                    )
+        
+        # Key assertion: Should NOT get 403 tier_insufficient
+        # Pro tier passes the tier check, so error should be different
+        if response.status_code == 403:
+            data = response.json()
+            detail = data.get("detail", data)
+            # If we get 403, it should NOT be for tier reasons
+            assert detail.get("error") != "tier_insufficient", \
+                "Pro tier should pass tier validation for Google Forms export"
+        else:
+            # 500 is expected when Google credentials are not available
+            # This proves tier check passed but export failed for other reasons
+            assert response.status_code == 500
+            data = response.json()
+            # Verify it's a credentials issue, not tier issue
+            detail = data.get("detail", "")
+            assert "credentials" in detail.lower() or "oauth" in detail.lower()
+
     def test_free_tier_cannot_export_any_format(self, free_tier_auth):
         """Free tier users should NOT be able to export any format."""
         headers = {"Authorization": f"Bearer {free_tier_auth}"}

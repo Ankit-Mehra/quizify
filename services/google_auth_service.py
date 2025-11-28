@@ -108,6 +108,14 @@ def _encrypt_token(token: str) -> str:
         return token  # Fallback to plaintext
 
 
+class TokenDecryptionError(Exception):
+    """Exception raised when token decryption fails."""
+    
+    def __init__(self, message: str = "Failed to decrypt token"):
+        self.message = message
+        super().__init__(message)
+
+
 def _decrypt_token(encrypted_token: str) -> str:
     """
     Decrypt a stored refresh token.
@@ -116,20 +124,34 @@ def _decrypt_token(encrypted_token: str) -> str:
         encrypted_token: Encrypted token from database
         
     Returns:
-        Decrypted plaintext token, or original if decryption fails
+        Decrypted plaintext token
+        
+    Raises:
+        TokenDecryptionError: If encryption is enabled but decryption fails
+            (indicates corrupted, tampered, or wrongly-keyed token)
     """
     fernet = _get_fernet()
     
     if fernet is None:
-        return encrypted_token  # Assume stored plaintext
+        # Encryption was never enabled - token is stored as plaintext
+        return encrypted_token
     
     try:
         decrypted = fernet.decrypt(encrypted_token.encode())
         return decrypted.decode()
     except Exception as e:
-        # Token might have been stored before encryption was enabled
-        logger.warning(f"Failed to decrypt token (may be plaintext): {e}")
-        return encrypted_token  # Return as-is, might be plaintext
+        # SECURITY: If encryption is enabled but decryption fails, the token is:
+        # - Corrupted in database
+        # - Tampered with
+        # - Encrypted with a different key
+        # Do NOT return it as plaintext - this could expose sensitive data
+        # or cause authentication issues. The caller should clear the token.
+        logger.error(
+            f"Token decryption failed (possible corruption/tampering): {type(e).__name__}"
+        )
+        raise TokenDecryptionError(
+            "Failed to decrypt token - token may be corrupted or encrypted with different key"
+        )
 
 # OAuth2 client config structure
 def _get_client_config() -> dict:
@@ -324,6 +346,8 @@ async def get_google_credentials(user_id: str) -> Optional[Credentials]:
         
     Note:
         Decrypts the stored refresh token if GOOGLE_TOKEN_ENCRYPTION_KEY is set.
+        If decryption fails (corrupted/tampered token), automatically disconnects
+        the user to allow reconnection with fresh tokens.
     """
     import asyncio
 
@@ -345,7 +369,16 @@ async def get_google_credentials(user_id: str) -> Optional[Credentials]:
         
         # Decrypt the stored refresh token
         encrypted_token = profile["google_refresh_token"]
-        refresh_token = _decrypt_token(encrypted_token)
+        try:
+            refresh_token = _decrypt_token(encrypted_token)
+        except TokenDecryptionError as decrypt_error:
+            # SECURITY: Token is corrupted or encrypted with different key
+            # Auto-disconnect user so they can reconnect with fresh tokens
+            logger.warning(
+                f"Corrupted token for user {user_id[:8]}..., auto-disconnecting: {decrypt_error}"
+            )
+            await disconnect_google(user_id)
+            return None
         
         credentials = build_credentials_from_refresh_token(refresh_token)
         

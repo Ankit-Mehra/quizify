@@ -65,16 +65,19 @@ class GoogleFormsExporter(BaseExporter):
     # Default point value per question
     DEFAULT_POINT_VALUE = 1
     
-    def __init__(self, user_id: Optional[str] = None):
+    def __init__(self, user_id: Optional[str] = None, user_token: Optional[str] = None):
         """
         Initialize the Google Forms exporter.
         
         Args:
             user_id: User ID for fetching Google OAuth credentials
+            user_token: JWT token for authenticated operations (optional, for API
+                       consistency with other exporters like ShareLinkExporter)
         """
         self._service = None
         self._credentials = None
         self._user_id = user_id
+        self._user_token = user_token  # Reserved for future use
     
     async def export(
         self,

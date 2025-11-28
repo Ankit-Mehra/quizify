@@ -16,6 +16,10 @@ from schemas.export import ExportFormat
 
 
 # Pro-only formats - require Pro subscription
+# Business rationale:
+# - QTI 2.1 / Moodle XML: LMS integration features for enterprise/educational institutions
+# - Google Forms: Requires Google API access with associated costs and support overhead
+# These advanced integrations justify the Pro tier requirement for sustainability.
 PRO_ONLY_FORMATS: Set[ExportFormat] = {
     ExportFormat.QTI,
     ExportFormat.MOODLE_XML,

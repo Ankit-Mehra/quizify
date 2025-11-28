@@ -208,20 +208,17 @@ class TestGoogleAuthServiceFunctions:
     
     def test_is_google_auth_configured_without_env(self):
         """is_google_auth_configured returns False without env vars."""
+        from services.google_auth_service import is_google_auth_configured
         
-        # Default env vars are empty strings
-        with patch.dict(
-            'os.environ', 
-            {'GOOGLE_CLIENT_ID': '', 'GOOGLE_CLIENT_SECRET': ''},
-            clear=False
+        # Mock the module-level constants at the point where they're read
+        # This is more reliable than reloading modules and doesn't affect other tests
+        with patch(
+            'services.google_auth_service.GOOGLE_CLIENT_ID', ''
+        ), patch(
+            'services.google_auth_service.GOOGLE_CLIENT_SECRET', ''
         ):
-            # Re-import to pick up new env vars
-            import importlib
-            import services.google_auth_service as gas
-            importlib.reload(gas)
-            
             # With empty values, should return False
-            assert gas.is_google_auth_configured() is False
+            assert is_google_auth_configured() is False
     
     def test_generate_auth_url_requires_config(self):
         """generate_auth_url should raise error without config."""
@@ -303,6 +300,32 @@ class TestTokenEncryption:
             decrypted = gas._decrypt_token(token)
             
             assert decrypted == token
+    
+    def test_decrypt_raises_on_corrupted_token_with_key(self):
+        """With encryption key, _decrypt_token raises on invalid/corrupted token."""
+        from cryptography.fernet import Fernet
+        
+        # Generate a test key
+        test_key = Fernet.generate_key().decode()
+        
+        with patch.object(
+            __import__('config', fromlist=['config']).config,
+            'GOOGLE_TOKEN_ENCRYPTION_KEY',
+            test_key
+        ):
+            import services.google_auth_service as gas
+            from services.google_auth_service import TokenDecryptionError
+            # Reset the cached fernet
+            gas._fernet = None
+            gas._encryption_warned = False
+            
+            # Try to decrypt a corrupted/invalid token
+            corrupted_token = "not_a_valid_encrypted_token"
+            
+            with pytest.raises(TokenDecryptionError) as exc_info:
+                gas._decrypt_token(corrupted_token)
+            
+            assert "corrupted" in str(exc_info.value).lower() or "failed" in str(exc_info.value).lower()
     
     def test_encryption_functions_exist(self):
         """Encryption functions should be importable."""
