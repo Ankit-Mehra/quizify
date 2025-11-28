@@ -4,7 +4,7 @@ Google Auth Service - OAuth2 authentication for Google APIs.
 This module handles:
 - Generating OAuth2 authorization URLs
 - Exchanging authorization codes for tokens
-- Storing and retrieving refresh tokens
+- Storing and retrieving refresh tokens (encrypted at rest)
 - Refreshing expired access tokens
 - Revoking user authorization
 
@@ -13,8 +13,13 @@ The OAuth flow:
 2. If not connected, redirect to Google OAuth consent
 3. User authorizes Quizify
 4. Callback receives auth code, exchanges for tokens
-5. Refresh token stored in database
+5. Refresh token encrypted and stored in database
 6. Access token used for API calls
+
+Security:
+- Refresh tokens are encrypted using Fernet (AES-128-CBC) before storage
+- Encryption key must be set via GOOGLE_TOKEN_ENCRYPTION_KEY env var
+- If key is not set, tokens are stored in plaintext (logs warning)
 """
 
 import os
@@ -26,6 +31,7 @@ from google_auth_oauthlib.flow import Flow
 from google.auth.transport.requests import Request as GoogleRequest
 
 from services.logger import app_logger as logger
+from config import config as app_config
 
 # Google OAuth2 Configuration
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
@@ -39,6 +45,91 @@ GOOGLE_REDIRECT_URI = os.getenv(
 GOOGLE_FORMS_SCOPES = [
     "https://www.googleapis.com/auth/forms.body"
 ]
+
+# Token encryption setup
+_fernet = None
+_encryption_warned = False
+
+
+def _get_fernet():
+    """
+    Get or create Fernet encryption instance.
+    
+    Returns:
+        Fernet instance if encryption key is configured, None otherwise
+    """
+    global _fernet, _encryption_warned
+    
+    if _fernet is not None:
+        return _fernet
+    
+    encryption_key = app_config.GOOGLE_TOKEN_ENCRYPTION_KEY
+    
+    if not encryption_key:
+        if not _encryption_warned:
+            logger.warning(
+                "GOOGLE_TOKEN_ENCRYPTION_KEY not set! "
+                "Google OAuth tokens will be stored in PLAINTEXT. "
+                "Set this environment variable in production!"
+            )
+            _encryption_warned = True
+        return None
+    
+    try:
+        from cryptography.fernet import Fernet
+        _fernet = Fernet(encryption_key.encode())
+        logger.info("Google OAuth token encryption initialized")
+        return _fernet
+    except Exception as e:
+        logger.error(f"Failed to initialize token encryption: {e}")
+        return None
+
+
+def _encrypt_token(token: str) -> str:
+    """
+    Encrypt a refresh token for secure storage.
+    
+    Args:
+        token: Plaintext refresh token
+        
+    Returns:
+        Encrypted token (base64 encoded) or original token if encryption unavailable
+    """
+    fernet = _get_fernet()
+    
+    if fernet is None:
+        return token  # Store plaintext if encryption not configured
+    
+    try:
+        encrypted = fernet.encrypt(token.encode())
+        return encrypted.decode()
+    except Exception as e:
+        logger.error(f"Failed to encrypt token: {e}")
+        return token  # Fallback to plaintext
+
+
+def _decrypt_token(encrypted_token: str) -> str:
+    """
+    Decrypt a stored refresh token.
+    
+    Args:
+        encrypted_token: Encrypted token from database
+        
+    Returns:
+        Decrypted plaintext token, or original if decryption fails
+    """
+    fernet = _get_fernet()
+    
+    if fernet is None:
+        return encrypted_token  # Assume stored plaintext
+    
+    try:
+        decrypted = fernet.decrypt(encrypted_token.encode())
+        return decrypted.decode()
+    except Exception as e:
+        # Token might have been stored before encryption was enabled
+        logger.warning(f"Failed to decrypt token (may be plaintext): {e}")
+        return encrypted_token  # Return as-is, might be plaintext
 
 # OAuth2 client config structure
 def _get_client_config() -> dict:
@@ -186,20 +277,26 @@ def build_credentials_from_refresh_token(refresh_token: str) -> Optional[Credent
 
 async def store_google_tokens(user_id: str, credentials: Credentials) -> None:
     """
-    Store Google OAuth tokens in the database.
+    Store Google OAuth tokens in the database (encrypted).
     
     Args:
         user_id: User ID to store tokens for
         credentials: Google Credentials object
+        
+    Note:
+        Refresh token is encrypted before storage if GOOGLE_TOKEN_ENCRYPTION_KEY is set.
     """
     import asyncio
     from services.db_services.supabase_quiz import get_supabase
     
     supabase = get_supabase()
     
+    # Encrypt the refresh token before storage
+    encrypted_token = _encrypt_token(credentials.refresh_token)
+    
     def update_profile():
         return supabase.table("profiles").update({
-            "google_refresh_token": credentials.refresh_token,
+            "google_refresh_token": encrypted_token,
             "google_connected_at": datetime.now(timezone.utc).isoformat()
         }).eq("id", user_id).execute()
     
@@ -223,6 +320,9 @@ async def get_google_credentials(user_id: str) -> Optional[Credentials]:
         
     Returns:
         Credentials object if user is connected, None otherwise
+        
+    Note:
+        Decrypts the stored refresh token if GOOGLE_TOKEN_ENCRYPTION_KEY is set.
     """
     import asyncio
     from services.db_services.supabase_quiz import get_supabase
@@ -241,7 +341,10 @@ async def get_google_credentials(user_id: str) -> Optional[Credentials]:
         if not profile or not profile.get("google_refresh_token"):
             return None
         
-        refresh_token = profile["google_refresh_token"]
+        # Decrypt the stored refresh token
+        encrypted_token = profile["google_refresh_token"]
+        refresh_token = _decrypt_token(encrypted_token)
+        
         credentials = build_credentials_from_refresh_token(refresh_token)
         
         return credentials

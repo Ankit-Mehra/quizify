@@ -238,6 +238,81 @@ class TestGoogleAuthServiceFunctions:
             assert "not configured" in str(exc_info.value).lower()
 
 
+class TestTokenEncryption:
+    """Test token encryption/decryption functions."""
+    
+    def test_encrypt_decrypt_roundtrip_with_key(self):
+        """Token should survive encrypt/decrypt roundtrip when key is configured."""
+        from cryptography.fernet import Fernet
+        import importlib
+        
+        # Generate a test key
+        test_key = Fernet.generate_key().decode()
+        
+        with patch.object(
+            __import__('config', fromlist=['config']).config,
+            'GOOGLE_TOKEN_ENCRYPTION_KEY',
+            test_key
+        ):
+            # Reload to pick up the key
+            import services.google_auth_service as gas
+            # Reset the cached fernet
+            gas._fernet = None
+            gas._encryption_warned = False
+            
+            original_token = "test_refresh_token_12345"
+            
+            # Encrypt
+            encrypted = gas._encrypt_token(original_token)
+            assert encrypted != original_token  # Should be different
+            
+            # Decrypt
+            decrypted = gas._decrypt_token(encrypted)
+            assert decrypted == original_token  # Should match original
+    
+    def test_encrypt_returns_plaintext_without_key(self):
+        """Without encryption key, _encrypt_token returns plaintext."""
+        with patch.object(
+            __import__('config', fromlist=['config']).config,
+            'GOOGLE_TOKEN_ENCRYPTION_KEY',
+            None
+        ):
+            import services.google_auth_service as gas
+            # Reset the cached fernet
+            gas._fernet = None
+            gas._encryption_warned = False
+            
+            original_token = "test_refresh_token_no_key"
+            encrypted = gas._encrypt_token(original_token)
+            
+            # Should be the same since no key configured
+            assert encrypted == original_token
+    
+    def test_decrypt_returns_input_without_key(self):
+        """Without encryption key, _decrypt_token returns input unchanged."""
+        with patch.object(
+            __import__('config', fromlist=['config']).config,
+            'GOOGLE_TOKEN_ENCRYPTION_KEY',
+            None
+        ):
+            import services.google_auth_service as gas
+            # Reset the cached fernet
+            gas._fernet = None
+            gas._encryption_warned = False
+            
+            token = "some_token_value"
+            decrypted = gas._decrypt_token(token)
+            
+            assert decrypted == token
+    
+    def test_encryption_functions_exist(self):
+        """Encryption functions should be importable."""
+        from services.google_auth_service import _encrypt_token, _decrypt_token
+        
+        assert callable(_encrypt_token)
+        assert callable(_decrypt_token)
+
+
 class TestGoogleAuthHandlers:
     """Test Google OAuth handler functions exist."""
     

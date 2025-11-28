@@ -119,6 +119,11 @@ class Config:
         f"{os.getenv('BACKEND_URL', 'http://localhost:8000')}/api/auth/google/callback"
     )
     
+    # Encryption key for Google OAuth refresh tokens (Fernet key)
+    # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    # CRITICAL: Set this in production! Tokens stored without encryption if not set.
+    GOOGLE_TOKEN_ENCRYPTION_KEY: str = os.getenv("GOOGLE_TOKEN_ENCRYPTION_KEY", "")
+    
     @classmethod
     def is_testing(cls) -> bool:
         """
