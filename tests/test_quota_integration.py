@@ -271,7 +271,8 @@ class TestQuotaEnforcementTextEndpoint:
                 )
             
             # Assertions
-            assert_quota_exceeded_error(exc_info, 'basic', 100, 100)
+            # 'basic' tier is normalized to 'premium' in user-facing messages
+            assert_quota_exceeded_error(exc_info, 'premium', 100, 100)
             assert 'Upgrade to Pro' in exc_info.value.detail['detail']
         
     @pytest.mark.asyncio
@@ -459,7 +460,8 @@ class TestQuotaEnforcementTextEndpoint:
         detail = exc_info.value.detail
         assert detail['current_count'] == 100
         assert detail['quota_limit'] == 100
-        assert detail['user_tier'] == 'basic'
+        # 'basic' tier is normalized to 'premium' in user-facing messages
+        assert detail['user_tier'] == 'premium'
 
 
 class TestQuotaCheckBeforeGeneration:
@@ -729,7 +731,8 @@ class TestQuotaEnforcementFileIdEndpoint:
         detail = exc_info.value.detail
         assert detail['current_count'] == 100
         assert detail['quota_limit'] == 100
-        assert detail['user_tier'] == 'basic'
+        # 'basic' tier is normalized to 'premium' in user-facing messages
+        assert detail['user_tier'] == 'premium'
         assert 'Upgrade to Pro' in detail['detail']
         
     @pytest.mark.asyncio

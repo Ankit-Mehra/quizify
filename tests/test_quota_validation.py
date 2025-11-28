@@ -143,7 +143,8 @@ class TestValidateUserQuota:
         detail = exc_info.value.detail
         assert detail['current_count'] == 100
         assert detail['quota_limit'] == 100
-        assert detail['user_tier'] == 'basic'
+        # 'basic' tier is normalized to 'premium' in user-facing messages
+        assert detail['user_tier'] == 'premium'
         assert 'Upgrade to Pro for unlimited quizzes' in detail['detail']
         
     @patch('handlers.quiz_handlers.get_user_tier_info_cached', new_callable=AsyncMock)

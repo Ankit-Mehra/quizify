@@ -71,6 +71,10 @@ async def validate_user_quota(user_id: str, user_token: str = None):
         quota_limit = tier_info["quota_limit"]
         user_tier = tier_info["account_tier"]
         
+        # Normalize legacy tier naming for user-facing messages
+        # Database may still have "basic" but we display "premium" to users
+        display_tier = "premium" if user_tier == "basic" else user_tier
+        
         # Create upgrade suggestion based on current tier
         upgrade_suggestion = ""
         if user_tier == "free":
@@ -78,7 +82,7 @@ async def validate_user_quota(user_id: str, user_token: str = None):
         elif user_tier in ("basic", "premium"):  # Support both legacy and new naming
             upgrade_suggestion = "Upgrade to Pro for unlimited quizzes."
         
-        detail_message = f"Quiz quota exceeded for {user_tier} tier ({current_count}/{quota_limit}). {upgrade_suggestion}".strip()
+        detail_message = f"Quiz quota exceeded for {display_tier} tier ({current_count}/{quota_limit}). {upgrade_suggestion}".strip()
         
         # Log with truncated user ID for security (server-side only)
         user_id_truncated = user_id[:8] + "..." if len(user_id) > 8 else user_id
@@ -90,7 +94,7 @@ async def validate_user_quota(user_id: str, user_token: str = None):
                 "detail": detail_message,
                 "current_count": current_count,
                 "quota_limit": quota_limit,
-                "user_tier": user_tier
+                "user_tier": display_tier  # Return normalized tier name
             }
         )
     
