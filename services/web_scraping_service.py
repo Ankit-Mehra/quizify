@@ -10,7 +10,6 @@ import httpx
 from urllib.parse import urlparse
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeout
 import trafilatura
-import asyncio
 from fastapi import HTTPException
 from services.logger import app_logger as logger
 from config import config as app_config

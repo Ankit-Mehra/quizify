@@ -19,8 +19,11 @@ class ExportFormat(str, Enum):
     Supported export formats.
     
     Tier Access:
-    - All tiers: pdf, docx, csv_quizify, csv_anki, share_link
-    - Pro only: qti, moodle_xml
+    - Free: No export access
+    - Premium ($7/mo): PDF, DOCX, CSV (Quizify), CSV (Anki), Share Link (5 formats)
+    - Pro: All Premium formats + QTI 2.1, Moodle XML, Google Forms (8 formats)
+    
+    Note: Authoritative tier access control is defined in services.exporters.tier_validator
     """
     PDF = "pdf"
     DOCX = "docx"
@@ -29,10 +32,12 @@ class ExportFormat(str, Enum):
     QTI = "qti"
     MOODLE_XML = "moodle_xml"
     SHARE_LINK = "share_link"
+    GOOGLE_FORMS = "google_forms"
 
 
-# Pro-only export formats
-PRO_ONLY_FORMATS = {ExportFormat.QTI, ExportFormat.MOODLE_XML}
+# NOTE: Tier access constants (PRO_ONLY_FORMATS, PAID_TIER_FORMATS) are defined in
+# services.exporters.tier_validator - that is the single source of truth for tier gating.
+# Do not define duplicate constants here to avoid configuration drift.
 
 
 class ExportRequest(BaseModel):
@@ -65,7 +70,7 @@ class TierInsufficientError(BaseModel):
     """Error response when user's tier doesn't allow the requested export format."""
     error: Literal["tier_insufficient"] = "tier_insufficient"
     message: str = Field(
-        default="LMS export formats (QTI, Moodle XML) require a Pro subscription"
+        default="Pro features (QTI, Moodle XML, Google Forms) require a Pro subscription"
     )
     required_tier: Literal["pro"] = "pro"
     current_tier: str
@@ -185,5 +190,32 @@ class ExportResult(BaseModel):
     content_type: str = Field(..., description="MIME type of the content")
     filename: Optional[str] = Field(None, description="Suggested filename for download (None for non-file exports)")
     share_url: Optional[str] = Field(None, description="Share URL for share_link exports")
+    # Google Forms specific fields
+    form_url: Optional[str] = Field(None, description="Google Forms responder URL")
+    edit_url: Optional[str] = Field(None, description="Google Forms edit URL")
+    form_id: Optional[str] = Field(None, description="Google Forms ID")
+    questions_exported: Optional[int] = Field(None, description="Number of questions exported")
+    questions_skipped: Optional[int] = Field(None, description="Number of questions skipped")
+    warnings: Optional[List[str]] = Field(None, description="Warnings during export")
     
     model_config = ConfigDict(arbitrary_types_allowed=True)
+
+
+class GoogleFormsExportResponse(BaseModel):
+    """Response for google_forms export format."""
+    form_url: str = Field(..., description="Google Forms URL for responders")
+    edit_url: str = Field(..., description="Google Forms URL for editing")
+    form_id: str = Field(..., description="Google Forms unique ID")
+    questions_exported: int = Field(default=0, description="Number of questions exported")
+    questions_skipped: int = Field(default=0, description="Number of questions skipped")
+    warnings: Optional[List[str]] = Field(None, description="Warnings about skipped questions")
+
+
+class GoogleAuthRequiredResponse(BaseModel):
+    """Response when Google OAuth is required for export."""
+    error: Literal["google_auth_required"] = "google_auth_required"
+    message: str = Field(
+        default="Please connect your Google account to export to Google Forms"
+    )
+    auth_url: str = Field(..., description="URL to initiate Google OAuth")
+    current_tier: str = Field(..., description="User's current tier")

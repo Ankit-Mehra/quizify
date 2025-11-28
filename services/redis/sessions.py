@@ -856,7 +856,7 @@ class SessionService:
                 return session_id
             
             # Fallback: O(n) search for legacy sessions without mapping
-            logger.debug(f"Client token not in Redis mapping, trying O(n) fallback search")
+            logger.debug("Client token not in Redis mapping, trying O(n) fallback search")
             sessions = await self.list_sessions(user_id)
             
             # Find matching session by client token

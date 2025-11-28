@@ -21,11 +21,13 @@ This document provides everything needed to integrate the quiz export functional
 
 The export feature allows users to download quizzes in various formats. Access is controlled by subscription tier:
 
-| Tier | Available Formats |
-|------|-------------------|
-| **Free** | ❌ No export access |
-| **Basic** | PDF, DOCX, CSV (Quizify), CSV (Anki), Share Link |
-| **Pro** | All Basic formats + QTI 2.1, Moodle XML |
+| Tier | Price | Available Formats |
+|------|-------|-------------------|
+| **Free** | $0 | ❌ No export access |
+| **Premium** | $7/mo | PDF, DOCX, CSV (Quizify), CSV (Anki), Share Link (5 formats) |
+| **Pro** | TBD | All Premium formats + QTI 2.1, Moodle XML, Google Forms (8 formats) |
+
+> **Note:** Pro tier includes LMS integrations (QTI, Moodle XML) and Google Forms export.
 
 ---
 
@@ -60,9 +62,10 @@ Content-Type: application/json
 - `docx` - Word document (editable)
 - `csv_quizify` - CSV native format
 - `csv_anki` - CSV for Anki flashcards
+- `share_link` - Generate public share URL
+- `google_forms` - Export to Google Forms - **Pro only**
 - `qti` - QTI 2.1 XML (LMS) - **Pro only**
 - `moodle_xml` - Moodle XML (LMS) - **Pro only**
-- `share_link` - Generate public share URL
 
 **Response:**
 - **File formats** (pdf, docx, csv_*, qti, moodle_xml): Returns binary file with appropriate `Content-Type` and `Content-Disposition` headers
@@ -100,42 +103,64 @@ Authorization: Bearer <jwt_token>
   "pdf": {
     "available": true,
     "requires_pro": false,
+    "requires_paid": false,
+    "coming_soon": false,
     "name": "PDF Document"
   },
   "docx": {
     "available": true,
     "requires_pro": false,
+    "requires_paid": false,
+    "coming_soon": false,
     "name": "Word Document (DOCX)"
   },
   "csv_quizify": {
     "available": true,
     "requires_pro": false,
+    "requires_paid": false,
+    "coming_soon": false,
     "name": "CSV (Quizify Native)"
   },
   "csv_anki": {
     "available": true,
     "requires_pro": false,
+    "requires_paid": false,
+    "coming_soon": false,
     "name": "CSV (Anki Flashcards)"
   },
   "share_link": {
     "available": true,
     "requires_pro": false,
+    "requires_paid": false,
+    "coming_soon": false,
     "name": "Shareable Link"
+  },
+  "google_forms": {
+    "available": false,
+    "requires_pro": true,
+    "requires_paid": false,  // Note: requires_paid=false because Pro-only is checked via requires_pro=true
+    "coming_soon": false,
+    "name": "Google Forms"
   },
   "qti": {
     "available": false,
     "requires_pro": true,
+    "requires_paid": false,
+    "coming_soon": false,
     "name": "QTI 2.1 (LMS)"
   },
   "moodle_xml": {
     "available": false,
     "requires_pro": true,
+    "requires_paid": false,
+    "coming_soon": false,
     "name": "Moodle XML (LMS)"
   }
 }
 ```
 
 > **Note:** Response is a flat object (not nested under `formats`), and does not include `user_tier` or `description` fields.
+> **Note:** Formats with `requires_pro: true` require Pro tier subscription (QTI, Moodle XML, Google Forms).
 
 ---
 
@@ -246,7 +271,10 @@ export type ExportFormat =
   | 'csv_anki'
   | 'qti'
   | 'moodle_xml'
-  | 'share_link';
+  | 'share_link'
+  | 'google_forms';
+
+export type UserTier = 'free' | 'premium' | 'pro';
 
 export interface ExportRequest {
   format: ExportFormat;
@@ -261,6 +289,8 @@ export interface ShareLinkResponse {
 export interface FormatInfo {
   available: boolean;
   requires_pro: boolean;
+  requires_paid: boolean;  // Requires Premium or Pro
+  coming_soon: boolean;    // Pro features not yet released
   name: string;
 }
 
@@ -323,10 +353,10 @@ export interface ExportError {
 export interface TierInsufficientError {
   error: 'tier_insufficient';
   message: string;
-  required_tier: 'basic' | 'pro';  // 'basic' for free users, 'pro' for LMS formats
+  required_tier: 'premium' | 'pro';  // 'premium' for free users, 'pro' for Google Forms/LMS formats
   current_tier: string;
   requested_format: string;  // The format that was requested
-  upgrade_url: string;
+  upgrade_url?: string;      // URL to upgrade page
 }
 ```
 
@@ -417,13 +447,18 @@ export async function getAvailableFormats(): Promise<AvailableFormatsResponse> {
  * Helper to get user tier from formats response
  * (tier must be inferred from format availability since it's not returned)
  */
-export function inferUserTier(formats: AvailableFormatsResponse): 'free' | 'basic' | 'pro' {
-  // If QTI is available, user is Pro
-  if (formats.qti?.available) return 'pro';
-  // If PDF is available, user is at least Basic
-  if (formats.pdf?.available) return 'basic';
+export function inferUserTier(formats: AvailableFormatsResponse): UserTier {
+  // If PDF is available, user is at least Premium
+  if (formats.pdf?.available) return 'premium';
   // Otherwise Free
   return 'free';
+}
+
+/**
+ * Check if a format requires Pro tier
+ */
+export function isFormatProOnly(formats: AvailableFormatsResponse, format: ExportFormat): boolean {
+  return formats[format]?.requires_pro ?? false;
 }
 
 /**
@@ -601,6 +636,8 @@ export function useExport(quizId: string, quizTitle: string) {
     // Helpers
     isFormatAvailable: (format: ExportFormat) => 
       formatsData?.[format]?.available ?? false,
+    isFormatProOnly: (format: ExportFormat) =>
+      formatsData?.[format]?.requires_pro ?? false,
     requiresPro: (format: ExportFormat) => 
       formatsData?.[format]?.requires_pro ?? false,
   };
@@ -617,7 +654,7 @@ export function useExport(quizId: string, quizTitle: string) {
 // components/ExportDropdown.tsx
 
 import { useState } from 'react';
-import { Download, Share2, FileText, Table, Crown, Loader2 } from 'lucide-react';
+import { Download, Share2, FileText, Table, Crown, Loader2, Clock } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -649,6 +686,7 @@ const FORMAT_OPTIONS: Array<{
   { format: 'csv_anki', label: 'CSV (Anki)', icon: Table, group: 'data' },
   { format: 'qti', label: 'QTI 2.1 (LMS)', icon: Download, group: 'lms' },
   { format: 'moodle_xml', label: 'Moodle XML', icon: Download, group: 'lms' },
+  { format: 'google_forms', label: 'Google Forms', icon: Share2, group: 'lms' },
   { format: 'share_link', label: 'Create Share Link', icon: Share2, group: 'share' },
 ];
 
@@ -661,10 +699,14 @@ export function ExportDropdown({ quizId, quizTitle, disabled }: ExportDropdownPr
     userTier,
     exportQuiz,
     isFormatAvailable,
-    requiresPro,
+    isFormatProOnly,
   } = useExport(quizId, quizTitle);
 
   const handleSelect = async (format: ExportFormat) => {
+    // Don't allow clicking on Pro-only formats if not Pro tier
+    if (formats?.[format]?.requires_pro && userTier !== 'pro') {
+      return;
+    }
     setOpen(false);
     await exportQuiz(format);
   };
@@ -684,7 +726,7 @@ export function ExportDropdown({ quizId, quizTitle, disabled }: ExportDropdownPr
         <Download className="h-4 w-4 mr-2" />
         Export
         <Badge variant="secondary" className="ml-2">
-          Basic+
+          Premium
         </Badge>
       </Button>
     );
@@ -730,26 +772,30 @@ export function ExportDropdown({ quizId, quizTitle, disabled }: ExportDropdownPr
         ))}
 
         <DropdownMenuSeparator />
-        <DropdownMenuLabel>LMS Formats</DropdownMenuLabel>
-        {lmsFormats.map(({ format, label, icon: Icon }) => (
-          <DropdownMenuItem
-            key={format}
-            onClick={() => handleSelect(format)}
-            disabled={!isFormatAvailable(format)}
-            className="flex items-center justify-between"
-          >
-            <span className="flex items-center">
-              <Icon className="h-4 w-4 mr-2" />
-              {label}
-            </span>
-            {requiresPro(format) && !isFormatAvailable(format) && (
-              <Badge variant="outline" className="ml-2">
-                <Crown className="h-3 w-3 mr-1" />
-                Pro
-              </Badge>
-            )}
-          </DropdownMenuItem>
-        ))}
+        <DropdownMenuLabel>LMS Formats (Pro)</DropdownMenuLabel>
+        {lmsFormats.map(({ format, label, icon: Icon }) => {
+          const requiresPro = formats?.[format]?.requires_pro;
+          const isProUser = userTier === 'pro';
+          return (
+            <DropdownMenuItem
+              key={format}
+              onClick={() => handleSelect(format)}
+              disabled={requiresPro && !isProUser}
+              className={requiresPro && !isProUser ? "flex items-center justify-between opacity-60" : "flex items-center justify-between"}
+            >
+              <span className="flex items-center">
+                <Icon className="h-4 w-4 mr-2" />
+                {label}
+              </span>
+              {requiresPro && !isProUser && (
+                <Badge variant="outline" className="ml-2 text-xs">
+                  <Crown className="h-3 w-3 mr-1" />
+                  Pro
+                </Badge>
+              )}
+            </DropdownMenuItem>
+          );
+        })}
 
         <DropdownMenuSeparator />
         {shareFormats.map(({ format, label, icon: Icon }) => (
@@ -1030,18 +1076,18 @@ export function ShareLinkCard({ quizId, quizTitle }: ShareLinkCardProps) {
 ```tsx
 // components/TierGate.tsx
 
-import { Crown } from 'lucide-react';
+import { Crown, Clock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useRouter } from 'next/navigation';
 
 interface TierGateProps {
-  requiredTier: 'basic' | 'pro';
-  currentTier: 'free' | 'basic' | 'pro';
+  requiredTier: 'premium' | 'pro';
+  currentTier: 'free' | 'premium' | 'pro';
   children: React.ReactNode;
   fallback?: React.ReactNode;
 }
 
-const TIER_ORDER = { free: 0, basic: 1, pro: 2 };
+const TIER_ORDER = { free: 0, premium: 1, pro: 2 };
 
 export function TierGate({ 
   requiredTier, 
@@ -1050,6 +1096,7 @@ export function TierGate({
   fallback 
 }: TierGateProps) {
   const router = useRouter();
+  
   const hasAccess = TIER_ORDER[currentTier] >= TIER_ORDER[requiredTier];
 
   if (hasAccess) {
@@ -1063,11 +1110,9 @@ export function TierGate({
   return (
     <div className="flex flex-col items-center justify-center p-6 text-center bg-muted/50 rounded-lg">
       <Crown className="h-8 w-8 text-yellow-500 mb-2" />
-      <h3 className="font-semibold">
-        {requiredTier === 'pro' ? 'Pro' : 'Basic'} Feature
-      </h3>
+      <h3 className="font-semibold">{requiredTier === 'pro' ? 'Pro Feature' : 'Premium Feature'}</h3>
       <p className="text-sm text-muted-foreground mb-4">
-        Upgrade to access this feature
+        Upgrade to {requiredTier === 'pro' ? 'Pro' : 'Premium'} to access this feature
       </p>
       <Button onClick={() => router.push('/billing/upgrade')}>
         Upgrade Now
@@ -1100,12 +1145,23 @@ export function handleExportError(error: any): void {
       
     case 403:
       if (errorType === 'tier_insufficient') {
-        toast.error('Upgrade to Pro to access LMS export formats', {
-          action: {
-            label: 'Upgrade',
-            onClick: () => window.location.href = '/billing/upgrade',
-          },
-        });
+        const requiredTier = error.response?.data?.required_tier;
+        if (requiredTier === 'pro') {
+          toast.error('Upgrade to Pro to access this feature', {
+            description: 'Google Forms, QTI, and Moodle XML exports require Pro tier.',
+            action: {
+              label: 'Upgrade to Pro',
+              onClick: () => window.location.href = '/billing/upgrade',
+            },
+          });
+        } else {
+          toast.error('Upgrade to Premium to access export features', {
+            action: {
+              label: 'Upgrade - $7/mo',
+              onClick: () => window.location.href = '/billing/upgrade',
+            },
+          });
+        }
       } else {
         toast.error('You do not have permission to export this quiz');
       }
@@ -1210,15 +1266,16 @@ export default function PublicQuizPage({ params }: { params: { slug: string } })
 ```typescript
 // mocks/exportMocks.ts
 
-// Mock for Basic tier user
+// Mock for Premium tier user
 export const mockFormatsResponse: AvailableFormatsResponse = {
-  pdf: { available: true, requires_pro: false, name: 'PDF Document' },
-  docx: { available: true, requires_pro: false, name: 'Word Document (DOCX)' },
-  csv_quizify: { available: true, requires_pro: false, name: 'CSV (Quizify Native)' },
-  csv_anki: { available: true, requires_pro: false, name: 'CSV (Anki Flashcards)' },
-  share_link: { available: true, requires_pro: false, name: 'Shareable Link' },
-  qti: { available: false, requires_pro: true, name: 'QTI 2.1 (LMS)' },
-  moodle_xml: { available: false, requires_pro: true, name: 'Moodle XML (LMS)' },
+  pdf: { available: true, requires_pro: false, requires_paid: false, coming_soon: false, name: 'PDF Document' },
+  docx: { available: true, requires_pro: false, requires_paid: false, coming_soon: false, name: 'Word Document (DOCX)' },
+  csv_quizify: { available: true, requires_pro: false, requires_paid: false, coming_soon: false, name: 'CSV (Quizify Native)' },
+  csv_anki: { available: true, requires_pro: false, requires_paid: false, coming_soon: false, name: 'CSV (Anki Flashcards)' },
+  share_link: { available: true, requires_pro: false, requires_paid: false, coming_soon: false, name: 'Shareable Link' },
+  google_forms: { available: false, requires_pro: true, requires_paid: false, coming_soon: false, name: 'Google Forms' },
+  qti: { available: false, requires_pro: true, requires_paid: false, coming_soon: false, name: 'QTI 2.1 (LMS)' },
+  moodle_xml: { available: false, requires_pro: true, requires_paid: false, coming_soon: false, name: 'Moodle XML (LMS)' },
 };
 
 export const mockShareStatus = {
@@ -1236,6 +1293,8 @@ export const mockShareStatus = {
 
 | Date | Version | Changes |
 |------|---------|---------|
+| 2025-11-27 | 2.1.0 | **Breaking:** Google Forms moved to Pro-only tier. Pro tier now fully enabled (no more "coming soon"). Premium tier has 5 formats, Pro tier has 8 formats (includes QTI, Moodle XML, Google Forms). |
+| 2025-11-27 | 2.0.0 | **Breaking:** Renamed "Basic" tier to "Premium" ($7/mo). Pro tier features (QTI, Moodle XML) now return `coming_soon: true` and are disabled. Added `google_forms` export format. New fields: `requires_paid`, `coming_soon` in format response. |
 | 2025-11-26 | 1.2.0 | **Updated:** `description`, `topic`, and `difficulty` are now always `null` (not stored in DB). `question_type` uses `multiple_choice` instead of `mcq`. Added XSS security warning for frontend. |
 | 2025-11-26 | 1.1.0 | **Breaking:** Matching questions now use `matching_left`/`matching_right` arrays instead of `matching_pairs`. Right column is shuffled server-side for security. |
 | 2025-11-26 | 1.0.0 | Initial integration guide |

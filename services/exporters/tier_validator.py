@@ -3,8 +3,8 @@ Tier Validator - Export format access control based on user subscription tier.
 
 This module enforces tier-based access to export formats:
 - Free tier: No export access
-- Basic tier: PDF, DOCX, CSV (Quizify), CSV (Anki), Share Link
-- Pro tier: All formats including QTI 2.1, Moodle XML
+- Premium tier: PDF, DOCX, CSV (Quizify), CSV (Anki), Share Link
+- Pro tier: All Premium formats + Google Forms, QTI 2.1, Moodle XML
 
 Access is validated at the API layer before any export processing begins.
 """
@@ -15,17 +15,32 @@ from fastapi import HTTPException
 from schemas.export import ExportFormat
 
 
-# Export formats restricted to Pro tier only
+# Pro-only formats - require Pro subscription
+# Business rationale:
+# - QTI 2.1 / Moodle XML: LMS integration features for enterprise/educational institutions
+# - Google Forms: Requires Google API access with associated costs and support overhead
+# These advanced integrations justify the Pro tier requirement for sustainability.
 PRO_ONLY_FORMATS: Set[ExportFormat] = {
     ExportFormat.QTI,
-    ExportFormat.MOODLE_XML
+    ExportFormat.MOODLE_XML,
+    ExportFormat.GOOGLE_FORMS,
+}
+
+# Export formats available to Premium and Pro tiers (paid tiers)
+# These are the base paid formats (non-Pro)
+PAID_TIER_FORMATS: Set[ExportFormat] = {
+    ExportFormat.PDF,
+    ExportFormat.DOCX,
+    ExportFormat.CSV_QUIZIFY,
+    ExportFormat.CSV_ANKI,
+    ExportFormat.SHARE_LINK,
 }
 
 # Tiers that have export access (free tier excluded)
-EXPORT_ALLOWED_TIERS = {"basic", "pro"}
+EXPORT_ALLOWED_TIERS = {"premium", "pro"}
 
 # Valid tier values
-VALID_TIERS = {"free", "basic", "pro"}
+VALID_TIERS = {"free", "premium", "pro"}
 
 
 class TierInsufficientError(HTTPException):
@@ -39,8 +54,8 @@ class TierInsufficientError(HTTPException):
         if reason == "free_tier":
             detail = {
                 "error": "tier_insufficient",
-                "message": "Export features require a Basic or Pro subscription",
-                "required_tier": "basic",
+                "message": "Export features require a Premium or Pro subscription",
+                "required_tier": "premium",
                 "current_tier": current_tier,
                 "requested_format": requested_format.value,
                 "upgrade_url": "/billing/upgrade"
@@ -48,7 +63,7 @@ class TierInsufficientError(HTTPException):
         else:  # pro_required
             detail = {
                 "error": "tier_insufficient",
-                "message": "LMS export formats (QTI, Moodle XML) require a Pro subscription",
+                "message": "Google Forms and LMS export formats (QTI, Moodle XML) require a Pro subscription",
                 "required_tier": "pro",
                 "current_tier": current_tier,
                 "requested_format": requested_format.value,
@@ -65,7 +80,7 @@ def validate_export_tier_access(
     Validate that user's subscription tier allows the requested export format.
     
     Args:
-        user_tier: User's current subscription tier ('free', 'basic', 'pro')
+        user_tier: User's current subscription tier ('free', 'premium', 'pro')
         export_format: The export format being requested
         
     Raises:
@@ -73,13 +88,15 @@ def validate_export_tier_access(
         ValueError: If user_tier is not a valid tier value
         
     Example:
-        >>> validate_export_tier_access("free", ExportFormat.PDF)   # Raises 403
-        >>> validate_export_tier_access("basic", ExportFormat.PDF)  # OK
-        >>> validate_export_tier_access("basic", ExportFormat.QTI)  # Raises 403
-        >>> validate_export_tier_access("pro", ExportFormat.QTI)    # OK
+        >>> validate_export_tier_access("free", ExportFormat.PDF)      # Raises 403
+        >>> validate_export_tier_access("premium", ExportFormat.PDF)   # OK
+        >>> validate_export_tier_access("premium", ExportFormat.QTI)   # Raises 403 (Pro required)
+        >>> validate_export_tier_access("pro", ExportFormat.QTI)       # OK
     """
-    # Normalize tier to lowercase
+    # Normalize tier to lowercase and map legacy "basic" to "premium"
     user_tier = user_tier.lower() if user_tier else "free"
+    if user_tier == "basic":
+        user_tier = "premium"  # Legacy mapping
     
     # Validate tier value
     if user_tier not in VALID_TIERS:
@@ -93,14 +110,13 @@ def validate_export_tier_access(
             reason="free_tier"
         )
     
-    # Check if format requires Pro tier
-    if export_format in PRO_ONLY_FORMATS:
-        if user_tier != "pro":
-            raise TierInsufficientError(
-                current_tier=user_tier,
-                requested_format=export_format,
-                reason="pro_required"
-            )
+    # Pro-only formats require Pro tier
+    if export_format in PRO_ONLY_FORMATS and user_tier != "pro":
+        raise TierInsufficientError(
+            current_tier=user_tier,
+            requested_format=export_format,
+            reason="pro_required"
+        )
 
 
 def is_format_available_for_tier(user_tier: str, export_format: ExportFormat) -> bool:
@@ -117,16 +133,18 @@ def is_format_available_for_tier(user_tier: str, export_format: ExportFormat) ->
         True if format is available, False otherwise
     """
     user_tier = user_tier.lower() if user_tier else "free"
+    if user_tier == "basic":
+        user_tier = "premium"  # Legacy mapping
     
     # Free tier has no export access
     if user_tier == "free":
         return False
     
-    # Pro-only formats check
+    # Pro-only formats require Pro tier
     if export_format in PRO_ONLY_FORMATS:
         return user_tier == "pro"
     
-    # Basic and Pro have access to non-Pro formats
+    # Premium and Pro have access to non-Pro formats
     return True
 
 
@@ -141,6 +159,8 @@ def get_available_formats_for_tier(user_tier: str) -> list[ExportFormat]:
         List of available ExportFormat values
     """
     user_tier = user_tier.lower() if user_tier else "free"
+    if user_tier == "basic":
+        user_tier = "premium"  # Legacy mapping
     
     # Free tier gets nothing
     if user_tier == "free":

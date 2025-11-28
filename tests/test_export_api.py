@@ -11,7 +11,7 @@ Tests cover:
 import pytest
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import HTTPException
 
@@ -46,7 +46,7 @@ class TestTierValidator:
         with pytest.raises(TierInsufficientError) as exc_info:
             validate_export_tier_access("free", ExportFormat.PDF)
         assert exc_info.value.status_code == 403
-        assert exc_info.value.detail["required_tier"] == "basic"
+        assert exc_info.value.detail["required_tier"] == "premium"
         assert exc_info.value.detail["current_tier"] == "free"
     
     def test_free_tier_cannot_access_docx(self):
@@ -75,8 +75,10 @@ class TestTierValidator:
             validate_export_tier_access("free", ExportFormat.QTI)
         
         assert exc_info.value.status_code == 403
+        # Free tier gets generic tier_insufficient, not coming_soon 
+        # (fails on first check before reaching coming_soon logic)
         assert exc_info.value.detail["error"] == "tier_insufficient"
-        assert exc_info.value.detail["required_tier"] == "basic"
+        assert exc_info.value.detail["required_tier"] == "premium"
         assert exc_info.value.detail["current_tier"] == "free"
     
     def test_free_tier_cannot_access_moodle_xml(self):
@@ -134,8 +136,12 @@ class TestTierValidator:
     
     def test_tier_case_insensitive(self):
         """Tier validation should be case-insensitive."""
+        # Basic/premium tiers - PDF should work
         validate_export_tier_access("BASIC", ExportFormat.PDF)
         validate_export_tier_access("Basic", ExportFormat.PDF)
+        validate_export_tier_access("PREMIUM", ExportFormat.PDF)
+        validate_export_tier_access("Premium", ExportFormat.PDF)
+        # Pro tier - all formats should work
         validate_export_tier_access("PRO", ExportFormat.QTI)
         validate_export_tier_access("Pro", ExportFormat.QTI)
     
@@ -184,13 +190,15 @@ class TestFormatAvailability:
         assert ExportFormat.QTI not in formats
     
     def test_get_available_formats_basic(self):
-        """Basic tier should have 5 formats available (all except LMS)."""
+        """Basic/Premium tier should have 5 formats available (no Pro features)."""
         formats = get_available_formats_for_tier("basic")
         assert ExportFormat.PDF in formats
         assert ExportFormat.DOCX in formats
         assert ExportFormat.CSV_QUIZIFY in formats
         assert ExportFormat.CSV_ANKI in formats
         assert ExportFormat.SHARE_LINK in formats
+        # Pro-only formats not available
+        assert ExportFormat.GOOGLE_FORMS not in formats
         assert ExportFormat.QTI not in formats
         assert ExportFormat.MOODLE_XML not in formats
     
@@ -249,7 +257,7 @@ class TestQuizExportData:
         quiz = QuizExportData(
             quiz_id=uuid4(),
             title="Test Quiz",
-            created_at=datetime.now(),
+            created_at=datetime.now(timezone.utc),
             questions=[
                 ExportQuestionMCQ(
                     id=uuid4(),
@@ -278,7 +286,7 @@ class TestQuizExportData:
         quiz = QuizExportData(
             quiz_id=uuid4(),
             title="Mixed Quiz",
-            created_at=datetime.now(),
+            created_at=datetime.now(timezone.utc),
             questions=[
                 ExportQuestionMCQ(
                     id=uuid4(),
@@ -526,8 +534,9 @@ class TestGetExportFormats:
         
         formats = await get_export_formats_for_user("pro")
         
+        # All formats should be available for Pro tier
         for fmt_name, fmt_info in formats.items():
-            assert fmt_info["available"] is True
+            assert fmt_info["available"] is True, f"{fmt_name} should be available for Pro tier"
 
 
 # ============================================================================

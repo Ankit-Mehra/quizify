@@ -94,8 +94,8 @@ class Config:
     
     # Stripe Price IDs for subscription plans
     # These are created in Stripe Dashboard and map to our tier system
-    STRIPE_PRICE_ID_BASIC: str = os.getenv("STRIPE_PRICE_ID_BASIC", "")  # $5/mo - 100 quizzes
-    STRIPE_PRICE_ID_PRO: str = os.getenv("STRIPE_PRICE_ID_PRO", "")  # $15/mo - unlimited quizzes
+    STRIPE_PRICE_ID_PREMIUM: str = os.getenv("STRIPE_PRICE_ID_PREMIUM", "")  # $7/mo - 50 quizzes
+    STRIPE_PRICE_ID_PRO: str = os.getenv("STRIPE_PRICE_ID_PRO", "")  # Coming soon - unlimited quizzes + LMS exports
     
     # Frontend URLs for Stripe redirects
     STRIPE_SUCCESS_URL: str = os.getenv("STRIPE_SUCCESS_URL", f"{os.getenv('FRONTEND_URL', 'https://www.quizify.ca')}/billing/success")
@@ -107,6 +107,22 @@ class Config:
     # Billing strict mode - when True, webhooks fail if Redis is unavailable (for multi-instance prod)
     # Set to "true" in production with multiple instances to prevent duplicate processing
     BILLING_REQUIRE_REDIS: bool = os.getenv("BILLING_REQUIRE_REDIS", "false").lower() == "true"
+    
+    # ============================================================================
+    # Google OAuth Configuration (for Google Forms Export - Pro Tier Feature)
+    # ============================================================================
+    
+    GOOGLE_CLIENT_ID: str = os.getenv("GOOGLE_CLIENT_ID", "")
+    GOOGLE_CLIENT_SECRET: str = os.getenv("GOOGLE_CLIENT_SECRET", "")
+    GOOGLE_REDIRECT_URI: str = os.getenv(
+        "GOOGLE_REDIRECT_URI",
+        f"{os.getenv('BACKEND_URL', 'http://localhost:8000')}/api/auth/google/callback"
+    )
+    
+    # Encryption key for Google OAuth refresh tokens (Fernet key)
+    # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    # CRITICAL: Set this in production! Tokens stored without encryption if not set.
+    GOOGLE_TOKEN_ENCRYPTION_KEY: str = os.getenv("GOOGLE_TOKEN_ENCRYPTION_KEY", "")
     
     @classmethod
     def is_testing(cls) -> bool:
@@ -226,10 +242,10 @@ class Config:
             price_id: The Stripe price ID to map
             
         Returns:
-            Optional[str]: The tier name ("basic", "pro") or None if not found
+            Optional[str]: The tier name ("premium", "pro") or None if not found
         """
-        if price_id == cls.STRIPE_PRICE_ID_BASIC:
-            return "basic"
+        if price_id == cls.STRIPE_PRICE_ID_PREMIUM:
+            return "premium"
         elif price_id == cls.STRIPE_PRICE_ID_PRO:
             return "pro"
         return None
@@ -240,13 +256,13 @@ class Config:
         Map an internal tier name to its Stripe price ID.
         
         Args:
-            tier: The tier name ("basic", "pro")
+            tier: The tier name ("premium", "pro")
             
         Returns:
             Optional[str]: The Stripe price ID or None if not found
         """
         tier_map = {
-            "basic": cls.STRIPE_PRICE_ID_BASIC,
+            "premium": cls.STRIPE_PRICE_ID_PREMIUM,
             "pro": cls.STRIPE_PRICE_ID_PRO,
         }
         return tier_map.get(tier.lower())

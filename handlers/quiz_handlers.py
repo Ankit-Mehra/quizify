@@ -5,7 +5,7 @@ from services.ai_services.doc_service import (
     extract_text_from_plain_text,
     extract_text_from_docx
 )
-from services.db_services.supabase_quiz import ( 
+from services.db_services.supabase_quiz import (  # noqa: F401
     save_quiz_to_database, get_user_quizzes,
     get_quiz_from_database, save_metadata, 
     get_metadata, delete_quiz_from_database,
@@ -465,7 +465,7 @@ async def get_quiz_by_id_handler(
         # Defense-in-depth: Explicitly verify ownership after fetching metadata
         # Protects against cache poisoning attacks
         if metadata["created_by"] != current_user_id:
-            logger.warning(f"Access denied - User attempting to access quiz they don't own")
+            logger.warning("Access denied - User attempting to access quiz they don't own")
             raise HTTPException(status_code=403, detail="Access denied")
         
         # Log quiz access (without exposing full quiz IDs)

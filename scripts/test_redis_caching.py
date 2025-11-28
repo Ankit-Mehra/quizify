@@ -19,9 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from services.db_services.supabase_quiz import (
     get_user_tier_info_cached,
-    get_quiz_metadata_cached,
-    invalidate_user_tier_cache,
-    invalidate_quiz_cache
+    get_quiz_metadata_cached
 )
 from services.redis import get_cache_service
 
@@ -60,17 +58,17 @@ async def test_user_tier_caching():
     # Calculate improvement
     if elapsed_2 > 0:
         improvement = elapsed_1 / elapsed_2
-        print(f"\n📈 PERFORMANCE IMPROVEMENT:")
+        print("\n📈 PERFORMANCE IMPROVEMENT:")
         print(f"   • First call (database):  {elapsed_1:.2f}ms")
         print(f"   • Second call (cached):   {elapsed_2:.2f}ms")
         print(f"   • Speedup:                {improvement:.1f}x faster ⚡")
         
         if improvement > 10:
-            print(f"   ✅ EXCELLENT! Cache is working as expected (>10x faster)")
+            print("   ✅ EXCELLENT! Cache is working as expected (>10x faster)")
         elif improvement > 2:
-            print(f"   ⚠️  Cache working but less improvement than expected")
+            print("   ⚠️  Cache working but less improvement than expected")
         else:
-            print(f"   ❌ Cache may not be working properly")
+            print("   ❌ Cache may not be working properly")
     
     # Check cache statistics
     print("\n📊 CACHE STATISTICS:")
@@ -119,17 +117,17 @@ async def test_quiz_metadata_caching():
     # Calculate improvement
     if elapsed_2 > 0:
         improvement = elapsed_1 / elapsed_2
-        print(f"\n📈 PERFORMANCE IMPROVEMENT:")
+        print("\n📈 PERFORMANCE IMPROVEMENT:")
         print(f"   • First call (database):  {elapsed_1:.2f}ms")
         print(f"   • Second call (cached):   {elapsed_2:.2f}ms")
         print(f"   • Speedup:                {improvement:.1f}x faster ⚡")
         
         if improvement > 10:
-            print(f"   ✅ EXCELLENT! Cache is working as expected (>10x faster)")
+            print("   ✅ EXCELLENT! Cache is working as expected (>10x faster)")
         elif improvement > 2:
-            print(f"   ⚠️  Cache working but less improvement than expected")
+            print("   ⚠️  Cache working but less improvement than expected")
         else:
-            print(f"   ❌ Cache may not be working properly")
+            print("   ❌ Cache may not be working properly")
     
     # Check cache statistics
     print("\n📊 CACHE STATISTICS:")

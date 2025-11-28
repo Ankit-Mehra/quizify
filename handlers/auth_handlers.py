@@ -1,14 +1,23 @@
-from fastapi import HTTPException, Body, Response, Request, Query
+from typing import Any, Dict, List, Optional
+
+from fastapi import Depends, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from services.logger import app_logger as logger
-from fastapi import Depends
-from dependencies.auth_dependencies import get_current_user_id, get_current_user_token
-from services.db_services.supabase_quiz import get_user_tier_info_cached
-from services.redis.sessions import SessionService, SessionInfo, TooManySessionsError
-from typing import Dict, Any, List, Optional
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+
 from config import config as app_config
-from schemas.auth import SignupRequest, LoginRequest, LogoutRequest, UpdateEmailRequest, ChangePasswordRequest, ForgotPasswordRequest, ResetPasswordRequest, ResendVerificationRequest
+from dependencies.auth_dependencies import get_current_user_id, get_current_user_token
+from schemas.auth import (
+    ChangePasswordRequest,
+    ForgotPasswordRequest,
+    LoginRequest,
+    ResendVerificationRequest,
+    ResetPasswordRequest,
+    SignupRequest,
+    UpdateEmailRequest,
+)
+from services.db_services.supabase_quiz import get_user_tier_info_cached
+from services.logger import app_logger as logger
+from services.redis.sessions import SessionInfo, SessionService, TooManySessionsError
 
 security = HTTPBearer(auto_error=False)
 
@@ -923,7 +932,7 @@ async def revoke_session(
         # If it's a client token (starts with cst_sess_), map it to real session_id
         actual_session_id = session_id_to_revoke
         if session_id_to_revoke.startswith("cst_sess_"):
-            logger.debug(f"Client token provided, mapping to real session_id")
+            logger.debug("Client token provided, mapping to real session_id")
             actual_session_id = await session_service.find_session_by_client_token(
                 session_id_to_revoke, user_id
             )
@@ -970,3 +979,231 @@ async def revoke_session(
     except Exception as e:
         logger.error(f"Error revoking session: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# GOOGLE OAUTH ENDPOINTS (Epic QUIZ-002 - Google Forms Export)
+# ============================================================================
+
+async def google_connect(
+    user_id: str = Depends(get_current_user_id)
+):
+    """
+    Initiate Google OAuth flow for Google Forms export.
+    
+    Returns an authorization URL that the frontend should redirect to.
+    After user authorizes, they will be redirected to /auth/google/callback.
+    
+    Requires Pro tier for access.
+    """
+    from services.db_services.supabase_quiz import get_user_tier_info_cached
+    from services.google_auth_service import (
+        GoogleAuthError,
+        generate_auth_url,
+        is_google_auth_configured,
+    )
+    
+    logger.info(f"Google connect initiated for user {_short_user_id(user_id)}")
+    
+    # Check user tier - Google Forms is Pro-only
+    tier_info = await get_user_tier_info_cached(user_id)
+    user_tier = tier_info.get("account_tier", "free").lower()
+    if user_tier != "pro":
+        logger.warning(f"User {_short_user_id(user_id)} with tier '{user_tier}' attempted to connect Google (Pro only)")
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": "tier_insufficient",
+                "message": "Google Forms export requires a Pro subscription",
+                "required_tier": "pro",
+                "current_tier": user_tier
+            }
+        )
+    
+    # Check if Google OAuth is configured
+    if not is_google_auth_configured():
+        logger.error("Google OAuth not configured")
+        raise HTTPException(
+            status_code=503,
+            detail="Google Forms export is not configured. Please contact support."
+        )
+    
+    try:
+        # Generate authorization URL with user_id as state for CSRF protection
+        auth_url, state = generate_auth_url(state=user_id)
+        
+        logger.info(f"Google OAuth URL generated for user {_short_user_id(user_id)}")
+        
+        return {
+            "auth_url": auth_url,
+            "state": state,
+            "message": "Redirect to auth_url to connect your Google account"
+        }
+        
+    except GoogleAuthError as e:
+        logger.error(f"Google OAuth error: {e.message}")
+        raise HTTPException(status_code=400, detail=e.message)
+    except Exception as e:
+        logger.error(f"Error generating Google auth URL: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to initiate Google authorization")
+
+
+async def google_callback(
+    code: str = Query(..., description="Authorization code from Google"),
+    state: str = Query(None, description="State parameter (user_id) for CSRF protection"),
+    error: str = Query(None, description="Error from Google OAuth")
+):
+    """
+    Handle Google OAuth callback.
+    
+    After user authorizes on Google, they are redirected here with an authorization code.
+    We exchange the code for tokens and store the refresh token.
+    
+    SECURITY: Validates Pro tier before storing tokens to prevent bypass of google_connect check.
+    """
+    from services.db_services.supabase_quiz import get_user_tier_info_cached
+    from services.google_auth_service import (
+        GoogleAuthError,
+        exchange_code_for_tokens,
+        store_google_tokens,
+    )
+    
+    # Check for OAuth errors from Google
+    if error:
+        logger.warning(f"Google OAuth error: {error}")
+        return RedirectResponse(
+            url=f"{app_config.FRONTEND_URL}/settings?google_error={error}",
+            status_code=302
+        )
+    
+    # State contains the user_id
+    user_id = state
+    if not user_id:
+        logger.error("Missing state (user_id) in Google OAuth callback")
+        return RedirectResponse(
+            url=f"{app_config.FRONTEND_URL}/settings?google_error=invalid_state",
+            status_code=302
+        )
+    
+    logger.info(f"Google OAuth callback for user {_short_user_id(user_id)}")
+    
+    # SECURITY: Re-validate Pro tier to prevent bypass via direct callback URL
+    # A user could theoretically get a valid code and bypass google_connect tier check
+    try:
+        tier_info = await get_user_tier_info_cached(user_id)
+        user_tier = tier_info.get("account_tier", "free").lower()
+        if user_tier != "pro":
+            logger.warning(
+                f"User {_short_user_id(user_id)} with tier '{user_tier}' attempted "
+                f"OAuth callback (Pro only) - rejecting"
+            )
+            return RedirectResponse(
+                url=f"{app_config.FRONTEND_URL}/settings?google_error=tier_insufficient",
+                status_code=302
+            )
+    except Exception as tier_error:
+        logger.error(f"Failed to verify user tier in callback: {tier_error}")
+        return RedirectResponse(
+            url=f"{app_config.FRONTEND_URL}/settings?google_error=tier_check_failed",
+            status_code=302
+        )
+    
+    try:
+        # Exchange authorization code for tokens
+        credentials = exchange_code_for_tokens(code)
+        
+        # Store refresh token in database
+        await store_google_tokens(user_id, credentials)
+        
+        logger.info(f"Google account connected for user {_short_user_id(user_id)}")
+        
+        # Redirect to frontend with success
+        return RedirectResponse(
+            url=f"{app_config.FRONTEND_URL}/settings?google_connected=true",
+            status_code=302
+        )
+        
+    except GoogleAuthError as e:
+        logger.error(f"Google OAuth error: {e.message}")
+        return RedirectResponse(
+            url=f"{app_config.FRONTEND_URL}/settings?google_error={e.error_code}",
+            status_code=302
+        )
+    except Exception as e:
+        logger.error(f"Error in Google OAuth callback: {str(e)}", exc_info=True)
+        return RedirectResponse(
+            url=f"{app_config.FRONTEND_URL}/settings?google_error=callback_failed",
+            status_code=302
+        )
+
+
+async def google_disconnect(
+    user_id: str = Depends(get_current_user_id)
+):
+    """
+    Disconnect Google account by removing stored OAuth tokens.
+    
+    After this, user will need to re-authorize to use Google Forms export.
+    """
+    from services.google_auth_service import disconnect_google
+    
+    logger.info(f"Google disconnect requested for user {_short_user_id(user_id)}")
+    
+    try:
+        success = await disconnect_google(user_id)
+        
+        if success:
+            logger.info(f"Google account disconnected for user {_short_user_id(user_id)}")
+            return {
+                "message": "Google account disconnected successfully",
+                "google_connected": False
+            }
+        else:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to disconnect Google account"
+            )
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error disconnecting Google: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to disconnect Google account")
+
+
+async def google_status(
+    user_id: str = Depends(get_current_user_id)
+):
+    """
+    Check if user has connected their Google account.
+    
+    Returns connection status and whether Google Forms export is available.
+    """
+    from services.google_auth_service import (
+        is_google_auth_configured,
+        is_user_connected,
+    )
+    
+    logger.debug(f"Google status check for user {_short_user_id(user_id)}")
+    
+    try:
+        # Check if OAuth is configured at all
+        configured = is_google_auth_configured()
+        
+        # Check if user is connected
+        connected = await is_user_connected(user_id) if configured else False
+        
+        return {
+            "google_configured": configured,
+            "google_connected": connected,
+            "can_export_to_forms": configured and connected
+        }
+        
+    except Exception as e:
+        logger.error(f"Error checking Google status: {str(e)}", exc_info=True)
+        # Return safe defaults on error
+        return {
+            "google_configured": False,
+            "google_connected": False,
+            "can_export_to_forms": False
+        }
