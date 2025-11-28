@@ -110,7 +110,7 @@ class GoogleFormsExporter(BaseExporter):
         
         if not credentials:
             raise ExportError(
-                "Google OAuth2 credentials required for Google Forms export",
+                "Please connect your Google account first. Go to Settings > Integrations > Connect Google to enable Google Forms export.",
                 self.FORMAT_NAME
             )
         

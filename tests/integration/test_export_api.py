@@ -240,9 +240,9 @@ class TestExportTierGating:
             # This proves tier check passed but export failed for other reasons
             assert response.status_code == 500
             data = response.json()
-            # Verify it's a credentials issue, not tier issue
+            # Verify it's a credentials/connection issue, not tier issue
             detail = data.get("detail", "")
-            assert "credentials" in detail.lower() or "oauth" in detail.lower()
+            assert "connect" in detail.lower() or "google" in detail.lower()
 
     def test_free_tier_cannot_export_any_format(self, free_tier_auth):
         """Free tier users should NOT be able to export any format."""
