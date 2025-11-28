@@ -139,8 +139,13 @@ class GoogleFormsExporter(BaseExporter):
                     f"{skipped_questions}"
                 )
             
-            # Get form URLs
-            form = service.forms().get(formId=form_id).execute()
+            # Get form URLs (wrap in thread to avoid blocking)
+            import asyncio
+            
+            def get_form():
+                return service.forms().get(formId=form_id).execute()
+            
+            form = await asyncio.to_thread(get_form)
             responder_uri = form.get(
                 "responderUri", 
                 f"https://docs.google.com/forms/d/e/{form_id}/viewform"
