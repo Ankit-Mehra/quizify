@@ -239,7 +239,7 @@ async def test_benchmark_cache_hit_rate():
         UserTierInfo(
             id=user_id,
             email=f"user_{i}@example.com",
-            account_tier="basic",
+            account_tier="premium",
             quota_limit=20,
             current_quiz_count=5,
             quota_exceeded=False

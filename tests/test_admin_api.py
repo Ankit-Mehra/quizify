@@ -54,7 +54,7 @@ def mock_user_tier_data():
         {
             "id": "user-2",
             "email": "user2@example.com",
-            "account_tier": "basic",
+            "account_tier": "premium",
             "current_quiz_count": 15,
             "quota_limit": 100,
             "quota_exceeded": False,
@@ -90,7 +90,7 @@ def mock_profile_data():
     mock_response = Mock()
     mock_response.data = [{
         "id": "user-1",
-        "account_tier": "basic",
+        "account_tier": "premium",
         "created_at": "2025-10-01T10:00:00Z",
         "updated_at": "2025-10-09T12:00:00Z"
     }]
@@ -173,7 +173,7 @@ class TestListAllUsers:
         assert len(result) == 2
         assert result[0].id == "user-1"
         assert result[0].account_tier == "free"
-        assert result[1].account_tier == "basic"
+        assert result[1].account_tier == "premium"
         
         # Verify Supabase was called correctly
         mock_supabase.table.assert_called_once_with("user_tier_info")
@@ -398,7 +398,7 @@ class TestUpdateUserTier:
         tier_response.data = [{
             "id": "user-1",
             "email": "user1@example.com",
-            "account_tier": "basic",
+            "account_tier": "premium",
             "current_quiz_count": 2,
             "quota_limit": 100,
             "quota_exceeded": False
@@ -410,17 +410,17 @@ class TestUpdateUserTier:
         # Return different mocks for each table call
         mock_client.table.side_effect = [mock_check_table, mock_update_table, mock_tier_info_table]
         
-        tier_update = UserTierUpdate(new_tier="basic", reason="Test tier update")
+        tier_update = UserTierUpdate(new_tier="premium", reason="Test tier update")
         
         result = await update_user_tier("user-1", tier_update, mock_admin_user_id)
         
         assert result["user_id"] == "user-1"
-        assert result["new_tier"] == "basic"
+        assert result["new_tier"] == "premium"
         assert result["success"] is True
         
         # Verify Supabase was called correctly
         assert mock_client.table.call_count == 3
-        mock_update_table.update.assert_called_once_with({"account_tier": "basic"})
+        mock_update_table.update.assert_called_once_with({"account_tier": "premium"})
     
     @pytest.mark.asyncio
     @patch("handlers.admin_handlers.is_admin")
@@ -432,7 +432,7 @@ class TestUpdateUserTier:
         """Non-admin user should be denied access"""
         mock_is_admin.return_value = False
         
-        tier_update = UserTierUpdate(new_tier="basic", reason="Test unauthorized update")
+        tier_update = UserTierUpdate(new_tier="premium", reason="Test unauthorized update")
         
         with pytest.raises(HTTPException) as exc_info:
             await update_user_tier("user-1", tier_update, mock_regular_user_id)
@@ -495,7 +495,7 @@ class TestUpdateUserTier:
         
         mock_client.table.side_effect = [mock_check_table, mock_update_table]
         
-        tier_update = UserTierUpdate(new_tier="basic", reason="Test database error")
+        tier_update = UserTierUpdate(new_tier="premium", reason="Test database error")
         
         with pytest.raises(HTTPException) as exc_info:
             await update_user_tier("user-1", tier_update, mock_admin_user_id)
@@ -513,11 +513,11 @@ class TestUpdateUserTier:
         mock_admin_user_id,
         mock_profile_data
     ):
-        """Test updating to each valid tier (free, basic, pro)"""
+        """Test updating to each valid tier (free, premium, pro)"""
         mock_is_admin.return_value = True
         
-        valid_tiers = ["free", "basic", "pro"]
-        quota_limits = {"free": 5, "basic": 100, "pro": 999999}
+        valid_tiers = ["free", "premium", "pro"]
+        quota_limits = {"free": 5, "premium": 100, "pro": 999999}
         
         for tier in valid_tiers:
             # Create fresh mock client for each iteration

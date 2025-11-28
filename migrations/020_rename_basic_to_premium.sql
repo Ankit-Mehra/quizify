@@ -4,7 +4,7 @@
 --
 -- Tier Structure:
 -- - Free: $0/mo - 5 quizzes
--- - Premium: $7/mo - 50 quizzes (was 'basic')
+-- - Premium: $7/mo - 100 quizzes (was 'basic')
 -- - Pro: Coming soon - Unlimited + LMS exports
 --
 -- IMPORTANT: Steps must be in this order to avoid constraint violations
@@ -48,7 +48,7 @@ SELECT
     ) as quizzes_attempted,
     CASE 
         WHEN COALESCE(p.account_tier, 'free') = 'free' THEN 5
-        WHEN COALESCE(p.account_tier, 'free') = 'premium' THEN 50
+        WHEN COALESCE(p.account_tier, 'free') = 'premium' THEN 100
         WHEN COALESCE(p.account_tier, 'free') = 'pro' THEN -1  -- Unlimited
         ELSE 5
     END as quota_limit,
@@ -56,7 +56,7 @@ SELECT
         WHEN COALESCE(p.account_tier, 'free') = 'pro' THEN FALSE
         WHEN COALESCE(p.account_tier, 'free') = 'premium' THEN (
             SELECT COUNT(*) FROM quizzes q WHERE q.created_by = u.id
-        ) >= 50
+        ) >= 100
         ELSE (
             SELECT COUNT(*) FROM quizzes q WHERE q.created_by = u.id
         ) >= 5

@@ -455,7 +455,7 @@ def get_user_tier_info(user_id: str):
         dict: User tier information with keys:
             - id: User UUID
             - email: User email
-            - account_tier: 'free', 'basic', or 'pro'
+            - account_tier: 'free', 'premium', or 'pro'
             - current_quiz_count: Number of quizzes created
             - quizzes_attempted: Number of quizzes attempted (submissions)
             - quota_limit: Max quizzes allowed for tier
