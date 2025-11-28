@@ -3,8 +3,8 @@ Tier Validator - Export format access control based on user subscription tier.
 
 This module enforces tier-based access to export formats:
 - Free tier: No export access
-- Premium tier: PDF, DOCX, CSV (Quizify), CSV (Anki), Share Link, Google Forms
-- Pro tier: All Premium formats + LMS formats (QTI 2.1, Moodle XML)
+- Premium tier: PDF, DOCX, CSV (Quizify), CSV (Anki), Share Link
+- Pro tier: All Premium formats + Google Forms, QTI 2.1, Moodle XML
 
 Access is validated at the API layer before any export processing begins.
 """
@@ -19,12 +19,17 @@ from schemas.export import ExportFormat
 PRO_ONLY_FORMATS: Set[ExportFormat] = {
     ExportFormat.QTI,
     ExportFormat.MOODLE_XML,
+    ExportFormat.GOOGLE_FORMS,
 }
 
 # Export formats available to Premium and Pro tiers (paid tiers)
-# Google Forms is a premium feature available to both paid tiers
+# These are the base paid formats (non-Pro)
 PAID_TIER_FORMATS: Set[ExportFormat] = {
-    ExportFormat.GOOGLE_FORMS,
+    ExportFormat.PDF,
+    ExportFormat.DOCX,
+    ExportFormat.CSV_QUIZIFY,
+    ExportFormat.CSV_ANKI,
+    ExportFormat.SHARE_LINK,
 }
 
 # Tiers that have export access (free tier excluded)
@@ -54,7 +59,7 @@ class TierInsufficientError(HTTPException):
         else:  # pro_required
             detail = {
                 "error": "tier_insufficient",
-                "message": "LMS export formats (QTI, Moodle XML) require a Pro subscription",
+                "message": "Google Forms and LMS export formats (QTI, Moodle XML) require a Pro subscription",
                 "required_tier": "pro",
                 "current_tier": current_tier,
                 "requested_format": requested_format.value,

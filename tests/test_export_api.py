@@ -190,14 +190,15 @@ class TestFormatAvailability:
         assert ExportFormat.QTI not in formats
     
     def test_get_available_formats_basic(self):
-        """Basic tier should have 6 formats available (all except LMS)."""
+        """Basic/Premium tier should have 5 formats available (no Pro features)."""
         formats = get_available_formats_for_tier("basic")
         assert ExportFormat.PDF in formats
         assert ExportFormat.DOCX in formats
         assert ExportFormat.CSV_QUIZIFY in formats
         assert ExportFormat.CSV_ANKI in formats
         assert ExportFormat.SHARE_LINK in formats
-        assert ExportFormat.GOOGLE_FORMS in formats
+        # Pro-only formats not available
+        assert ExportFormat.GOOGLE_FORMS not in formats
         assert ExportFormat.QTI not in formats
         assert ExportFormat.MOODLE_XML not in formats
     
