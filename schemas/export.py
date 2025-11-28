@@ -20,8 +20,10 @@ class ExportFormat(str, Enum):
     
     Tier Access:
     - Free: No export access
-    - Premium ($7/mo): PDF, DOCX, CSV (Quizify), CSV (Anki), Share Link, Google Forms
-    - Pro (Coming Soon): All Premium formats + QTI 2.1, Moodle XML
+    - Premium ($7/mo): PDF, DOCX, CSV (Quizify), CSV (Anki), Share Link (5 formats)
+    - Pro: All Premium formats + QTI 2.1, Moodle XML, Google Forms (8 formats)
+    
+    Note: Authoritative tier access control is defined in services.exporters.tier_validator
     """
     PDF = "pdf"
     DOCX = "docx"
@@ -33,11 +35,9 @@ class ExportFormat(str, Enum):
     GOOGLE_FORMS = "google_forms"
 
 
-# Pro-only export formats (LMS integrations) - COMING SOON
-PRO_ONLY_FORMATS = {ExportFormat.QTI, ExportFormat.MOODLE_XML}
-
-# Paid-tier formats (available to Premium and Pro, not Free)
-PAID_TIER_FORMATS = {ExportFormat.GOOGLE_FORMS}
+# NOTE: Tier access constants (PRO_ONLY_FORMATS, PAID_TIER_FORMATS) are defined in
+# services.exporters.tier_validator - that is the single source of truth for tier gating.
+# Do not define duplicate constants here to avoid configuration drift.
 
 
 class ExportRequest(BaseModel):
@@ -70,7 +70,7 @@ class TierInsufficientError(BaseModel):
     """Error response when user's tier doesn't allow the requested export format."""
     error: Literal["tier_insufficient"] = "tier_insufficient"
     message: str = Field(
-        default="LMS export formats (QTI, Moodle XML) require a Pro subscription"
+        default="Pro features (QTI, Moodle XML, Google Forms) require a Pro subscription"
     )
     required_tier: Literal["pro"] = "pro"
     current_tier: str
