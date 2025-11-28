@@ -19,7 +19,6 @@ from services.exporters.tier_validator import (
     validate_export_tier_access,
     TierInsufficientError,
     is_format_available_for_tier,
-    is_format_coming_soon,
     get_available_formats_for_tier,
     PRO_ONLY_FORMATS,
     PAID_TIER_FORMATS
@@ -40,17 +39,10 @@ class TestGoogleFormsExportFormat:
         assert ExportFormat.GOOGLE_FORMS not in PRO_ONLY_FORMATS
     
     def test_pro_only_formats_contains_lms_formats(self):
-        """PRO_ONLY_FORMATS should contain only LMS formats (QTI, Moodle) - Coming Soon."""
+        """PRO_ONLY_FORMATS should contain LMS formats (QTI, Moodle)."""
         assert ExportFormat.QTI in PRO_ONLY_FORMATS
         assert ExportFormat.MOODLE_XML in PRO_ONLY_FORMATS
         assert len(PRO_ONLY_FORMATS) == 2
-    
-    def test_pro_formats_are_coming_soon(self):
-        """Pro-only formats should be marked as coming soon."""
-        assert is_format_coming_soon(ExportFormat.QTI) is True
-        assert is_format_coming_soon(ExportFormat.MOODLE_XML) is True
-        assert is_format_coming_soon(ExportFormat.PDF) is False
-        assert is_format_coming_soon(ExportFormat.GOOGLE_FORMS) is False
 
 
 class TestTierValidationForGoogleForms:

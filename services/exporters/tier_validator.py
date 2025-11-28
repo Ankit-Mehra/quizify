@@ -4,7 +4,7 @@ Tier Validator - Export format access control based on user subscription tier.
 This module enforces tier-based access to export formats:
 - Free tier: No export access
 - Premium tier: PDF, DOCX, CSV (Quizify), CSV (Anki), Share Link, Google Forms
-- Pro tier: Coming soon - LMS formats (QTI 2.1, Moodle XML) - currently disabled
+- Pro tier: All Premium formats + LMS formats (QTI 2.1, Moodle XML)
 
 Access is validated at the API layer before any export processing begins.
 """
@@ -15,8 +15,7 @@ from fastapi import HTTPException
 from schemas.export import ExportFormat
 
 
-# Pro-only formats - CURRENTLY DISABLED (Coming Soon)
-# These formats will return "coming soon" response instead of working
+# Pro-only formats - require Pro subscription
 PRO_ONLY_FORMATS: Set[ExportFormat] = {
     ExportFormat.QTI,
     ExportFormat.MOODLE_XML,
@@ -52,15 +51,6 @@ class TierInsufficientError(HTTPException):
                 "requested_format": requested_format.value,
                 "upgrade_url": "/billing/upgrade"
             }
-        elif reason == "coming_soon":
-            detail = {
-                "error": "feature_coming_soon",
-                "message": "Pro tier features are coming soon! LMS export formats (QTI, Moodle XML) will be available in a future update.",
-                "required_tier": "pro",
-                "current_tier": current_tier,
-                "requested_format": requested_format.value,
-                "coming_soon": True
-            }
         else:  # pro_required
             detail = {
                 "error": "tier_insufficient",
@@ -91,8 +81,8 @@ def validate_export_tier_access(
     Example:
         >>> validate_export_tier_access("free", ExportFormat.PDF)      # Raises 403
         >>> validate_export_tier_access("premium", ExportFormat.PDF)   # OK
-        >>> validate_export_tier_access("premium", ExportFormat.QTI)   # Raises 403 (coming soon)
-        >>> validate_export_tier_access("pro", ExportFormat.QTI)       # Raises 403 (coming soon)
+        >>> validate_export_tier_access("premium", ExportFormat.QTI)   # Raises 403 (Pro required)
+        >>> validate_export_tier_access("pro", ExportFormat.QTI)       # OK
     """
     # Normalize tier to lowercase and map legacy "basic" to "premium"
     user_tier = user_tier.lower() if user_tier else "free"
@@ -111,12 +101,12 @@ def validate_export_tier_access(
             reason="free_tier"
         )
     
-    # Pro-only formats are DISABLED (Coming Soon) - even for Pro users
-    if export_format in PRO_ONLY_FORMATS:
+    # Pro-only formats require Pro tier
+    if export_format in PRO_ONLY_FORMATS and user_tier != "pro":
         raise TierInsufficientError(
             current_tier=user_tier,
             requested_format=export_format,
-            reason="coming_soon"
+            reason="pro_required"
         )
 
 
@@ -141,25 +131,12 @@ def is_format_available_for_tier(user_tier: str, export_format: ExportFormat) ->
     if user_tier == "free":
         return False
     
-    # Pro-only formats are DISABLED (Coming Soon) - not available to anyone
+    # Pro-only formats require Pro tier
     if export_format in PRO_ONLY_FORMATS:
-        return False
+        return user_tier == "pro"
     
     # Premium and Pro have access to non-Pro formats
     return True
-
-
-def is_format_coming_soon(export_format: ExportFormat) -> bool:
-    """
-    Check if an export format is marked as "coming soon".
-    
-    Args:
-        export_format: The export format to check
-        
-    Returns:
-        True if format is coming soon (Pro-only formats), False otherwise
-    """
-    return export_format in PRO_ONLY_FORMATS
 
 
 def get_available_formats_for_tier(user_tier: str) -> list[ExportFormat]:

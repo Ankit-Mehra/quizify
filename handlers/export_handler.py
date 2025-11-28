@@ -261,19 +261,16 @@ async def get_export_formats_for_user(user_tier: str) -> dict:
     """
     from services.exporters.tier_validator import (
         is_format_available_for_tier,
-        is_format_coming_soon,
         PRO_ONLY_FORMATS,
         PAID_TIER_FORMATS
     )
     
     formats = {}
     for fmt in list(ExportFormat):
-        coming_soon = is_format_coming_soon(fmt)
         formats[fmt.value] = {
             "available": is_format_available_for_tier(user_tier, fmt),
             "requires_pro": fmt in PRO_ONLY_FORMATS,
             "requires_paid": fmt in PAID_TIER_FORMATS,  # Premium or Pro tier
-            "coming_soon": coming_soon,  # Pro features not yet released
             "name": _get_format_display_name(fmt)
         }
     
@@ -287,8 +284,8 @@ def _get_format_display_name(format: ExportFormat) -> str:
         ExportFormat.DOCX: "Word Document (DOCX)",
         ExportFormat.CSV_QUIZIFY: "CSV (Quizify Native)",
         ExportFormat.CSV_ANKI: "CSV (Anki Flashcards)",
-        ExportFormat.QTI: "QTI 2.1 (LMS) - Coming Soon",
-        ExportFormat.MOODLE_XML: "Moodle XML (LMS) - Coming Soon",
+        ExportFormat.QTI: "QTI 2.1 (LMS)",
+        ExportFormat.MOODLE_XML: "Moodle XML (LMS)",
         ExportFormat.SHARE_LINK: "Shareable Link",
         ExportFormat.GOOGLE_FORMS: "Google Forms"
     }
