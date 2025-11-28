@@ -407,7 +407,16 @@ class GoogleFormsExporter(BaseExporter):
         index: int,
         options: "ExportOptions"
     ) -> Dict[str, Any]:
-        """Build a fill-in-the-blank question item for Google Forms."""
+        """
+        Build a fill-in-the-blank question item for Google Forms.
+        
+        Note: Google Forms API does NOT support correctAnswers for textQuestion types.
+        Text questions require manual grading. We use generalFeedback to show the
+        correct answer to instructors during grading, and whenWrong feedback for
+        students after submission.
+        
+        Reference: https://developers.google.com/forms/api/reference/rest/v1/forms#Grading
+        """
         
         item = {
             "item": {
@@ -424,16 +433,18 @@ class GoogleFormsExporter(BaseExporter):
             "location": {"index": index}
         }
         
-        # Add grading if answer key is included
-        # Note: Text questions in Forms use generalFeedback, not correctAnswers
+        # Add grading info if answer key is included
+        # IMPORTANT: textQuestion does NOT support correctAnswers for auto-grading
+        # Only choiceQuestion types support automatic grading with correctAnswers
+        # We use generalFeedback to show the expected answer during manual grading
         if options.include_answer_key:
             item["item"]["questionItem"]["question"]["grading"] = {
                 "pointValue": self.DEFAULT_POINT_VALUE,
-                "correctAnswers": {
-                    "answers": [{"value": question.correct_answer}]
-                },
                 "generalFeedback": {
-                    "text": f"Correct answer: {question.correct_answer}"
+                    "text": f"Expected answer: {question.correct_answer}"
+                },
+                "whenWrong": {
+                    "text": f"The correct answer is: {question.correct_answer}"
                 }
             }
         

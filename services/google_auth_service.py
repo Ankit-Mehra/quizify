@@ -386,14 +386,51 @@ async def disconnect_google(user_id: str) -> bool:
 
 async def is_user_connected(user_id: str) -> bool:
     """
-    Check if a user has connected their Google account.
+    Check if a user has connected their Google account with valid credentials.
+    
+    If stored credentials exist but are invalid (expired and refresh fails),
+    this function automatically disconnects the user and returns False.
+    This prevents stale tokens from blocking reconnection.
     
     Args:
         user_id: User ID to check
         
     Returns:
-        True if user has valid Google connection
+        True if user has valid Google connection, False otherwise
     """
-    credentials = await get_google_credentials(user_id)
-    return credentials is not None and credentials.valid
+    import asyncio
+    from services.db_services.supabase_quiz import get_supabase
+    
+    supabase = get_supabase()
+    
+    # First check if there's a stored token at all
+    def get_profile():
+        response = supabase.table("profiles").select(
+            "google_refresh_token"
+        ).eq("id", user_id).single().execute()
+        return response.data
+    
+    try:
+        profile = await asyncio.to_thread(get_profile)
+        
+        if not profile or not profile.get("google_refresh_token"):
+            return False
+        
+        # Token exists, try to get valid credentials
+        credentials = await get_google_credentials(user_id)
+        
+        if credentials is not None and credentials.valid:
+            return True
+        
+        # Credentials exist but are invalid (refresh failed)
+        # Auto-disconnect to allow user to reconnect cleanly
+        logger.warning(
+            f"User {user_id[:8]}... has invalid Google credentials, auto-disconnecting"
+        )
+        await disconnect_google(user_id)
+        return False
+        
+    except Exception as e:
+        logger.error(f"Error checking Google connection: {str(e)}")
+        return False
 

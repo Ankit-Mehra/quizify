@@ -1049,12 +1049,15 @@ async def google_callback(
     
     After user authorizes on Google, they are redirected here with an authorization code.
     We exchange the code for tokens and store the refresh token.
+    
+    SECURITY: Validates Pro tier before storing tokens to prevent bypass of google_connect check.
     """
     from services.google_auth_service import (
         exchange_code_for_tokens,
         store_google_tokens,
         GoogleAuthError
     )
+    from services.db_services.supabase_quiz import get_user_tier_info_cached
     
     # Check for OAuth errors from Google
     if error:
@@ -1074,6 +1077,27 @@ async def google_callback(
         )
     
     logger.info(f"Google OAuth callback for user {_short_user_id(user_id)}")
+    
+    # SECURITY: Re-validate Pro tier to prevent bypass via direct callback URL
+    # A user could theoretically get a valid code and bypass google_connect tier check
+    try:
+        tier_info = await get_user_tier_info_cached(user_id)
+        user_tier = tier_info.get("account_tier", "free").lower()
+        if user_tier != "pro":
+            logger.warning(
+                f"User {_short_user_id(user_id)} with tier '{user_tier}' attempted "
+                f"OAuth callback (Pro only) - rejecting"
+            )
+            return RedirectResponse(
+                url=f"{app_config.FRONTEND_URL}/settings?google_error=tier_insufficient",
+                status_code=302
+            )
+    except Exception as tier_error:
+        logger.error(f"Failed to verify user tier in callback: {tier_error}")
+        return RedirectResponse(
+            url=f"{app_config.FRONTEND_URL}/settings?google_error=tier_check_failed",
+            status_code=302
+        )
     
     try:
         # Exchange authorization code for tokens
