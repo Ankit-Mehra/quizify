@@ -1,6 +1,10 @@
 -- Migration: Add Google OAuth token storage to profiles
 -- Purpose: Store Google refresh tokens for Google Forms export feature
 -- Epic: QUIZ-002 Google Forms Export
+-- 
+-- NOTE: This migration handles BOTH 'basic' AND 'premium' tier names for
+-- backwards compatibility. Migration 020 will rename 'basic' to 'premium'.
+-- After 020 runs, only 'premium' will exist in the database.
 
 -- Add columns for Google OAuth tokens
 ALTER TABLE profiles 

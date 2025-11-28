@@ -9,9 +9,9 @@ Provides endpoints for:
 """
 
 import time
-from fastapi import APIRouter, Depends, Request, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import JSONResponse
-from services.redis.client import check_redis_health, get_redis_client
+from services.redis.client import get_redis_client
 from services.redis.cache import get_cache_service
 from dependencies.auth_dependencies import get_current_user_id
 from handlers.admin_handlers import is_admin

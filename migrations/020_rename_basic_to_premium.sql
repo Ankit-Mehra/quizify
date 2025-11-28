@@ -21,7 +21,7 @@ WHERE account_tier = 'basic';
 ALTER TABLE profiles ADD CONSTRAINT profiles_account_tier_check 
 CHECK (account_tier IN ('free', 'premium', 'pro'));
 
--- Step 3: Update the user_tier_info view with new tier names
+-- Step 4: Update the user_tier_info view with new tier names
 DROP VIEW IF EXISTS user_tier_info;
 
 CREATE VIEW user_tier_info AS

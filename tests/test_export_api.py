@@ -11,7 +11,7 @@ Tests cover:
 import pytest
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import HTTPException
 
@@ -257,7 +257,7 @@ class TestQuizExportData:
         quiz = QuizExportData(
             quiz_id=uuid4(),
             title="Test Quiz",
-            created_at=datetime.now(),
+            created_at=datetime.now(timezone.utc),
             questions=[
                 ExportQuestionMCQ(
                     id=uuid4(),
@@ -286,7 +286,7 @@ class TestQuizExportData:
         quiz = QuizExportData(
             quiz_id=uuid4(),
             title="Mixed Quiz",
-            created_at=datetime.now(),
+            created_at=datetime.now(timezone.utc),
             questions=[
                 ExportQuestionMCQ(
                     id=uuid4(),

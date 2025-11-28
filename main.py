@@ -2,10 +2,10 @@ from fastapi import FastAPI
 from fastapi.security import HTTPBearer
 from fastapi.openapi.utils import get_openapi
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 import os
 import json
+import re
 from dotenv import load_dotenv
 
 # Load environment variables from .env file FIRST
@@ -33,7 +33,6 @@ except json.JSONDecodeError:
     logger.warning("Failed to parse CORS origins from env, using defaults")
 
 # Get CORS origin regex for wildcard support (e.g., Vercel previews)
-import re
 
 def is_overly_permissive_cors_regex(pattern: str) -> bool:
     """
@@ -52,7 +51,7 @@ def is_overly_permissive_cors_regex(pattern: str) -> bool:
     # Check for patterns that contain ".*" but don't have enough specificity
     # e.g., ".*" without any literal dots usually means "match anything"
     # whereas ".*\.example\.com" has a literal dot
-    if ".*" in pattern and not ("." in pattern.replace(".*", "")):
+    if ".*" in pattern and "." not in pattern.replace(".*", ""):
         return True
         
     return False

@@ -244,7 +244,6 @@ class TestTokenEncryption:
     def test_encrypt_decrypt_roundtrip_with_key(self):
         """Token should survive encrypt/decrypt roundtrip when key is configured."""
         from cryptography.fernet import Fernet
-        import importlib
         
         # Generate a test key
         test_key = Fernet.generate_key().decode()

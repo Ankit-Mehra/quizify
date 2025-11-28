@@ -10,10 +10,10 @@ Run with: pytest tests/performance/test_benchmarks.py -v --benchmark
 import pytest
 import time
 import asyncio
-from typing import List, Dict, Any
-from unittest.mock import Mock, AsyncMock, patch
+from typing import List
+from unittest.mock import AsyncMock, patch
 
-from services.redis.cache import get_cache_service, CacheService
+from services.redis.cache import get_cache_service
 from schemas.user import UserTierInfo
 
 
@@ -91,7 +91,7 @@ async def test_benchmark_database_query_without_cache(
     max_time = max(times)
     p95_time = sorted(times)[int(len(times) * 0.95)]
     
-    print(f"\n📊 Benchmark: Database Query WITHOUT Cache")
+    print("\n📊 Benchmark: Database Query WITHOUT Cache")
     print(f"   Iterations: {BENCHMARK_ITERATIONS}")
     print(f"   Average:    {avg_time:.2f}ms")
     print(f"   Min:        {min_time:.2f}ms")
@@ -141,7 +141,7 @@ async def test_benchmark_database_query_with_cache(
     max_time = max(times)
     p95_time = sorted(times)[int(len(times) * 0.95)]
     
-    print(f"\n📊 Benchmark: Database Query WITH Cache")
+    print("\n📊 Benchmark: Database Query WITH Cache")
     print(f"   Iterations: {BENCHMARK_ITERATIONS}")
     print(f"   Average:    {avg_time:.2f}ms")
     print(f"   Min:        {min_time:.2f}ms")
@@ -201,7 +201,7 @@ async def test_benchmark_cache_speedup_comparison(
     time_saved = db_avg - cache_avg
     percent_faster = ((db_avg - cache_avg) / db_avg) * 100
     
-    print(f"\n🚀 Benchmark: Cache Speedup Analysis")
+    print("\n🚀 Benchmark: Cache Speedup Analysis")
     print(f"   Database Average:  {db_avg:.2f}ms")
     print(f"   Cache Average:     {cache_avg:.2f}ms")
     print(f"   Time Saved:        {time_saved:.2f}ms ({percent_faster:.1f}% faster)")
@@ -278,7 +278,7 @@ async def test_benchmark_cache_hit_rate():
     total_requests = len(access_pattern)
     hit_rate = (hit_count / total_requests) * 100
     
-    print(f"\n📊 Benchmark: Cache Hit Rate Under Load")
+    print("\n📊 Benchmark: Cache Hit Rate Under Load")
     print(f"   Total Requests:  {total_requests}")
     print(f"   Cache Hits:      {hit_count}")
     print(f"   Cache Misses:    {miss_count}")
@@ -290,7 +290,7 @@ async def test_benchmark_cache_hit_rate():
     
     # Verify target hit rate achieved
     assert hit_rate >= 80, f"Cache hit rate should be >=80%, got {hit_rate:.1f}%"
-    print(f"   ✅ Target 80% hit rate: ACHIEVED")
+    print("   ✅ Target 80% hit rate: ACHIEVED")
 
 
 # ============================================================================
@@ -339,7 +339,7 @@ async def test_benchmark_memory_fallback_performance(sample_user_tier_info: User
         
         memory_avg = sum(memory_times) / len(memory_times)
     
-    print(f"\n📊 Benchmark: Memory Fallback Performance")
+    print("\n📊 Benchmark: Memory Fallback Performance")
     print(f"   Redis Average:   {redis_avg:.3f}ms")
     print(f"   Memory Average:  {memory_avg:.3f}ms")
     print(f"   Difference:      {abs(redis_avg - memory_avg):.3f}ms")
@@ -350,7 +350,7 @@ async def test_benchmark_memory_fallback_performance(sample_user_tier_info: User
     # Verify memory fallback is reasonably fast (within 10ms of Redis)
     assert abs(redis_avg - memory_avg) < 10, \
         "Memory fallback should be within 10ms of Redis performance"
-    print(f"   ✅ Memory fallback performance: ACCEPTABLE")
+    print("   ✅ Memory fallback performance: ACCEPTABLE")
 
 
 # ============================================================================

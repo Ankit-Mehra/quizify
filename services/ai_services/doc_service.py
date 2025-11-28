@@ -20,7 +20,7 @@ def extract_text_from_pdf(contents):
             text += page.get_text()
         doc.close()
         return text
-    except Exception as e:
+    except Exception:
         logger.exception("Error extracting text from PDF")
         raise Exception("Failed to extract text from PDF")
     finally:

@@ -642,7 +642,7 @@ async def mock_validate_request_session_integration(request, user_id: str):
     Mock session validation for integration tests.
     Works around TestClient cookie propagation limitations.
     """
-    from services.redis.sessions import SessionService, SessionInfo
+    from services.redis.sessions import SessionService
     
     # Get Redis client
     redis_client = getattr(request.app.state, "redis", None)
@@ -662,7 +662,6 @@ async def mock_validate_request_session_integration(request, user_id: str):
             return
     
     # Create a new test session for this user
-    from datetime import datetime
     refresh_token = f"test_refresh_{user_id}"
     client_token = await session_service.create_session(
         user_id=user_id,
