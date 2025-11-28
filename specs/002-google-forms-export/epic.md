@@ -16,10 +16,10 @@ Enable users to export quizzes directly to Google Forms, creating a fully functi
 - Users can distribute quizzes via Google Forms ecosystem
 - Leverages Google's infrastructure for quiz taking and grading
 - Integrates with Google Classroom and Google Workspace
-- Premium feature available to Basic and Pro tier users (drives upgrades from Free tier)
+- Pro-exclusive feature (drives upgrades from Free and Premium tiers)
 
 ### Success Criteria
-- [ ] Basic and Pro tier users can export any quiz to Google Forms
+- [ ] Pro tier users can export any quiz to Google Forms
 - [ ] Exported form has quiz mode enabled with auto-grading
 - [ ] MCQ and True/False questions are properly mapped
 - [ ] Users receive a shareable Google Forms URL
@@ -267,5 +267,5 @@ Content-Type: application/json
 | 2025-11-27 | Epic created | - |
 | 2025-11-27 | Phase 1-3 implemented: enum, exporter, OAuth service, endpoints, migration | Copilot |
 | 2025-11-27 | Phase 4 started: 36 unit tests added and passing | Copilot |
-| 2025-11-27 | **Tier policy update**: Google Forms now available to Basic AND Pro tiers (not just Pro) | Copilot |
+| 2025-11-27 | **Tier policy update**: Google Forms is Pro-only (QTI, Moodle XML, Google Forms all require Pro) | Copilot |
 

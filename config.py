@@ -108,6 +108,17 @@ class Config:
     # Set to "true" in production with multiple instances to prevent duplicate processing
     BILLING_REQUIRE_REDIS: bool = os.getenv("BILLING_REQUIRE_REDIS", "false").lower() == "true"
     
+    # ============================================================================
+    # Google OAuth Configuration (for Google Forms Export - Pro Tier Feature)
+    # ============================================================================
+    
+    GOOGLE_CLIENT_ID: str = os.getenv("GOOGLE_CLIENT_ID", "")
+    GOOGLE_CLIENT_SECRET: str = os.getenv("GOOGLE_CLIENT_SECRET", "")
+    GOOGLE_REDIRECT_URI: str = os.getenv(
+        "GOOGLE_REDIRECT_URI",
+        f"{os.getenv('BACKEND_URL', 'http://localhost:8000')}/api/auth/google/callback"
+    )
+    
     @classmethod
     def is_testing(cls) -> bool:
         """

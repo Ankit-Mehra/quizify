@@ -992,8 +992,24 @@ async def google_connect(
         is_google_auth_configured,
         GoogleAuthError
     )
+    from services.db_services.supabase_quiz import get_user_tier_info_cached
     
     logger.info(f"Google connect initiated for user {_short_user_id(user_id)}")
+    
+    # Check user tier - Google Forms is Pro-only
+    tier_info = await get_user_tier_info_cached(user_id)
+    user_tier = tier_info.get("account_tier", "free").lower()
+    if user_tier != "pro":
+        logger.warning(f"User {_short_user_id(user_id)} with tier '{user_tier}' attempted to connect Google (Pro only)")
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": "tier_insufficient",
+                "message": "Google Forms export requires a Pro subscription",
+                "required_tier": "pro",
+                "current_tier": user_tier
+            }
+        )
     
     # Check if Google OAuth is configured
     if not is_google_auth_configured():

@@ -42,13 +42,13 @@ SELECT
     ) as quizzes_attempted,
     CASE 
         WHEN COALESCE(p.account_tier, 'free') = 'free' THEN 5
-        WHEN COALESCE(p.account_tier, 'free') = 'basic' THEN 50
+        WHEN COALESCE(p.account_tier, 'free') = 'premium' THEN 50
         WHEN COALESCE(p.account_tier, 'free') = 'pro' THEN -1  -- Unlimited
         ELSE 5
     END as quota_limit,
     CASE 
         WHEN COALESCE(p.account_tier, 'free') = 'pro' THEN FALSE
-        WHEN COALESCE(p.account_tier, 'free') = 'basic' THEN (
+        WHEN COALESCE(p.account_tier, 'free') = 'premium' THEN (
             SELECT COUNT(*) FROM quizzes q WHERE q.created_by = u.id
         ) >= 50
         ELSE (

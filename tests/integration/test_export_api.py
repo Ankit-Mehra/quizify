@@ -103,13 +103,13 @@ def mock_tier_info(tier: str):
 def mock_quiz_for_export():
     """Create mock quiz data for export tests."""
     from schemas.export import QuizExportData, ExportQuestionMCQ
-    from datetime import datetime
+    from datetime import datetime, timezone
     
     quiz_id = uuid4()
     return QuizExportData(
         quiz_id=quiz_id,
         title="Test Export Quiz",
-        created_at=datetime.now(),
+        created_at=datetime.now(timezone.utc),
         questions=[
             ExportQuestionMCQ(
                 id=uuid4(),

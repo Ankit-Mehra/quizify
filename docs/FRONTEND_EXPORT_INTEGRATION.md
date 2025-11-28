@@ -138,7 +138,7 @@ Authorization: Bearer <jwt_token>
   "google_forms": {
     "available": false,
     "requires_pro": true,
-    "requires_paid": false,
+    "requires_paid": false,  // Note: requires_paid=false because Pro-only is checked via requires_pro=true
     "coming_soon": false,
     "name": "Google Forms"
   },
