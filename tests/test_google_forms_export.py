@@ -9,7 +9,7 @@ This module tests:
 """
 
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 from uuid import uuid4
 from datetime import datetime, timezone
 

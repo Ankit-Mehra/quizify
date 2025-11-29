@@ -315,7 +315,11 @@ class GoogleFormsExporter(BaseExporter):
                 body=update_request
             ).execute()
         
-        await asyncio.to_thread(update)
+        try:
+            await asyncio.to_thread(update)
+        except HttpError as e:
+            logger.error(f"Failed to enable quiz mode for form_id={form_id}: {e}")
+            raise
     
     async def _add_questions(
         self,
