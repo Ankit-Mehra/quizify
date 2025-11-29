@@ -219,16 +219,18 @@ class TestExportTierGating:
                        return_value=mock_quiz_for_export()):
                 # Mock get_google_credentials to return None (no credentials)
                 with patch("services.google_auth_service.get_google_credentials", return_value=None):
-                    # Mock Google auth URL generation
-                    with patch("services.google_auth_service.is_google_auth_configured", return_value=True):
-                        with patch("services.google_auth_service.generate_auth_url", 
-                                   return_value=("https://accounts.google.com/o/oauth2/...", "state123")):
+                    # Mock Google auth config and URL generation at handler import locations
+                    with patch("handlers.export_handler.is_google_auth_configured", return_value=True):
+                        # Mock secure state token generation for OAuth flow
+                        with patch("handlers.export_handler.generate_secure_state_token", return_value="test_state_token"):
+                            with patch("handlers.export_handler.generate_auth_url", 
+                                       return_value=("https://accounts.google.com/o/oauth2/...", "state123")):
                             
-                            response = client.post(
-                                f"/api/quizzes/{quiz_id}/export",
-                                headers=headers,
-                                json={"format": "google_forms"}
-                            )
+                                response = client.post(
+                                    f"/api/quizzes/{quiz_id}/export",
+                                    headers=headers,
+                                    json={"format": "google_forms"}
+                                )
         
         # Should get 401 with auth_url when not connected to Google
         # (Pro tier passes tier check, but needs Google OAuth)

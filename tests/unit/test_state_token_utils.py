@@ -282,10 +282,7 @@ def test_validate_token_small_clock_skew_allowed():
     current = int(time.time())
     future_timestamp = current + 10
     
-    # Generate token with future timestamp
-    generate_secure_state_token("user-123")
-    
-    # Replace timestamp with future one
+    # Build a token with a future timestamp to simulate clock skew
     import hashlib
     import hmac
     from services.google_auth_service import _get_state_secret

@@ -5,6 +5,8 @@ Sends contact form emails to admin using Resend API.
 """
 
 import html
+import textwrap
+
 import resend
 from fastapi import HTTPException
 
@@ -46,34 +48,34 @@ async def handle_contact_submission(request: ContactRequest) -> ContactResponse:
     safe_message = html.escape(request.message)
     
     # Build email content with escaped inputs
-    html_content = f"""
-    <h2>New Contact Form Submission</h2>
-    <p><strong>From:</strong> {safe_name} ({safe_email})</p>
-    <p><strong>Subject:</strong> {safe_subject}</p>
-    <hr>
-    <h3>Message:</h3>
-    <p style="white-space: pre-wrap;">{safe_message}</p>
-    <hr>
-    <p style="color: #666; font-size: 12px;">
+    html_content = textwrap.dedent(f"""\
+        <h2>New Contact Form Submission</h2>
+        <p><strong>From:</strong> {safe_name} ({safe_email})</p>
+        <p><strong>Subject:</strong> {safe_subject}</p>
+        <hr>
+        <h3>Message:</h3>
+        <p style="white-space: pre-wrap;">{safe_message}</p>
+        <hr>
+        <p style="color: #666; font-size: 12px;">
+            This message was sent from the Quizify contact form.
+            Reply directly to this email to respond to the sender.
+        </p>
+    """)
+
+    # Plain text doesn't need escaping (no HTML rendering)
+    text_content = textwrap.dedent(f"""\
+        New Contact Form Submission
+
+        From: {request.name} ({request.email})
+        Subject: {request.subject}
+
+        Message:
+        {request.message}
+
+        ---
         This message was sent from the Quizify contact form.
         Reply directly to this email to respond to the sender.
-    </p>
-    """
-    
-    # Plain text doesn't need escaping (no HTML rendering)
-    text_content = f"""
-New Contact Form Submission
-
-From: {request.name} ({request.email})
-Subject: {request.subject}
-
-Message:
-{request.message}
-
----
-This message was sent from the Quizify contact form.
-Reply directly to this email to respond to the sender.
-    """
+    """)
     
     try:
         # Send email via Resend
