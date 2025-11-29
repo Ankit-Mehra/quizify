@@ -253,6 +253,9 @@ class GoogleFormsExporter(BaseExporter):
             service: Google Forms API service
             form_id: Google Form ID
             description: Form description
+            
+        Raises:
+            HttpError: If the API call fails
         """
         import asyncio
         
@@ -275,7 +278,11 @@ class GoogleFormsExporter(BaseExporter):
                 body=update_request
             ).execute()
         
-        await asyncio.to_thread(update)
+        try:
+            await asyncio.to_thread(update)
+        except HttpError as e:
+            logger.error(f"Failed to set form description for form_id={form_id}: {e}")
+            raise
     
     async def _enable_quiz_mode(self, service, form_id: str) -> None:
         """
