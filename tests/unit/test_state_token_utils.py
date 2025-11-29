@@ -221,6 +221,7 @@ def test_validate_token_wrong_format_five_parts():
     user_id, redirect_url, error = validate_secure_state_token("p1:p2:p3:p4:p5")
     
     assert user_id is None
+    assert redirect_url is None
     assert error == "invalid_state"
 
 
@@ -229,6 +230,7 @@ def test_validate_token_invalid_timestamp():
     user_id, redirect_url, error = validate_secure_state_token("not-a-number:user-123::abcdef1234")
     
     assert user_id is None
+    assert redirect_url is None
     assert error == "invalid_state"
 
 
@@ -293,6 +295,7 @@ def test_validate_token_tampered_redirect_url():
     user_id, redirect_url, error = validate_secure_state_token(tampered_token)
     
     assert user_id is None
+    assert redirect_url is None
     assert error == "invalid_state"
 
 
