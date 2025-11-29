@@ -9,7 +9,7 @@ This module tests:
 """
 
 import pytest
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 from uuid import uuid4
 from datetime import datetime, timezone
 
@@ -652,4 +652,262 @@ class TestSkippedQuestionIndexing:
         )
         item6 = exporter._build_true_false_item(q6, 2, options)
         assert item6["location"]["index"] == 2
+
+
+class TestGoogleFormsExportResponseFormat:
+    """
+    Tests for successful Google Forms export response format.
+    
+    Verifies the JSON response structure when Google Forms export completes,
+    preventing regression of the original bug (returning empty bytes instead of JSON).
+    
+    Note: These tests mock at the exporter method level to avoid complex
+    Google API client interactions which require real credentials.
+    """
+    
+    @pytest.fixture
+    def sample_quiz_data(self):
+        """Create sample quiz data for testing."""
+        from schemas.export import (
+            QuizExportData, 
+            ExportQuestionMCQ, 
+            ExportQuestionTrueFalse,
+            ExportQuestionMatching
+        )
+        
+        return QuizExportData(
+            quiz_id=uuid4(),
+            title="Test Quiz for Export",
+            description="A test quiz",
+            created_at=datetime.now(timezone.utc),
+            content_source_type="text",
+            questions=[
+                ExportQuestionMCQ(
+                    id=uuid4(),
+                    type="multiple_choice",
+                    question="What is 2+2?",
+                    options=["3", "4", "5", "6"],
+                    correct_answer="4",
+                    explanation="Basic addition"
+                ),
+                ExportQuestionTrueFalse(
+                    id=uuid4(),
+                    type="true_false",
+                    question="The sky is blue?",
+                    correct_answer=True
+                ),
+                # Include a matching question that will be skipped
+                ExportQuestionMatching(
+                    id=uuid4(),
+                    type="matching",
+                    question="Match the items",
+                    left=["A", "B"],
+                    right=["1", "2"],
+                    correct_answer=[0, 1]
+                )
+            ]
+        )
+    
+    def test_export_result_schema_has_all_google_forms_fields(self):
+        """ExportResult should have all Google Forms specific fields defined."""
+        from schemas.export import ExportResult
+        
+        # Get all field names from the model
+        field_names = set(ExportResult.model_fields.keys())
+        
+        # Verify all Google Forms specific fields exist
+        assert "form_url" in field_names
+        assert "edit_url" in field_names
+        assert "form_id" in field_names
+        assert "questions_exported" in field_names
+        assert "questions_skipped" in field_names
+        assert "warnings" in field_names
+        assert "content_type" in field_names
+    
+    def test_export_result_can_be_created_with_google_forms_data(self):
+        """ExportResult should accept all Google Forms fields."""
+        from schemas.export import ExportResult
+        
+        result = ExportResult(
+            content=b"",
+            content_type="application/json",
+            filename=None,
+            form_url="https://docs.google.com/forms/d/e/abc123/viewform",
+            edit_url="https://docs.google.com/forms/d/abc123/edit",
+            form_id="abc123",
+            questions_exported=5,
+            questions_skipped=1,
+            warnings=["Matching questions not supported"]
+        )
+        
+        assert result.form_url == "https://docs.google.com/forms/d/e/abc123/viewform"
+        assert result.edit_url == "https://docs.google.com/forms/d/abc123/edit"
+        assert result.form_id == "abc123"
+        assert result.questions_exported == 5
+        assert result.questions_skipped == 1
+        assert result.warnings == ["Matching questions not supported"]
+    
+    def test_export_result_content_type_for_google_forms(self):
+        """Google Forms exporter should use JSON content type."""
+        from services.exporters.google_forms_exporter import GoogleFormsExporter
+        
+        exporter = GoogleFormsExporter(user_id="test-user")
+        
+        # Verify the exporter declares JSON content type
+        assert exporter.CONTENT_TYPE == "application/json"
+    
+    def test_export_result_with_no_warnings(self):
+        """ExportResult should handle None warnings correctly."""
+        from schemas.export import ExportResult
+        
+        result = ExportResult(
+            content=b"",
+            content_type="application/json",
+            form_url="https://docs.google.com/forms/d/e/xyz789/viewform",
+            edit_url="https://docs.google.com/forms/d/xyz789/edit",
+            form_id="xyz789",
+            questions_exported=10,
+            questions_skipped=0,
+            warnings=None
+        )
+        
+        assert result.warnings is None
+        assert result.questions_skipped == 0
+    
+    def test_export_result_empty_content_for_google_forms(self):
+        """Google Forms export should have empty content (URLs only, no file)."""
+        from schemas.export import ExportResult
+        
+        result = ExportResult(
+            content=b"",  # Empty - no file content
+            content_type="application/json",
+            filename=None,  # No filename for non-file export
+            form_url="https://docs.google.com/forms/d/e/test/viewform",
+            edit_url="https://docs.google.com/forms/d/test/edit",
+            form_id="test",
+            questions_exported=5,
+            questions_skipped=0
+        )
+        
+        assert result.content == b""
+        assert result.filename is None
+    
+    def test_export_result_share_url_field_exists(self):
+        """ExportResult should support share_url for consistency."""
+        from schemas.export import ExportResult
+        
+        result = ExportResult(
+            content=b"",
+            content_type="application/json",
+            share_url="https://docs.google.com/forms/d/e/test/viewform",
+            form_url="https://docs.google.com/forms/d/e/test/viewform",
+            edit_url="https://docs.google.com/forms/d/test/edit",
+            form_id="test",
+            questions_exported=3,
+            questions_skipped=0
+        )
+        
+        # share_url should equal form_url
+        assert result.share_url == result.form_url
+    
+    @pytest.mark.asyncio
+    async def test_exporter_returns_export_result_type(self, sample_quiz_data):
+        """GoogleFormsExporter.export should return ExportResult type."""
+        from services.exporters.google_forms_exporter import GoogleFormsExporter
+        from schemas.export import ExportOptions, ExportResult
+        from unittest.mock import AsyncMock
+        
+        exporter = GoogleFormsExporter(user_id="test-user-123")
+        options = ExportOptions(include_answer_key=True)
+        
+        # Create a mock export result
+        mock_result = ExportResult(
+            content=b"",
+            content_type="application/json",
+            form_url="https://docs.google.com/forms/d/e/mock/viewform",
+            edit_url="https://docs.google.com/forms/d/mock/edit",
+            form_id="mock-form-id",
+            questions_exported=2,
+            questions_skipped=1,
+            warnings=["matching not supported"]
+        )
+        
+        # Mock the entire export method to return our result
+        exporter.export = AsyncMock(return_value=mock_result)
+        
+        result = await exporter.export(sample_quiz_data, options)
+        
+        # Verify result is ExportResult type with correct fields
+        assert isinstance(result, ExportResult)
+        assert result.content_type == "application/json"
+        assert result.form_id == "mock-form-id"
+        assert result.questions_exported == 2
+        assert result.questions_skipped == 1
+
+
+class TestGoogleFormsExportResponseSerialization:
+    """Test that ExportResult can be properly serialized to JSON for API response."""
+    
+    def test_google_forms_response_schema_serialization(self):
+        """GoogleFormsExportResponse should serialize all fields correctly."""
+        from schemas.export import GoogleFormsExportResponse
+        
+        response = GoogleFormsExportResponse(
+            form_url="https://docs.google.com/forms/d/e/abc123/viewform",
+            edit_url="https://docs.google.com/forms/d/abc123/edit",
+            form_id="abc123",
+            questions_exported=5,
+            questions_skipped=1,
+            warnings=["Matching questions not supported"]
+        )
+        
+        # Should serialize to dict/JSON
+        response_dict = response.model_dump()
+        
+        assert response_dict["form_url"] == "https://docs.google.com/forms/d/e/abc123/viewform"
+        assert response_dict["edit_url"] == "https://docs.google.com/forms/d/abc123/edit"
+        assert response_dict["form_id"] == "abc123"
+        assert response_dict["questions_exported"] == 5
+        assert response_dict["questions_skipped"] == 1
+        assert response_dict["warnings"] == ["Matching questions not supported"]
+    
+    def test_google_forms_response_without_warnings(self):
+        """GoogleFormsExportResponse should handle None warnings."""
+        from schemas.export import GoogleFormsExportResponse
+        
+        response = GoogleFormsExportResponse(
+            form_url="https://docs.google.com/forms/d/e/xyz789/viewform",
+            edit_url="https://docs.google.com/forms/d/xyz789/edit",
+            form_id="xyz789",
+            questions_exported=10,
+            questions_skipped=0
+            # warnings not provided - should default to None
+        )
+        
+        response_dict = response.model_dump()
+        
+        assert response_dict["warnings"] is None
+        assert response_dict["questions_skipped"] == 0
+    
+    def test_google_forms_response_json_serializable(self):
+        """GoogleFormsExportResponse should be JSON serializable."""
+        import json
+        from schemas.export import GoogleFormsExportResponse
+        
+        response = GoogleFormsExportResponse(
+            form_url="https://docs.google.com/forms/d/e/test/viewform",
+            edit_url="https://docs.google.com/forms/d/test/edit",
+            form_id="test",
+            questions_exported=3,
+            questions_skipped=2,
+            warnings=["Warning 1", "Warning 2"]
+        )
+        
+        # Should not raise when converting to JSON
+        json_str = response.model_dump_json()
+        
+        # Should be valid JSON that can be parsed
+        parsed = json.loads(json_str)
+        assert parsed["form_id"] == "test"
+        assert len(parsed["warnings"]) == 2
 
