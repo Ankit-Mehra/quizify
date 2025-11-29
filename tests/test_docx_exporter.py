@@ -663,12 +663,11 @@ class TestDocxBranding:
         """DOCX watermark should use the shared QUIZIFY_WATERMARK_TEXT constant."""
         from services.exporters.constants import QUIZIFY_WATERMARK_TEXT
         from lxml import etree
-        import zipfile
         
         result = await docx_exporter.export(sample_quiz_data, export_options_minimal)
         
         # Extract header XML from DOCX (which is a ZIP file)
-        with zipfile.ZipFile(BytesIO(result.content)) as zf:
+        with ZipFile(BytesIO(result.content)) as zf:
             # Read header XML
             header_xml = zf.read('word/header1.xml')
             

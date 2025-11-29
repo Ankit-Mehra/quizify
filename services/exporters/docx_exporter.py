@@ -32,7 +32,7 @@ from schemas.export import (
     ExportQuestionMatching,
 )
 from services.exporters.base import BaseExporter
-from services.exporters.constants import QUIZIFY_URL, QUIZIFY_FOOTER_TEXT, QUIZIFY_WATERMARK_TEXT
+from services.exporters.constants import QUIZIFY_URL, QUIZIFY_WATERMARK_TEXT
 
 logger = logging.getLogger(__name__)
 

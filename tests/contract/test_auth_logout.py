@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi.testclient import TestClient
 from main import app
 from dependencies.auth_dependencies import get_current_user_id
-from services.redis.sessions import SessionService, SessionInfo
+from services.redis.sessions import SessionInfo
 
 client = TestClient(app)
 
