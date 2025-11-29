@@ -1,4 +1,4 @@
--- Migration 019: Fix user_tier_info view to include current_period_start and subscription_canceled_at
+-- Migration 022: Fix user_tier_info view to include current_period_start and subscription_canceled_at
 -- Issue: API returns null for current_period_start because the view was missing this column
 -- The profiles table has these columns, but they weren't included in the view
 -- Date: 2025-11-28

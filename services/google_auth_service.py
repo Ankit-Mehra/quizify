@@ -242,7 +242,7 @@ def validate_secure_state_token(
     
     Args:
         state: The state token from OAuth callback
-        max_age_seconds: Maximum token age in seconds (default: 900 = 15 minutes)
+        max_age_seconds: Maximum token age in seconds (default: 300 = 5 minutes)
         
     Returns:
         Tuple of (user_id, redirect_url, error_code):
