@@ -270,11 +270,26 @@ async def handle_export(
         logger.error(f"Unexpected export error: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail="Export failed due to an unexpected error")
     
-    # Step 6: Return appropriate response
+    # Step 6: Return appropriate response based on format
     if export_format == ExportFormat.SHARE_LINK:
         # Share link returns JSON with the URL
         return JSONResponse(
             content={"share_url": result.share_url},
+            status_code=200
+        )
+    elif export_format == ExportFormat.GOOGLE_FORMS:
+        # Google Forms returns JSON with form URLs and metadata
+        response_content = {
+            "form_url": result.form_url,
+            "edit_url": result.edit_url,
+            "form_id": result.form_id,
+            "questions_exported": result.questions_exported,
+            "questions_skipped": result.questions_skipped,
+        }
+        if result.warnings:
+            response_content["warnings"] = result.warnings
+        return JSONResponse(
+            content=response_content,
             status_code=200
         )
     else:
