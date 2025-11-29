@@ -230,17 +230,23 @@ class TestExportTierGating:
                                 json={"format": "google_forms"}
                             )
         
-        # Key assertion: Should NOT get 403 tier_insufficient
-        # Pro tier passes the tier check
-        assert response.status_code != 403 or response.json().get("detail", {}).get("error") != "tier_insufficient", \
-            "Pro tier should pass tier validation for Google Forms export"
-        
         # Should get 401 with auth_url when not connected to Google
-        assert response.status_code == 401
+        # (Pro tier passes tier check, but needs Google OAuth)
+        assert response.status_code == 401, \
+            f"Expected 401 for OAuth flow, got {response.status_code}: {response.json()}"
+        
+        # Ensure we didn't get a tier_insufficient error (Pro should pass tier check)
+        if response.status_code == 403:
+            assert response.json().get("detail", {}).get("error") != "tier_insufficient", \
+                "Pro tier should pass tier validation for Google Forms export"
+        
         data = response.json()
         assert data.get("error") == "google_connection_required"
         assert "auth_url" in data
-        assert data["auth_url"].startswith("https://accounts.google.com")
+        # Validate it's a well-formed Google OAuth URL
+        assert data["auth_url"].startswith("https://accounts.google.com/o/oauth2"), \
+            f"Expected Google OAuth URL, got: {data['auth_url']}"
+        assert data.get("message") == "Please connect your Google account to export to Google Forms"
 
     def test_free_tier_cannot_export_any_format(self, free_tier_auth):
         """Free tier users should NOT be able to export any format."""

@@ -19,7 +19,7 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
 from schemas.export import ExportResult
-from services.exporters.base import BaseExporter, ExportError
+from services.exporters.base import BaseExporter, ExportError, GoogleConnectionRequiredError
 from services.logger import app_logger as logger
 
 if TYPE_CHECKING:
@@ -109,8 +109,6 @@ class GoogleFormsExporter(BaseExporter):
         credentials = await get_google_credentials(self._user_id)
         
         if not credentials:
-            # Import here to avoid circular import
-            from services.exporters.base import GoogleConnectionRequiredError
             raise GoogleConnectionRequiredError()
         
         try:

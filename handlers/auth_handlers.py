@@ -1029,14 +1029,32 @@ async def google_connect(
         )
     
     try:
-        # Generate authorization URL with user_id as state for CSRF protection
-        auth_url, state = generate_auth_url(state=user_id)
+        # Generate secure state token (HMAC-signed) instead of raw user_id
+        # Format: timestamp:user_id:signature
+        import hashlib
+        import hmac
+        import time
+        
+        timestamp = str(int(time.time()))
+        secret_key = app_config.GOOGLE_TOKEN_ENCRYPTION_KEY or hashlib.sha256(
+            app_config.SUPABASE_KEY.encode()
+        ).hexdigest()[:32]
+        message = f"{timestamp}:{user_id}"
+        signature = hmac.new(
+            secret_key.encode(),
+            message.encode(),
+            hashlib.sha256
+        ).hexdigest()[:16]
+        secure_state = f"{timestamp}:{user_id}:{signature}"
+        
+        # Generate authorization URL with secure state for CSRF protection
+        auth_url, _ = generate_auth_url(state=secure_state)
         
         logger.info(f"Google OAuth URL generated for user {_short_user_id(user_id)}")
         
         return {
             "auth_url": auth_url,
-            "state": state,
+            "state": secure_state,
             "message": "Redirect to auth_url to connect your Google account"
         }
         
@@ -1050,7 +1068,7 @@ async def google_connect(
 
 async def google_callback(
     code: str = Query(..., description="Authorization code from Google"),
-    state: str = Query(None, description="State parameter (user_id) for CSRF protection"),
+    state: str = Query(None, description="Signed state parameter for CSRF protection"),
     error: str = Query(None, description="Error from Google OAuth")
 ):
     """
@@ -1059,8 +1077,15 @@ async def google_callback(
     After user authorizes on Google, they are redirected here with an authorization code.
     We exchange the code for tokens and store the refresh token.
     
-    SECURITY: Validates Pro tier before storing tokens to prevent bypass of google_connect check.
+    SECURITY: 
+    - Validates HMAC-signed state token to prevent CSRF and tampering
+    - State format: "timestamp:user_id:signature"
+    - Validates Pro tier before storing tokens to prevent bypass of google_connect check.
     """
+    import hashlib
+    import hmac
+    import time
+    
     from services.db_services.supabase_quiz import get_user_tier_info_cached
     from services.google_auth_service import (
         GoogleAuthError,
@@ -1076,10 +1101,48 @@ async def google_callback(
             status_code=302
         )
     
-    # State contains the user_id
-    user_id = state
-    if not user_id:
-        logger.error("Missing state (user_id) in Google OAuth callback")
+    # Validate signed state token
+    # Format: "timestamp:user_id:signature"
+    if not state:
+        logger.error("Missing state in Google OAuth callback")
+        return RedirectResponse(
+            url=f"{app_config.FRONTEND_URL}/settings?google_error=invalid_state",
+            status_code=302
+        )
+    
+    try:
+        parts = state.split(":")
+        if len(parts) != 3:
+            raise ValueError("Invalid state format")
+        
+        timestamp_str, user_id, received_signature = parts
+        
+        # Verify signature
+        secret_key = app_config.GOOGLE_TOKEN_ENCRYPTION_KEY or hashlib.sha256(
+            app_config.SUPABASE_KEY.encode()
+        ).hexdigest()[:32]
+        message = f"{timestamp_str}:{user_id}"
+        expected_signature = hmac.new(
+            secret_key.encode(),
+            message.encode(),
+            hashlib.sha256
+        ).hexdigest()[:16]
+        
+        if not hmac.compare_digest(received_signature, expected_signature):
+            raise ValueError("Invalid signature")
+        
+        # Check timestamp is not too old (15 minute window for OAuth flow)
+        timestamp = int(timestamp_str)
+        current_time = int(time.time())
+        if current_time - timestamp > 900:  # 15 minutes
+            logger.warning(f"Expired OAuth state token (age: {current_time - timestamp}s)")
+            return RedirectResponse(
+                url=f"{app_config.FRONTEND_URL}/settings?google_error=state_expired",
+                status_code=302
+            )
+        
+    except (ValueError, TypeError) as e:
+        logger.error(f"Invalid state token in Google OAuth callback: {e}")
         return RedirectResponse(
             url=f"{app_config.FRONTEND_URL}/settings?google_error=invalid_state",
             status_code=302

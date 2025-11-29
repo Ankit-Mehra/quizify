@@ -35,9 +35,14 @@ Content-Type: application/json
   "error": "google_connection_required",
   "message": "Please connect your Google account to export to Google Forms",
   "auth_url": "https://accounts.google.com/o/oauth2/v2/auth?client_id=...&redirect_uri=...&scope=...&state=...",
-  "state": "user-id-here"
+  "state": "timestamp:user-id:signature"
 }
 ```
+
+> **Security Note:**  
+> The `state` parameter is an HMAC-signed token containing a timestamp and user identifier.  
+> This protects against CSRF attacks and prevents tampering with the OAuth flow.  
+> The backend validates this signature in the callback before processing the authorization.
 
 **Frontend Action:**
 
@@ -300,13 +305,20 @@ export function useGoogleFormsExport() {
       const data = error.response?.data;
       
       if (status === 401 && data?.error === 'google_connection_required') {
-        // Store pending export and redirect to Google OAuth
-        sessionStorage.setItem('pendingGoogleExport', JSON.stringify({
-          quizId,
-          options: { format: 'google_forms', ...options }
-        }));
-        
-        window.location.href = data.auth_url;
+        // Validate auth_url is a legitimate Google OAuth URL before redirecting
+        // This prevents potential open redirect vulnerabilities
+        if (typeof data.auth_url === 'string' && 
+            data.auth_url.startsWith('https://accounts.google.com/o/oauth2')) {
+          // Store pending export and redirect to Google OAuth
+          sessionStorage.setItem('pendingGoogleExport', JSON.stringify({
+            quizId,
+            options: { format: 'google_forms', ...options }
+          }));
+          
+          window.location.href = data.auth_url;
+        } else {
+          throw new Error('Invalid OAuth URL received from server');
+        }
         return null;
       }
       

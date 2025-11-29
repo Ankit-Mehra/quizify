@@ -25,6 +25,7 @@ from services.exporters.base import (
 )
 from services.exporters.tier_validator import validate_export_tier_access
 from services.exporters.quiz_loader import load_quiz_for_export
+from services.google_auth_service import generate_auth_url, is_google_auth_configured
 from services.logger import app_logger as logger
 
 
@@ -229,7 +230,6 @@ async def handle_export(
     except GoogleConnectionRequiredError:
         # Special handling for Google Forms - return auth URL for OAuth flow
         logger.info(f"Google connection required for user {user_id[:8]}... - returning auth URL")
-        from services.google_auth_service import generate_auth_url, is_google_auth_configured
         
         if not is_google_auth_configured():
             raise HTTPException(
@@ -238,14 +238,35 @@ async def handle_export(
             )
         
         try:
-            auth_url, state = generate_auth_url(state=user_id)
+            # Generate secure state token (HMAC-signed) instead of raw user_id
+            # The state will be validated in the callback to extract user_id securely
+            import hashlib
+            import hmac
+            import time
+            from config import Config
+            
+            # Create a signed state token: timestamp:user_id:signature
+            timestamp = str(int(time.time()))
+            # Use encryption key or fallback to a hash of service key for HMAC
+            secret_key = Config.GOOGLE_TOKEN_ENCRYPTION_KEY or hashlib.sha256(
+                Config.SUPABASE_KEY.encode()
+            ).hexdigest()[:32]
+            message = f"{timestamp}:{user_id}"
+            signature = hmac.new(
+                secret_key.encode(),
+                message.encode(),
+                hashlib.sha256
+            ).hexdigest()[:16]
+            secure_state = f"{timestamp}:{user_id}:{signature}"
+            
+            auth_url, _ = generate_auth_url(state=secure_state)
             return JSONResponse(
                 status_code=401,
                 content={
                     "error": "google_connection_required",
                     "message": "Please connect your Google account to export to Google Forms",
                     "auth_url": auth_url,
-                    "state": state
+                    "state": secure_state
                 }
             )
         except Exception as e:
