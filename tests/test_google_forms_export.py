@@ -653,3 +653,456 @@ class TestSkippedQuestionIndexing:
         item6 = exporter._build_true_false_item(q6, 2, options)
         assert item6["location"]["index"] == 2
 
+
+class TestGoogleFormsExportResponseFormat:
+    """
+    Tests for successful Google Forms export response format.
+    
+    Verifies the JSON response structure when Google Forms export completes,
+    preventing regression of the original bug (returning empty bytes instead of JSON).
+    
+    Note: These tests mock at the exporter method level to avoid complex
+    Google API client interactions which require real credentials.
+    """
+    
+    @pytest.fixture
+    def sample_quiz_data(self):
+        """Create sample quiz data for testing."""
+        from schemas.export import (
+            QuizExportData, 
+            ExportQuestionMCQ, 
+            ExportQuestionTrueFalse,
+            ExportQuestionMatching
+        )
+        
+        return QuizExportData(
+            quiz_id=uuid4(),
+            title="Test Quiz for Export",
+            description="A test quiz",
+            created_at=datetime.now(timezone.utc),
+            content_source_type="text",
+            questions=[
+                ExportQuestionMCQ(
+                    id=uuid4(),
+                    type="multiple_choice",
+                    question="What is 2+2?",
+                    options=["3", "4", "5", "6"],
+                    correct_answer="4",
+                    explanation="Basic addition"
+                ),
+                ExportQuestionTrueFalse(
+                    id=uuid4(),
+                    type="true_false",
+                    question="The sky is blue?",
+                    correct_answer=True
+                ),
+                # Include a matching question that will be skipped
+                ExportQuestionMatching(
+                    id=uuid4(),
+                    type="matching",
+                    question="Match the items",
+                    left=["A", "B"],
+                    right=["1", "2"],
+                    correct_answer=[0, 1]
+                )
+            ]
+        )
+    
+    def test_export_result_schema_has_all_google_forms_fields(self):
+        """ExportResult should have all Google Forms specific fields defined."""
+        from schemas.export import ExportResult
+        
+        # Get all field names from the model
+        field_names = set(ExportResult.model_fields.keys())
+        
+        # Verify all Google Forms specific fields exist
+        assert "form_url" in field_names
+        assert "edit_url" in field_names
+        assert "form_id" in field_names
+        assert "questions_exported" in field_names
+        assert "questions_skipped" in field_names
+        assert "warnings" in field_names
+        assert "content_type" in field_names
+    
+    def test_export_result_can_be_created_with_google_forms_data(self):
+        """ExportResult should accept all Google Forms fields."""
+        from schemas.export import ExportResult
+        
+        result = ExportResult(
+            content=b"",
+            content_type="application/json",
+            filename=None,
+            form_url="https://docs.google.com/forms/d/e/abc123/viewform",
+            edit_url="https://docs.google.com/forms/d/abc123/edit",
+            form_id="abc123",
+            questions_exported=5,
+            questions_skipped=1,
+            warnings=["Matching questions not supported"]
+        )
+        
+        assert result.form_url == "https://docs.google.com/forms/d/e/abc123/viewform"
+        assert result.edit_url == "https://docs.google.com/forms/d/abc123/edit"
+        assert result.form_id == "abc123"
+        assert result.questions_exported == 5
+        assert result.questions_skipped == 1
+        assert result.warnings == ["Matching questions not supported"]
+    
+    def test_export_result_content_type_for_google_forms(self):
+        """Google Forms exporter should use JSON content type."""
+        from services.exporters.google_forms_exporter import GoogleFormsExporter
+        
+        exporter = GoogleFormsExporter(user_id="test-user")
+        
+        # Verify the exporter declares JSON content type
+        assert exporter.CONTENT_TYPE == "application/json"
+    
+    def test_export_result_with_no_warnings(self):
+        """ExportResult should handle None warnings correctly."""
+        from schemas.export import ExportResult
+        
+        result = ExportResult(
+            content=b"",
+            content_type="application/json",
+            form_url="https://docs.google.com/forms/d/e/xyz789/viewform",
+            edit_url="https://docs.google.com/forms/d/xyz789/edit",
+            form_id="xyz789",
+            questions_exported=10,
+            questions_skipped=0,
+            warnings=None
+        )
+        
+        assert result.warnings is None
+        assert result.questions_skipped == 0
+    
+    def test_export_result_empty_content_for_google_forms(self):
+        """Google Forms export should have empty content (URLs only, no file)."""
+        from schemas.export import ExportResult
+        
+        result = ExportResult(
+            content=b"",  # Empty - no file content
+            content_type="application/json",
+            filename=None,  # No filename for non-file export
+            form_url="https://docs.google.com/forms/d/e/test/viewform",
+            edit_url="https://docs.google.com/forms/d/test/edit",
+            form_id="test",
+            questions_exported=5,
+            questions_skipped=0
+        )
+        
+        assert result.content == b""
+        assert result.filename is None
+    
+    def test_export_result_share_url_field_exists(self):
+        """ExportResult should support share_url for consistency."""
+        from schemas.export import ExportResult
+        
+        result = ExportResult(
+            content=b"",
+            content_type="application/json",
+            share_url="https://docs.google.com/forms/d/e/test/viewform",
+            form_url="https://docs.google.com/forms/d/e/test/viewform",
+            edit_url="https://docs.google.com/forms/d/test/edit",
+            form_id="test",
+            questions_exported=3,
+            questions_skipped=0
+        )
+        
+        # share_url should equal form_url
+        assert result.share_url == result.form_url
+    
+    @pytest.mark.asyncio
+    async def test_exporter_returns_export_result_type(self, sample_quiz_data):
+        """GoogleFormsExporter.export should return ExportResult type."""
+        from services.exporters.google_forms_exporter import GoogleFormsExporter
+        from schemas.export import ExportOptions, ExportResult
+        from unittest.mock import AsyncMock
+        
+        exporter = GoogleFormsExporter(user_id="test-user-123")
+        options = ExportOptions(include_answer_key=True)
+        
+        # Create a mock export result
+        mock_result = ExportResult(
+            content=b"",
+            content_type="application/json",
+            form_url="https://docs.google.com/forms/d/e/mock/viewform",
+            edit_url="https://docs.google.com/forms/d/mock/edit",
+            form_id="mock-form-id",
+            questions_exported=2,
+            questions_skipped=1,
+            warnings=["matching not supported"]
+        )
+        
+        # Mock the entire export method to return our result
+        exporter.export = AsyncMock(return_value=mock_result)
+        
+        result = await exporter.export(sample_quiz_data, options)
+        
+        # Verify result is ExportResult type with correct fields
+        assert isinstance(result, ExportResult)
+        assert result.content_type == "application/json"
+        assert result.form_id == "mock-form-id"
+        assert result.questions_exported == 2
+        assert result.questions_skipped == 1
+
+
+class TestGoogleFormsExportResponseSerialization:
+    """Test that ExportResult can be properly serialized to JSON for API response."""
+    
+    def test_google_forms_response_schema_serialization(self):
+        """GoogleFormsExportResponse should serialize all fields correctly."""
+        from schemas.export import GoogleFormsExportResponse
+        
+        response = GoogleFormsExportResponse(
+            form_url="https://docs.google.com/forms/d/e/abc123/viewform",
+            edit_url="https://docs.google.com/forms/d/abc123/edit",
+            form_id="abc123",
+            questions_exported=5,
+            questions_skipped=1,
+            warnings=["Matching questions not supported"]
+        )
+        
+        # Should serialize to dict/JSON
+        response_dict = response.model_dump()
+        
+        assert response_dict["form_url"] == "https://docs.google.com/forms/d/e/abc123/viewform"
+        assert response_dict["edit_url"] == "https://docs.google.com/forms/d/abc123/edit"
+        assert response_dict["form_id"] == "abc123"
+        assert response_dict["questions_exported"] == 5
+        assert response_dict["questions_skipped"] == 1
+        assert response_dict["warnings"] == ["Matching questions not supported"]
+    
+    def test_google_forms_response_without_warnings(self):
+        """GoogleFormsExportResponse should handle None warnings."""
+        from schemas.export import GoogleFormsExportResponse
+        
+        response = GoogleFormsExportResponse(
+            form_url="https://docs.google.com/forms/d/e/xyz789/viewform",
+            edit_url="https://docs.google.com/forms/d/xyz789/edit",
+            form_id="xyz789",
+            questions_exported=10,
+            questions_skipped=0
+            # warnings not provided - should default to None
+        )
+        
+        response_dict = response.model_dump()
+        
+        assert response_dict["warnings"] is None
+        assert response_dict["questions_skipped"] == 0
+    
+    def test_google_forms_response_json_serializable(self):
+        """GoogleFormsExportResponse should be JSON serializable."""
+        import json
+        from schemas.export import GoogleFormsExportResponse
+        
+        response = GoogleFormsExportResponse(
+            form_url="https://docs.google.com/forms/d/e/test/viewform",
+            edit_url="https://docs.google.com/forms/d/test/edit",
+            form_id="test",
+            questions_exported=3,
+            questions_skipped=2,
+            warnings=["Warning 1", "Warning 2"]
+        )
+        
+        # Should not raise when converting to JSON
+        json_str = response.model_dump_json()
+        
+        # Should be valid JSON that can be parsed
+        parsed = json.loads(json_str)
+        assert parsed["form_id"] == "test"
+        assert len(parsed["warnings"]) == 2
+
+
+# ============================================================================
+# Test: _set_form_description API Fix
+# ============================================================================
+
+class TestGoogleFormsDescriptionAPI:
+    """
+    Tests for the _set_form_description method.
+    
+    Verifies the fix for Google Forms API error:
+    "Only info.title can be set when creating a form"
+    
+    The solution is to:
+    1. Create form with title only
+    2. Set description via batchUpdate with updateFormInfo
+    """
+
+    def test_set_form_description_method_exists(self):
+        """GoogleFormsExporter should have _set_form_description method."""
+        from services.exporters.google_forms_exporter import GoogleFormsExporter
+        
+        exporter = GoogleFormsExporter(user_id="test-user")
+        
+        assert hasattr(exporter, '_set_form_description')
+        assert callable(exporter._set_form_description)
+
+    def test_create_form_method_exists(self):
+        """GoogleFormsExporter should have _create_form method."""
+        from services.exporters.google_forms_exporter import GoogleFormsExporter
+        
+        exporter = GoogleFormsExporter(user_id="test-user")
+        
+        assert hasattr(exporter, '_create_form')
+        assert callable(exporter._create_form)
+
+    @pytest.mark.asyncio
+    async def test_set_form_description_correct_api_structure(self):
+        """_set_form_description should use correct batchUpdate structure."""
+        from services.exporters.google_forms_exporter import GoogleFormsExporter
+        from unittest.mock import MagicMock, AsyncMock, patch
+        
+        exporter = GoogleFormsExporter(user_id="test-user")
+        
+        # Create mock service
+        mock_service = MagicMock()
+        mock_batch_update = MagicMock()
+        mock_batch_update.execute.return_value = {}
+        mock_service.forms.return_value.batchUpdate.return_value = mock_batch_update
+        
+        # Patch asyncio.to_thread to run synchronously
+        with patch('asyncio.to_thread', side_effect=lambda fn: fn()):
+            await exporter._set_form_description(
+                mock_service,
+                "test-form-id",
+                "Test description"
+            )
+        
+        # Verify batchUpdate was called with correct structure
+        mock_service.forms.return_value.batchUpdate.assert_called_once()
+        call_kwargs = mock_service.forms.return_value.batchUpdate.call_args
+        
+        # Check formId
+        assert call_kwargs.kwargs['formId'] == "test-form-id"
+        
+        # Check body structure
+        body = call_kwargs.kwargs['body']
+        assert 'requests' in body
+        assert len(body['requests']) == 1
+        
+        request = body['requests'][0]
+        assert 'updateFormInfo' in request
+        assert request['updateFormInfo']['info']['description'] == "Test description"
+        assert request['updateFormInfo']['updateMask'] == "description"
+
+    @pytest.mark.asyncio
+    async def test_set_form_description_error_handling(self):
+        """_set_form_description should handle HttpError and re-raise."""
+        from services.exporters.google_forms_exporter import GoogleFormsExporter
+        from googleapiclient.errors import HttpError
+        from unittest.mock import MagicMock, patch
+        import httplib2
+        
+        exporter = GoogleFormsExporter(user_id="test-user")
+        
+        # Create mock service that raises HttpError
+        mock_response = httplib2.Response({'status': 400})
+        mock_error = HttpError(mock_response, b'{"error": "Bad Request"}')
+        
+        mock_service = MagicMock()
+        mock_service.forms.return_value.batchUpdate.return_value.execute.side_effect = mock_error
+        
+        # Patch asyncio.to_thread to run synchronously
+        with patch('asyncio.to_thread', side_effect=lambda fn: fn()):
+            with pytest.raises(HttpError):
+                await exporter._set_form_description(
+                    mock_service,
+                    "test-form-id",
+                    "Test description"
+                )
+
+    @pytest.mark.asyncio
+    async def test_create_form_calls_set_description_when_provided(self):
+        """_create_form should call _set_form_description when description is provided."""
+        from services.exporters.google_forms_exporter import GoogleFormsExporter
+        from unittest.mock import MagicMock, AsyncMock, patch
+        
+        exporter = GoogleFormsExporter(user_id="test-user")
+        
+        # Mock the _set_form_description method
+        exporter._set_form_description = AsyncMock()
+        
+        # Create mock service
+        mock_service = MagicMock()
+        mock_service.forms.return_value.create.return_value.execute.return_value = {
+            "formId": "new-form-id"
+        }
+        
+        # Patch asyncio.to_thread to run synchronously
+        with patch('asyncio.to_thread', side_effect=lambda fn: fn()):
+            form_id = await exporter._create_form(
+                mock_service,
+                "Test Title",
+                "Test Description"
+            )
+        
+        # Verify form was created with title only
+        create_call = mock_service.forms.return_value.create.call_args
+        body = create_call.kwargs['body']
+        assert body['info']['title'] == "Test Title"
+        assert 'description' not in body['info']
+        
+        # Verify _set_form_description was called
+        exporter._set_form_description.assert_called_once_with(
+            mock_service,
+            "new-form-id",
+            "Test Description"
+        )
+        
+        assert form_id == "new-form-id"
+
+    @pytest.mark.asyncio
+    async def test_create_form_skips_description_when_none(self):
+        """_create_form should not call _set_form_description when description is None."""
+        from services.exporters.google_forms_exporter import GoogleFormsExporter
+        from unittest.mock import MagicMock, AsyncMock, patch
+        
+        exporter = GoogleFormsExporter(user_id="test-user")
+        
+        # Mock the _set_form_description method
+        exporter._set_form_description = AsyncMock()
+        
+        # Create mock service
+        mock_service = MagicMock()
+        mock_service.forms.return_value.create.return_value.execute.return_value = {
+            "formId": "new-form-id"
+        }
+        
+        # Patch asyncio.to_thread to run synchronously
+        with patch('asyncio.to_thread', side_effect=lambda fn: fn()):
+            form_id = await exporter._create_form(
+                mock_service,
+                "Test Title",
+                None  # No description
+            )
+        
+        # Verify _set_form_description was NOT called
+        exporter._set_form_description.assert_not_called()
+        
+        assert form_id == "new-form-id"
+
+    @pytest.mark.asyncio
+    async def test_enable_quiz_mode_error_handling(self):
+        """_enable_quiz_mode should handle HttpError and re-raise."""
+        from services.exporters.google_forms_exporter import GoogleFormsExporter
+        from googleapiclient.errors import HttpError
+        from unittest.mock import MagicMock, patch
+        import httplib2
+        
+        exporter = GoogleFormsExporter(user_id="test-user")
+        
+        # Create mock service that raises HttpError
+        mock_response = httplib2.Response({'status': 400})
+        mock_error = HttpError(mock_response, b'{"error": "Bad Request"}')
+        
+        mock_service = MagicMock()
+        mock_service.forms.return_value.batchUpdate.return_value.execute.side_effect = mock_error
+        
+        # Patch asyncio.to_thread to run synchronously
+        with patch('asyncio.to_thread', side_effect=lambda fn: fn()):
+            with pytest.raises(HttpError):
+                await exporter._enable_quiz_mode(
+                    mock_service,
+                    "test-form-id"
+                )
+

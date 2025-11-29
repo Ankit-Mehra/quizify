@@ -208,31 +208,81 @@ class GoogleFormsExporter(BaseExporter):
         """
         Create a new Google Form.
         
+        Note: Google Forms API only allows setting title during creation.
+        Description must be added via batchUpdate after form is created.
+        
         Args:
             service: Google Forms API service
             title: Form title
-            description: Optional form description
+            description: Optional form description (added via batchUpdate)
             
         Returns:
             Form ID
         """
         import asyncio
         
+        # Google Forms API only allows title during creation
         form_body = {
             "info": {
                 "title": title,
             }
         }
         
-        # Add description if provided
-        if description:
-            form_body["info"]["description"] = description
-        
         def create():
             return service.forms().create(body=form_body).execute()
         
         result = await asyncio.to_thread(create)
-        return result["formId"]
+        form_id = result["formId"]
+        
+        # Add description via batchUpdate if provided
+        if description:
+            await self._set_form_description(service, form_id, description)
+        
+        return form_id
+
+    async def _set_form_description(
+        self,
+        service,
+        form_id: str,
+        description: str
+    ) -> None:
+        """
+        Set form description via batchUpdate.
+        
+        Args:
+            service: Google Forms API service
+            form_id: Google Form ID
+            description: Form description
+            
+        Raises:
+            HttpError: If the API call fails
+        """
+        import asyncio
+        
+        update_request = {
+            "requests": [
+                {
+                    "updateFormInfo": {
+                        "info": {
+                            "description": description
+                        },
+                        "updateMask": "description"
+                    }
+                }
+            ]
+        }
+        
+        def update():
+            return service.forms().batchUpdate(
+                formId=form_id,
+                body=update_request
+            ).execute()
+        
+        try:
+            await asyncio.to_thread(update)
+        except HttpError as e:
+            logger.error(f"Failed to set form description for form_id={form_id}: {e}")
+            raise
     
     async def _enable_quiz_mode(self, service, form_id: str) -> None:
         """
@@ -265,7 +315,11 @@ class GoogleFormsExporter(BaseExporter):
                 body=update_request
             ).execute()
         
-        await asyncio.to_thread(update)
+        try:
+            await asyncio.to_thread(update)
+        except HttpError as e:
+            logger.error(f"Failed to enable quiz mode for form_id={form_id}: {e}")
+            raise
     
     async def _add_questions(
         self,
