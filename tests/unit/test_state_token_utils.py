@@ -180,6 +180,7 @@ def test_validate_token_wrong_format_one_part():
     user_id, redirect_url, error = validate_secure_state_token("just-one-part")
     
     assert user_id is None
+    assert redirect_url is None
     assert error == "invalid_state"
 
 
@@ -188,6 +189,7 @@ def test_validate_token_wrong_format_two_parts():
     user_id, redirect_url, error = validate_secure_state_token("part1:part2")
     
     assert user_id is None
+    assert redirect_url is None
     assert error == "invalid_state"
 
 
