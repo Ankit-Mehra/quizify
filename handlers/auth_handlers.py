@@ -1087,7 +1087,7 @@ async def google_callback(
     
     # Validate signed state token using shared utility
     # Use 15 minute window (900 seconds) for OAuth flow completion
-    user_id, error_code = validate_secure_state_token(state, max_age_seconds=900)
+    user_id, redirect_url, error_code = validate_secure_state_token(state, max_age_seconds=900)
     
     if error_code:
         logger.error(f"Invalid state token in Google OAuth callback: {error_code}")
@@ -1097,6 +1097,28 @@ async def google_callback(
         )
     
     logger.info(f"Google OAuth callback for user {_short_user_id(user_id)}")
+    
+    # Validate and sanitize redirect_url to prevent open redirects
+    # Must be a relative path (starts with /) or None
+    safe_redirect_path = None
+    if redirect_url:
+        # Only allow relative paths starting with /
+        if redirect_url.startswith("/") and not redirect_url.startswith("//"):
+            # Strip any protocol:// that might be embedded
+            if "://" not in redirect_url:
+                safe_redirect_path = redirect_url
+                logger.debug(f"Using custom redirect path: {safe_redirect_path}")
+            else:
+                logger.warning(f"Rejecting redirect_url with protocol: {redirect_url[:50]}...")
+        else:
+            logger.warning(f"Rejecting non-relative redirect_url: {redirect_url[:50]}...")
+    
+    # Helper to build redirect URL with fallback to /settings
+    def build_redirect_url(query_params: str) -> str:
+        if safe_redirect_path:
+            separator = "&" if "?" in safe_redirect_path else "?"
+            return f"{app_config.FRONTEND_URL}{safe_redirect_path}{separator}{query_params}"
+        return f"{app_config.FRONTEND_URL}/settings?{query_params}"
     
     # SECURITY: Re-validate Pro tier to prevent bypass via direct callback URL
     # A user could theoretically get a valid code and bypass google_connect tier check
@@ -1109,13 +1131,13 @@ async def google_callback(
                 f"OAuth callback (Pro only) - rejecting"
             )
             return RedirectResponse(
-                url=f"{app_config.FRONTEND_URL}/settings?google_error=tier_insufficient",
+                url=build_redirect_url("google_error=tier_insufficient"),
                 status_code=302
             )
     except Exception as tier_error:
         logger.error(f"Failed to verify user tier in callback: {tier_error}")
         return RedirectResponse(
-            url=f"{app_config.FRONTEND_URL}/settings?google_error=tier_check_failed",
+            url=build_redirect_url("google_error=tier_check_failed"),
             status_code=302
         )
     
@@ -1128,22 +1150,22 @@ async def google_callback(
         
         logger.info(f"Google account connected for user {_short_user_id(user_id)}")
         
-        # Redirect to frontend with success
+        # Redirect to frontend with success (use custom path or /settings)
         return RedirectResponse(
-            url=f"{app_config.FRONTEND_URL}/settings?google_connected=true",
+            url=build_redirect_url("google_connected=true"),
             status_code=302
         )
         
     except GoogleAuthError as e:
         logger.error(f"Google OAuth error: {e.message}")
         return RedirectResponse(
-            url=f"{app_config.FRONTEND_URL}/settings?google_error={e.error_code}",
+            url=build_redirect_url(f"google_error={e.error_code}"),
             status_code=302
         )
     except Exception as e:
         logger.error(f"Error in Google OAuth callback: {str(e)}", exc_info=True)
         return RedirectResponse(
-            url=f"{app_config.FRONTEND_URL}/settings?google_error=callback_failed",
+            url=build_redirect_url("google_error=callback_failed"),
             status_code=302
         )
 

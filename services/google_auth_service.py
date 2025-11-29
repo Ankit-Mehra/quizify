@@ -187,28 +187,38 @@ def _get_state_secret() -> bytes:
     return secret.encode()
 
 
-def generate_secure_state_token(user_id: str) -> str:
+def generate_secure_state_token(user_id: str, redirect_url: Optional[str] = None) -> str:
     """
     Generate an HMAC-signed OAuth state token for CSRF protection.
     
-    The token format is: timestamp:user_id:signature
+    The token format is: timestamp:user_id:redirect_b64:signature
     - timestamp: Unix epoch (integer) for expiration checking
     - user_id: The user's ID to bind the OAuth flow to
-    - signature: HMAC-SHA256 of "timestamp:user_id" using secret key
+    - redirect_b64: Base64-encoded redirect URL (or empty string if none)
+    - signature: HMAC-SHA256 of "timestamp:user_id:redirect_b64" using secret key
     
     Args:
         user_id: The authenticated user's ID
+        redirect_url: Optional URL to redirect back to after OAuth (e.g., "/quizzes/123")
         
     Returns:
         Secure state token string
         
     Example:
-        >>> token = generate_secure_state_token("user-123")
+        >>> token = generate_secure_state_token("user-123", "/quizzes/abc")
         >>> token
-        "1704067200:user-123:a1b2c3d4e5f6..."
+        "1704067200:user-123:L3F1aXp6ZXMvYWJj:a1b2c3d4e5f6..."
     """
+    import base64
+    
     timestamp = int(time.time())
-    payload = f"{timestamp}:{user_id}"
+    
+    # Encode redirect_url as URL-safe base64 (or empty string if none)
+    redirect_b64 = ""
+    if redirect_url:
+        redirect_b64 = base64.urlsafe_b64encode(redirect_url.encode()).decode()
+    
+    payload = f"{timestamp}:{user_id}:{redirect_b64}"
     signature = hmac.new(
         _get_state_secret(),
         payload.encode(),
@@ -221,54 +231,63 @@ def generate_secure_state_token(user_id: str) -> str:
 def validate_secure_state_token(
     state: str,
     max_age_seconds: int = STATE_TOKEN_EXPIRY_SECONDS
-) -> Tuple[Optional[str], str]:
+) -> Tuple[Optional[str], Optional[str], str]:
     """
     Validate an HMAC-signed OAuth state token.
     
     Checks:
-    1. Token has correct format (timestamp:user_id:signature)
+    1. Token has correct format (timestamp:user_id:redirect_b64:signature)
     2. Signature is valid (prevents tampering)
     3. Token hasn't expired (prevents replay attacks)
     
     Args:
         state: The state token from OAuth callback
-        max_age_seconds: Maximum token age in seconds (default: 300 = 5 minutes)
+        max_age_seconds: Maximum token age in seconds (default: 900 = 15 minutes)
         
     Returns:
-        Tuple of (user_id, error_code):
-        - On success: (user_id, "")
-        - On failure: (None, error_code)
+        Tuple of (user_id, redirect_url, error_code):
+        - On success: (user_id, redirect_url_or_None, "")
+        - On failure: (None, None, error_code)
         
         Error codes:
         - "invalid_state": Malformed token or signature mismatch
         - "state_expired": Token has expired
         
     Example:
-        >>> user_id, error = validate_secure_state_token(state)
+        >>> user_id, redirect_url, error = validate_secure_state_token(state)
         >>> if error:
         ...     raise HTTPException(400, error)
-        >>> print(f"User: {user_id}")
+        >>> print(f"User: {user_id}, Redirect: {redirect_url}")
     """
+    import base64
+    
     if not state:
         logger.warning("Empty state token received")
-        return None, "invalid_state"
+        return None, None, "invalid_state"
     
     parts = state.split(":")
-    if len(parts) != 3:
-        logger.warning(f"Invalid state format: expected 3 parts, got {len(parts)}")
-        return None, "invalid_state"
-    
-    timestamp_str, user_id, received_signature = parts
+    # Support both old 3-part format and new 4-part format
+    if len(parts) == 3:
+        # Old format: timestamp:user_id:signature (no redirect_url)
+        timestamp_str, user_id, received_signature = parts
+        redirect_b64 = ""
+        payload = f"{timestamp_str}:{user_id}"
+    elif len(parts) == 4:
+        # New format: timestamp:user_id:redirect_b64:signature
+        timestamp_str, user_id, redirect_b64, received_signature = parts
+        payload = f"{timestamp_str}:{user_id}:{redirect_b64}"
+    else:
+        logger.warning(f"Invalid state format: expected 3 or 4 parts, got {len(parts)}")
+        return None, None, "invalid_state"
     
     # Validate timestamp format
     try:
         timestamp = int(timestamp_str)
     except ValueError:
         logger.warning("Invalid timestamp in state token")
-        return None, "invalid_state"
+        return None, None, "invalid_state"
     
     # Verify HMAC signature (constant-time comparison prevents timing attacks)
-    payload = f"{timestamp_str}:{user_id}"
     expected_signature = hmac.new(
         _get_state_secret(),
         payload.encode(),
@@ -280,7 +299,7 @@ def validate_secure_state_token(
             f"State signature mismatch for user {user_id[:8]}... "
             "(possible tampering or wrong key)"
         )
-        return None, "invalid_state"
+        return None, None, "invalid_state"
     
     # Check expiration
     current_time = int(time.time())
@@ -291,7 +310,7 @@ def validate_secure_state_token(
             f"State token expired for user {user_id[:8]}... "
             f"(age: {token_age}s, max: {max_age_seconds}s)"
         )
-        return None, "state_expired"
+        return None, None, "state_expired"
     
     if token_age < 0:
         # Future timestamp - could be clock skew or tampering
@@ -301,9 +320,18 @@ def validate_secure_state_token(
         )
         # Allow small clock skew (30 seconds)
         if abs(token_age) > 30:
-            return None, "invalid_state"
+            return None, None, "invalid_state"
     
-    return user_id, ""
+    # Decode redirect_url if present
+    redirect_url = None
+    if redirect_b64:
+        try:
+            redirect_url = base64.urlsafe_b64decode(redirect_b64.encode()).decode()
+        except Exception as e:
+            logger.warning(f"Failed to decode redirect_url from state: {e}")
+            # Don't fail - just ignore the redirect_url
+    
+    return user_id, redirect_url, ""
 
 
 # OAuth2 client config structure

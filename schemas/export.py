@@ -56,6 +56,14 @@ class ExportRequest(BaseModel):
         default=False,
         description="Whether to include explanations for each answer"
     )
+    redirect_url: Optional[str] = Field(
+        default=None,
+        description=(
+            "URL to redirect back to after Google OAuth completes. "
+            "Only used for google_forms format when OAuth is required. "
+            "Must be a relative path (e.g., '/quizzes/123') or same-origin URL."
+        )
+    )
 
 
 class ExportResponse(BaseModel):

@@ -244,7 +244,11 @@ async def handle_export(
         try:
             # Generate secure state token (HMAC-signed) for CSRF protection
             # The state will be validated in the callback to extract user_id securely
-            secure_state = generate_secure_state_token(user_id)
+            # Include redirect_url if provided so user returns to original page after OAuth
+            secure_state = generate_secure_state_token(
+                user_id=user_id, 
+                redirect_url=request.redirect_url
+            )
             
             auth_url, _ = generate_auth_url(state=secure_state)
             return JSONResponse(
