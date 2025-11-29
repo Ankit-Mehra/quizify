@@ -579,3 +579,77 @@ class TestQuestionTypeMapping:
         
         assert exporter._find_correct_option_index(options, "NotFound") == 0
 
+
+class TestSkippedQuestionIndexing:
+    """Tests for correct form indexing when questions are skipped."""
+    
+    def test_form_indices_correct_with_skipped_matching_questions(self):
+        """Form indices should be sequential even when matching questions are skipped."""
+        from services.exporters.google_forms_exporter import GoogleFormsExporter
+        from schemas.export import ExportOptions
+        
+        exporter = GoogleFormsExporter(user_id="test-user")
+        options = ExportOptions(include_answer_key=True)
+        
+        # Build items for questions at different original indices
+        # Simulating: MCQ(0), MCQ(1), MATCHING(2-skipped), MCQ(3)
+        
+        # Question at original index 0 should get form_index 0
+        from schemas.export import ExportQuestionMCQ
+        q1 = ExportQuestionMCQ(
+            id=uuid4(), type="multiple_choice",
+            question="Q1", options=["A", "B"], correct_answer="A"
+        )
+        item1 = exporter._build_mcq_item(q1, 0, options)
+        assert item1["location"]["index"] == 0
+        
+        # Question at original index 1 should get form_index 1
+        q2 = ExportQuestionMCQ(
+            id=uuid4(), type="multiple_choice",
+            question="Q2", options=["A", "B"], correct_answer="A"
+        )
+        item2 = exporter._build_mcq_item(q2, 1, options)
+        assert item2["location"]["index"] == 1
+        
+        # Question at original index 3 (after skipped matching) should get form_index 2
+        q4 = ExportQuestionMCQ(
+            id=uuid4(), type="multiple_choice",
+            question="Q4", options=["A", "B"], correct_answer="A"
+        )
+        item4 = exporter._build_mcq_item(q4, 2, options)  # form_index=2, not 3
+        assert item4["location"]["index"] == 2
+    
+    def test_multiple_skipped_questions_indices(self):
+        """Form indices should remain correct with multiple skipped questions."""
+        from services.exporters.google_forms_exporter import GoogleFormsExporter
+        from schemas.export import ExportOptions, ExportQuestionTrueFalse
+        
+        exporter = GoogleFormsExporter(user_id="test-user")
+        options = ExportOptions(include_answer_key=True)
+        
+        # Simulating: TF(0), SKIP(1), SKIP(2), TF(3), SKIP(4), TF(5)
+        # Expected form indices: 0, -, -, 1, -, 2
+        
+        q1 = ExportQuestionTrueFalse(
+            id=uuid4(), type="true_false",
+            question="Q1", correct_answer=True
+        )
+        item1 = exporter._build_true_false_item(q1, 0, options)
+        assert item1["location"]["index"] == 0
+        
+        # After 2 skips, next question should be at form_index 1
+        q4 = ExportQuestionTrueFalse(
+            id=uuid4(), type="true_false",
+            question="Q4", correct_answer=False
+        )
+        item4 = exporter._build_true_false_item(q4, 1, options)
+        assert item4["location"]["index"] == 1
+        
+        # After another skip, next question should be at form_index 2
+        q6 = ExportQuestionTrueFalse(
+            id=uuid4(), type="true_false",
+            question="Q6", correct_answer=True
+        )
+        item6 = exporter._build_true_false_item(q6, 2, options)
+        assert item6["location"]["index"] == 2
+
