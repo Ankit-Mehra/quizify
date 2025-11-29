@@ -326,7 +326,9 @@ def validate_secure_state_token(
     redirect_url = None
     if redirect_b64:
         try:
-            redirect_url = base64.urlsafe_b64decode(redirect_b64.encode()).decode()
+            # Add base64 padding if missing (base64 strings must be multiple of 4)
+            padded = redirect_b64 + "=" * (-len(redirect_b64) % 4)
+            redirect_url = base64.urlsafe_b64decode(padded.encode()).decode()
         except Exception as e:
             logger.warning(f"Failed to decode redirect_url from state: {e}")
             # Don't fail - just ignore the redirect_url

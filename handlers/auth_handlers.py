@@ -1098,12 +1098,16 @@ async def google_callback(
     
     logger.info(f"Google OAuth callback for user {_short_user_id(user_id)}")
     
-    # Validate and sanitize redirect_url to prevent open redirects
+    # Validate and sanitize redirect_url to prevent open redirects and CRLF injection
     # Must be a relative path (starts with /) or None
     safe_redirect_path = None
     if redirect_url:
+        # Check for control characters that could enable CRLF header injection
+        control_chars = "\r\n\x00"
+        if any(c in redirect_url for c in control_chars):
+            logger.warning(f"Rejecting redirect_url with control characters (CRLF injection attempt)")
         # Only allow relative paths starting with /
-        if redirect_url.startswith("/") and not redirect_url.startswith("//"):
+        elif redirect_url.startswith("/") and not redirect_url.startswith("//"):
             # Strip any protocol:// that might be embedded
             if "://" not in redirect_url:
                 safe_redirect_path = redirect_url

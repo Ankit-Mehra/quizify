@@ -249,6 +249,7 @@ def test_validate_token_tampered_signature():
     user_id, redirect_url, error = validate_secure_state_token(tampered_token)
     
     assert user_id is None
+    assert redirect_url is None
     assert error == "invalid_state"
 
 
@@ -263,6 +264,7 @@ def test_validate_token_tampered_user_id():
     user_id, redirect_url, error = validate_secure_state_token(tampered_token)
     
     assert user_id is None
+    assert redirect_url is None
     assert error == "invalid_state"
 
 
@@ -278,6 +280,7 @@ def test_validate_token_tampered_timestamp():
     user_id, redirect_url, error = validate_secure_state_token(tampered_token)
     
     assert user_id is None
+    assert redirect_url is None
     assert error == "invalid_state"
 
 
@@ -315,6 +318,7 @@ def test_validate_token_expired():
         user_id, redirect_url, error = validate_secure_state_token(token)
     
     assert user_id is None
+    assert redirect_url is None
     assert error == "state_expired"
 
 
@@ -366,6 +370,8 @@ def test_validate_token_exactly_at_expiry():
     with patch("services.google_auth_service.time.time", return_value=future_time):
         user_id, redirect_url, error = validate_secure_state_token(token)
     
+    assert user_id is None
+    assert redirect_url is None
     assert error == "state_expired"
 
 
@@ -421,4 +427,5 @@ def test_validate_token_large_clock_skew_rejected():
     user_id, redirect_url, error = validate_secure_state_token(future_token)
     
     assert user_id is None
+    assert redirect_url is None
     assert error == "invalid_state"
