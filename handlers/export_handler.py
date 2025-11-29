@@ -25,7 +25,11 @@ from services.exporters.base import (
 )
 from services.exporters.tier_validator import validate_export_tier_access
 from services.exporters.quiz_loader import load_quiz_for_export
-from services.google_auth_service import generate_auth_url, is_google_auth_configured
+from services.google_auth_service import (
+    generate_auth_url,
+    generate_secure_state_token,
+    is_google_auth_configured
+)
 from services.logger import app_logger as logger
 
 
@@ -238,26 +242,9 @@ async def handle_export(
             )
         
         try:
-            # Generate secure state token (HMAC-signed) instead of raw user_id
+            # Generate secure state token (HMAC-signed) for CSRF protection
             # The state will be validated in the callback to extract user_id securely
-            import hashlib
-            import hmac
-            import time
-            from config import Config
-            
-            # Create a signed state token: timestamp:user_id:signature
-            timestamp = str(int(time.time()))
-            # Use encryption key or fallback to a hash of service key for HMAC
-            secret_key = Config.GOOGLE_TOKEN_ENCRYPTION_KEY or hashlib.sha256(
-                Config.SUPABASE_KEY.encode()
-            ).hexdigest()[:32]
-            message = f"{timestamp}:{user_id}"
-            signature = hmac.new(
-                secret_key.encode(),
-                message.encode(),
-                hashlib.sha256
-            ).hexdigest()[:16]
-            secure_state = f"{timestamp}:{user_id}:{signature}"
+            secure_state = generate_secure_state_token(user_id)
             
             auth_url, _ = generate_auth_url(state=secure_state)
             return JSONResponse(

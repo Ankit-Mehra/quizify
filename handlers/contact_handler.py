@@ -4,6 +4,7 @@ Contact Handler - Business logic for contact form submissions.
 Sends contact form emails to admin using Resend API.
 """
 
+import html
 import resend
 from fastapi import HTTPException
 
@@ -38,14 +39,20 @@ async def handle_contact_submission(request: ContactRequest) -> ContactResponse:
     # Configure Resend
     resend.api_key = Config.RESEND_API_KEY
     
-    # Build email content
+    # SECURITY: Escape user inputs to prevent HTML/XSS injection in emails
+    safe_name = html.escape(request.name)
+    safe_email = html.escape(request.email)
+    safe_subject = html.escape(request.subject)
+    safe_message = html.escape(request.message)
+    
+    # Build email content with escaped inputs
     html_content = f"""
     <h2>New Contact Form Submission</h2>
-    <p><strong>From:</strong> {request.name} ({request.email})</p>
-    <p><strong>Subject:</strong> {request.subject}</p>
+    <p><strong>From:</strong> {safe_name} ({safe_email})</p>
+    <p><strong>Subject:</strong> {safe_subject}</p>
     <hr>
     <h3>Message:</h3>
-    <p style="white-space: pre-wrap;">{request.message}</p>
+    <p style="white-space: pre-wrap;">{safe_message}</p>
     <hr>
     <p style="color: #666; font-size: 12px;">
         This message was sent from the Quizify contact form.
@@ -53,6 +60,7 @@ async def handle_contact_submission(request: ContactRequest) -> ContactResponse:
     </p>
     """
     
+    # Plain text doesn't need escaping (no HTML rendering)
     text_content = f"""
 New Contact Form Submission
 

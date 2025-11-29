@@ -103,6 +103,7 @@ if (googleError) {
     'access_denied': 'Google authorization was cancelled',
     'tier_insufficient': 'Google Forms export requires a Pro subscription',
     'invalid_state': 'Authorization failed. Please try again.',
+    'state_expired': 'Authorization link expired. Please try again.',
     'tier_check_failed': 'Could not verify subscription. Please try again.'
   };
   
@@ -391,6 +392,7 @@ export function useGoogleOAuthCallback() {
         'access_denied': 'Google authorization was cancelled',
         'tier_insufficient': 'Google Forms export requires a Pro subscription',
         'invalid_state': 'Authorization failed. Please try again.',
+        'state_expired': 'Authorization link expired. Please try again.',
       };
       
       toast.error(errorMessages[googleError] || 'Google connection failed');

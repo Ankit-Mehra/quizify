@@ -7,6 +7,7 @@ This module handles:
 - Storing and retrieving refresh tokens (encrypted at rest)
 - Refreshing expired access tokens
 - Revoking user authorization
+- Secure state token generation and validation for CSRF protection
 
 The OAuth flow:
 1. User requests Google Forms export
@@ -20,9 +21,13 @@ Security:
 - Refresh tokens are encrypted using Fernet (AES-128-CBC) before storage
 - Encryption key must be set via GOOGLE_TOKEN_ENCRYPTION_KEY env var
 - If key is not set, tokens are stored in plaintext (logs warning)
+- OAuth state tokens are HMAC-signed to prevent CSRF and tampering
 """
 
+import hashlib
+import hmac
 import os
+import time
 from datetime import datetime, timezone
 from typing import Optional, Tuple
 
@@ -152,6 +157,154 @@ def _decrypt_token(encrypted_token: str) -> str:
         raise TokenDecryptionError(
             "Failed to decrypt token - token may be corrupted or encrypted with different key"
         )
+
+
+# =============================================================================
+# OAuth State Token Utilities (CSRF Protection)
+# =============================================================================
+
+# State token expiry in seconds (5 minutes)
+STATE_TOKEN_EXPIRY_SECONDS = 300
+
+
+def _get_state_secret() -> bytes:
+    """
+    Get the secret key for HMAC state token signing.
+    
+    Uses GOOGLE_TOKEN_ENCRYPTION_KEY if set, otherwise falls back to SUPABASE_KEY.
+    
+    Returns:
+        Secret key bytes for HMAC signing
+    """
+    secret = app_config.GOOGLE_TOKEN_ENCRYPTION_KEY or app_config.SUPABASE_KEY
+    if not secret:
+        logger.warning(
+            "No secret key configured for state token signing! "
+            "Using fallback key. Set GOOGLE_TOKEN_ENCRYPTION_KEY in production."
+        )
+        # Use a deterministic fallback for development only
+        secret = "quizify-dev-fallback-secret"
+    return secret.encode()
+
+
+def generate_secure_state_token(user_id: str) -> str:
+    """
+    Generate an HMAC-signed OAuth state token for CSRF protection.
+    
+    The token format is: timestamp:user_id:signature
+    - timestamp: Unix epoch (integer) for expiration checking
+    - user_id: The user's ID to bind the OAuth flow to
+    - signature: HMAC-SHA256 of "timestamp:user_id" using secret key
+    
+    Args:
+        user_id: The authenticated user's ID
+        
+    Returns:
+        Secure state token string
+        
+    Example:
+        >>> token = generate_secure_state_token("user-123")
+        >>> token
+        "1704067200:user-123:a1b2c3d4e5f6..."
+    """
+    timestamp = int(time.time())
+    payload = f"{timestamp}:{user_id}"
+    signature = hmac.new(
+        _get_state_secret(),
+        payload.encode(),
+        hashlib.sha256
+    ).hexdigest()
+    
+    return f"{payload}:{signature}"
+
+
+def validate_secure_state_token(
+    state: str,
+    max_age_seconds: int = STATE_TOKEN_EXPIRY_SECONDS
+) -> Tuple[Optional[str], str]:
+    """
+    Validate an HMAC-signed OAuth state token.
+    
+    Checks:
+    1. Token has correct format (timestamp:user_id:signature)
+    2. Signature is valid (prevents tampering)
+    3. Token hasn't expired (prevents replay attacks)
+    
+    Args:
+        state: The state token from OAuth callback
+        max_age_seconds: Maximum token age in seconds (default: 300 = 5 minutes)
+        
+    Returns:
+        Tuple of (user_id, error_code):
+        - On success: (user_id, "")
+        - On failure: (None, error_code)
+        
+        Error codes:
+        - "invalid_state": Malformed token or signature mismatch
+        - "state_expired": Token has expired
+        
+    Example:
+        >>> user_id, error = validate_secure_state_token(state)
+        >>> if error:
+        ...     raise HTTPException(400, error)
+        >>> print(f"User: {user_id}")
+    """
+    if not state:
+        logger.warning("Empty state token received")
+        return None, "invalid_state"
+    
+    parts = state.split(":")
+    if len(parts) != 3:
+        logger.warning(f"Invalid state format: expected 3 parts, got {len(parts)}")
+        return None, "invalid_state"
+    
+    timestamp_str, user_id, received_signature = parts
+    
+    # Validate timestamp format
+    try:
+        timestamp = int(timestamp_str)
+    except ValueError:
+        logger.warning("Invalid timestamp in state token")
+        return None, "invalid_state"
+    
+    # Verify HMAC signature (constant-time comparison prevents timing attacks)
+    payload = f"{timestamp_str}:{user_id}"
+    expected_signature = hmac.new(
+        _get_state_secret(),
+        payload.encode(),
+        hashlib.sha256
+    ).hexdigest()
+    
+    if not hmac.compare_digest(received_signature, expected_signature):
+        logger.warning(
+            f"State signature mismatch for user {user_id[:8]}... "
+            "(possible tampering or wrong key)"
+        )
+        return None, "invalid_state"
+    
+    # Check expiration
+    current_time = int(time.time())
+    token_age = current_time - timestamp
+    
+    if token_age > max_age_seconds:
+        logger.info(
+            f"State token expired for user {user_id[:8]}... "
+            f"(age: {token_age}s, max: {max_age_seconds}s)"
+        )
+        return None, "state_expired"
+    
+    if token_age < 0:
+        # Future timestamp - could be clock skew or tampering
+        logger.warning(
+            f"State token has future timestamp for user {user_id[:8]}... "
+            f"(drift: {abs(token_age)}s)"
+        )
+        # Allow small clock skew (30 seconds)
+        if abs(token_age) > 30:
+            return None, "invalid_state"
+    
+    return user_id, ""
+
 
 # OAuth2 client config structure
 def _get_client_config() -> dict:

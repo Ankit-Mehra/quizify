@@ -1000,6 +1000,7 @@ async def google_connect(
     from services.google_auth_service import (
         GoogleAuthError,
         generate_auth_url,
+        generate_secure_state_token,
         is_google_auth_configured,
     )
     
@@ -1029,23 +1030,9 @@ async def google_connect(
         )
     
     try:
-        # Generate secure state token (HMAC-signed) instead of raw user_id
+        # Generate secure state token (HMAC-signed) for CSRF protection
         # Format: timestamp:user_id:signature
-        import hashlib
-        import hmac
-        import time
-        
-        timestamp = str(int(time.time()))
-        secret_key = app_config.GOOGLE_TOKEN_ENCRYPTION_KEY or hashlib.sha256(
-            app_config.SUPABASE_KEY.encode()
-        ).hexdigest()[:32]
-        message = f"{timestamp}:{user_id}"
-        signature = hmac.new(
-            secret_key.encode(),
-            message.encode(),
-            hashlib.sha256
-        ).hexdigest()[:16]
-        secure_state = f"{timestamp}:{user_id}:{signature}"
+        secure_state = generate_secure_state_token(user_id)
         
         # Generate authorization URL with secure state for CSRF protection
         auth_url, _ = generate_auth_url(state=secure_state)
@@ -1082,15 +1069,12 @@ async def google_callback(
     - State format: "timestamp:user_id:signature"
     - Validates Pro tier before storing tokens to prevent bypass of google_connect check.
     """
-    import hashlib
-    import hmac
-    import time
-    
     from services.db_services.supabase_quiz import get_user_tier_info_cached
     from services.google_auth_service import (
         GoogleAuthError,
         exchange_code_for_tokens,
         store_google_tokens,
+        validate_secure_state_token,
     )
     
     # Check for OAuth errors from Google
@@ -1101,50 +1085,14 @@ async def google_callback(
             status_code=302
         )
     
-    # Validate signed state token
-    # Format: "timestamp:user_id:signature"
-    if not state:
-        logger.error("Missing state in Google OAuth callback")
-        return RedirectResponse(
-            url=f"{app_config.FRONTEND_URL}/settings?google_error=invalid_state",
-            status_code=302
-        )
+    # Validate signed state token using shared utility
+    # Use 15 minute window (900 seconds) for OAuth flow completion
+    user_id, error_code = validate_secure_state_token(state, max_age_seconds=900)
     
-    try:
-        parts = state.split(":")
-        if len(parts) != 3:
-            raise ValueError("Invalid state format")
-        
-        timestamp_str, user_id, received_signature = parts
-        
-        # Verify signature
-        secret_key = app_config.GOOGLE_TOKEN_ENCRYPTION_KEY or hashlib.sha256(
-            app_config.SUPABASE_KEY.encode()
-        ).hexdigest()[:32]
-        message = f"{timestamp_str}:{user_id}"
-        expected_signature = hmac.new(
-            secret_key.encode(),
-            message.encode(),
-            hashlib.sha256
-        ).hexdigest()[:16]
-        
-        if not hmac.compare_digest(received_signature, expected_signature):
-            raise ValueError("Invalid signature")
-        
-        # Check timestamp is not too old (15 minute window for OAuth flow)
-        timestamp = int(timestamp_str)
-        current_time = int(time.time())
-        if current_time - timestamp > 900:  # 15 minutes
-            logger.warning(f"Expired OAuth state token (age: {current_time - timestamp}s)")
-            return RedirectResponse(
-                url=f"{app_config.FRONTEND_URL}/settings?google_error=state_expired",
-                status_code=302
-            )
-        
-    except (ValueError, TypeError) as e:
-        logger.error(f"Invalid state token in Google OAuth callback: {e}")
+    if error_code:
+        logger.error(f"Invalid state token in Google OAuth callback: {error_code}")
         return RedirectResponse(
-            url=f"{app_config.FRONTEND_URL}/settings?google_error=invalid_state",
+            url=f"{app_config.FRONTEND_URL}/settings?google_error={error_code}",
             status_code=302
         )
     
