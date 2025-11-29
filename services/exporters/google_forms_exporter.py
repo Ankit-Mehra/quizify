@@ -274,21 +274,25 @@ class GoogleFormsExporter(BaseExporter):
         
         requests = []
         skipped = []
+        form_index = 0  # Track actual form index (excludes skipped questions)
         
         for idx, question in enumerate(questions):
             question_type = question.type
             
             if question_type == "multiple_choice":
-                item = self._build_mcq_item(question, idx, options)
+                item = self._build_mcq_item(question, form_index, options)
                 requests.append({"createItem": item})
+                form_index += 1
                 
             elif question_type == "true_false":
-                item = self._build_true_false_item(question, idx, options)
+                item = self._build_true_false_item(question, form_index, options)
                 requests.append({"createItem": item})
+                form_index += 1
                 
             elif question_type == "fill_blank":
-                item = self._build_fill_blank_item(question, idx, options)
+                item = self._build_fill_blank_item(question, form_index, options)
                 requests.append({"createItem": item})
+                form_index += 1
                 
             elif question_type == "matching":
                 # Matching questions not supported by Google Forms API
@@ -296,10 +300,12 @@ class GoogleFormsExporter(BaseExporter):
                 logger.warning(
                     f"Skipping matching question at index {idx} - not supported"
                 )
+                # Don't increment form_index - question is skipped
                 
             else:
                 skipped.append(f"Q{idx + 1}: {question_type}")
                 logger.warning(f"Unknown question type: {question_type}")
+                # Don't increment form_index - question is skipped
         
         if requests:
             batch_request = {"requests": requests}
