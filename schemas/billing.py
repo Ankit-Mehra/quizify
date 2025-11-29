@@ -36,25 +36,54 @@ class CheckoutSessionRequest(BaseModel):
 
 class CheckoutSessionResponse(BaseModel):
     """
-    Response containing Stripe Checkout session URL.
+    Response containing Stripe Checkout session URL OR upgrade confirmation.
     
-    Frontend should redirect user to this URL to complete payment.
+    For new subscriptions: Frontend should redirect user to checkout_url.
+    For upgrades: Returns status and message, no redirect needed.
     """
-    checkout_url: HttpUrl = Field(
-        ...,
-        description="Stripe Checkout session URL - redirect user here"
+    # For new subscriptions
+    checkout_url: Optional[HttpUrl] = Field(
+        None,
+        description="Stripe Checkout session URL - redirect user here (only for new subscriptions)"
     )
-    session_id: str = Field(
-        ...,
-        description="Stripe Checkout session ID (cs_XXXXXXXXX)"
+    session_id: Optional[str] = Field(
+        None,
+        description="Stripe Checkout session ID (cs_XXXXXXXXX) (only for new subscriptions)"
+    )
+    
+    # For subscription upgrades
+    status: Optional[str] = Field(
+        None,
+        description="Upgrade status: 'upgraded' or 'already_subscribed'"
+    )
+    message: Optional[str] = Field(
+        None,
+        description="Human-readable message about the upgrade"
+    )
+    subscription_id: Optional[str] = Field(
+        None,
+        description="Subscription ID (for upgrades)"
     )
     
     class Config:
         json_schema_extra = {
-            "example": {
-                "checkout_url": "https://checkout.stripe.com/c/pay/cs_test_a1b2c3d4...",
-                "session_id": "cs_test_a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0"
-            }
+            "examples": [
+                {
+                    "description": "New subscription checkout",
+                    "value": {
+                        "checkout_url": "https://checkout.stripe.com/c/pay/cs_test_a1b2c3d4...",
+                        "session_id": "cs_test_a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0"
+                    }
+                },
+                {
+                    "description": "Subscription upgrade",
+                    "value": {
+                        "status": "upgraded",
+                        "message": "Successfully upgraded to pro",
+                        "subscription_id": "sub_abc123"
+                    }
+                }
+            ]
         }
 
 

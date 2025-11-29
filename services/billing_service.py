@@ -322,6 +322,115 @@ class BillingService:
     # Checkout Session
     # ========================================================================
     
+    async def get_active_subscription(self, customer_id: str) -> Optional[stripe.Subscription]:
+        """
+        Get the user's active subscription from Stripe.
+        
+        Args:
+            customer_id: Stripe customer ID
+            
+        Returns:
+            stripe.Subscription if user has an active subscription, None otherwise
+        """
+        try:
+            # List all subscriptions for this customer
+            subscriptions = await asyncio.to_thread(
+                stripe.Subscription.list,
+                customer=customer_id,
+                status="active",
+                limit=1
+            )
+            
+            if subscriptions.data and len(subscriptions.data) > 0:
+                return subscriptions.data[0]
+            return None
+            
+        except stripe.StripeError as e:
+            logger.error(f"Error fetching subscriptions: {e}")
+            return None
+    
+    async def upgrade_subscription(
+        self,
+        subscription_id: str,
+        new_price_id: str,
+        user_id: str,
+        tier: str
+    ) -> dict:
+        """
+        Upgrade an existing subscription to a new price/tier.
+        
+        This modifies the subscription immediately with proration,
+        rather than creating a duplicate subscription.
+        
+        Args:
+            subscription_id: Existing Stripe subscription ID
+            new_price_id: New price ID to switch to
+            user_id: User ID for metadata
+            tier: New tier name
+            
+        Returns:
+            dict with subscription details
+        """
+        try:
+            # Get current subscription to find the subscription item ID
+            subscription = await asyncio.to_thread(
+                stripe.Subscription.retrieve,
+                subscription_id
+            )
+            
+            # Get the first (and typically only) subscription item
+            if not subscription.get("items") or not subscription["items"].get("data"):
+                raise HTTPException(status_code=500, detail="Subscription has no items")
+            
+            subscription_item_id = subscription["items"]["data"][0]["id"]
+            current_price_id = subscription["items"]["data"][0]["price"]["id"]
+            
+            # Check if already on this price
+            if current_price_id == new_price_id:
+                logger.info(f"User {user_id[:8]} already on {tier}, no upgrade needed")
+                return {
+                    "status": "already_subscribed",
+                    "message": f"You are already subscribed to {tier}",
+                    "subscription_id": subscription_id
+                }
+            
+            logger.info(
+                f"Upgrading subscription {_short_stripe_id(subscription_id)} "
+                f"from {_short_stripe_id(current_price_id)} to {_short_stripe_id(new_price_id)}"
+            )
+            
+            # Update the subscription with the new price
+            # proration_behavior: "create_prorations" charges the difference immediately
+            updated_subscription = await asyncio.to_thread(
+                stripe.Subscription.modify,
+                subscription_id,
+                items=[{
+                    "id": subscription_item_id,
+                    "price": new_price_id,
+                }],
+                proration_behavior="create_prorations",
+                metadata={
+                    "user_id": user_id,
+                    "tier": tier,
+                    "upgraded_at": datetime.now(timezone.utc).isoformat()
+                }
+            )
+            
+            logger.info(f"Subscription upgraded successfully for user {user_id[:8]} to {tier}")
+            
+            return {
+                "status": "upgraded",
+                "message": f"Successfully upgraded to {tier}",
+                "subscription_id": updated_subscription.id
+            }
+            
+        except stripe.StripeError as e:
+            logger.error(f"Stripe error upgrading subscription: {e}")
+            raise HTTPException(status_code=502, detail=f"Stripe error: {str(e)}")
+        except Exception as e:
+            logger.error(f"Error upgrading subscription: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Failed to upgrade subscription: {str(e)}")
+
     async def create_checkout_session(
         self, 
         user_id: str, 
@@ -393,7 +502,24 @@ class BillingService:
             # 2. Get or create customer
             customer_id = await self.get_or_create_customer(user_id, user_token, email)
             
-            # 3. Create Checkout Session
+            # 3. Check if user already has an active subscription
+            # If they do, upgrade it instead of creating a new one
+            existing_subscription = await self.get_active_subscription(customer_id)
+            
+            if existing_subscription:
+                logger.info(
+                    f"User {user_id[:8]} has existing subscription "
+                    f"{_short_stripe_id(existing_subscription.id)}, upgrading instead of creating new"
+                )
+                # Upgrade the existing subscription to the new tier
+                return await self.upgrade_subscription(
+                    subscription_id=existing_subscription.id,
+                    new_price_id=price_id,
+                    user_id=user_id,
+                    tier=tier
+                )
+            
+            # 4. No existing subscription, create Checkout Session for new subscription
             # Run synchronous Stripe API call in thread pool to avoid blocking event loop
             session = await asyncio.to_thread(
                 stripe.checkout.Session.create,
