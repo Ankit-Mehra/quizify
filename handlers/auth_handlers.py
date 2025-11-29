@@ -370,9 +370,12 @@ async def logout(
                             session_id = found_session_id
                             logger.debug(f"Session found via refresh_token for user {_short_user_id(user_id)}")
                         else:
-                            logger.warning(
-                                f"Session {found_session_id[:12]}... does not belong to user {_short_user_id(user_id)} - ignoring"
-                            )
+                            if session_info:
+                                logger.warning(
+                                    f"Session {found_session_id[:12]}... does not belong to user {_short_user_id(user_id)} - ignoring"
+                                )
+                            else:
+                                logger.debug(f"Session {found_session_id[:12]}... not found or expired - ignoring")
                 except Exception as lookup_error:
                     logger.warning(f"Failed to lookup session via refresh_token: {lookup_error}")
 
