@@ -61,7 +61,7 @@ class ExportRequest(BaseModel):
         description=(
             "URL to redirect back to after Google OAuth completes. "
             "Only used for google_forms format when OAuth is required. "
-            "Must be a relative path (e.g., '/quizzes/123') or same-origin URL."
+            "Must be a relative path starting with '/' (e.g., '/quizzes/123')."
         )
     )
 

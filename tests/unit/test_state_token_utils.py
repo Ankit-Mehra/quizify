@@ -144,6 +144,9 @@ def test_validate_secure_state_token_round_trip_with_redirects():
         ("/settings", "/settings"),
         ("/dashboard?tab=quizzes", "/dashboard?tab=quizzes"),
         ("/quiz/abc123/export", "/quiz/abc123/export"),
+        # Fragment identifiers for SPA client-side routing
+        ("/dashboard#settings", "/dashboard#settings"),
+        ("/quizzes/123#results", "/quizzes/123#results"),
     ]
     
     for input_url, expected_url in test_cases:
