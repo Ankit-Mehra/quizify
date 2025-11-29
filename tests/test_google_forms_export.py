@@ -911,3 +911,198 @@ class TestGoogleFormsExportResponseSerialization:
         assert parsed["form_id"] == "test"
         assert len(parsed["warnings"]) == 2
 
+
+# ============================================================================
+# Test: _set_form_description API Fix
+# ============================================================================
+
+class TestGoogleFormsDescriptionAPI:
+    """
+    Tests for the _set_form_description method.
+    
+    Verifies the fix for Google Forms API error:
+    "Only info.title can be set when creating a form"
+    
+    The solution is to:
+    1. Create form with title only
+    2. Set description via batchUpdate with updateFormInfo
+    """
+
+    def test_set_form_description_method_exists(self):
+        """GoogleFormsExporter should have _set_form_description method."""
+        from services.exporters.google_forms_exporter import GoogleFormsExporter
+        
+        exporter = GoogleFormsExporter(user_id="test-user")
+        
+        assert hasattr(exporter, '_set_form_description')
+        assert callable(exporter._set_form_description)
+
+    def test_create_form_method_exists(self):
+        """GoogleFormsExporter should have _create_form method."""
+        from services.exporters.google_forms_exporter import GoogleFormsExporter
+        
+        exporter = GoogleFormsExporter(user_id="test-user")
+        
+        assert hasattr(exporter, '_create_form')
+        assert callable(exporter._create_form)
+
+    @pytest.mark.asyncio
+    async def test_set_form_description_correct_api_structure(self):
+        """_set_form_description should use correct batchUpdate structure."""
+        from services.exporters.google_forms_exporter import GoogleFormsExporter
+        from unittest.mock import MagicMock, AsyncMock, patch
+        
+        exporter = GoogleFormsExporter(user_id="test-user")
+        
+        # Create mock service
+        mock_service = MagicMock()
+        mock_batch_update = MagicMock()
+        mock_batch_update.execute.return_value = {}
+        mock_service.forms.return_value.batchUpdate.return_value = mock_batch_update
+        
+        # Patch asyncio.to_thread to run synchronously
+        with patch('asyncio.to_thread', side_effect=lambda fn: fn()):
+            await exporter._set_form_description(
+                mock_service,
+                "test-form-id",
+                "Test description"
+            )
+        
+        # Verify batchUpdate was called with correct structure
+        mock_service.forms.return_value.batchUpdate.assert_called_once()
+        call_kwargs = mock_service.forms.return_value.batchUpdate.call_args
+        
+        # Check formId
+        assert call_kwargs.kwargs['formId'] == "test-form-id"
+        
+        # Check body structure
+        body = call_kwargs.kwargs['body']
+        assert 'requests' in body
+        assert len(body['requests']) == 1
+        
+        request = body['requests'][0]
+        assert 'updateFormInfo' in request
+        assert request['updateFormInfo']['info']['description'] == "Test description"
+        assert request['updateFormInfo']['updateMask'] == "description"
+
+    @pytest.mark.asyncio
+    async def test_set_form_description_error_handling(self):
+        """_set_form_description should handle HttpError and re-raise."""
+        from services.exporters.google_forms_exporter import GoogleFormsExporter
+        from googleapiclient.errors import HttpError
+        from unittest.mock import MagicMock, patch
+        import httplib2
+        
+        exporter = GoogleFormsExporter(user_id="test-user")
+        
+        # Create mock service that raises HttpError
+        mock_response = httplib2.Response({'status': 400})
+        mock_error = HttpError(mock_response, b'{"error": "Bad Request"}')
+        
+        mock_service = MagicMock()
+        mock_service.forms.return_value.batchUpdate.return_value.execute.side_effect = mock_error
+        
+        # Patch asyncio.to_thread to run synchronously
+        with patch('asyncio.to_thread', side_effect=lambda fn: fn()):
+            with pytest.raises(HttpError):
+                await exporter._set_form_description(
+                    mock_service,
+                    "test-form-id",
+                    "Test description"
+                )
+
+    @pytest.mark.asyncio
+    async def test_create_form_calls_set_description_when_provided(self):
+        """_create_form should call _set_form_description when description is provided."""
+        from services.exporters.google_forms_exporter import GoogleFormsExporter
+        from unittest.mock import MagicMock, AsyncMock, patch
+        
+        exporter = GoogleFormsExporter(user_id="test-user")
+        
+        # Mock the _set_form_description method
+        exporter._set_form_description = AsyncMock()
+        
+        # Create mock service
+        mock_service = MagicMock()
+        mock_service.forms.return_value.create.return_value.execute.return_value = {
+            "formId": "new-form-id"
+        }
+        
+        # Patch asyncio.to_thread to run synchronously
+        with patch('asyncio.to_thread', side_effect=lambda fn: fn()):
+            form_id = await exporter._create_form(
+                mock_service,
+                "Test Title",
+                "Test Description"
+            )
+        
+        # Verify form was created with title only
+        create_call = mock_service.forms.return_value.create.call_args
+        body = create_call.kwargs['body']
+        assert body['info']['title'] == "Test Title"
+        assert 'description' not in body['info']
+        
+        # Verify _set_form_description was called
+        exporter._set_form_description.assert_called_once_with(
+            mock_service,
+            "new-form-id",
+            "Test Description"
+        )
+        
+        assert form_id == "new-form-id"
+
+    @pytest.mark.asyncio
+    async def test_create_form_skips_description_when_none(self):
+        """_create_form should not call _set_form_description when description is None."""
+        from services.exporters.google_forms_exporter import GoogleFormsExporter
+        from unittest.mock import MagicMock, AsyncMock, patch
+        
+        exporter = GoogleFormsExporter(user_id="test-user")
+        
+        # Mock the _set_form_description method
+        exporter._set_form_description = AsyncMock()
+        
+        # Create mock service
+        mock_service = MagicMock()
+        mock_service.forms.return_value.create.return_value.execute.return_value = {
+            "formId": "new-form-id"
+        }
+        
+        # Patch asyncio.to_thread to run synchronously
+        with patch('asyncio.to_thread', side_effect=lambda fn: fn()):
+            form_id = await exporter._create_form(
+                mock_service,
+                "Test Title",
+                None  # No description
+            )
+        
+        # Verify _set_form_description was NOT called
+        exporter._set_form_description.assert_not_called()
+        
+        assert form_id == "new-form-id"
+
+    @pytest.mark.asyncio
+    async def test_enable_quiz_mode_error_handling(self):
+        """_enable_quiz_mode should handle HttpError and re-raise."""
+        from services.exporters.google_forms_exporter import GoogleFormsExporter
+        from googleapiclient.errors import HttpError
+        from unittest.mock import MagicMock, patch
+        import httplib2
+        
+        exporter = GoogleFormsExporter(user_id="test-user")
+        
+        # Create mock service that raises HttpError
+        mock_response = httplib2.Response({'status': 400})
+        mock_error = HttpError(mock_response, b'{"error": "Bad Request"}')
+        
+        mock_service = MagicMock()
+        mock_service.forms.return_value.batchUpdate.return_value.execute.side_effect = mock_error
+        
+        # Patch asyncio.to_thread to run synchronously
+        with patch('asyncio.to_thread', side_effect=lambda fn: fn()):
+            with pytest.raises(HttpError):
+                await exporter._enable_quiz_mode(
+                    mock_service,
+                    "test-form-id"
+                )
+
