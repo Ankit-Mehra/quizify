@@ -114,6 +114,16 @@ class ExportError(Exception):
         super().__init__(f"Export failed ({format_name}): {message}")
 
 
+class GoogleConnectionRequiredError(ExportError):
+    """Exception raised when Google Forms export requires OAuth connection."""
+    
+    def __init__(self):
+        super().__init__(
+            message="Google account connection required",
+            format_name="google_forms"
+        )
+
+
 class ExportNotImplementedError(ExportError):
     """Exception raised when an export format is not yet implemented."""
     

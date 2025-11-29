@@ -19,7 +19,7 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
 from schemas.export import ExportResult
-from services.exporters.base import BaseExporter, ExportError
+from services.exporters.base import BaseExporter, ExportError, GoogleConnectionRequiredError
 from services.logger import app_logger as logger
 
 if TYPE_CHECKING:
@@ -109,10 +109,7 @@ class GoogleFormsExporter(BaseExporter):
         credentials = await get_google_credentials(self._user_id)
         
         if not credentials:
-            raise ExportError(
-                "Google OAuth2 credentials required for Google Forms export",
-                self.FORMAT_NAME
-            )
+            raise GoogleConnectionRequiredError()
         
         try:
             # Build the Forms API service

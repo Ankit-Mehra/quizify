@@ -203,13 +203,12 @@ class TestExportTierGating:
         """
         Pro tier users CAN initiate Google Forms export (passes tier check).
         
-        This tests that the tier gating passes for Pro tier. The export will fail
-        with a 500 error because no Google account is connected (no credentials),
-        but the key assertion is that we DON'T get a 403 tier_insufficient error.
+        This tests that the tier gating passes for Pro tier. When no Google account
+        is connected, the API returns a 401 with an auth_url for OAuth flow.
         
         Note: A fully successful Google Forms export requires:
         1. Pro tier (tested here - passes)
-        2. Connected Google account with valid credentials (not tested here)
+        2. Connected Google account with valid credentials (returns auth_url if not)
         """
         headers = {"Authorization": f"Bearer {pro_tier_auth}"}
         quiz_id = str(uuid4())
@@ -220,29 +219,36 @@ class TestExportTierGating:
                        return_value=mock_quiz_for_export()):
                 # Mock get_google_credentials to return None (no credentials)
                 with patch("services.google_auth_service.get_google_credentials", return_value=None):
-                    
-                    response = client.post(
-                        f"/api/quizzes/{quiz_id}/export",
-                        headers=headers,
-                        json={"format": "google_forms"}
-                    )
+                    # Mock Google auth config and URL generation at handler import locations
+                    with patch("handlers.export_handler.is_google_auth_configured", return_value=True):
+                        # Mock secure state token generation for OAuth flow
+                        with patch("handlers.export_handler.generate_secure_state_token", return_value="test_state_token"):
+                            with patch("handlers.export_handler.generate_auth_url", 
+                                       return_value=("https://accounts.google.com/o/oauth2/...", "state123")):
+                            
+                                response = client.post(
+                                    f"/api/quizzes/{quiz_id}/export",
+                                    headers=headers,
+                                    json={"format": "google_forms"}
+                                )
         
-        # Key assertion: Should NOT get 403 tier_insufficient
-        # Pro tier passes the tier check, so error should be different
+        # Should get 401 with auth_url when not connected to Google
+        # (Pro tier passes tier check, but needs Google OAuth)
+        assert response.status_code == 401, \
+            f"Expected 401 for OAuth flow, got {response.status_code}: {response.json()}"
+        
+        # Ensure we didn't get a tier_insufficient error (Pro should pass tier check)
         if response.status_code == 403:
-            data = response.json()
-            detail = data.get("detail", data)
-            # If we get 403, it should NOT be for tier reasons
-            assert detail.get("error") != "tier_insufficient", \
+            assert response.json().get("detail", {}).get("error") != "tier_insufficient", \
                 "Pro tier should pass tier validation for Google Forms export"
-        else:
-            # 500 is expected when Google credentials are not available
-            # This proves tier check passed but export failed for other reasons
-            assert response.status_code == 500
-            data = response.json()
-            # Verify it's a credentials issue, not tier issue
-            detail = data.get("detail", "")
-            assert "credentials" in detail.lower() or "oauth" in detail.lower()
+        
+        data = response.json()
+        assert data.get("error") == "google_connection_required"
+        assert "auth_url" in data
+        # Validate it's a well-formed Google OAuth URL
+        assert data["auth_url"].startswith("https://accounts.google.com/o/oauth2"), \
+            f"Expected Google OAuth URL, got: {data['auth_url']}"
+        assert data.get("message") == "Please connect your Google account to export to Google Forms"
 
     def test_free_tier_cannot_export_any_format(self, free_tier_auth):
         """Free tier users should NOT be able to export any format."""

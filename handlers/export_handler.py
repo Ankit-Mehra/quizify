@@ -17,9 +17,19 @@ from schemas.export import (
     ExportRequest,
     ExportOptions
 )
-from services.exporters.base import BaseExporter, ExportError, ExportNotImplementedError
+from services.exporters.base import (
+    BaseExporter,
+    ExportError,
+    ExportNotImplementedError,
+    GoogleConnectionRequiredError
+)
 from services.exporters.tier_validator import validate_export_tier_access
 from services.exporters.quiz_loader import load_quiz_for_export
+from services.google_auth_service import (
+    generate_auth_url,
+    generate_secure_state_token,
+    is_google_auth_configured
+)
 from services.logger import app_logger as logger
 
 
@@ -221,6 +231,34 @@ async def handle_export(
     # Step 5: Execute export
     try:
         result = await exporter.export(quiz_data, options)
+    except GoogleConnectionRequiredError:
+        # Special handling for Google Forms - return auth URL for OAuth flow
+        logger.info(f"Google connection required for user {user_id[:8]}... - returning auth URL")
+        
+        if not is_google_auth_configured():
+            raise HTTPException(
+                status_code=503,
+                detail="Google Forms export is not configured. Please contact support."
+            )
+        
+        try:
+            # Generate secure state token (HMAC-signed) for CSRF protection
+            # The state will be validated in the callback to extract user_id securely
+            secure_state = generate_secure_state_token(user_id)
+            
+            auth_url, _ = generate_auth_url(state=secure_state)
+            return JSONResponse(
+                status_code=401,
+                content={
+                    "error": "google_connection_required",
+                    "message": "Please connect your Google account to export to Google Forms",
+                    "auth_url": auth_url,
+                    "state": secure_state
+                }
+            )
+        except Exception as e:
+            logger.error(f"Failed to generate Google auth URL: {e}")
+            raise HTTPException(status_code=500, detail="Failed to initiate Google authorization")
     except ExportError as e:
         logger.error(f"Export failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Export failed: {e.message}")

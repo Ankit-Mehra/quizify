@@ -20,7 +20,7 @@ app_config.validate_config()
 
 # Import modules that depend on environment variables
 from services.logger import app_logger as logger  # noqa: E402
-from api import auth_routes, quiz_routes, file_routes, submission_routes, admin_routes, health_routes, billing_routes, export_routes, share_routes  # noqa: E402
+from api import auth_routes, quiz_routes, file_routes, submission_routes, admin_routes, health_routes, billing_routes, export_routes, share_routes, contact_routes  # noqa: E402
 from middleware.auto_refresh import SupabaseAutoRefreshMiddleware, close_http_client  # noqa: E402
 from services.redis.client import lifespan as redis_lifespan  # noqa: E402
 
@@ -133,6 +133,7 @@ app.include_router(submission_routes.router, prefix="/api")
 app.include_router(admin_routes.router, prefix="/api")
 app.include_router(export_routes.router, prefix="/api")  # Export routes at /api/quizzes/{id}/export
 app.include_router(share_routes.router, prefix="/api")  # Share routes at /api/share
+app.include_router(contact_routes.router, prefix="/api")  # Contact form at /api/contact
 app.include_router(billing_routes.router)  # Billing routes have their own /api/billing prefix
 app.include_router(health_routes.router)  # No prefix - mount at root
 

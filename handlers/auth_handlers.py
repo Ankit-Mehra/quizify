@@ -1000,6 +1000,7 @@ async def google_connect(
     from services.google_auth_service import (
         GoogleAuthError,
         generate_auth_url,
+        generate_secure_state_token,
         is_google_auth_configured,
     )
     
@@ -1029,14 +1030,18 @@ async def google_connect(
         )
     
     try:
-        # Generate authorization URL with user_id as state for CSRF protection
-        auth_url, state = generate_auth_url(state=user_id)
+        # Generate secure state token (HMAC-signed) for CSRF protection
+        # Format: timestamp:user_id:signature
+        secure_state = generate_secure_state_token(user_id)
+        
+        # Generate authorization URL with secure state for CSRF protection
+        auth_url, _ = generate_auth_url(state=secure_state)
         
         logger.info(f"Google OAuth URL generated for user {_short_user_id(user_id)}")
         
         return {
             "auth_url": auth_url,
-            "state": state,
+            "state": secure_state,
             "message": "Redirect to auth_url to connect your Google account"
         }
         
@@ -1050,7 +1055,7 @@ async def google_connect(
 
 async def google_callback(
     code: str = Query(..., description="Authorization code from Google"),
-    state: str = Query(None, description="State parameter (user_id) for CSRF protection"),
+    state: str = Query(None, description="Signed state parameter for CSRF protection"),
     error: str = Query(None, description="Error from Google OAuth")
 ):
     """
@@ -1059,13 +1064,17 @@ async def google_callback(
     After user authorizes on Google, they are redirected here with an authorization code.
     We exchange the code for tokens and store the refresh token.
     
-    SECURITY: Validates Pro tier before storing tokens to prevent bypass of google_connect check.
+    SECURITY: 
+    - Validates HMAC-signed state token to prevent CSRF and tampering
+    - State format: "timestamp:user_id:signature"
+    - Validates Pro tier before storing tokens to prevent bypass of google_connect check.
     """
     from services.db_services.supabase_quiz import get_user_tier_info_cached
     from services.google_auth_service import (
         GoogleAuthError,
         exchange_code_for_tokens,
         store_google_tokens,
+        validate_secure_state_token,
     )
     
     # Check for OAuth errors from Google
@@ -1076,12 +1085,14 @@ async def google_callback(
             status_code=302
         )
     
-    # State contains the user_id
-    user_id = state
-    if not user_id:
-        logger.error("Missing state (user_id) in Google OAuth callback")
+    # Validate signed state token using shared utility
+    # Use 15 minute window (900 seconds) for OAuth flow completion
+    user_id, error_code = validate_secure_state_token(state, max_age_seconds=900)
+    
+    if error_code:
+        logger.error(f"Invalid state token in Google OAuth callback: {error_code}")
         return RedirectResponse(
-            url=f"{app_config.FRONTEND_URL}/settings?google_error=invalid_state",
+            url=f"{app_config.FRONTEND_URL}/settings?google_error={error_code}",
             status_code=302
         )
     
