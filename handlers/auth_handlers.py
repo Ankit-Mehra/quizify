@@ -332,21 +332,56 @@ async def logout(
     """
     Logout current device.
     
-    Deletes the Redis session (if session_id provided) and clears auth cookies.
-    Frontend should send session_id as query parameter: /auth/logout?session_id=sess_xxx
+    Deletes the Redis session and clears auth cookies.
+    Session lookup priority:
+    1. Query parameter: /auth/logout?session_id=sess_xxx
+    2. request.state.session_id (set during auth validation)
+    3. Lookup via refresh_token cookie (fallback for stale sessions)
     """
     try:
         logger.info(f"User {_short_user_id(user_id)} logout requested")
 
+        # Priority 1: Query parameter
+        # Priority 2: request.state (set during auth validation)
         if not session_id:
             session_id = getattr(request.state, "session_id", None)
 
-        # Delete Redis session if session_id provided
+        redis_client = get_redis_client(request)
+        session_service = None
+        
+        # Priority 3: Lookup via refresh_token (header in dev mode, cookie in production)
+        # This is critical for proper cleanup when frontend doesn't pass session_id
+        if not session_id and redis_client:
+            # Match the same logic used in auth_dependencies.py
+            if app_config.is_development():
+                refresh_token_header = request.headers.get("X-Refresh-Token")
+                refresh_token = refresh_token_header or request.cookies.get("refresh_token")
+            else:
+                refresh_token = request.cookies.get("refresh_token")
+            
+            if refresh_token:
+                try:
+                    session_service = SessionService(redis_client)
+                    found_session_id = await session_service.find_session_by_refresh_token(refresh_token)
+                    if found_session_id:
+                        # SECURITY: Verify session belongs to authenticated user before allowing logout
+                        session_info = await session_service.validate_session(found_session_id)
+                        if session_info and session_info.user_id == user_id:
+                            session_id = found_session_id
+                            logger.debug(f"Session found via refresh_token for user {_short_user_id(user_id)}")
+                        else:
+                            logger.warning(
+                                f"Session {found_session_id[:12]}... does not belong to user {_short_user_id(user_id)} - ignoring"
+                            )
+                except Exception as lookup_error:
+                    logger.warning(f"Failed to lookup session via refresh_token: {lookup_error}")
+
+        # Delete Redis session if session_id was found
         if session_id:
             try:
-                redis_client = get_redis_client(request)
                 if redis_client:
-                    session_service = SessionService(redis_client)
+                    if not session_service:
+                        session_service = SessionService(redis_client)
                     success = await session_service.logout(session_id)
                     if success:
                         logger.info(f"Redis session deleted for user {_short_user_id(user_id)}")
@@ -355,6 +390,8 @@ async def logout(
             except Exception as redis_error:
                 # Don't fail logout if Redis deletion fails (fallback mode)
                 logger.warning(f"Failed to delete Redis session (fallback mode): {redis_error}")
+        else:
+            logger.warning(f"No session_id found for user {_short_user_id(user_id)} during logout - session may remain in Redis")
         
         # Must match domain used when setting cookies
         domain = app_config.COOKIE_DOMAIN if not app_config.is_testing() else None
