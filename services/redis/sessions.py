@@ -271,6 +271,11 @@ class SessionService:
             user_sessions_key = f"user_sessions:{user_id}"
             session_id = self._generate_session_id()
             
+            # IMPORTANT: Cleanup stale session references before checking limits
+            # This removes session IDs from the set that point to expired/deleted sessions,
+            # preventing false "Too many sessions" errors when slots are actually available
+            await self.cleanup_expired_sessions(user_id)
+            
             # Atomic check-and-add using Lua script (prevents race conditions)
             try:
                 result = await self.redis.eval(

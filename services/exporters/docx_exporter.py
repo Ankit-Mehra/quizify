@@ -32,7 +32,7 @@ from schemas.export import (
     ExportQuestionMatching,
 )
 from services.exporters.base import BaseExporter
-from services.exporters.constants import QUIZIFY_URL, QUIZIFY_FOOTER_TEXT
+from services.exporters.constants import QUIZIFY_URL, QUIZIFY_WATERMARK_TEXT
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +78,9 @@ class DocxExporter(BaseExporter):
         
         # Set up custom styles
         self._setup_styles(doc)
+        
+        # Add watermark to document header
+        self._add_watermark(doc)
         
         # Add cover section
         self._add_cover_section(doc, quiz_data)
@@ -465,6 +468,66 @@ class DocxExporter(BaseExporter):
             return ", ".join(pairs)
         
         return "(Unknown format)"
+
+    def _add_watermark(self, doc: Document) -> None:
+        """
+        Add a diagonal watermark to the document.
+        
+        Creates a semi-transparent text watermark in the document header
+        that appears on every page. Uses raw lxml elements for VML shapes.
+        """
+        from lxml import etree
+        
+        section = doc.sections[0]
+        header = section.header
+        header.is_linked_to_previous = False
+        
+        # Get or create header paragraph
+        if header.paragraphs:
+            para = header.paragraphs[0]
+        else:
+            para = header.add_paragraph()
+        
+        # Define VML namespace
+        nsmap = {
+            'v': 'urn:schemas-microsoft-com:vml',
+            'o': 'urn:schemas-microsoft-com:office:office',
+            'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main',
+        }
+        
+        # Create the pict element using Word namespace
+        pict = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}pict', nsmap=nsmap)
+        
+        # Create VML shape for the watermark
+        shape = etree.SubElement(pict, '{urn:schemas-microsoft-com:vml}shape')
+        shape.set('id', 'PowerPlusWaterMarkObject')
+        shape.set('type', '#_x0000_t136')  # Text shape type
+        shape.set('style', 
+            'position:absolute;'
+            'margin-left:0;margin-top:0;'
+            'width:500pt;height:100pt;'
+            'rotation:315;'  # Diagonal rotation (-45 degrees)
+            'z-index:-251658752;'
+            'mso-position-horizontal:center;'
+            'mso-position-horizontal-relative:margin;'
+            'mso-position-vertical:center;'
+            'mso-position-vertical-relative:margin'
+        )
+        shape.set('fillcolor', '#E0E0E0')  # Light gray color
+        shape.set('stroked', 'f')  # No stroke/border
+        
+        # Add fill element for transparency
+        fill = etree.SubElement(shape, '{urn:schemas-microsoft-com:vml}fill')
+        fill.set('opacity', '.15')  # 15% opacity for subtle watermark
+        
+        # Add textpath for the watermark text
+        textpath = etree.SubElement(shape, '{urn:schemas-microsoft-com:vml}textpath')
+        textpath.set('style', 'font-family:"Arial";font-size:60pt')
+        textpath.set('string', QUIZIFY_WATERMARK_TEXT)
+        
+        # Add to paragraph via run using python-docx's mechanism
+        run = para.add_run()
+        run._r.append(pict)
 
     def _add_branding_footer(self, doc: Document) -> None:
         """

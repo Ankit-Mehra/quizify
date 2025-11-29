@@ -195,6 +195,46 @@ class TestSessionCreation:
         assert exc_info.value.count == 5
         assert exc_info.value.max_sessions == 5
 
+    @pytest.mark.asyncio
+    async def test_create_session_cleans_up_expired_before_limit_check(self, session_service, redis_client):
+        """Should clean up expired sessions before checking limit, allowing new session creation.
+        
+        This verifies the automatic cleanup behavior that runs in create_session()
+        before the session limit check. Without this, expired sessions would still
+        count toward the limit, causing false "TooManySessionsError" errors.
+        """
+        # Create 5 sessions (at limit)
+        session_ids = []
+        for i in range(5):
+            refresh_token = f"token_{i}"
+            await session_service.create_session(
+                user_id="user_123", device_type=f"device_{i}", refresh_token=refresh_token
+            )
+            session_id = await session_service.find_session_by_refresh_token(refresh_token)
+            session_ids.append(session_id)
+        
+        # Verify we're at limit
+        count_before = await session_service.get_session_count("user_123")
+        assert count_before == 5
+        
+        # Manually delete 2 session details (simulate expiration/deletion)
+        # The session IDs still exist in user_sessions:{user_id} set, but data is gone
+        await redis_client.delete(f"session:{session_ids[0]}")
+        await redis_client.delete(f"session:{session_ids[1]}")
+        
+        # Creating new session should succeed because:
+        # 1. create_session calls cleanup_expired_sessions() first
+        # 2. cleanup removes the 2 orphaned references from the set
+        # 3. Session count drops to 3, leaving room for new session
+        new_token = await session_service.create_session(
+            user_id="user_123", device_type="new_device", refresh_token="new_token"
+        )
+        assert new_token is not None
+        
+        # Should now have 4 sessions (3 original + 1 new)
+        count_after = await session_service.get_session_count("user_123")
+        assert count_after == 4
+
 
 class TestSessionValidation:
     """Tests for validate_session()"""
