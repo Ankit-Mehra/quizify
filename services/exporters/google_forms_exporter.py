@@ -445,9 +445,8 @@ class GoogleFormsExporter(BaseExporter):
                 "generalFeedback": {
                     "text": f"Expected answer: {question.correct_answer}"
                 }
-                # NOTE: whenRight/whenWrong CANNOT be used with textQuestion
-                # Google Forms API error: "Correct/incorrect answer feedback 
-                # can only be set for multiple choice questions."
+                # NOTE: whenRight/whenWrong CANNOT be used with textQuestion.
+                # Google Forms API error: "Correct/incorrect answer feedback can only be set for multiple choice questions."
             }
         
         return item
