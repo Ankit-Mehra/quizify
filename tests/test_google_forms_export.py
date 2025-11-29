@@ -531,13 +531,13 @@ class TestQuestionTypeMapping:
         assert "textQuestion" in question_item
         assert question_item["textQuestion"]["paragraph"] is False  # Short answer
         
-        # Check grading - textQuestion does NOT support correctAnswers (API limitation)
-        # We use generalFeedback and whenWrong instead for manual grading
+        # Check grading - textQuestion does NOT support correctAnswers or whenWrong (API limitation)
+        # We use generalFeedback only for manual grading
         assert "grading" in question_item
         assert question_item["grading"]["pointValue"] == 1
         assert "correctAnswers" not in question_item["grading"]  # Not supported for text
+        assert "whenWrong" not in question_item["grading"]  # Not supported for text
         assert "Paris" in question_item["grading"]["generalFeedback"]["text"]
-        assert "Paris" in question_item["grading"]["whenWrong"]["text"]
     
     def test_find_correct_option_index_exact_match(self):
         """Should find exact match in options."""

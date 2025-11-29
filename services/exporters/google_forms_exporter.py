@@ -435,18 +435,18 @@ class GoogleFormsExporter(BaseExporter):
         }
         
         # Add grading info if answer key is included
-        # IMPORTANT: textQuestion does NOT support correctAnswers for auto-grading
-        # Only choiceQuestion types support automatic grading with correctAnswers
-        # We use generalFeedback to show the expected answer during manual grading
+        # IMPORTANT: textQuestion does NOT support correctAnswers or whenRight/whenWrong
+        # for auto-grading. Only choiceQuestion types support automatic grading.
+        # For text questions, we only set pointValue and generalFeedback.
+        # generalFeedback shows the expected answer during manual grading.
         if options.include_answer_key:
             item["item"]["questionItem"]["question"]["grading"] = {
                 "pointValue": self.DEFAULT_POINT_VALUE,
                 "generalFeedback": {
                     "text": f"Expected answer: {question.correct_answer}"
-                },
-                "whenWrong": {
-                    "text": f"The correct answer is: {question.correct_answer}"
                 }
+                # NOTE: whenRight/whenWrong CANNOT be used with textQuestion.
+                # Google Forms API error: "Correct/incorrect answer feedback can only be set for multiple choice questions."
             }
         
         return item
