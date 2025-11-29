@@ -378,12 +378,17 @@ class BillingService:
                 subscription_id
             )
             
-            # Get the first (and typically only) subscription item
-            if not subscription.get("items") or not subscription["items"].get("data"):
+            # Get the first (and typically only) subscription item using _get_attr helper
+            # for consistent access regardless of whether it's a dict or Stripe object
+            items = self._get_attr(subscription, "items")
+            items_data = self._get_attr(items, "data", [])
+            if not items_data:
                 raise HTTPException(status_code=500, detail="Subscription has no items")
             
-            subscription_item_id = subscription["items"]["data"][0]["id"]
-            current_price_id = subscription["items"]["data"][0]["price"]["id"]
+            first_item = items_data[0]
+            subscription_item_id = self._get_attr(first_item, "id")
+            item_price = self._get_attr(first_item, "price")
+            current_price_id = self._get_attr(item_price, "id")
             
             # Check if already on this price
             if current_price_id == new_price_id:
@@ -394,13 +399,22 @@ class BillingService:
                     "subscription_id": subscription_id
                 }
             
+            # Determine if this is an upgrade or downgrade based on tier hierarchy
+            tier_order = {"free": 0, "basic": 1, "premium": 2, "pro": 3}
+            current_tier = self.config.get_tier_from_price_id(current_price_id) or "unknown"
+            is_upgrade = tier_order.get(tier, 0) > tier_order.get(current_tier, 0)
+            action = "Upgrading" if is_upgrade else "Downgrading"
+            
             logger.info(
-                f"Upgrading subscription {_short_stripe_id(subscription_id)} "
-                f"from {_short_stripe_id(current_price_id)} to {_short_stripe_id(new_price_id)}"
+                f"{action} subscription {_short_stripe_id(subscription_id)} "
+                f"from {current_tier} ({_short_stripe_id(current_price_id)}) to {tier} ({_short_stripe_id(new_price_id)})"
             )
             
             # Update the subscription with the new price
-            # proration_behavior: "create_prorations" charges the difference immediately
+            # For upgrades: "create_prorations" charges the difference immediately
+            # For downgrades: "none" takes effect at next billing cycle (prevents partial refunds)
+            proration_behavior = "create_prorations" if is_upgrade else "none"
+            
             updated_subscription = await asyncio.to_thread(
                 stripe.Subscription.modify,
                 subscription_id,
@@ -408,19 +422,37 @@ class BillingService:
                     "id": subscription_item_id,
                     "price": new_price_id,
                 }],
-                proration_behavior="create_prorations",
+                proration_behavior=proration_behavior,
                 metadata={
                     "user_id": user_id,
                     "tier": tier,
-                    "upgraded_at": datetime.now(timezone.utc).isoformat()
+                    "upgraded_at" if is_upgrade else "downgraded_at": datetime.now(timezone.utc).isoformat()
                 }
             )
             
-            logger.info(f"Subscription upgraded successfully for user {user_id[:8]} to {tier}")
+            logger.info(f"Subscription {action.lower()[:-3]}ed successfully for user {user_id[:8]} to {tier}")
             
+            # Sync database immediately so user sees updated tier without waiting for webhook
+            # The webhook will also fire but this ensures immediate consistency
+            try:
+                await self.provision_subscription(
+                    user_id=user_id,
+                    customer_id=self._get_attr(updated_subscription, "customer"),
+                    subscription_id=updated_subscription.id,
+                    subscription_status=self._get_attr(updated_subscription, "status"),
+                    price_id=new_price_id,
+                    current_period_start=self._get_attr(updated_subscription, "current_period_start"),
+                    current_period_end=self._get_attr(updated_subscription, "current_period_end")
+                )
+                logger.info(f"Database synced immediately after {action.lower()[:-3]}e for user {user_id[:8]}")
+            except Exception as db_error:
+                # Log but don't fail - webhook will eventually sync
+                logger.warning(f"Failed to sync database immediately, webhook will sync: {db_error}")
+            
+            status = "upgraded" if is_upgrade else "downgraded"
             return {
-                "status": "upgraded",
-                "message": f"Successfully upgraded to {tier}",
+                "status": status,
+                "message": f"Successfully {status} to {tier}" + ("" if is_upgrade else " (effective next billing cycle)"),
                 "subscription_id": updated_subscription.id
             }
             
@@ -520,6 +552,13 @@ class BillingService:
                 )
             
             # 4. No existing subscription, create Checkout Session for new subscription
+            # Generate idempotency key to prevent duplicate sessions on double-click
+            # Uses user_id + tier + hourly bucket to allow retries within same hour
+            # but prevent rapid duplicate submissions
+            from hashlib import sha256
+            hourly_bucket = datetime.now(timezone.utc).strftime("%Y-%m-%d-%H")
+            idempotency_key = sha256(f"{user_id}:{tier}:{hourly_bucket}".encode()).hexdigest()[:32]
+            
             # Run synchronous Stripe API call in thread pool to avoid blocking event loop
             session = await asyncio.to_thread(
                 stripe.checkout.Session.create,
@@ -542,8 +581,12 @@ class BillingService:
                         "tier": tier
                     }
                 },
-                allow_promotion_codes=True
+                allow_promotion_codes=True,
+                stripe_version=None,  # Use default API version
+                idempotency_key=idempotency_key
             )
+            
+            logger.debug(f"Created checkout session with idempotency key {idempotency_key[:8]}...")
             
             return {
                 "checkout_url": session.url,

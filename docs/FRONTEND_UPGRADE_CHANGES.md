@@ -1,7 +1,7 @@
 # Frontend Changes: Subscription Upgrade Flow
 
 ## Summary
-The `/api/billing/create-checkout` endpoint now handles subscription upgrades automatically. The response format has changed.
+The `/api/billing/create-checkout-session` endpoint now handles subscription upgrades and downgrades automatically. The response format has changed.
 
 ## Response Format
 
@@ -14,7 +14,7 @@ The `/api/billing/create-checkout` endpoint now handles subscription upgrades au
 ```
 **Action**: Redirect user to `checkout_url`
 
-### Upgrade (user already has a subscription)
+### Upgrade (user moving to higher tier)
 ```json
 {
   "status": "upgraded",
@@ -22,7 +22,17 @@ The `/api/billing/create-checkout` endpoint now handles subscription upgrades au
   "subscription_id": "sub_xxx"
 }
 ```
-**Action**: Show success message, no redirect needed
+**Action**: Show success message, no redirect needed. Upgrade takes effect immediately with prorated charge.
+
+### Downgrade (user moving to lower tier)
+```json
+{
+  "status": "downgraded",
+  "message": "Successfully downgraded to basic (effective next billing cycle)",
+  "subscription_id": "sub_xxx"
+}
+```
+**Action**: Show info message. Downgrade takes effect at end of current billing period.
 
 ### Already on Same Tier
 ```json
@@ -37,28 +47,59 @@ The `/api/billing/create-checkout` endpoint now handles subscription upgrades au
 ## Implementation
 
 ```typescript
-const response = await fetch('/api/billing/create-checkout', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ tier: 'pro' })
-});
+interface CheckoutResponse {
+  // New subscription fields
+  checkout_url?: string;
+  session_id?: string;
+  // Upgrade/downgrade fields
+  status?: 'upgraded' | 'downgraded' | 'already_subscribed';
+  message?: string;
+  subscription_id?: string;
+}
 
-const data = await response.json();
+async function handleTierChange(tier: string): Promise<void> {
+  try {
+    const response = await fetch('/api/billing/create-checkout-session', {
+      method: 'POST',
+      headers: { 
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${accessToken}`
+      },
+      body: JSON.stringify({ tier })
+    });
 
-if (data.checkout_url) {
-  // New subscription - redirect to Stripe
-  window.location.href = data.checkout_url;
-} else if (data.status === 'upgraded') {
-  // Upgrade successful - show success and refresh user data
-  toast.success(data.message);
-  await refreshUserProfile(); // Reload tier info
-} else if (data.status === 'already_subscribed') {
-  // Already on this tier
-  toast.info(data.message);
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || 'Failed to process subscription change');
+    }
+
+    const data: CheckoutResponse = await response.json();
+
+    if (data.checkout_url) {
+      // New subscription - redirect to Stripe Checkout
+      window.location.href = data.checkout_url;
+    } else if (data.status === 'upgraded') {
+      // Upgrade successful - show success and refresh user data
+      toast.success(data.message);
+      await refreshUserProfile(); // Reload tier info immediately
+    } else if (data.status === 'downgraded') {
+      // Downgrade scheduled - show info about timing
+      toast.info(data.message);
+      await refreshUserProfile();
+    } else if (data.status === 'already_subscribed') {
+      // Already on this tier
+      toast.info(data.message);
+    }
+  } catch (error) {
+    console.error('Subscription change failed:', error);
+    toast.error(error instanceof Error ? error.message : 'An unexpected error occurred');
+  }
 }
 ```
 
 ## Key Points
-- Check for `checkout_url` first (indicates new subscription)
-- If no `checkout_url`, check `status` field for upgrade result
-- After upgrade, refresh user profile to get updated tier
+- Check for `checkout_url` first (indicates new subscription requiring Stripe Checkout)
+- If no `checkout_url`, check `status` field for upgrade/downgrade result
+- After upgrade, refresh user profile to get updated tier immediately
+- Downgrades take effect at next billing cycle (no prorated refund)
+- Race condition protection: Double-clicks within the same hour return the same checkout session
