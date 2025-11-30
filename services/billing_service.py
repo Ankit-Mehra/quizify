@@ -16,7 +16,7 @@ import stripe
 import asyncio
 from hashlib import sha256
 from typing import Optional
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from fastapi import HTTPException
 from config import Config
 from supabase import Client
@@ -603,9 +603,21 @@ class BillingService:
             proration_amount = debit_amount - credit_amount
             
             # Get next billing info
-            next_billing_date = datetime.fromtimestamp(
-                subscription.current_period_end, tz=timezone.utc
-            )
+            # current_period_end should always exist on subscription objects per Stripe API docs
+            # Using _get_attr for defensive access in case of API inconsistencies
+            current_period_end = self._get_attr(subscription, "current_period_end")
+            if current_period_end:
+                next_billing_date = datetime.fromtimestamp(
+                    current_period_end, tz=timezone.utc
+                )
+            else:
+                # Fallback: estimate next billing as 30 days from now
+                # Log warning as this shouldn't happen with valid subscriptions
+                logger.warning(
+                    f"Subscription {subscription.id} missing current_period_end field. "
+                    f"Using 30-day fallback estimate."
+                )
+                next_billing_date = datetime.now(tz=timezone.utc) + timedelta(days=30)
             
             # Get the new plan's monthly price
             new_price = await asyncio.to_thread(stripe.Price.retrieve, new_price_id)
