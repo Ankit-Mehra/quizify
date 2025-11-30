@@ -571,52 +571,22 @@ class BillingService:
             # Generate idempotency key to prevent duplicate sessions on rapid double-clicks
             # Uses user_id + tier + hourly bucket for reasonable deduplication window
             hourly_bucket = datetime.now(timezone.utc).strftime("%Y-%m-%d-%H")
-            idempotency_key = sha256(f"{user_id}:{tier}:{hourly_bucket}".encode()).hexdigest()[:32]
+            base_key = f"{user_id}:{tier}:{hourly_bucket}"
             
-            # Run synchronous Stripe API call in thread pool to avoid blocking event loop
-            session = await asyncio.to_thread(
-                stripe.checkout.Session.create,
-                customer=customer_id,
-                payment_method_types=["card"],
-                line_items=[{
-                    "price": price_id,
-                    "quantity": 1,
-                }],
-                mode="subscription",
-                success_url=f"{success_url.rstrip('/')}?session_id={{CHECKOUT_SESSION_ID}}",
-                cancel_url=cancel_url.rstrip('/'),
-                metadata={
-                    "user_id": user_id,
-                    "tier": tier
-                },
-                subscription_data={
-                    "metadata": {
-                        "user_id": user_id,
-                        "tier": tier
-                    }
-                },
-                allow_promotion_codes=True,
-                idempotency_key=idempotency_key
-            )
+            # Try up to 5 attempts to get a valid (open) session
+            # Each attempt uses a different idempotency key based on attempt number
+            max_attempts = 5
+            session = None
             
-            logger.debug(f"Checkout session created/retrieved with idempotency key {idempotency_key[:8]}...")
-            
-            # 5. Validate the session is still usable (not expired or completed)
-            # Stripe idempotency keys cache responses for 24h, but sessions become
-            # invalid after use. Check status and create a fresh session if needed.
-            if session.status != "open":
-                logger.info(
-                    f"Cached session {_short_stripe_id(session.id)} has status '{session.status}', "
-                    f"creating fresh session for user {user_id[:8]}"
-                )
-                # Create a new session with a DIFFERENT idempotency key to:
-                # 1. Bypass the cached stale session
-                # 2. Still protect against double-clicks on this fresh session
-                # Include the old session ID to make the key unique per retry cycle
-                retry_idempotency_key = sha256(
-                    f"{user_id}:{tier}:{hourly_bucket}:retry:{session.id}".encode()
-                ).hexdigest()[:32]
+            for attempt in range(max_attempts):
+                # Generate idempotency key for this attempt
+                # Attempt 0 = base key, Attempt 1+ = base key + attempt number
+                if attempt == 0:
+                    idempotency_key = sha256(base_key.encode()).hexdigest()[:32]
+                else:
+                    idempotency_key = sha256(f"{base_key}:attempt:{attempt}".encode()).hexdigest()[:32]
                 
+                # Run synchronous Stripe API call in thread pool to avoid blocking event loop
                 session = await asyncio.to_thread(
                     stripe.checkout.Session.create,
                     customer=customer_id,
@@ -639,11 +609,34 @@ class BillingService:
                         }
                     },
                     allow_promotion_codes=True,
-                    idempotency_key=retry_idempotency_key
+                    idempotency_key=idempotency_key
                 )
-                logger.info(
-                    f"Created fresh checkout session {_short_stripe_id(session.id)} "
-                    f"with retry key {retry_idempotency_key[:8]}... for user {user_id[:8]}"
+                
+                # Check if session is still valid (status = "open")
+                if session.status == "open":
+                    if attempt > 0:
+                        logger.info(
+                            f"Found valid session {_short_stripe_id(session.id)} on attempt {attempt + 1} "
+                            f"for user {user_id[:8]}"
+                        )
+                    else:
+                        logger.debug(f"Checkout session {_short_stripe_id(session.id)} created/retrieved")
+                    break
+                else:
+                    logger.debug(
+                        f"Attempt {attempt + 1}: Session {_short_stripe_id(session.id)} has status "
+                        f"'{session.status}', trying next attempt..."
+                    )
+            
+            # After all attempts, check if we have a valid session
+            if session is None or session.status != "open":
+                logger.error(
+                    f"Failed to get valid checkout session after {max_attempts} attempts "
+                    f"for user {user_id[:8]}. Last session status: {session.status if session else 'None'}"
+                )
+                raise HTTPException(
+                    status_code=503,
+                    detail="Unable to create checkout session. Please try again in a few minutes."
                 )
             
             return {
