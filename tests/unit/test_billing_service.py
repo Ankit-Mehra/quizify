@@ -756,3 +756,176 @@ class TestCheckoutSessionRetryLogic:
                     assert len(idempotency_keys_used) == 3
                     # All keys should be unique
                     assert len(set(idempotency_keys_used)) == 3
+
+
+class TestPreviewUpgradeFallback:
+    """Test the preview_upgrade fallback logic when current_period_end is missing."""
+    
+    @pytest.fixture
+    def mock_billing_service(self):
+        """Create a mock billing service with all dependencies mocked."""
+        from unittest.mock import patch, MagicMock, AsyncMock
+        
+        with patch("services.billing_service.Config") as MockConfig:
+            mock_config = MagicMock()
+            mock_config.STRIPE_SECRET_KEY = "sk_test_mock_key_for_testing_only"  # noqa: S105
+            mock_config.STRIPE_PRO_PRICE_ID = "price_pro"
+            mock_config.STRIPE_BASIC_PRICE_ID = "price_basic"
+            mock_config.get_tier_from_price_id.return_value = "basic"
+            mock_config.get_price_id_for_tier.return_value = "price_pro"
+            MockConfig.return_value = mock_config
+            
+            from services.billing_service import BillingService
+            
+            mock_supabase = MagicMock()
+            service = BillingService(mock_supabase)
+            
+            yield service
+    
+    @pytest.mark.asyncio
+    async def test_preview_upgrade_uses_fallback_when_current_period_end_missing(self, mock_billing_service):
+        """Should use 30-day fallback estimate when current_period_end is missing."""
+        from unittest.mock import patch, MagicMock, AsyncMock
+        from datetime import datetime, timezone, timedelta
+        import logging
+        
+        # Mock subscription WITHOUT current_period_end attribute
+        mock_subscription = MagicMock(spec=['id', 'items'])
+        mock_subscription.id = "sub_test123"
+        # Create items structure
+        mock_item = MagicMock()
+        mock_item.id = "si_test123"
+        mock_item.price = MagicMock()
+        mock_item.price.id = "price_basic"
+        mock_subscription.items = MagicMock()
+        mock_subscription.items.data = [mock_item]
+        # Explicitly set current_period_end to None (simulating missing field)
+        mock_subscription.current_period_end = None
+        
+        # Mock preview invoice
+        mock_line = MagicMock()
+        mock_line.proration = False
+        mock_line.discountable = True
+        mock_line.amount = 1000
+        mock_preview = MagicMock()
+        mock_preview.lines = MagicMock()
+        mock_preview.lines.data = [mock_line]
+        
+        # Mock price
+        mock_price = MagicMock()
+        mock_price.unit_amount = 2000
+        
+        # Mock customer
+        mock_customer = MagicMock()
+        mock_customer.invoice_settings = MagicMock()
+        mock_customer.invoice_settings.default_payment_method = None
+        mock_customer.default_source = None
+        
+        with patch.object(mock_billing_service, 'get_active_subscription', new_callable=AsyncMock) as mock_get_sub:
+            mock_get_sub.return_value = mock_subscription
+            
+            with patch("services.billing_service.get_authed_supabase_client") as mock_get_authed:
+                mock_authed_supabase = MagicMock()
+                mock_authed_supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
+                    data={"stripe_customer_id": "cus_test123"}
+                )
+                mock_get_authed.return_value = mock_authed_supabase
+                
+                with patch("stripe.Invoice.create_preview", return_value=mock_preview):
+                    with patch("stripe.Price.retrieve", return_value=mock_price):
+                        with patch("stripe.Customer.retrieve", return_value=mock_customer):
+                            with patch("asyncio.to_thread", new_callable=lambda: AsyncMock(side_effect=lambda f, *args, **kwargs: f(*args, **kwargs))):
+                                with patch("services.billing_service.logger") as mock_logger:
+                                    before_call = datetime.now(tz=timezone.utc)
+                                    
+                                    result = await mock_billing_service.preview_upgrade(
+                                        user_id="user123",
+                                        user_token="test_token_123",
+                                        tier="pro"
+                                    )
+                                
+                                    after_call = datetime.now(tz=timezone.utc)
+                                    
+                                    # Verify warning was logged
+                                    mock_logger.warning.assert_called_once()
+                                    warning_msg = mock_logger.warning.call_args[0][0]
+                                    assert "sub_test123" in warning_msg
+                                    assert "missing current_period_end" in warning_msg
+                                    assert "30-day fallback" in warning_msg
+                                    
+                                    # Verify fallback date is approximately 30 days from now
+                                    expected_min = before_call + timedelta(days=29, hours=23)
+                                    expected_max = after_call + timedelta(days=30, hours=1)
+                                    actual_date = datetime.fromisoformat(result["next_billing_date"].replace("Z", "+00:00"))
+                                    assert expected_min <= actual_date <= expected_max
+                                    
+                                    # Verify response is still valid
+                                    assert "proration_amount" in result
+                                    assert "next_billing_amount" in result
+    
+    @pytest.mark.asyncio
+    async def test_preview_upgrade_uses_actual_date_when_current_period_end_present(self, mock_billing_service):
+        """Should use actual current_period_end when present."""
+        from unittest.mock import patch, MagicMock, AsyncMock
+        from datetime import datetime, timezone
+        
+        # Mock subscription WITH current_period_end attribute
+        expected_timestamp = 1735689600  # 2025-01-01 00:00:00 UTC
+        mock_subscription = MagicMock()
+        mock_subscription.id = "sub_test456"
+        mock_subscription.current_period_end = expected_timestamp
+        # Create items structure
+        mock_item = MagicMock()
+        mock_item.id = "si_test456"
+        mock_item.price = MagicMock()
+        mock_item.price.id = "price_basic"
+        mock_subscription.items = MagicMock()
+        mock_subscription.items.data = [mock_item]
+        
+        # Mock preview invoice
+        mock_line = MagicMock()
+        mock_line.proration = False
+        mock_line.discountable = True
+        mock_line.amount = 1000
+        mock_preview = MagicMock()
+        mock_preview.lines = MagicMock()
+        mock_preview.lines.data = [mock_line]
+        
+        # Mock price
+        mock_price = MagicMock()
+        mock_price.unit_amount = 2000
+        
+        # Mock customer
+        mock_customer = MagicMock()
+        mock_customer.invoice_settings = MagicMock()
+        mock_customer.invoice_settings.default_payment_method = None
+        mock_customer.default_source = None
+        
+        with patch.object(mock_billing_service, 'get_active_subscription', new_callable=AsyncMock) as mock_get_sub:
+            mock_get_sub.return_value = mock_subscription
+            
+            with patch("services.billing_service.get_authed_supabase_client") as mock_get_authed:
+                mock_authed_supabase = MagicMock()
+                mock_authed_supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
+                    data={"stripe_customer_id": "cus_test456"}
+                )
+                mock_get_authed.return_value = mock_authed_supabase
+                
+                with patch("stripe.Invoice.create_preview", return_value=mock_preview):
+                    with patch("stripe.Price.retrieve", return_value=mock_price):
+                        with patch("stripe.Customer.retrieve", return_value=mock_customer):
+                            with patch("asyncio.to_thread", new_callable=lambda: AsyncMock(side_effect=lambda f, *args, **kwargs: f(*args, **kwargs))):
+                                with patch("services.billing_service.logger") as mock_logger:
+                                    result = await mock_billing_service.preview_upgrade(
+                                        user_id="user456",
+                                        user_token="test_token_456",
+                                        tier="pro"
+                                    )
+                                    
+                                    # Verify NO warning was logged
+                                    mock_logger.warning.assert_not_called()
+                                    
+                                    # Verify the actual date from current_period_end is used
+                                    expected_date = datetime.fromtimestamp(expected_timestamp, tz=timezone.utc)
+                                    actual_date = datetime.fromisoformat(result["next_billing_date"].replace("Z", "+00:00"))
+                                    assert actual_date == expected_date
