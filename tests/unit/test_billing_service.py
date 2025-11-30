@@ -548,7 +548,8 @@ class TestCheckoutSessionRetryLogic:
     
     Stripe caches idempotent responses for 24 hours, but checkout sessions
     become invalid after completion (status changes from "open" to "complete").
-    The retry logic uses different idempotency keys to find a valid session.
+    The retry logic attempts to find a valid session by creating/retrieving
+    sessions with different idempotency keys until one has "open" status.
     """
     
     @pytest.fixture

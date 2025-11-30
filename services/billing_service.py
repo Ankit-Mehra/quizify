@@ -36,6 +36,7 @@ STATUS_UNPAID = "unpaid"
 # Checkout session retry configuration
 # Stripe caches idempotent responses for 24 hours, but checkout sessions become
 # invalid after completion. We try multiple idempotency keys to find a valid session.
+# 5 attempts balances retry coverage with API performance and covers typical cache edge cases
 MAX_CHECKOUT_SESSION_ATTEMPTS = 5
 
 
@@ -590,7 +591,6 @@ class BillingService:
             #
             hourly_bucket = datetime.now(timezone.utc).strftime("%Y-%m-%d-%H")
             base_key = f"{user_id}:{tier}:{hourly_bucket}"
-            session = None
             
             for attempt in range(MAX_CHECKOUT_SESSION_ATTEMPTS):
                 # Generate idempotency key for this attempt
