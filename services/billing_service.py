@@ -580,6 +580,8 @@ class BillingService:
             
             for attempt in range(max_attempts):
                 # Generate idempotency key for this attempt
+                # Each attempt gets a unique key to bypass cached stale sessions
+                # while still protecting against double-clicks within the same attempt
                 idempotency_key = sha256(f"{base_key}:attempt:{attempt}".encode()).hexdigest()[:32]
                 
                 # Run synchronous Stripe API call in thread pool to avoid blocking event loop
@@ -608,30 +610,20 @@ class BillingService:
                     idempotency_key=idempotency_key
                 )
                 
-                # CRITICAL: The idempotency key returns cached API responses, which may have
-                # stale status. We must retrieve the session to get its CURRENT status.
-                # Stripe caches responses for 24h, but session status changes when used.
-                current_session = await asyncio.to_thread(
-                    stripe.checkout.Session.retrieve,
-                    session.id
-                )
-                
                 # Check if session is still valid (status = "open")
-                if current_session.status == "open":
+                if session.status == "open":
                     if attempt > 0:
                         logger.info(
                             f"Found valid session {_short_stripe_id(session.id)} on attempt {attempt + 1} "
                             f"for user {user_id[:8]}"
                         )
                     else:
-                        logger.debug(f"Checkout session {_short_stripe_id(session.id)} is valid (open)")
-                    # Use the retrieved session which has current status
-                    session = current_session
+                        logger.debug(f"Checkout session {_short_stripe_id(session.id)} created/retrieved")
                     break
                 else:
                     logger.debug(
                         f"Attempt {attempt + 1}: Session {_short_stripe_id(session.id)} has status "
-                        f"'{current_session.status}', trying next attempt..."
+                        f"'{session.status}', trying next attempt..."
                     )
             
             # After all attempts, check if we have a valid session
