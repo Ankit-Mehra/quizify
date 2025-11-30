@@ -507,7 +507,6 @@ class TestCheckoutSessionResponseSchema:
     def test_checkout_response_rejects_mixed_fields(self):
         """Should reject response with both checkout and upgrade fields."""
         from schemas.billing import CheckoutSessionResponse
-        import pytest
         
         with pytest.raises(ValueError, match="cannot contain both"):
             CheckoutSessionResponse(
@@ -521,7 +520,6 @@ class TestCheckoutSessionResponseSchema:
     def test_checkout_response_rejects_empty_response(self):
         """Should reject response with no fields."""
         from schemas.billing import CheckoutSessionResponse
-        import pytest
         
         with pytest.raises(ValueError, match="must contain either"):
             CheckoutSessionResponse()
@@ -529,7 +527,6 @@ class TestCheckoutSessionResponseSchema:
     def test_checkout_response_requires_complete_checkout_fields(self):
         """Should reject checkout response missing session_id."""
         from schemas.billing import CheckoutSessionResponse
-        import pytest
         
         with pytest.raises(ValueError, match="must include both"):
             CheckoutSessionResponse(
@@ -539,7 +536,6 @@ class TestCheckoutSessionResponseSchema:
     def test_checkout_response_requires_complete_upgrade_fields(self):
         """Should reject upgrade response missing message or subscription_id."""
         from schemas.billing import CheckoutSessionResponse
-        import pytest
         
         with pytest.raises(ValueError, match="must include status"):
             CheckoutSessionResponse(

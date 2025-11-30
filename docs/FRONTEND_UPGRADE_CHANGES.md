@@ -28,7 +28,7 @@ The `/api/billing/create-checkout-session` endpoint now handles subscription upg
 ```json
 {
   "status": "downgraded",
-  "message": "Successfully downgraded to basic (effective next billing cycle)",
+  "message": "Successfully downgraded to premium (effective next billing cycle)",
   "subscription_id": "sub_xxx"
 }
 ```

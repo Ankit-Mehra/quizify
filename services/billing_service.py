@@ -14,6 +14,7 @@ Epic 2-3: Full implementation with Stripe API integration
 
 import stripe
 import asyncio
+from hashlib import sha256
 from typing import Optional
 from datetime import datetime, timezone
 from fastapi import HTTPException
@@ -324,16 +325,16 @@ class BillingService:
     
     async def get_active_subscription(self, customer_id: str) -> Optional[stripe.Subscription]:
         """
-        Get the user's active subscription from Stripe.
+        Get the user's active or trialing subscription from Stripe.
         
         Args:
             customer_id: Stripe customer ID
             
         Returns:
-            stripe.Subscription if user has an active subscription, None otherwise
+            stripe.Subscription if user has an active or trialing subscription, None otherwise
         """
         try:
-            # List all subscriptions for this customer
+            # Check for active subscription first
             subscriptions = await asyncio.to_thread(
                 stripe.Subscription.list,
                 customer=customer_id,
@@ -343,6 +344,18 @@ class BillingService:
             
             if subscriptions.data and len(subscriptions.data) > 0:
                 return subscriptions.data[0]
+            
+            # If no active subscription, check for trialing subscription
+            trialing_subs = await asyncio.to_thread(
+                stripe.Subscription.list,
+                customer=customer_id,
+                status="trialing",
+                limit=1
+            )
+            
+            if trialing_subs.data and len(trialing_subs.data) > 0:
+                return trialing_subs.data[0]
+            
             return None
             
         except stripe.StripeError as e:
@@ -400,13 +413,14 @@ class BillingService:
                 }
             
             # Determine if this is an upgrade or downgrade based on tier hierarchy
-            tier_order = {"free": 0, "basic": 1, "premium": 2, "pro": 3}
+            # Only include tiers that have Stripe price IDs configured
+            tier_order = {"premium": 1, "pro": 2}
             current_tier = self.config.get_tier_from_price_id(current_price_id) or "unknown"
             is_upgrade = tier_order.get(tier, 0) > tier_order.get(current_tier, 0)
-            action = "Upgrading" if is_upgrade else "Downgrading"
+            action = "upgrade" if is_upgrade else "downgrade"
             
             logger.info(
-                f"{action} subscription {_short_stripe_id(subscription_id)} "
+                f"{action.capitalize()}ing subscription {_short_stripe_id(subscription_id)} "
                 f"from {current_tier} ({_short_stripe_id(current_price_id)}) to {tier} ({_short_stripe_id(new_price_id)})"
             )
             
@@ -430,7 +444,8 @@ class BillingService:
                 }
             )
             
-            logger.info(f"Subscription {action.lower()[:-3]}ed successfully for user {user_id[:8]} to {tier}")
+            status = "upgraded" if is_upgrade else "downgraded"
+            logger.info(f"Subscription {status} successfully for user {user_id[:8]} to {tier}")
             
             # Sync database immediately so user sees updated tier without waiting for webhook
             # The webhook will also fire but this ensures immediate consistency
@@ -444,12 +459,10 @@ class BillingService:
                     current_period_start=self._get_attr(updated_subscription, "current_period_start"),
                     current_period_end=self._get_attr(updated_subscription, "current_period_end")
                 )
-                logger.info(f"Database synced immediately after {action.lower()[:-3]}e for user {user_id[:8]}")
+                logger.info(f"Database synced immediately after {action} for user {user_id[:8]}")
             except Exception as db_error:
                 # Log but don't fail - webhook will eventually sync
                 logger.warning(f"Failed to sync database immediately, webhook will sync: {db_error}")
-            
-            status = "upgraded" if is_upgrade else "downgraded"
             return {
                 "status": status,
                 "message": f"Successfully {status} to {tier}" + ("" if is_upgrade else " (effective next billing cycle)"),
@@ -555,7 +568,6 @@ class BillingService:
             # Generate idempotency key to prevent duplicate sessions on double-click
             # Uses user_id + tier + hourly bucket to allow retries within same hour
             # but prevent rapid duplicate submissions
-            from hashlib import sha256
             hourly_bucket = datetime.now(timezone.utc).strftime("%Y-%m-%d-%H")
             idempotency_key = sha256(f"{user_id}:{tier}:{hourly_bucket}".encode()).hexdigest()[:32]
             
