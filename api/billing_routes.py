@@ -423,7 +423,7 @@ async def create_checkout_session(
 )
 async def preview_upgrade(
     request: UpgradePreviewRequest,
-    user_id: str = Depends(get_current_user_id),
+    user_id: str = Depends(check_rate_limit),
     user_token: str = Depends(get_current_user_token),
     billing_service: BillingService = Depends(get_billing_service),
 ) -> UpgradePreviewResponse:
@@ -451,7 +451,7 @@ async def preview_upgrade(
     3. Frontend shows modal: "You'll be charged $2.50 today. Then $15/mo starting Dec 15."
     4. User clicks "Confirm Upgrade"
     5. Frontend calls POST /api/billing/create-checkout-session {"tier": "pro"}
-    6. Backend upgrades subscription (no Stripe checkout page needed)
+    6. Backend upgrades subscription using Stripe Subscription.modify (no Stripe checkout page needed)
     
     **Errors:**
     - `400`: No active subscription, or already on requested tier

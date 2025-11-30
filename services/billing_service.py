@@ -39,6 +39,10 @@ STATUS_UNPAID = "unpaid"
 # 5 attempts balances retry coverage with API performance and covers typical cache edge cases
 MAX_CHECKOUT_SESSION_ATTEMPTS = 5
 
+# Tier hierarchy for upgrade/downgrade detection
+# Higher number = higher tier. Used to determine if plan change is upgrade or downgrade.
+TIER_ORDER = {"premium": 1, "pro": 2}
+
 
 def _short_stripe_id(stripe_id: str, max_len: int = 12) -> str:
     """
@@ -421,9 +425,8 @@ class BillingService:
             
             # Determine if this is an upgrade or downgrade based on tier hierarchy
             # Only include tiers that have Stripe price IDs configured
-            tier_order = {"premium": 1, "pro": 2}
             current_tier = self.config.get_tier_from_price_id(current_price_id) or "unknown"
-            is_upgrade = tier_order.get(tier, 0) > tier_order.get(current_tier, 0)
+            is_upgrade = TIER_ORDER.get(tier, 0) > TIER_ORDER.get(current_tier, 0)
             action = "upgrade" if is_upgrade else "downgrade"
             
             logger.info(
@@ -509,8 +512,6 @@ class BillingService:
         Raises:
             HTTPException: If user has no active subscription or preview fails
         """
-        from datetime import timezone as tz
-        
         logger.info(f"Previewing upgrade to {tier} for user {user_id[:8]}")
         
         # Validate tier and get price ID
@@ -562,9 +563,8 @@ class BillingService:
                     detail=f"You are already subscribed to {tier}"
                 )
             
-            # Determine if upgrade or downgrade
-            tier_order = {"premium": 1, "pro": 2}
-            is_upgrade = tier_order.get(tier, 0) > tier_order.get(current_tier, 0)
+            # Determine if upgrade or downgrade using module-level tier hierarchy
+            is_upgrade = TIER_ORDER.get(tier, 0) > TIER_ORDER.get(current_tier, 0)
             
             # Create preview invoice using Stripe's API
             # This calculates the proration without actually modifying the subscription
@@ -597,7 +597,7 @@ class BillingService:
             
             # Get next billing info
             next_billing_date = datetime.fromtimestamp(
-                subscription.current_period_end, tz=tz.utc
+                subscription.current_period_end, tz=timezone.utc
             )
             
             # Get the new plan's monthly price
@@ -641,7 +641,7 @@ class BillingService:
                 dollars = cents / 100
                 return f"${dollars:,.2f}"
             
-            # Build user message
+            # Build user message based on upgrade/downgrade and proration amount
             if is_upgrade:
                 if proration_amount > 0:
                     message = (
@@ -649,13 +649,23 @@ class BillingService:
                         f"Then {format_amount(next_billing_amount)}/month starting "
                         f"{next_billing_date.strftime('%b %d')}."
                     )
+                elif proration_amount == 0:
+                    # Edge case: exact proration balance (unlikely but possible)
+                    message = (
+                        f"No charge today - your credit exactly covers the upgrade. "
+                        f"Then {format_amount(next_billing_amount)}/month starting "
+                        f"{next_billing_date.strftime('%b %d')}."
+                    )
                 else:
+                    # Negative proration: user gets a credit (rare for upgrades)
                     message = (
                         f"You'll receive a {format_amount(abs(proration_amount))} credit. "
                         f"Then {format_amount(next_billing_amount)}/month starting "
                         f"{next_billing_date.strftime('%b %d')}."
                     )
             else:
+                # Downgrade: no proration, change takes effect at next billing cycle
+                # Note: proration fields will be $0.00 for downgrades since proration_behavior="none"
                 message = (
                     f"Your plan will change to {tier} on {next_billing_date.strftime('%b %d')}. "
                     f"You'll keep {current_tier} until then. "
