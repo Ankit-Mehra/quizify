@@ -7,7 +7,7 @@ including checkout sessions, customer portal, subscription status, and webhooks.
 
 from datetime import datetime
 from typing import Optional, Literal
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, Field, HttpUrl, model_validator
 
 
 # ============================================================================
@@ -36,25 +36,101 @@ class CheckoutSessionRequest(BaseModel):
 
 class CheckoutSessionResponse(BaseModel):
     """
-    Response containing Stripe Checkout session URL.
+    Response containing Stripe Checkout session URL OR upgrade confirmation.
     
-    Frontend should redirect user to this URL to complete payment.
+    For new subscriptions: Frontend should redirect user to checkout_url.
+    For upgrades: Returns status and message, no redirect needed.
+    
+    Response type is determined by the presence of fields:
+    - If checkout_url is present → new subscription flow
+    - If status is present → upgrade/downgrade flow
     """
-    checkout_url: HttpUrl = Field(
-        ...,
-        description="Stripe Checkout session URL - redirect user here"
+    # For new subscriptions
+    checkout_url: Optional[HttpUrl] = Field(
+        None,
+        description="Stripe Checkout session URL - redirect user here (only for new subscriptions)"
     )
-    session_id: str = Field(
-        ...,
-        description="Stripe Checkout session ID (cs_XXXXXXXXX)"
+    session_id: Optional[str] = Field(
+        None,
+        description="Stripe Checkout session ID (cs_XXXXXXXXX) (only for new subscriptions)"
     )
+    
+    # For subscription upgrades/downgrades
+    status: Optional[str] = Field(
+        None,
+        description="Status: 'upgraded', 'downgraded', or 'already_subscribed'"
+    )
+    message: Optional[str] = Field(
+        None,
+        description="Human-readable message about the upgrade/downgrade"
+    )
+    subscription_id: Optional[str] = Field(
+        None,
+        description="Subscription ID (for upgrades/downgrades)"
+    )
+    
+    @model_validator(mode='after')
+    def validate_response_type(self) -> 'CheckoutSessionResponse':
+        """
+        Ensure response is either a checkout response OR an upgrade response, not a mix.
+        This prevents invalid states where some fields from both types are present.
+        """
+        has_checkout = self.checkout_url is not None or self.session_id is not None
+        has_upgrade = self.status is not None
+        
+        if has_checkout and has_upgrade:
+            raise ValueError(
+                "Response cannot contain both checkout fields (checkout_url/session_id) "
+                "and upgrade fields (status). Must be one or the other."
+            )
+        
+        if not has_checkout and not has_upgrade:
+            raise ValueError(
+                "Response must contain either checkout fields (checkout_url, session_id) "
+                "or upgrade fields (status, message, subscription_id)."
+            )
+        
+        # Validate checkout response has both required fields
+        if has_checkout and (self.checkout_url is None or self.session_id is None):
+            raise ValueError(
+                "Checkout response must include both checkout_url and session_id."
+            )
+        
+        # Validate upgrade response has required fields
+        if has_upgrade and (self.message is None or self.subscription_id is None):
+            raise ValueError(
+                "Upgrade response must include status, message, and subscription_id."
+            )
+        
+        return self
     
     class Config:
         json_schema_extra = {
-            "example": {
-                "checkout_url": "https://checkout.stripe.com/c/pay/cs_test_a1b2c3d4...",
-                "session_id": "cs_test_a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0"
-            }
+            "examples": [
+                {
+                    "description": "New subscription checkout",
+                    "value": {
+                        "checkout_url": "https://checkout.stripe.com/c/pay/cs_test_a1b2c3d4...",
+                        "session_id": "cs_test_a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0"
+                    }
+                },
+                {
+                    "description": "Subscription upgrade",
+                    "value": {
+                        "status": "upgraded",
+                        "message": "Successfully upgraded to pro",
+                        "subscription_id": "sub_abc123"
+                    }
+                },
+                {
+                    "description": "Subscription downgrade",
+                    "value": {
+                        "status": "downgraded",
+                        "message": "Successfully downgraded to basic (effective next billing cycle)",
+                        "subscription_id": "sub_abc123"
+                    }
+                }
+            ]
         }
 
 
