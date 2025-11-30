@@ -580,11 +580,7 @@ class BillingService:
             
             for attempt in range(max_attempts):
                 # Generate idempotency key for this attempt
-                # Attempt 0 = base key, Attempt 1+ = base key + attempt number
-                if attempt == 0:
-                    idempotency_key = sha256(base_key.encode()).hexdigest()[:32]
-                else:
-                    idempotency_key = sha256(f"{base_key}:attempt:{attempt}".encode()).hexdigest()[:32]
+                idempotency_key = sha256(f"{base_key}:attempt:{attempt}".encode()).hexdigest()[:32]
                 
                 # Run synchronous Stripe API call in thread pool to avoid blocking event loop
                 session = await asyncio.to_thread(
@@ -612,20 +608,30 @@ class BillingService:
                     idempotency_key=idempotency_key
                 )
                 
+                # CRITICAL: The idempotency key returns cached API responses, which may have
+                # stale status. We must retrieve the session to get its CURRENT status.
+                # Stripe caches responses for 24h, but session status changes when used.
+                current_session = await asyncio.to_thread(
+                    stripe.checkout.Session.retrieve,
+                    session.id
+                )
+                
                 # Check if session is still valid (status = "open")
-                if session.status == "open":
+                if current_session.status == "open":
                     if attempt > 0:
                         logger.info(
                             f"Found valid session {_short_stripe_id(session.id)} on attempt {attempt + 1} "
                             f"for user {user_id[:8]}"
                         )
                     else:
-                        logger.debug(f"Checkout session {_short_stripe_id(session.id)} created/retrieved")
+                        logger.debug(f"Checkout session {_short_stripe_id(session.id)} is valid (open)")
+                    # Use the retrieved session which has current status
+                    session = current_session
                     break
                 else:
                     logger.debug(
                         f"Attempt {attempt + 1}: Session {_short_stripe_id(session.id)} has status "
-                        f"'{session.status}', trying next attempt..."
+                        f"'{current_session.status}', trying next attempt..."
                     )
             
             # After all attempts, check if we have a valid session
