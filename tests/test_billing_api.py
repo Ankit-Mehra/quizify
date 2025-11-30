@@ -102,6 +102,7 @@ class TestBillingAPI:
             mock_customer_create.return_value.id = "cus_test_123"
             mock_session_create.return_value.url = "https://checkout.stripe.com/test"
             mock_session_create.return_value.id = "cs_test_123"
+            mock_session_create.return_value.status = "open"  # Session must be open to be valid
             
             # Mock Config
             mock_config_instance = MockConfig.return_value

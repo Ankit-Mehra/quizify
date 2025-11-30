@@ -33,6 +33,11 @@ STATUS_INCOMPLETE = "incomplete"
 STATUS_INCOMPLETE_EXPIRED = "incomplete_expired"
 STATUS_UNPAID = "unpaid"
 
+# Checkout session retry configuration
+# Stripe caches idempotent responses for 24 hours, but checkout sessions become
+# invalid after completion. We try multiple idempotency keys to find a valid session.
+MAX_CHECKOUT_SESSION_ATTEMPTS = 5
+
 
 def _short_stripe_id(stripe_id: str, max_len: int = 12) -> str:
     """
@@ -568,17 +573,26 @@ class BillingService:
                 )
             
             # 4. No existing subscription, create Checkout Session for new subscription
-            # Generate idempotency key to prevent duplicate sessions on rapid double-clicks
-            # Uses user_id + tier + hourly bucket for reasonable deduplication window
+            # 
+            # IDEMPOTENCY KEY STRATEGY:
+            # Stripe caches idempotent API responses for 24 hours. However, checkout sessions
+            # become invalid after use (status changes from "open" to "complete"/"expired").
+            # 
+            # Problem: Same idempotency key → returns cached (potentially stale) session
+            # Solution: Try different idempotency keys until we find an "open" session
+            # 
+            # Each attempt uses a unique key: hash(user:tier:hour:attempt:N)
+            # - Attempt 0: May return cached session from earlier in the hour
+            # - Attempt 1-4: Each creates/retrieves a different session
+            # 
+            # Double-click protection is maintained because rapid clicks within the same
+            # attempt number will get the same idempotency key → same session.
+            #
             hourly_bucket = datetime.now(timezone.utc).strftime("%Y-%m-%d-%H")
             base_key = f"{user_id}:{tier}:{hourly_bucket}"
-            
-            # Try up to 5 attempts to get a valid (open) session
-            # Each attempt uses a different idempotency key based on attempt number
-            max_attempts = 5
             session = None
             
-            for attempt in range(max_attempts):
+            for attempt in range(MAX_CHECKOUT_SESSION_ATTEMPTS):
                 # Generate idempotency key for this attempt
                 # Each attempt gets a unique key to bypass cached stale sessions
                 # while still protecting against double-clicks within the same attempt
@@ -627,14 +641,16 @@ class BillingService:
                     )
             
             # After all attempts, check if we have a valid session
-            if session is None or session.status != "open":
+            # Note: session will never be None here since it's assigned in every loop iteration,
+            # but we check status to ensure we got a valid "open" session
+            if session.status != "open":
                 logger.error(
-                    f"Failed to get valid checkout session after {max_attempts} attempts "
-                    f"for user {user_id[:8]}. Last session status: {session.status if session else 'None'}"
+                    f"Failed to get valid checkout session after {MAX_CHECKOUT_SESSION_ATTEMPTS} attempts "
+                    f"for user {user_id[:8]}. Last session status: {session.status}"
                 )
                 raise HTTPException(
                     status_code=503,
-                    detail="Unable to create checkout session. Please try again in a few minutes."
+                    detail="Unable to create checkout session. Please contact support if this persists."
                 )
             
             return {

@@ -542,3 +542,176 @@ class TestCheckoutSessionResponseSchema:
                 status="upgraded"
             )
 
+
+class TestCheckoutSessionRetryLogic:
+    """Test the retry logic for stale checkout sessions.
+    
+    Stripe caches idempotent responses for 24 hours, but checkout sessions
+    become invalid after completion (status changes from "open" to "complete").
+    The retry logic uses different idempotency keys to find a valid session.
+    """
+    
+    @pytest.fixture
+    def mock_billing_service(self):
+        """Create a mock billing service with all dependencies mocked."""
+        from unittest.mock import patch, MagicMock, AsyncMock
+        
+        with patch("services.billing_service.Config") as MockConfig:
+            mock_config = MagicMock()
+            mock_config.STRIPE_SECRET_KEY = "sk_test_mock_key_for_testing_only"  # noqa: S105
+            mock_config.get_price_id_from_tier = MagicMock(return_value="price_pro")
+            mock_config.STRIPE_SUCCESS_URL = "https://app.test.com/success"
+            mock_config.STRIPE_CANCEL_URL = "https://app.test.com/cancel"
+            mock_config.FRONTEND_URL = "https://app.test.com"
+            MockConfig.return_value = mock_config
+            
+            from services.billing_service import BillingService
+            
+            mock_supabase = MagicMock()
+            service = BillingService(mock_supabase)
+            service.get_or_create_customer = AsyncMock(return_value="cus_test123")
+            service.get_active_subscription = AsyncMock(return_value=None)
+            
+            yield service
+    
+    @pytest.mark.asyncio
+    async def test_returns_immediately_when_session_is_open(self, mock_billing_service):
+        """Should return immediately when first attempt returns an open session."""
+        from unittest.mock import patch, MagicMock, AsyncMock
+        
+        # Mock session with "open" status
+        mock_session = MagicMock()
+        mock_session.status = "open"
+        mock_session.id = "cs_test_open_123"
+        mock_session.url = "https://checkout.stripe.com/open"
+        
+        with patch("stripe.checkout.Session.create", return_value=mock_session) as mock_create:
+            with patch("asyncio.to_thread", new_callable=lambda: AsyncMock(side_effect=lambda f, *args, **kwargs: f(*args, **kwargs))):
+                result = await mock_billing_service.create_checkout_session(
+                    user_id="user123",
+                    user_token="token123",
+                    email="test@test.com",
+                    tier="pro"
+                )
+                
+                # Should only call create once since session was open
+                assert mock_create.call_count == 1
+                assert result["session_id"] == "cs_test_open_123"
+    
+    @pytest.mark.asyncio
+    async def test_retries_when_session_is_complete(self, mock_billing_service):
+        """Should retry with different key when session status is 'complete'."""
+        from unittest.mock import patch, MagicMock, AsyncMock
+        
+        # First call returns complete session, second returns open
+        complete_session = MagicMock()
+        complete_session.status = "complete"
+        complete_session.id = "cs_test_complete_123"
+        
+        open_session = MagicMock()
+        open_session.status = "open"
+        open_session.id = "cs_test_open_456"
+        open_session.url = "https://checkout.stripe.com/open"
+        
+        with patch("stripe.checkout.Session.create", side_effect=[complete_session, open_session]) as mock_create:
+            with patch("asyncio.to_thread", new_callable=lambda: AsyncMock(side_effect=lambda f, *args, **kwargs: f(*args, **kwargs))):
+                result = await mock_billing_service.create_checkout_session(
+                    user_id="user123",
+                    user_token="token123",
+                    email="test@test.com",
+                    tier="pro"
+                )
+                
+                # Should have called create twice
+                assert mock_create.call_count == 2
+                # Should return the open session
+                assert result["session_id"] == "cs_test_open_456"
+    
+    @pytest.mark.asyncio
+    async def test_retries_when_session_is_expired(self, mock_billing_service):
+        """Should retry with different key when session status is 'expired'."""
+        from unittest.mock import patch, MagicMock, AsyncMock
+        
+        expired_session = MagicMock()
+        expired_session.status = "expired"
+        expired_session.id = "cs_test_expired_123"
+        
+        open_session = MagicMock()
+        open_session.status = "open"
+        open_session.id = "cs_test_open_789"
+        open_session.url = "https://checkout.stripe.com/open"
+        
+        with patch("stripe.checkout.Session.create", side_effect=[expired_session, open_session]) as mock_create:
+            with patch("asyncio.to_thread", new_callable=lambda: AsyncMock(side_effect=lambda f, *args, **kwargs: f(*args, **kwargs))):
+                result = await mock_billing_service.create_checkout_session(
+                    user_id="user123",
+                    user_token="token123",
+                    email="test@test.com",
+                    tier="pro"
+                )
+                
+                assert mock_create.call_count == 2
+                assert result["session_id"] == "cs_test_open_789"
+    
+    @pytest.mark.asyncio
+    async def test_raises_503_when_all_attempts_fail(self, mock_billing_service):
+        """Should raise HTTPException 503 when all attempts return invalid sessions."""
+        from unittest.mock import patch, MagicMock, AsyncMock
+        from fastapi import HTTPException
+        
+        # All 5 attempts return complete sessions
+        complete_sessions = []
+        for i in range(5):
+            session = MagicMock()
+            session.status = "complete"
+            session.id = f"cs_test_complete_{i}"
+            complete_sessions.append(session)
+        
+        with patch("stripe.checkout.Session.create", side_effect=complete_sessions) as mock_create:
+            with patch("asyncio.to_thread", new_callable=lambda: AsyncMock(side_effect=lambda f, *args, **kwargs: f(*args, **kwargs))):
+                with pytest.raises(HTTPException) as exc_info:
+                    await mock_billing_service.create_checkout_session(
+                        user_id="user123",
+                        user_token="token123",
+                        email="test@test.com",
+                        tier="pro"
+                    )
+                
+                # Should have tried all 5 attempts
+                assert mock_create.call_count == 5
+                # Should raise 503
+                assert exc_info.value.status_code == 503
+                assert "contact support" in exc_info.value.detail.lower()
+    
+    @pytest.mark.asyncio  
+    async def test_uses_different_idempotency_keys_per_attempt(self, mock_billing_service):
+        """Should use different idempotency keys for each attempt."""
+        from unittest.mock import patch, MagicMock, AsyncMock
+        
+        # First two calls return complete, third returns open
+        sessions = [
+            MagicMock(status="complete", id="cs_1"),
+            MagicMock(status="complete", id="cs_2"),
+            MagicMock(status="open", id="cs_3", url="https://checkout.stripe.com/open"),
+        ]
+        
+        idempotency_keys_used = []
+        
+        def capture_create(*args, **kwargs):
+            if "idempotency_key" in kwargs:
+                idempotency_keys_used.append(kwargs["idempotency_key"])
+            return sessions[len(idempotency_keys_used) - 1]
+        
+        with patch("stripe.checkout.Session.create", side_effect=capture_create):
+            with patch("asyncio.to_thread", new_callable=lambda: AsyncMock(side_effect=lambda f, *args, **kwargs: f(*args, **kwargs))):
+                await mock_billing_service.create_checkout_session(
+                    user_id="user123",
+                    user_token="token123",
+                    email="test@test.com",
+                    tier="pro"
+                )
+                
+                # Should have 3 different idempotency keys
+                assert len(idempotency_keys_used) == 3
+                # All keys should be unique
+                assert len(set(idempotency_keys_used)) == 3
