@@ -14,6 +14,7 @@ Epic 2-3: Full implementation with Stripe API integration
 
 import stripe
 import asyncio
+from hashlib import sha256
 from typing import Optional
 from datetime import datetime, timezone
 from fastapi import HTTPException
@@ -567,18 +568,10 @@ class BillingService:
                 )
             
             # 4. No existing subscription, create Checkout Session for new subscription
-            # NOTE: We intentionally do NOT use idempotency keys for checkout sessions.
-            # 
-            # Why? Stripe's idempotency keys cache responses for 24 hours, but checkout
-            # sessions become invalid after they're used or completed. This caused a bug
-            # where users clicking "Subscribe" again would get a stale/expired session URL.
-            #
-            # Double-click protection is now handled by:
-            # 1. Frontend: Disable button after first click
-            # 2. Step 3 above: Check for existing subscription before creating session
-            # 3. Stripe: Sessions have a 24h expiry and single-use semantics
-            #
-            # This ensures users always get a fresh, valid checkout session.
+            # Generate idempotency key to prevent duplicate sessions on rapid double-clicks
+            # Uses user_id + tier + hourly bucket for reasonable deduplication window
+            hourly_bucket = datetime.now(timezone.utc).strftime("%Y-%m-%d-%H")
+            idempotency_key = sha256(f"{user_id}:{tier}:{hourly_bucket}".encode()).hexdigest()[:32]
             
             # Run synchronous Stripe API call in thread pool to avoid blocking event loop
             session = await asyncio.to_thread(
@@ -602,10 +595,45 @@ class BillingService:
                         "tier": tier
                     }
                 },
-                allow_promotion_codes=True
+                allow_promotion_codes=True,
+                idempotency_key=idempotency_key
             )
             
-            logger.info(f"Created new checkout session {_short_stripe_id(session.id)} for user {user_id[:8]}")
+            logger.debug(f"Checkout session created/retrieved with idempotency key {idempotency_key[:8]}...")
+            
+            # 5. Validate the session is still usable (not expired or completed)
+            # Stripe idempotency keys cache responses for 24h, but sessions become
+            # invalid after use. Check status and create a fresh session if needed.
+            if session.status != "open":
+                logger.info(
+                    f"Cached session {_short_stripe_id(session.id)} has status '{session.status}', "
+                    f"creating fresh session for user {user_id[:8]}"
+                )
+                # Create a new session WITHOUT idempotency key to bypass cache
+                session = await asyncio.to_thread(
+                    stripe.checkout.Session.create,
+                    customer=customer_id,
+                    payment_method_types=["card"],
+                    line_items=[{
+                        "price": price_id,
+                        "quantity": 1,
+                    }],
+                    mode="subscription",
+                    success_url=f"{success_url.rstrip('/')}?session_id={{CHECKOUT_SESSION_ID}}",
+                    cancel_url=cancel_url.rstrip('/'),
+                    metadata={
+                        "user_id": user_id,
+                        "tier": tier
+                    },
+                    subscription_data={
+                        "metadata": {
+                            "user_id": user_id,
+                            "tier": tier
+                        }
+                    },
+                    allow_promotion_codes=True
+                )
+                logger.info(f"Created fresh checkout session {_short_stripe_id(session.id)} for user {user_id[:8]}")
             
             return {
                 "checkout_url": session.url,
