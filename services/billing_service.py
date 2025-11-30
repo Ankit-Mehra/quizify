@@ -843,8 +843,18 @@ class BillingService:
                     idempotency_key=idempotency_key
                 )
                 
+                # CRITICAL: When Stripe returns a cached session via idempotency key,
+                # the status reflects the ORIGINAL response (always "open" at creation).
+                # We must re-fetch the session to get its CURRENT status.
+                # This handles the case where user completed checkout, canceled subscription,
+                # and is now trying to re-subscribe within the same hour.
+                current_session = await asyncio.to_thread(
+                    stripe.checkout.Session.retrieve,
+                    session.id
+                )
+                
                 # Check if session is still valid (status = "open")
-                if session.status == "open":
+                if current_session.status == "open":
                     if attempt > 0:
                         logger.info(
                             f"Found valid session {_short_stripe_id(session.id)} on attempt {attempt + 1} "
@@ -856,25 +866,27 @@ class BillingService:
                 else:
                     logger.debug(
                         f"Attempt {attempt + 1}: Session {_short_stripe_id(session.id)} has status "
-                        f"'{session.status}', trying next attempt..."
+                        f"'{current_session.status}', trying next attempt..."
                     )
             
             # After all attempts, check if we have a valid session
-            # Note: session will never be None here since it's assigned in every loop iteration,
+            # Note: current_session will never be None here since it's assigned in every loop iteration,
             # but we check status to ensure we got a valid "open" session
-            if session.status != "open":
+            if current_session.status != "open":
                 logger.error(
                     f"Failed to get valid checkout session after {MAX_CHECKOUT_SESSION_ATTEMPTS} attempts "
-                    f"for user {user_id[:8]}. Last session status: {session.status}"
+                    f"for user {user_id[:8]}. Last session status: {current_session.status}"
                 )
                 raise HTTPException(
                     status_code=503,
                     detail="Unable to create checkout session. Please contact support if this persists."
                 )
             
+            # Return the current session's URL (not the cached one from create)
+            # current_session is from Session.retrieve, so it has real-time data
             return {
-                "checkout_url": session.url,
-                "session_id": session.id
+                "checkout_url": current_session.url,
+                "session_id": current_session.id
             }
             
         except stripe.StripeError as e:

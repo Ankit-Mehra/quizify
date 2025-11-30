@@ -89,6 +89,7 @@ class TestBillingAPI:
         """
         with patch("stripe.Customer.create") as mock_customer_create, \
              patch("stripe.checkout.Session.create") as mock_session_create, \
+             patch("stripe.checkout.Session.retrieve") as mock_session_retrieve, \
              patch("services.billing_service.Config") as MockConfig, \
              patch("services.billing_service.get_authed_supabase_client") as mock_authed_client:
             
@@ -103,6 +104,9 @@ class TestBillingAPI:
             mock_session_create.return_value.url = "https://checkout.stripe.com/test"
             mock_session_create.return_value.id = "cs_test_123"
             mock_session_create.return_value.status = "open"  # Session must be open to be valid
+            
+            # Mock Session.retrieve to return the same open session (simulates fresh session)
+            mock_session_retrieve.return_value = mock_session_create.return_value
             
             # Mock Config
             mock_config_instance = MockConfig.return_value
