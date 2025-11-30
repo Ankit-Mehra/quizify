@@ -873,12 +873,12 @@ class BillingService:
                     )
             
             # After all attempts, check if we have a valid session
-            # Note: current_session will never be None here since it's assigned in every loop iteration,
-            # but we check status to ensure we got a valid "open" session
-            if current_session.status != "open":
+            # Note: current_session should not be None here since MAX_CHECKOUT_SESSION_ATTEMPTS is > 0
+            # and it's assigned in every loop iteration, but we check status to ensure we got a valid "open" session
+            if not current_session or current_session.status != "open":
                 logger.error(
                     f"Failed to get valid checkout session after {MAX_CHECKOUT_SESSION_ATTEMPTS} attempts "
-                    f"for user {user_id[:8]}. Last session status: {current_session.status}"
+                    f"for user {user_id[:8]}. Last session status: {current_session.status if current_session else 'None'}"
                 )
                 raise HTTPException(
                     status_code=503,
