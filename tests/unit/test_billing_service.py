@@ -587,72 +587,96 @@ class TestCheckoutSessionRetryLogic:
         mock_session.url = "https://checkout.stripe.com/open"
         
         with patch("stripe.checkout.Session.create", return_value=mock_session) as mock_create:
-            with patch("asyncio.to_thread", new_callable=lambda: AsyncMock(side_effect=lambda f, *args, **kwargs: f(*args, **kwargs))):
-                result = await mock_billing_service.create_checkout_session(
-                    user_id="user123",
-                    user_token="token123",
-                    email="test@test.com",
-                    tier="pro"
-                )
-                
-                # Should only call create once since session was open
-                assert mock_create.call_count == 1
-                assert result["session_id"] == "cs_test_open_123"
+            # Also mock Session.retrieve to return the same session (current status check)
+            with patch("stripe.checkout.Session.retrieve", return_value=mock_session):
+                with patch("asyncio.to_thread", new_callable=lambda: AsyncMock(side_effect=lambda f, *args, **kwargs: f(*args, **kwargs))):
+                    result = await mock_billing_service.create_checkout_session(
+                        user_id="user123",
+                        user_token="token123",
+                        email="test@test.com",
+                        tier="pro"
+                    )
+                    
+                    # Should only call create once since session was open
+                    assert mock_create.call_count == 1
+                    assert result["session_id"] == "cs_test_open_123"
     
     @pytest.mark.asyncio
     async def test_retries_when_session_is_complete(self, mock_billing_service):
         """Should retry with different key when session status is 'complete'."""
         from unittest.mock import patch, MagicMock, AsyncMock
         
-        # First call returns complete session, second returns open
-        complete_session = MagicMock()
-        complete_session.status = "complete"
-        complete_session.id = "cs_test_complete_123"
+        # First call returns session, second returns different session
+        first_session = MagicMock()
+        first_session.status = "open"  # create returns "open" from cache
+        first_session.id = "cs_test_complete_123"
         
-        open_session = MagicMock()
-        open_session.status = "open"
-        open_session.id = "cs_test_open_456"
-        open_session.url = "https://checkout.stripe.com/open"
+        second_session = MagicMock()
+        second_session.status = "open"
+        second_session.id = "cs_test_open_456"
+        second_session.url = "https://checkout.stripe.com/open"
         
-        with patch("stripe.checkout.Session.create", side_effect=[complete_session, open_session]) as mock_create:
-            with patch("asyncio.to_thread", new_callable=lambda: AsyncMock(side_effect=lambda f, *args, **kwargs: f(*args, **kwargs))):
-                result = await mock_billing_service.create_checkout_session(
-                    user_id="user123",
-                    user_token="token123",
-                    email="test@test.com",
-                    tier="pro"
-                )
-                
-                # Should have called create twice
-                assert mock_create.call_count == 2
-                # Should return the open session
-                assert result["session_id"] == "cs_test_open_456"
+        # Retrieve shows first session is actually complete, second is open
+        first_retrieved = MagicMock()
+        first_retrieved.status = "complete"  # But retrieve shows it's complete!
+        first_retrieved.id = "cs_test_complete_123"
+        
+        second_retrieved = MagicMock()
+        second_retrieved.status = "open"
+        second_retrieved.id = "cs_test_open_456"
+        second_retrieved.url = "https://checkout.stripe.com/open"
+        
+        with patch("stripe.checkout.Session.create", side_effect=[first_session, second_session]) as mock_create:
+            with patch("stripe.checkout.Session.retrieve", side_effect=[first_retrieved, second_retrieved]):
+                with patch("asyncio.to_thread", new_callable=lambda: AsyncMock(side_effect=lambda f, *args, **kwargs: f(*args, **kwargs))):
+                    result = await mock_billing_service.create_checkout_session(
+                        user_id="user123",
+                        user_token="token123",
+                        email="test@test.com",
+                        tier="pro"
+                    )
+                    
+                    # Should have called create twice
+                    assert mock_create.call_count == 2
+                    # Should return the open session
+                    assert result["session_id"] == "cs_test_open_456"
     
     @pytest.mark.asyncio
     async def test_retries_when_session_is_expired(self, mock_billing_service):
         """Should retry with different key when session status is 'expired'."""
         from unittest.mock import patch, MagicMock, AsyncMock
         
-        expired_session = MagicMock()
-        expired_session.status = "expired"
-        expired_session.id = "cs_test_expired_123"
+        first_session = MagicMock()
+        first_session.status = "open"  # create returns "open" from cache
+        first_session.id = "cs_test_expired_123"
         
-        open_session = MagicMock()
-        open_session.status = "open"
-        open_session.id = "cs_test_open_789"
-        open_session.url = "https://checkout.stripe.com/open"
+        second_session = MagicMock()
+        second_session.status = "open"
+        second_session.id = "cs_test_open_789"
+        second_session.url = "https://checkout.stripe.com/open"
         
-        with patch("stripe.checkout.Session.create", side_effect=[expired_session, open_session]) as mock_create:
-            with patch("asyncio.to_thread", new_callable=lambda: AsyncMock(side_effect=lambda f, *args, **kwargs: f(*args, **kwargs))):
-                result = await mock_billing_service.create_checkout_session(
-                    user_id="user123",
-                    user_token="token123",
-                    email="test@test.com",
-                    tier="pro"
-                )
-                
-                assert mock_create.call_count == 2
-                assert result["session_id"] == "cs_test_open_789"
+        # Retrieve shows first is expired, second is open
+        first_retrieved = MagicMock()
+        first_retrieved.status = "expired"
+        first_retrieved.id = "cs_test_expired_123"
+        
+        second_retrieved = MagicMock()
+        second_retrieved.status = "open"
+        second_retrieved.id = "cs_test_open_789"
+        second_retrieved.url = "https://checkout.stripe.com/open"
+        
+        with patch("stripe.checkout.Session.create", side_effect=[first_session, second_session]) as mock_create:
+            with patch("stripe.checkout.Session.retrieve", side_effect=[first_retrieved, second_retrieved]):
+                with patch("asyncio.to_thread", new_callable=lambda: AsyncMock(side_effect=lambda f, *args, **kwargs: f(*args, **kwargs))):
+                    result = await mock_billing_service.create_checkout_session(
+                        user_id="user123",
+                        user_token="token123",
+                        email="test@test.com",
+                        tier="pro"
+                    )
+                    
+                    assert mock_create.call_count == 2
+                    assert result["session_id"] == "cs_test_open_789"
     
     @pytest.mark.asyncio
     async def test_raises_503_when_all_attempts_fail(self, mock_billing_service):
@@ -660,59 +684,75 @@ class TestCheckoutSessionRetryLogic:
         from unittest.mock import patch, MagicMock, AsyncMock
         from fastapi import HTTPException
         
-        # All 5 attempts return complete sessions
-        complete_sessions = []
+        # All 5 attempts return sessions that look open but are actually complete
+        created_sessions = []
+        retrieved_sessions = []
         for i in range(5):
-            session = MagicMock()
-            session.status = "complete"
-            session.id = f"cs_test_complete_{i}"
-            complete_sessions.append(session)
+            created = MagicMock()
+            created.status = "open"  # create returns "open" from cache
+            created.id = f"cs_test_complete_{i}"
+            created_sessions.append(created)
+            
+            retrieved = MagicMock()
+            retrieved.status = "complete"  # retrieve shows it's actually complete
+            retrieved.id = f"cs_test_complete_{i}"
+            retrieved_sessions.append(retrieved)
         
-        with patch("stripe.checkout.Session.create", side_effect=complete_sessions) as mock_create:
-            with patch("asyncio.to_thread", new_callable=lambda: AsyncMock(side_effect=lambda f, *args, **kwargs: f(*args, **kwargs))):
-                with pytest.raises(HTTPException) as exc_info:
-                    await mock_billing_service.create_checkout_session(
-                        user_id="user123",
-                        user_token="token123",
-                        email="test@test.com",
-                        tier="pro"
-                    )
-                
-                # Should have tried all 5 attempts
-                assert mock_create.call_count == 5
-                # Should raise 503
-                assert exc_info.value.status_code == 503
-                assert "contact support" in exc_info.value.detail.lower()
+        with patch("stripe.checkout.Session.create", side_effect=created_sessions) as mock_create:
+            with patch("stripe.checkout.Session.retrieve", side_effect=retrieved_sessions):
+                with patch("asyncio.to_thread", new_callable=lambda: AsyncMock(side_effect=lambda f, *args, **kwargs: f(*args, **kwargs))):
+                    with pytest.raises(HTTPException) as exc_info:
+                        await mock_billing_service.create_checkout_session(
+                            user_id="user123",
+                            user_token="token123",
+                            email="test@test.com",
+                            tier="pro"
+                        )
+                    
+                    # Should have tried all 5 attempts
+                    assert mock_create.call_count == 5
+                    # Should raise 503
+                    assert exc_info.value.status_code == 503
+                    assert "contact support" in exc_info.value.detail.lower()
     
     @pytest.mark.asyncio  
     async def test_uses_different_idempotency_keys_per_attempt(self, mock_billing_service):
         """Should use different idempotency keys for each attempt."""
         from unittest.mock import patch, MagicMock, AsyncMock
         
-        # First two calls return complete, third returns open
-        sessions = [
+        # First two calls return sessions that are complete when retrieved, third is open
+        created_sessions = [
+            MagicMock(status="open", id="cs_1"),
+            MagicMock(status="open", id="cs_2"),
+            MagicMock(status="open", id="cs_3", url="https://checkout.stripe.com/open"),
+        ]
+        retrieved_sessions = [
             MagicMock(status="complete", id="cs_1"),
             MagicMock(status="complete", id="cs_2"),
             MagicMock(status="open", id="cs_3", url="https://checkout.stripe.com/open"),
         ]
         
         idempotency_keys_used = []
+        create_call_count = [0]  # Use list to allow mutation in nested function
         
         def capture_create(*args, **kwargs):
             if "idempotency_key" in kwargs:
                 idempotency_keys_used.append(kwargs["idempotency_key"])
-            return sessions[len(idempotency_keys_used) - 1]
+            result = created_sessions[create_call_count[0]]
+            create_call_count[0] += 1
+            return result
         
         with patch("stripe.checkout.Session.create", side_effect=capture_create):
-            with patch("asyncio.to_thread", new_callable=lambda: AsyncMock(side_effect=lambda f, *args, **kwargs: f(*args, **kwargs))):
-                await mock_billing_service.create_checkout_session(
-                    user_id="user123",
-                    user_token="token123",
-                    email="test@test.com",
-                    tier="pro"
-                )
-                
-                # Should have 3 different idempotency keys
-                assert len(idempotency_keys_used) == 3
-                # All keys should be unique
-                assert len(set(idempotency_keys_used)) == 3
+            with patch("stripe.checkout.Session.retrieve", side_effect=retrieved_sessions):
+                with patch("asyncio.to_thread", new_callable=lambda: AsyncMock(side_effect=lambda f, *args, **kwargs: f(*args, **kwargs))):
+                    await mock_billing_service.create_checkout_session(
+                        user_id="user123",
+                        user_token="token123",
+                        email="test@test.com",
+                        tier="pro"
+                    )
+                    
+                    # Should have 3 different idempotency keys
+                    assert len(idempotency_keys_used) == 3
+                    # All keys should be unique
+                    assert len(set(idempotency_keys_used)) == 3
