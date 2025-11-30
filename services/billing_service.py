@@ -33,6 +33,12 @@ STATUS_INCOMPLETE = "incomplete"
 STATUS_INCOMPLETE_EXPIRED = "incomplete_expired"
 STATUS_UNPAID = "unpaid"
 
+# Checkout session retry configuration
+# Stripe caches idempotent responses for 24 hours, but checkout sessions become
+# invalid after completion. We try multiple idempotency keys to find a valid session.
+# 5 attempts balances retry coverage with API performance and covers typical cache edge cases
+MAX_CHECKOUT_SESSION_ATTEMPTS = 5
+
 
 def _short_stripe_id(stripe_id: str, max_len: int = 12) -> str:
     """
@@ -568,39 +574,84 @@ class BillingService:
                 )
             
             # 4. No existing subscription, create Checkout Session for new subscription
-            # Generate idempotency key to prevent duplicate sessions on double-click
-            # Uses user_id + tier + hourly bucket to allow retries within same hour
-            # but prevent rapid duplicate submissions
+            # 
+            # IDEMPOTENCY KEY STRATEGY:
+            # Stripe caches idempotent API responses for 24 hours. However, checkout sessions
+            # become invalid after use (status changes from "open" to "complete"/"expired").
+            # 
+            # Problem: Same idempotency key → returns cached (potentially stale) session
+            # Solution: Try different idempotency keys until we find an "open" session
+            # 
+            # Each attempt uses a unique key: hash(user:tier:hour:attempt:N)
+            # - Attempt 0: May return cached session from earlier in the hour
+            # - Attempt 1-4: Each creates/retrieves a different session
+            # 
+            # Double-click protection is maintained because rapid clicks within the same
+            # attempt number will get the same idempotency key → same session.
+            #
             hourly_bucket = datetime.now(timezone.utc).strftime("%Y-%m-%d-%H")
-            idempotency_key = sha256(f"{user_id}:{tier}:{hourly_bucket}".encode()).hexdigest()[:32]
+            base_key = f"{user_id}:{tier}:{hourly_bucket}"
             
-            # Run synchronous Stripe API call in thread pool to avoid blocking event loop
-            session = await asyncio.to_thread(
-                stripe.checkout.Session.create,
-                customer=customer_id,
-                payment_method_types=["card"],
-                line_items=[{
-                    "price": price_id,
-                    "quantity": 1,
-                }],
-                mode="subscription",
-                success_url=f"{success_url.rstrip('/')}?session_id={{CHECKOUT_SESSION_ID}}",
-                cancel_url=cancel_url.rstrip('/'),
-                metadata={
-                    "user_id": user_id,
-                    "tier": tier
-                },
-                subscription_data={
-                    "metadata": {
+            for attempt in range(MAX_CHECKOUT_SESSION_ATTEMPTS):
+                # Generate idempotency key for this attempt
+                # Each attempt gets a unique key to bypass cached stale sessions
+                # while still protecting against double-clicks within the same attempt
+                idempotency_key = sha256(f"{base_key}:attempt:{attempt}".encode()).hexdigest()[:32]
+                
+                # Run synchronous Stripe API call in thread pool to avoid blocking event loop
+                session = await asyncio.to_thread(
+                    stripe.checkout.Session.create,
+                    customer=customer_id,
+                    payment_method_types=["card"],
+                    line_items=[{
+                        "price": price_id,
+                        "quantity": 1,
+                    }],
+                    mode="subscription",
+                    success_url=f"{success_url.rstrip('/')}?session_id={{CHECKOUT_SESSION_ID}}",
+                    cancel_url=cancel_url.rstrip('/'),
+                    metadata={
                         "user_id": user_id,
                         "tier": tier
-                    }
-                },
-                allow_promotion_codes=True,
-                idempotency_key=idempotency_key
-            )
+                    },
+                    subscription_data={
+                        "metadata": {
+                            "user_id": user_id,
+                            "tier": tier
+                        }
+                    },
+                    allow_promotion_codes=True,
+                    idempotency_key=idempotency_key
+                )
+                
+                # Check if session is still valid (status = "open")
+                if session.status == "open":
+                    if attempt > 0:
+                        logger.info(
+                            f"Found valid session {_short_stripe_id(session.id)} on attempt {attempt + 1} "
+                            f"for user {user_id[:8]}"
+                        )
+                    else:
+                        logger.debug(f"Checkout session {_short_stripe_id(session.id)} created/retrieved")
+                    break
+                else:
+                    logger.debug(
+                        f"Attempt {attempt + 1}: Session {_short_stripe_id(session.id)} has status "
+                        f"'{session.status}', trying next attempt..."
+                    )
             
-            logger.debug(f"Created checkout session with idempotency key {idempotency_key[:8]}...")
+            # After all attempts, check if we have a valid session
+            # Note: session will never be None here since it's assigned in every loop iteration,
+            # but we check status to ensure we got a valid "open" session
+            if session.status != "open":
+                logger.error(
+                    f"Failed to get valid checkout session after {MAX_CHECKOUT_SESSION_ATTEMPTS} attempts "
+                    f"for user {user_id[:8]}. Last session status: {session.status}"
+                )
+                raise HTTPException(
+                    status_code=503,
+                    detail="Unable to create checkout session. Please contact support if this persists."
+                )
             
             return {
                 "checkout_url": session.url,
