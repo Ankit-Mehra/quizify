@@ -811,6 +811,9 @@ class BillingService:
             hourly_bucket = datetime.now(timezone.utc).strftime("%Y-%m-%d-%H")
             base_key = f"{user_id}:{tier}:{hourly_bucket}"
             
+            # Initialize current_session before loop for explicit scope
+            current_session = None
+            
             for attempt in range(MAX_CHECKOUT_SESSION_ATTEMPTS):
                 # Generate idempotency key for this attempt
                 # Each attempt gets a unique key to bypass cached stale sessions
