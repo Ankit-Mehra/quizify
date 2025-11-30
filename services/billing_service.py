@@ -334,26 +334,27 @@ class BillingService:
             stripe.Subscription if user has an active or trialing subscription, None otherwise
         """
         try:
-            # Check for active subscription first
-            subscriptions = await asyncio.to_thread(
-                stripe.Subscription.list,
-                customer=customer_id,
-                status="active",
-                limit=1
+            # Make both API calls concurrently to reduce latency
+            active_subs, trialing_subs = await asyncio.gather(
+                asyncio.to_thread(
+                    stripe.Subscription.list,
+                    customer=customer_id,
+                    status="active",
+                    limit=1
+                ),
+                asyncio.to_thread(
+                    stripe.Subscription.list,
+                    customer=customer_id,
+                    status="trialing",
+                    limit=1
+                )
             )
             
-            if subscriptions.data and len(subscriptions.data) > 0:
-                return subscriptions.data[0]
+            # Prefer active over trialing
+            if active_subs.data:
+                return active_subs.data[0]
             
-            # If no active subscription, check for trialing subscription
-            trialing_subs = await asyncio.to_thread(
-                stripe.Subscription.list,
-                customer=customer_id,
-                status="trialing",
-                limit=1
-            )
-            
-            if trialing_subs.data and len(trialing_subs.data) > 0:
+            if trialing_subs.data:
                 return trialing_subs.data[0]
             
             return None
@@ -472,6 +473,8 @@ class BillingService:
         except stripe.StripeError as e:
             logger.error(f"Stripe error upgrading subscription: {e}")
             raise HTTPException(status_code=502, detail=f"Stripe error: {str(e)}")
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Error upgrading subscription: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail=f"Failed to upgrade subscription: {str(e)}")
@@ -594,7 +597,6 @@ class BillingService:
                     }
                 },
                 allow_promotion_codes=True,
-                stripe_version=None,  # Use default API version
                 idempotency_key=idempotency_key
             )
             

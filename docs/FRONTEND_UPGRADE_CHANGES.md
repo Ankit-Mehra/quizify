@@ -102,4 +102,4 @@ async function handleTierChange(tier: string): Promise<void> {
 - If no `checkout_url`, check `status` field for upgrade/downgrade result
 - After upgrade, refresh user profile to get updated tier immediately
 - Downgrades take effect at next billing cycle (no prorated refund)
-- Race condition protection: Double-clicks within the same hour return the same checkout session
+- Race condition protection: For **new subscriptions only**, double-clicks within the same hour return the same checkout session (via idempotency key). This does **not** apply to upgrades/downgrades, which are processed immediately.
