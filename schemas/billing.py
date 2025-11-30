@@ -309,3 +309,131 @@ class WebhookEventMetadata(BaseModel):
                 "cancel_at": None
             }
         }
+
+
+# ============================================================================
+# Upgrade Preview Schemas
+# ============================================================================
+
+class UpgradePreviewRequest(BaseModel):
+    """
+    Request to preview upgrade/downgrade cost before confirming.
+    
+    Frontend calls this to show the user what they'll be charged (proration)
+    before they confirm the subscription change.
+    """
+    tier: Literal["premium", "pro"] = Field(
+        ...,
+        description="The target subscription tier to preview"
+    )
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "tier": "pro"
+            }
+        }
+
+
+class UpgradePreviewResponse(BaseModel):
+    """
+    Response containing proration preview for subscription upgrade/downgrade.
+    
+    Shows the user exactly what they'll be charged, including:
+    - Credit for unused time on current plan
+    - Charge for remaining time on new plan
+    - Net amount due today
+    - What the next regular invoice will be
+    """
+    # Current subscription info
+    current_tier: str = Field(
+        ...,
+        description="User's current subscription tier"
+    )
+    target_tier: str = Field(
+        ...,
+        description="The tier user wants to upgrade/downgrade to"
+    )
+    
+    # Proration details
+    is_upgrade: bool = Field(
+        ...,
+        description="True if upgrading (higher tier), False if downgrading"
+    )
+    proration_amount: int = Field(
+        ...,
+        description="Amount charged today in cents (positive = charge, negative = credit)"
+    )
+    proration_amount_formatted: str = Field(
+        ...,
+        description="Human-readable proration amount (e.g., '$2.50')"
+    )
+    
+    # Credit/Debit breakdown
+    credit_amount: int = Field(
+        ...,
+        description="Credit for unused time on current plan (in cents, always positive or zero)"
+    )
+    credit_amount_formatted: str = Field(
+        ...,
+        description="Human-readable credit amount"
+    )
+    debit_amount: int = Field(
+        ...,
+        description="Charge for remaining time on new plan (in cents, always positive)"
+    )
+    debit_amount_formatted: str = Field(
+        ...,
+        description="Human-readable debit amount"
+    )
+    
+    # Future billing
+    next_billing_amount: int = Field(
+        ...,
+        description="Amount of next regular billing (in cents)"
+    )
+    next_billing_amount_formatted: str = Field(
+        ...,
+        description="Human-readable next billing amount (e.g., '$15.00/month')"
+    )
+    next_billing_date: datetime = Field(
+        ...,
+        description="Date of next regular billing"
+    )
+    
+    # Payment method
+    card_last4: Optional[str] = Field(
+        None,
+        description="Last 4 digits of card on file (e.g., '4242')"
+    )
+    card_brand: Optional[str] = Field(
+        None,
+        description="Card brand (e.g., 'visa', 'mastercard')"
+    )
+    
+    # For frontend messaging
+    message: str = Field(
+        ...,
+        description="Human-readable summary for the user"
+    )
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "current_tier": "premium",
+                "target_tier": "pro",
+                "is_upgrade": True,
+                "proration_amount": 250,
+                "proration_amount_formatted": "$2.50",
+                "credit_amount": 500,
+                "credit_amount_formatted": "$5.00",
+                "debit_amount": 750,
+                "debit_amount_formatted": "$7.50",
+                "next_billing_amount": 1500,
+                "next_billing_amount_formatted": "$15.00/month",
+                "next_billing_date": "2025-12-15T00:00:00Z",
+                "card_last4": "4242",
+                "card_brand": "visa",
+                "message": "You'll be charged $2.50 today. Then $15.00/month starting Dec 15."
+            }
+        }

@@ -133,3 +133,200 @@ class TestBillingAPI:
             assert kwargs["customer"] == "cus_test_123"
             assert kwargs["mode"] == "subscription"
             assert kwargs["line_items"][0]["price"] == "price_test_123"
+
+
+class TestPreviewUpgrade:
+    """Tests for the preview_upgrade method in BillingService."""
+    
+    def setup_method(self):
+        # Set up API-level mocks for endpoint tests
+        app.dependency_overrides[get_current_user_id] = mock_get_current_user_id
+        app.dependency_overrides[get_current_user_email] = mock_get_current_user_email
+        app.dependency_overrides[get_current_user_token] = mock_get_current_user_token
+        app.dependency_overrides[get_billing_service] = mock_get_billing_service_dependency
+    
+    def teardown_method(self):
+        app.dependency_overrides.clear()
+
+    def test_preview_upgrade_endpoint_success(self):
+        """Test successful upgrade preview via API endpoint."""
+        # Reset and configure mock for preview_upgrade
+        mock_billing_service.preview_upgrade = AsyncMock(return_value={
+            "current_tier": "premium",
+            "target_tier": "pro",
+            "is_upgrade": True,
+            "proration_amount": 250,
+            "proration_amount_formatted": "$2.50",
+            "credit_amount": 500,
+            "credit_amount_formatted": "$5.00",
+            "debit_amount": 750,
+            "debit_amount_formatted": "$7.50",
+            "next_billing_amount": 1500,
+            "next_billing_amount_formatted": "$15.00/month",
+            "next_billing_date": "2025-12-15T00:00:00Z",
+            "card_last4": "4242",
+            "card_brand": "visa",
+            "message": "You'll be charged $2.50 today (prorated). Then $15.00/month starting Dec 15."
+        })
+        
+        response = client.post(
+            "/api/billing/preview-upgrade",
+            json={"tier": "pro"}
+        )
+        
+        assert response.status_code == 200
+        data = response.json()
+        assert data["current_tier"] == "premium"
+        assert data["target_tier"] == "pro"
+        assert data["is_upgrade"] is True
+        assert data["proration_amount"] == 250
+        assert data["card_last4"] == "4242"
+        mock_billing_service.preview_upgrade.assert_called_once()
+
+    def test_preview_upgrade_endpoint_invalid_tier(self):
+        """Test preview with invalid tier returns 422."""
+        response = client.post(
+            "/api/billing/preview-upgrade",
+            json={"tier": "invalid_tier"}
+        )
+        assert response.status_code == 422
+
+    def test_preview_upgrade_endpoint_downgrade(self):
+        """Test preview endpoint for downgrade (pro -> premium)."""
+        mock_billing_service.preview_upgrade = AsyncMock(return_value={
+            "current_tier": "pro",
+            "target_tier": "premium",
+            "is_upgrade": False,
+            "proration_amount": 0,  # No proration for downgrade
+            "proration_amount_formatted": "$0.00",
+            "credit_amount": 0,
+            "credit_amount_formatted": "$0.00",
+            "debit_amount": 0,
+            "debit_amount_formatted": "$0.00",
+            "next_billing_amount": 999,
+            "next_billing_amount_formatted": "$9.99/month",
+            "next_billing_date": "2025-12-15T00:00:00Z",
+            "card_last4": "4242",
+            "card_brand": "visa",
+            "message": "Your plan will change to premium on Dec 15. You'll keep pro until then."
+        })
+        
+        response = client.post(
+            "/api/billing/preview-upgrade",
+            json={"tier": "premium"}
+        )
+        
+        assert response.status_code == 200
+        data = response.json()
+        assert data["is_upgrade"] is False
+        # Downgrade has no proration
+        assert data["proration_amount"] == 0
+        assert data["credit_amount"] == 0
+        assert "will change to premium" in data["message"]
+
+    def test_preview_upgrade_endpoint_no_subscription(self):
+        """Test preview returns 400 when user has no subscription."""
+        from fastapi import HTTPException
+        mock_billing_service.preview_upgrade = AsyncMock(
+            side_effect=HTTPException(status_code=400, detail="No subscription found. Please subscribe first.")
+        )
+        
+        response = client.post(
+            "/api/billing/preview-upgrade",
+            json={"tier": "pro"}
+        )
+        
+        assert response.status_code == 400
+        assert "subscribe first" in response.json()["detail"].lower()
+
+    def test_preview_upgrade_endpoint_already_on_tier(self):
+        """Test preview returns 400 when already on requested tier."""
+        from fastapi import HTTPException
+        mock_billing_service.preview_upgrade = AsyncMock(
+            side_effect=HTTPException(status_code=400, detail="You are already subscribed to pro")
+        )
+        
+        response = client.post(
+            "/api/billing/preview-upgrade",
+            json={"tier": "pro"}
+        )
+        
+        assert response.status_code == 400
+        assert "already subscribed" in response.json()["detail"].lower()
+
+    def test_preview_upgrade_endpoint_zero_proration(self):
+        """Test preview handles zero proration edge case."""
+        mock_billing_service.preview_upgrade = AsyncMock(return_value={
+            "current_tier": "premium",
+            "target_tier": "pro",
+            "is_upgrade": True,
+            "proration_amount": 0,
+            "proration_amount_formatted": "$0.00",
+            "credit_amount": 500,
+            "credit_amount_formatted": "$5.00",
+            "debit_amount": 500,
+            "debit_amount_formatted": "$5.00",
+            "next_billing_amount": 1500,
+            "next_billing_amount_formatted": "$15.00/month",
+            "next_billing_date": "2025-12-15T00:00:00Z",
+            "card_last4": "4242",
+            "card_brand": "visa",
+            "message": "No charge today - your credit exactly covers the upgrade. Then $15.00/month starting Dec 15."
+        })
+        
+        response = client.post(
+            "/api/billing/preview-upgrade",
+            json={"tier": "pro"}
+        )
+        
+        assert response.status_code == 200
+        data = response.json()
+        assert data["proration_amount"] == 0
+        assert "No charge today" in data["message"]
+        assert "credit exactly covers" in data["message"]
+
+    def test_preview_upgrade_endpoint_negative_proration(self):
+        """Test preview handles negative proration (user gets credit)."""
+        mock_billing_service.preview_upgrade = AsyncMock(return_value={
+            "current_tier": "premium",
+            "target_tier": "pro",
+            "is_upgrade": True,
+            "proration_amount": -100,
+            "proration_amount_formatted": "-$1.00",
+            "credit_amount": 600,
+            "credit_amount_formatted": "$6.00",
+            "debit_amount": 500,
+            "debit_amount_formatted": "$5.00",
+            "next_billing_amount": 1500,
+            "next_billing_amount_formatted": "$15.00/month",
+            "next_billing_date": "2025-12-15T00:00:00Z",
+            "card_last4": "4242",
+            "card_brand": "visa",
+            "message": "You'll receive a $1.00 credit. Then $15.00/month starting Dec 15."
+        })
+        
+        response = client.post(
+            "/api/billing/preview-upgrade",
+            json={"tier": "pro"}
+        )
+        
+        assert response.status_code == 200
+        data = response.json()
+        assert data["proration_amount"] == -100
+        assert "receive" in data["message"] and "credit" in data["message"]
+
+    def test_preview_upgrade_endpoint_stripe_error(self):
+        """Test preview handles Stripe errors gracefully."""
+        from fastapi import HTTPException
+        mock_billing_service.preview_upgrade = AsyncMock(
+            side_effect=HTTPException(status_code=502, detail="Stripe error: Connection failed")
+        )
+        
+        response = client.post(
+            "/api/billing/preview-upgrade",
+            json={"tier": "pro"}
+        )
+        
+        assert response.status_code == 502
+        assert "Stripe error" in response.json()["detail"]
+
