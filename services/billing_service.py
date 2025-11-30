@@ -609,7 +609,14 @@ class BillingService:
                     f"Cached session {_short_stripe_id(session.id)} has status '{session.status}', "
                     f"creating fresh session for user {user_id[:8]}"
                 )
-                # Create a new session WITHOUT idempotency key to bypass cache
+                # Create a new session with a DIFFERENT idempotency key to:
+                # 1. Bypass the cached stale session
+                # 2. Still protect against double-clicks on this fresh session
+                # Include the old session ID to make the key unique per retry cycle
+                retry_idempotency_key = sha256(
+                    f"{user_id}:{tier}:{hourly_bucket}:retry:{session.id}".encode()
+                ).hexdigest()[:32]
+                
                 session = await asyncio.to_thread(
                     stripe.checkout.Session.create,
                     customer=customer_id,
@@ -631,9 +638,13 @@ class BillingService:
                             "tier": tier
                         }
                     },
-                    allow_promotion_codes=True
+                    allow_promotion_codes=True,
+                    idempotency_key=retry_idempotency_key
                 )
-                logger.info(f"Created fresh checkout session {_short_stripe_id(session.id)} for user {user_id[:8]}")
+                logger.info(
+                    f"Created fresh checkout session {_short_stripe_id(session.id)} "
+                    f"with retry key {retry_idempotency_key[:8]}... for user {user_id[:8]}"
+                )
             
             return {
                 "checkout_url": session.url,
