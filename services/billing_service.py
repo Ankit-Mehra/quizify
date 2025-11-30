@@ -485,6 +485,215 @@ class BillingService:
             logger.error(f"Error upgrading subscription: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail=f"Failed to upgrade subscription: {str(e)}")
 
+    async def preview_upgrade(
+        self,
+        user_id: str,
+        user_token: str,
+        tier: str
+    ) -> dict:
+        """
+        Preview the cost of upgrading/downgrading a subscription.
+        
+        Uses Stripe's Invoice.create_preview API to calculate the exact proration
+        amount without actually modifying the subscription. This allows showing
+        the user what they'll be charged before they confirm.
+        
+        Args:
+            user_id: User ID
+            user_token: User's JWT token for authenticated Supabase access
+            tier: Target tier to preview (premium or pro)
+            
+        Returns:
+            dict with proration details including amounts, card info, and billing date
+            
+        Raises:
+            HTTPException: If user has no active subscription or preview fails
+        """
+        from datetime import timezone as tz
+        
+        logger.info(f"Previewing upgrade to {tier} for user {user_id[:8]}")
+        
+        # Validate tier and get price ID
+        new_price_id = self.config.get_price_id_from_tier(tier)
+        if not new_price_id:
+            raise HTTPException(status_code=400, detail=f"Invalid tier: {tier}")
+        
+        try:
+            # Get customer ID from profile
+            from services.db_services.supabase_quiz import get_authed_supabase_client
+            supabase = get_authed_supabase_client(user_token)
+            
+            result = supabase.table("profiles").select(
+                "stripe_customer_id"
+            ).eq("id", user_id).single().execute()
+            
+            if not result.data or not result.data.get("stripe_customer_id"):
+                raise HTTPException(
+                    status_code=400, 
+                    detail="No subscription found. Please subscribe first."
+                )
+            
+            customer_id = result.data["stripe_customer_id"]
+            
+            # Get active subscription
+            subscription = await self.get_active_subscription(customer_id)
+            if not subscription:
+                raise HTTPException(
+                    status_code=400,
+                    detail="No active subscription found. Please subscribe first."
+                )
+            
+            # Get current subscription item and price
+            items = self._get_attr(subscription, "items")
+            items_data = self._get_attr(items, "data", [])
+            if not items_data:
+                raise HTTPException(status_code=500, detail="Subscription has no items")
+            
+            first_item = items_data[0]
+            subscription_item_id = self._get_attr(first_item, "id")
+            item_price = self._get_attr(first_item, "price")
+            current_price_id = self._get_attr(item_price, "id")
+            
+            # Check if already on this tier
+            current_tier = self.config.get_tier_from_price_id(current_price_id) or "unknown"
+            if current_price_id == new_price_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"You are already subscribed to {tier}"
+                )
+            
+            # Determine if upgrade or downgrade
+            tier_order = {"premium": 1, "pro": 2}
+            is_upgrade = tier_order.get(tier, 0) > tier_order.get(current_tier, 0)
+            
+            # Create preview invoice using Stripe's API
+            # This calculates the proration without actually modifying the subscription
+            preview_invoice = await asyncio.to_thread(
+                stripe.Invoice.create_preview,
+                customer=customer_id,
+                subscription=subscription.id,
+                subscription_details={
+                    "items": [{
+                        "id": subscription_item_id,
+                        "price": new_price_id,
+                    }],
+                    "proration_behavior": "create_prorations" if is_upgrade else "none"
+                }
+            )
+            
+            # Parse invoice line items to find proration amounts
+            credit_amount = 0  # Credit for unused time (negative line item)
+            debit_amount = 0   # Charge for new plan time (positive line item)
+            
+            for line in preview_invoice.lines.data:
+                if line.proration:
+                    if line.amount < 0:
+                        credit_amount += abs(line.amount)  # Store as positive
+                    else:
+                        debit_amount += line.amount
+            
+            # Net proration (what user pays today)
+            proration_amount = debit_amount - credit_amount
+            
+            # Get next billing info
+            next_billing_date = datetime.fromtimestamp(
+                subscription.current_period_end, tz=tz.utc
+            )
+            
+            # Get the new plan's monthly price
+            new_price = await asyncio.to_thread(stripe.Price.retrieve, new_price_id)
+            next_billing_amount = new_price.unit_amount or 0
+            
+            # Get card info for display
+            card_last4 = None
+            card_brand = None
+            
+            try:
+                customer = await asyncio.to_thread(
+                    stripe.Customer.retrieve,
+                    customer_id,
+                    expand=["default_source", "invoice_settings.default_payment_method"]
+                )
+                
+                # Try to get card from default payment method first
+                payment_method = self._get_attr(
+                    self._get_attr(customer, "invoice_settings"), 
+                    "default_payment_method"
+                )
+                if payment_method:
+                    card = self._get_attr(payment_method, "card")
+                    if card:
+                        card_last4 = self._get_attr(card, "last4")
+                        card_brand = self._get_attr(card, "brand")
+                
+                # Fallback to default source
+                if not card_last4:
+                    default_source = self._get_attr(customer, "default_source")
+                    if default_source:
+                        card_last4 = self._get_attr(default_source, "last4")
+                        card_brand = self._get_attr(default_source, "brand")
+            except Exception as e:
+                logger.warning(f"Failed to get card info: {e}")
+            
+            # Format amounts for display
+            def format_amount(cents: int) -> str:
+                """Format cents as dollar string."""
+                dollars = cents / 100
+                return f"${dollars:,.2f}"
+            
+            # Build user message
+            if is_upgrade:
+                if proration_amount > 0:
+                    message = (
+                        f"You'll be charged {format_amount(proration_amount)} today (prorated). "
+                        f"Then {format_amount(next_billing_amount)}/month starting "
+                        f"{next_billing_date.strftime('%b %d')}."
+                    )
+                else:
+                    message = (
+                        f"You'll receive a {format_amount(abs(proration_amount))} credit. "
+                        f"Then {format_amount(next_billing_amount)}/month starting "
+                        f"{next_billing_date.strftime('%b %d')}."
+                    )
+            else:
+                message = (
+                    f"Your plan will change to {tier} on {next_billing_date.strftime('%b %d')}. "
+                    f"You'll keep {current_tier} until then. "
+                    f"Next billing: {format_amount(next_billing_amount)}/month."
+                )
+            
+            logger.info(
+                f"Upgrade preview for user {user_id[:8]}: {current_tier} → {tier}, "
+                f"proration: {format_amount(proration_amount)}"
+            )
+            
+            return {
+                "current_tier": current_tier,
+                "target_tier": tier,
+                "is_upgrade": is_upgrade,
+                "proration_amount": proration_amount,
+                "proration_amount_formatted": format_amount(proration_amount) if proration_amount >= 0 else f"-{format_amount(abs(proration_amount))}",
+                "credit_amount": credit_amount,
+                "credit_amount_formatted": format_amount(credit_amount),
+                "debit_amount": debit_amount,
+                "debit_amount_formatted": format_amount(debit_amount),
+                "next_billing_amount": next_billing_amount,
+                "next_billing_amount_formatted": f"{format_amount(next_billing_amount)}/month",
+                "next_billing_date": next_billing_date,
+                "card_last4": card_last4,
+                "card_brand": card_brand,
+                "message": message
+            }
+            
+        except stripe.StripeError as e:
+            logger.error(f"Stripe error previewing upgrade: {e}")
+            raise HTTPException(status_code=502, detail=f"Stripe error: {str(e)}")
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error previewing upgrade: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Failed to preview upgrade: {str(e)}")
+
     async def create_checkout_session(
         self, 
         user_id: str, 

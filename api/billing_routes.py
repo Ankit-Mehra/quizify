@@ -23,6 +23,8 @@ from schemas.billing import (
     PortalSessionResponse,
     SubscriptionStatusResponse,
     CheckoutSessionVerification,
+    UpgradePreviewRequest,
+    UpgradePreviewResponse,
 )
 from services.billing_service import BillingService
 from services.db_services.supabase_quiz import get_supabase
@@ -399,6 +401,67 @@ async def create_checkout_session(
         user_id=user_id,
         user_token=user_token,
         email=email,
+        tier=request.tier
+    )
+
+
+# ============================================================================
+# Upgrade Preview Endpoint
+# ============================================================================
+
+@router.post(
+    "/preview-upgrade",
+    response_model=UpgradePreviewResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Preview subscription upgrade/downgrade cost",
+    description=(
+        "Preview the proration cost of upgrading or downgrading a subscription. "
+        "Returns the exact amount the user will be charged today, credit for unused time, "
+        "and what the next regular billing will be. Use this before showing an upgrade "
+        "confirmation modal."
+    ),
+)
+async def preview_upgrade(
+    request: UpgradePreviewRequest,
+    user_id: str = Depends(get_current_user_id),
+    user_token: str = Depends(get_current_user_token),
+    billing_service: BillingService = Depends(get_billing_service),
+) -> UpgradePreviewResponse:
+    """
+    Preview subscription upgrade/downgrade proration.
+    
+    **Use Case:**
+    Before showing an upgrade confirmation modal, call this endpoint to get
+    the exact proration amount. Display this to the user so they know what
+    they'll be charged before confirming.
+    
+    **Returns:**
+    - Current and target tier
+    - Is upgrade (true) or downgrade (false)
+    - Proration amount (charged today)
+    - Credit for unused current plan time
+    - Debit for new plan's remaining time
+    - Next billing date and amount
+    - Card info (last 4 digits, brand)
+    - Human-readable message for display
+    
+    **Example Flow:**
+    1. User clicks "Upgrade to Pro"
+    2. Frontend calls POST /api/billing/preview-upgrade {"tier": "pro"}
+    3. Frontend shows modal: "You'll be charged $2.50 today. Then $15/mo starting Dec 15."
+    4. User clicks "Confirm Upgrade"
+    5. Frontend calls POST /api/billing/create-checkout-session {"tier": "pro"}
+    6. Backend upgrades subscription (no Stripe checkout page needed)
+    
+    **Errors:**
+    - `400`: No active subscription, or already on requested tier
+    - `502`: Stripe API error
+    """
+    logger.info(f"Preview upgrade to {request.tier} for user {user_id[:8]}")
+    
+    return await billing_service.preview_upgrade(
+        user_id=user_id,
+        user_token=user_token,
         tier=request.tier
     )
 
