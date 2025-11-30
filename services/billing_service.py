@@ -14,7 +14,6 @@ Epic 2-3: Full implementation with Stripe API integration
 
 import stripe
 import asyncio
-from hashlib import sha256
 from typing import Optional
 from datetime import datetime, timezone
 from fastapi import HTTPException
@@ -568,11 +567,18 @@ class BillingService:
                 )
             
             # 4. No existing subscription, create Checkout Session for new subscription
-            # Generate idempotency key to prevent duplicate sessions on double-click
-            # Uses user_id + tier + hourly bucket to allow retries within same hour
-            # but prevent rapid duplicate submissions
-            hourly_bucket = datetime.now(timezone.utc).strftime("%Y-%m-%d-%H")
-            idempotency_key = sha256(f"{user_id}:{tier}:{hourly_bucket}".encode()).hexdigest()[:32]
+            # NOTE: We intentionally do NOT use idempotency keys for checkout sessions.
+            # 
+            # Why? Stripe's idempotency keys cache responses for 24 hours, but checkout
+            # sessions become invalid after they're used or completed. This caused a bug
+            # where users clicking "Subscribe" again would get a stale/expired session URL.
+            #
+            # Double-click protection is now handled by:
+            # 1. Frontend: Disable button after first click
+            # 2. Step 3 above: Check for existing subscription before creating session
+            # 3. Stripe: Sessions have a 24h expiry and single-use semantics
+            #
+            # This ensures users always get a fresh, valid checkout session.
             
             # Run synchronous Stripe API call in thread pool to avoid blocking event loop
             session = await asyncio.to_thread(
@@ -596,11 +602,10 @@ class BillingService:
                         "tier": tier
                     }
                 },
-                allow_promotion_codes=True,
-                idempotency_key=idempotency_key
+                allow_promotion_codes=True
             )
             
-            logger.debug(f"Created checkout session with idempotency key {idempotency_key[:8]}...")
+            logger.info(f"Created new checkout session {_short_stripe_id(session.id)} for user {user_id[:8]}")
             
             return {
                 "checkout_url": session.url,
