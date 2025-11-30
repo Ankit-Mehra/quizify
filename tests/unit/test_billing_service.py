@@ -624,6 +624,7 @@ class TestCheckoutSessionRetryLogic:
         second_retrieved = MagicMock()
         second_retrieved.status = "open"
         second_retrieved.id = "cs_test_open_456"
+        second_retrieved.url = "https://checkout.stripe.com/open"
         
         with patch("stripe.checkout.Session.create", side_effect=[first_session, second_session]) as mock_create:
             with patch("stripe.checkout.Session.retrieve", side_effect=[first_retrieved, second_retrieved]):
@@ -662,6 +663,7 @@ class TestCheckoutSessionRetryLogic:
         second_retrieved = MagicMock()
         second_retrieved.status = "open"
         second_retrieved.id = "cs_test_open_789"
+        second_retrieved.url = "https://checkout.stripe.com/open"
         
         with patch("stripe.checkout.Session.create", side_effect=[first_session, second_session]) as mock_create:
             with patch("stripe.checkout.Session.retrieve", side_effect=[first_retrieved, second_retrieved]):
@@ -727,7 +729,7 @@ class TestCheckoutSessionRetryLogic:
         retrieved_sessions = [
             MagicMock(status="complete", id="cs_1"),
             MagicMock(status="complete", id="cs_2"),
-            MagicMock(status="open", id="cs_3"),
+            MagicMock(status="open", id="cs_3", url="https://checkout.stripe.com/open"),
         ]
         
         idempotency_keys_used = []

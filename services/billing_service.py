@@ -857,15 +857,15 @@ class BillingService:
                 if current_session.status == "open":
                     if attempt > 0:
                         logger.info(
-                            f"Found valid session {_short_stripe_id(session.id)} on attempt {attempt + 1} "
+                            f"Found valid session {_short_stripe_id(current_session.id)} on attempt {attempt + 1} "
                             f"for user {user_id[:8]}"
                         )
                     else:
-                        logger.debug(f"Checkout session {_short_stripe_id(session.id)} created/retrieved")
+                        logger.debug(f"Checkout session {_short_stripe_id(current_session.id)} created/retrieved")
                     break
                 else:
                     logger.debug(
-                        f"Attempt {attempt + 1}: Session {_short_stripe_id(session.id)} has status "
+                        f"Attempt {attempt + 1}: Session {_short_stripe_id(current_session.id)} has status "
                         f"'{current_session.status}', trying next attempt..."
                     )
             
