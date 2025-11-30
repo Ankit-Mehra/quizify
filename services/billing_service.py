@@ -586,7 +586,14 @@ class BillingService:
             debit_amount = 0   # Charge for new plan time (positive line item)
             
             for line in preview_invoice.lines.data:
-                if line.proration:
+                # Check if this is a proration line item
+                # Stripe marks prorations with discountable=False OR type contains proration info
+                # For subscription updates, prorations appear as line items with amounts
+                # Negative amounts = credits for unused time on old plan
+                # Positive amounts = charges for new plan time
+                is_proration = getattr(line, 'proration', False) or not getattr(line, 'discountable', True)
+                
+                if is_proration:
                     if line.amount < 0:
                         credit_amount += abs(line.amount)  # Store as positive
                     else:
