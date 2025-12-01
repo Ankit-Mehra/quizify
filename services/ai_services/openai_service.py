@@ -9,6 +9,10 @@ automatic tracking of:
 - User-level analytics
 - Trace correlation for multi-step workflows
 - Thread-safe singleton initialization
+
+Note: Once initialized, the client type (PostHog-wrapped vs standard) cannot
+change without restarting the application. This is intentional for performance
+and to maintain consistent behavior throughout the application lifecycle.
 """
 
 import threading
@@ -29,7 +33,7 @@ from services.ai_services.prompt_smart import (
     build_quiz_prompt_matching,
 )
 from services.ai_services.prompts import build_quiz_prompt_mixed
-from services.posthog_service import get_posthog_client, is_posthog_enabled
+from services.posthog_service import get_posthog_client, is_posthog_enabled, is_posthog_wrapper_active
 from services.logger import ai_logger as logger
 
 logger.debug("OpenAI service initialized")
@@ -38,6 +42,7 @@ load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 # Global client instance with thread-safe initialization
+# Note: Client type is determined at first initialization and persists until restart
 _client: Optional[BaseAsyncOpenAI] = None
 _client_lock = threading.Lock()
 
@@ -101,8 +106,9 @@ def _build_posthog_kwargs(
     """
     Build PostHog-specific kwargs for OpenAI calls.
     
-    These kwargs are only used when PostHog analytics is enabled.
-    The PostHog wrapper will ignore these if it's not the wrapped client.
+    These kwargs are only added when PostHog wrapper is actively initialized.
+    They must not be passed to the standard AsyncOpenAI client as it will
+    raise TypeError for unexpected keyword arguments.
     
     Args:
         user_id: User's distinct ID for analytics attribution
@@ -110,11 +116,13 @@ def _build_posthog_kwargs(
         properties: Additional custom properties to track
         
     Returns:
-        Dict of PostHog kwargs to pass to OpenAI calls
+        Dict of PostHog kwargs to pass to OpenAI calls (empty if PostHog not active)
     """
     kwargs = {}
     
-    if not is_posthog_enabled():
+    # Only add kwargs if PostHog wrapper is actually active
+    # This prevents TypeError when using standard OpenAI client
+    if not is_posthog_wrapper_active():
         return kwargs
     
     if user_id:

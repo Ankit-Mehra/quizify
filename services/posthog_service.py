@@ -9,19 +9,33 @@ Features:
 - Latency measurement for LLM calls
 - User-level analytics (via distinct_id)
 - Trace correlation for multi-step AI workflows
-- Privacy mode support for sensitive data
 - Thread-safe singleton initialization
+
+Note: Once initialized, the client configuration cannot change without
+restarting the application. This is intentional for performance.
 """
 
 import threading
-from typing import Optional
+from typing import Optional, Union
 from posthog import Posthog
 from config import Config
 from services.logger import app_logger as logger
 
+
+# Sentinel object to cache "disabled" state and avoid repeated lock acquisition
+class _PostHogDisabled:
+    """Sentinel indicating PostHog is explicitly disabled."""
+    pass
+
+
+_POSTHOG_DISABLED = _PostHogDisabled()
+
 # Global PostHog client instance with thread-safe initialization
-_posthog_client: Optional[Posthog] = None
+# Can be: None (not yet checked), Posthog instance, or _POSTHOG_DISABLED sentinel
+_posthog_client: Optional[Union[Posthog, _PostHogDisabled]] = None
 _posthog_lock = threading.Lock()
+# Track if PostHog wrapper was successfully initialized (for kwargs check)
+_posthog_wrapper_active: bool = False
 
 
 def get_posthog_client() -> Optional[Posthog]:
@@ -33,20 +47,25 @@ def get_posthog_client() -> Optional[Posthog]:
     configured (no API key) or if LLM analytics is disabled.
     
     Uses double-checked locking pattern for thread-safe lazy initialization.
+    Caches "disabled" state to avoid repeated lock acquisition and logging.
     
     Returns:
         Optional[Posthog]: PostHog client instance or None if not configured
     """
-    global _posthog_client
+    global _posthog_client, _posthog_wrapper_active
     
-    # Fast path: return cached client if already initialized
+    # Fast path: return cached client or None if disabled
     if _posthog_client is not None:
+        if isinstance(_posthog_client, _PostHogDisabled):
+            return None
         return _posthog_client
     
     # Thread-safe initialization with lock
     with _posthog_lock:
         # Double-check after acquiring lock
         if _posthog_client is not None:
+            if isinstance(_posthog_client, _PostHogDisabled):
+                return None
             return _posthog_client
         
         # Check if PostHog is configured and enabled
@@ -55,10 +74,12 @@ def get_posthog_client() -> Optional[Posthog]:
                 "PostHog API key not configured. LLM analytics will be disabled. "
                 "Set POSTHOG_API_KEY environment variable to enable."
             )
+            _posthog_client = _POSTHOG_DISABLED
             return None
         
         if not Config.POSTHOG_LLM_ANALYTICS_ENABLED:
             logger.info("PostHog LLM analytics is disabled via POSTHOG_LLM_ANALYTICS_ENABLED=false")
+            _posthog_client = _POSTHOG_DISABLED
             return None
         
         try:
@@ -68,11 +89,28 @@ def get_posthog_client() -> Optional[Posthog]:
                 # Enable GeoIP lookup for event geolocation
                 disable_geoip=False,
             )
+            _posthog_wrapper_active = True
             logger.info(f"PostHog LLM analytics initialized successfully (host: {Config.POSTHOG_HOST})")
             return _posthog_client
         except Exception as e:
             logger.error(f"Failed to initialize PostHog client: {e}")
+            _posthog_client = _POSTHOG_DISABLED
             return None
+
+
+def is_posthog_wrapper_active() -> bool:
+    """
+    Check if PostHog wrapper was successfully initialized.
+    
+    This is different from is_posthog_enabled() - it checks if the wrapper
+    is actually active and ready to accept PostHog-specific kwargs.
+    
+    Returns:
+        bool: True if PostHog wrapper is active and kwargs should be added
+    """
+    # Trigger initialization if not done yet
+    get_posthog_client()
+    return _posthog_wrapper_active
 
 
 def shutdown_posthog() -> None:
@@ -82,10 +120,10 @@ def shutdown_posthog() -> None:
     Should be called on application shutdown to ensure all events are flushed.
     Uses lock to prevent concurrent access during shutdown.
     """
-    global _posthog_client
+    global _posthog_client, _posthog_wrapper_active
     
     with _posthog_lock:
-        if _posthog_client is not None:
+        if _posthog_client is not None and not isinstance(_posthog_client, _PostHogDisabled):
             try:
                 _posthog_client.shutdown()
                 logger.info("PostHog client shutdown successfully")
@@ -93,6 +131,10 @@ def shutdown_posthog() -> None:
                 logger.error(f"Error shutting down PostHog client: {e}")
             finally:
                 _posthog_client = None
+                _posthog_wrapper_active = False
+        else:
+            _posthog_client = None
+            _posthog_wrapper_active = False
 
 
 def is_posthog_enabled() -> bool:
