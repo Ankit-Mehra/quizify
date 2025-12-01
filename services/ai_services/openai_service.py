@@ -8,8 +8,10 @@ automatic tracking of:
 - Cost estimation
 - User-level analytics
 - Trace correlation for multi-step workflows
+- Thread-safe singleton initialization
 """
 
+import threading
 from typing import List, Optional, Dict, Any
 from openai import AsyncOpenAI as BaseAsyncOpenAI
 import os
@@ -35,6 +37,10 @@ load_dotenv()
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
+# Global client instance with thread-safe initialization
+_client: Optional[BaseAsyncOpenAI] = None
+_client_lock = threading.Lock()
+
 
 def _create_openai_client() -> BaseAsyncOpenAI:
     """
@@ -58,16 +64,24 @@ def _create_openai_client() -> BaseAsyncOpenAI:
     return BaseAsyncOpenAI(api_key=OPENAI_API_KEY)
 
 
-# Global client instance (lazy initialization)
-_client: Optional[BaseAsyncOpenAI] = None
-
-
 def get_openai_client() -> BaseAsyncOpenAI:
-    """Get or create the OpenAI client instance."""
+    """
+    Get or create the OpenAI client instance (thread-safe).
+    
+    Uses double-checked locking pattern for thread-safe lazy initialization.
+    """
     global _client
-    if _client is None:
-        _client = _create_openai_client()
-    return _client
+    
+    # Fast path: return cached client if already initialized
+    if _client is not None:
+        return _client
+    
+    # Thread-safe initialization with lock
+    with _client_lock:
+        # Double-check after acquiring lock
+        if _client is None:
+            _client = _create_openai_client()
+        return _client
 
 
 # Mapping from type -> prompt builder
