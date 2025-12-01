@@ -228,9 +228,3 @@ async def generate_quiz_async(
     quiz_id = uuid4()
     parsed_quizzes = convert_parsed_to_quizzes(parsed_response, quiz_id)
     return parsed_quizzes.quizzes
-
-
-# Legacy client export for backward compatibility
-# Provides direct access to the OpenAI client for edge cases
-client = None  # Will be initialized on first use via get_openai_client()
-

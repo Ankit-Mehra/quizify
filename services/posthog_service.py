@@ -54,7 +54,7 @@ def get_posthog_client() -> Optional[Posthog]:
         _posthog_client = Posthog(
             api_key=Config.POSTHOG_API_KEY,
             host=Config.POSTHOG_HOST,
-            # Disable automatic event capture - we only want LLM events
+            # Enable GeoIP lookup for event geolocation
             disable_geoip=False,
         )
         logger.info(f"PostHog LLM analytics initialized successfully (host: {Config.POSTHOG_HOST})")
