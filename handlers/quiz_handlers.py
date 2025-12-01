@@ -1,5 +1,6 @@
 from fastapi import HTTPException, Depends, Path, Body, UploadFile, File, Form
 import re
+from uuid import uuid4
 from services.ai_services.doc_service import ( 
     extract_text_from_pdf,
     extract_text_from_plain_text,
@@ -155,11 +156,14 @@ async def generate_quiz_from_file_openai(
         file_result = save_file_to_supabase(current_user_id, file_bytes, original_filename, user_token, file.content_type)
         file_id = file_result.get('file_id')
         
-        # Generate quiz questions
+        # Generate quiz questions with PostHog LLM analytics
+        trace_id = str(uuid4())  # Unique trace for this quiz generation
         quizzes = await generate_quizzes_single_async(
             parsed_text, 
             num_questions,
-            question_types=question_type
+            question_types=question_type,
+            user_id=current_user_id,
+            trace_id=trace_id
         )
         
         # Save quiz to database with file reference
@@ -260,10 +264,14 @@ async def generate_quiz_from_fileid(
     try:
         logger.info(f"Generating quiz questions from file content (length: {len(file_content)})")
         total_questions = data.num_questions if data.num_questions is not None else 10
+        # Generate quiz questions with PostHog LLM analytics
+        trace_id = str(uuid4())  # Unique trace for this quiz generation
         quizzes = await generate_quizzes_single_async(
             file_content, 
             total_questions,
-            question_types=list(data.question_type)
+            question_types=list(data.question_type),
+            user_id=current_user_id,
+            trace_id=trace_id
         )
         
         if not quizzes or len(quizzes) == 0:
@@ -327,12 +335,15 @@ async def generate_quiz_from_text(
         
         # Validate quota BEFORE generation (don't waste AI API calls)
         await validate_user_quota(current_user_id, user_token)
-        # Generate quiz questions
+        # Generate quiz questions with PostHog LLM analytics
         total_questions = data.num_questions if data.num_questions is not None else 10
+        trace_id = str(uuid4())  # Unique trace for this quiz generation
         quizzes = await generate_quizzes_single_async(
             data.content, 
             total_questions,
-            question_types=list(data.question_type)
+            question_types=list(data.question_type),
+            user_id=current_user_id,
+            trace_id=trace_id
         )
         
         # Save text as a file in Supabase Storage FIRST (for consistent user experience)
@@ -599,12 +610,15 @@ async def generate_quiz_from_url(
         else:
             content_source_reference = str(data.url)
         
-        # Generate quiz
+        # Generate quiz with PostHog LLM analytics
         total_questions = data.num_questions if data.num_questions is not None else 10
+        trace_id = str(uuid4())  # Unique trace for this quiz generation
         quizzes = await generate_quizzes_single_async(
             content,
             total_questions,
-            question_types=list(data.question_type)
+            question_types=list(data.question_type),
+            user_id=current_user_id,
+            trace_id=trace_id
         )
         
         # Save to database
