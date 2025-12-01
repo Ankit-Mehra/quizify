@@ -84,7 +84,7 @@ def get_posthog_client() -> Optional[Posthog]:
         
         try:
             _posthog_client = Posthog(
-                api_key=Config.POSTHOG_API_KEY,
+                project_api_key=Config.POSTHOG_API_KEY,
                 host=Config.POSTHOG_HOST,
                 # Enable GeoIP lookup for event geolocation
                 disable_geoip=False,
