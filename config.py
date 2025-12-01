@@ -131,6 +131,19 @@ class Config:
     RESEND_API_KEY: str = os.getenv("RESEND_API_KEY", "")
     CONTACT_EMAIL: str = os.getenv("CONTACT_EMAIL", "admin@quizify.ca")
     
+    # ============================================================================
+    # PostHog Configuration (for LLM analytics and observability)
+    # ============================================================================
+    
+    # PostHog API key (project API key from PostHog settings)
+    POSTHOG_API_KEY: str = os.getenv("POSTHOG_API_KEY", "")
+    
+    # PostHog host (default to US cloud, can be EU cloud or self-hosted)
+    POSTHOG_HOST: str = os.getenv("POSTHOG_HOST", "https://us.i.posthog.com")
+    
+    # Feature flag to enable/disable PostHog LLM analytics
+    POSTHOG_LLM_ANALYTICS_ENABLED: bool = os.getenv("POSTHOG_LLM_ANALYTICS_ENABLED", "true").lower() == "true"
+    
     @classmethod
     def is_testing(cls) -> bool:
         """

@@ -376,9 +376,9 @@ def create_mock_quiz_response(num_questions, question_types=None, text="sample t
 
 
 # Mock AI services
-async def mock_generate_quizzes_single_async(text, num_questions, question_types=None):
+async def mock_generate_quizzes_single_async(text, num_questions, question_types=None, user_id=None, trace_id=None):
     """
-    Mock OpenAI quiz generation.
+    Mock OpenAI quiz generation with PostHog analytics support.
     
     Default behavior: Returns exactly min(num_questions, 10) questions for predictable tests.
     

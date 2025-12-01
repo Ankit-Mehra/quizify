@@ -115,3 +115,4 @@ watchfiles==1.0.4
 websockets==14.2
 wsproto==1.2.0
 yarl==1.18.3
+posthog==7.0.1

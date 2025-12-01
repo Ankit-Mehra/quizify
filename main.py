@@ -23,6 +23,7 @@ from services.logger import app_logger as logger  # noqa: E402
 from api import auth_routes, quiz_routes, file_routes, submission_routes, admin_routes, health_routes, billing_routes, export_routes, share_routes, contact_routes  # noqa: E402
 from middleware.auto_refresh import SupabaseAutoRefreshMiddleware, close_http_client  # noqa: E402
 from services.redis.client import lifespan as redis_lifespan  # noqa: E402
+from services.posthog_service import shutdown_posthog, is_posthog_enabled  # noqa: E402
 
 # Get the CORS origins from environment variable or use default
 try:
@@ -90,6 +91,12 @@ async def app_lifespan(app: FastAPI):
     """
     logger.info("Application startup: initializing resources...")
     
+    # Log PostHog status
+    if is_posthog_enabled():
+        logger.info("PostHog LLM analytics is enabled")
+    else:
+        logger.info("PostHog LLM analytics is disabled (set POSTHOG_API_KEY to enable)")
+    
     # Initialize Redis connection (delegates to redis_lifespan)
     async with redis_lifespan(app):
         logger.info("Application startup complete")
@@ -100,6 +107,9 @@ async def app_lifespan(app: FastAPI):
     
     # Close HTTP client used for token refresh
     await close_http_client()
+    
+    # Shutdown PostHog to flush any pending events
+    shutdown_posthog()
 
 
 app = FastAPI(
