@@ -5,7 +5,7 @@ from typing import Literal, Dict, Any, Optional, List
 
 from services.ai_services.openai_service import get_openai_client
 from services.ai_services.context_service import ContextService
-from services.ai_services.concept_extraction_service import calculate_cost
+from services.ai_services.pricing import calculate_cost
 from services.ai_services.explanation_service import ExplanationService
 from services.db_services.supabase_llm_analytics import track_llm_call
 from services.logger import ai_logger as logger

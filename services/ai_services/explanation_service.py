@@ -189,4 +189,8 @@ class ExplanationService:
             
         except Exception as e:
             logger.error(f"Explanation generation failed: {str(e)}")
-            return "Explanation could not be generated."
+            # Provide user-friendly fallback that includes the correct answer
+            correct_answer = question_data.get("correct_answer", "")
+            if correct_answer:
+                return f"The correct answer is: {correct_answer}. A detailed explanation could not be generated at this time."
+            return "An explanation could not be generated at this time."

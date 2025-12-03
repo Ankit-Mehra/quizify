@@ -43,6 +43,11 @@ def track_llm_call(
         metadata: Additional metadata (feature, question_type, etc.)
         cost_usd: Calculated cost in USD
     """
+    # Validate user_id - must be a non-empty UUID string
+    if not user_id or not isinstance(user_id, str) or not user_id.strip():
+        logger.warning("Skipping LLM call tracking: invalid or empty user_id")
+        return
+    
     supabase = get_supabase_service()
     
     # Handle test mode where supabase is None
