@@ -36,6 +36,304 @@ from services.web_scraping_service import scrape_content
 MIN_CONTENT_LENGTH = 50  # Minimum characters required for quiz generation from uploaded files
 MIN_STORED_CONTENT_LENGTH = 10  # Minimum characters required for stored file content validation
 
+
+# =============================================================================
+# Helper Functions for generate_quiz_rag_async (Refactored for SRP)
+# =============================================================================
+
+async def _validate_quiz_request(
+    request: EnhancedTextQuizRequest,
+    user_id: str,
+    user_token: str
+) -> None:
+    """
+    Validate user quota and content length before quiz generation.
+    
+    Raises:
+        HTTPException: 403 if quota exceeded, 400 if content too short
+    """
+    await validate_user_quota(user_id, user_token)
+    
+    if len(request.content) < MIN_CONTENT_LENGTH:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Content too short. Minimum {MIN_CONTENT_LENGTH} characters required, got {len(request.content)}."
+        )
+
+
+async def _generate_standard_mode(
+    request: EnhancedTextQuizRequest,
+    user_id: str,
+    user_token: str,
+    trace_id: str,
+    content_source_type: str,
+    content_source_reference: str
+) -> EnhancedQuizGenerationResponse:
+    """
+    Generate quiz using standard (fast) mode with direct LLM calls.
+    
+    Returns:
+        EnhancedQuizGenerationResponse with generated questions
+    """
+    total_questions = request.num_questions
+    
+    # Normalize question_type to list
+    if request.question_type == "mixed":
+        question_types = ["mixed"]
+    elif isinstance(request.question_type, list):
+        question_types = list(request.question_type)
+    else:
+        question_types = [request.question_type]
+    
+    quizzes = await generate_quizzes_single_async(
+        request.content,
+        total_questions,
+        question_types=question_types,
+        user_id=user_id,
+        trace_id=trace_id
+    )
+    
+    # Save to database with proper content source tracking
+    quiz_id, saved_questions = save_quiz_to_database(
+        title=request.title,
+        quizzes=quizzes,
+        created_by=user_id,
+        content_source_type=content_source_type,
+        content_source_reference=content_source_reference,
+        user_token=user_token
+    )
+    
+    # Convert to EnhancedQuestion format (with defaults for enhanced fields)
+    final_questions = []
+    for q in saved_questions:
+        # Handle both dict and Pydantic model
+        q_dict = q if isinstance(q, dict) else q.model_dump() if hasattr(q, 'model_dump') else vars(q)
+        eq = EnhancedQuestion(
+            id=q_dict.get("id"),
+            quiz_id=q_dict.get("quiz_id"),
+            type=q_dict.get("type"),
+            question=q_dict.get("question"),
+            options=q_dict.get("options"),
+            left=q_dict.get("left"),
+            right=q_dict.get("right"),
+            correct_answer=q_dict.get("correct_answer"),
+            explanation=q_dict.get("explanation", ""),
+            source=q_dict.get("source", ""),
+            bloom_level=BloomLevel.UNDERSTAND,  # Default for standard mode
+            difficulty=Difficulty.MEDIUM,  # Default for standard mode
+            concept_id=None,
+            chunk_id=None,
+            confidence_score=None
+        )
+        final_questions.append(eq)
+    
+    return EnhancedQuizGenerationResponse(
+        quiz_id=quiz_id,
+        title=request.title,
+        message="Quiz generated successfully (standard mode)",
+        questions=final_questions,
+        generation_stats={
+            "mode": "standard",
+            "questions_generated": len(final_questions)
+        }
+    )
+
+
+async def _ingest_and_extract_concepts(
+    request: EnhancedTextQuizRequest,
+    user_id: str,
+    user_token: str,
+    trace_id: str,
+    ingestion_service: IngestionService,
+    concept_service: ConceptExtractionService
+) -> tuple[str, List[Dict], List[Dict]]:
+    """
+    Ingest content and extract concepts for enhanced mode.
+    
+    Returns:
+        Tuple of (document_id, chunks, concepts)
+        
+    Raises:
+        ValueError: If no concepts could be extracted
+    """
+    # Ingest Content (with user_token for RLS)
+    ingestion_result = await ingestion_service.ingest_content(
+        user_id=user_id,
+        user_token=user_token,
+        content=request.content,
+        title=request.title,
+        source_type="text",
+        trace_id=trace_id
+    )
+    document_id = ingestion_result["document_id"]
+    chunks = ingestion_result.get("chunks", [])
+    
+    # Extract Concepts (with user_token for RLS)
+    concepts = await concept_service.extract_concepts(
+        chunks=chunks,
+        user_id=user_id,
+        user_token=user_token,
+        document_id=document_id,
+        trace_id=trace_id
+    )
+    
+    if not concepts:
+        raise ValueError(
+            f"No concepts could be extracted from the content. "
+            f"Please ensure your content is at least {MIN_CONTENT_LENGTH} characters long and contains "
+            f"sufficient educational detail. Try providing more specific terminology, definitions, or examples."
+        )
+    
+    return document_id, chunks, concepts
+
+
+def _select_and_assign_concepts(
+    concepts: List[Dict],
+    num_questions: int,
+    question_type: Any,
+    orchestration_service: QuizOrchestrationService
+) -> tuple[List[tuple], List[tuple]]:
+    """
+    Select top concepts and assign question types, Bloom levels, and difficulties.
+    
+    Returns:
+        Tuple of (concept_type_pairs, bloom_difficulty_pairs)
+    """
+    # Sort by relevance and select top N
+    concepts.sort(key=lambda x: x.get("relevance_score", 0), reverse=True)
+    selected_concepts = concepts[:num_questions]
+    
+    # If not enough concepts, pad with cycling through existing ones
+    if len(selected_concepts) < num_questions:
+        original_count = len(selected_concepts)
+        while len(selected_concepts) < num_questions:
+            idx = len(selected_concepts) % original_count
+            selected_concepts.append(selected_concepts[idx])
+    
+    # Assign Question Types
+    concept_type_pairs = []
+    
+    if question_type == "mixed":
+        # Random distribution of all types
+        for c in selected_concepts:
+            concept_type_pairs.append((c, random.choice(ALL_QUESTION_TYPES)))
+    elif isinstance(question_type, list):
+        # Round robin through specified types
+        for i, c in enumerate(selected_concepts):
+            t = question_type[i % len(question_type)]
+            concept_type_pairs.append((c, t))
+    else:
+        # Single type for all
+        for c in selected_concepts:
+            concept_type_pairs.append((c, question_type))
+    
+    # Assign Bloom Levels and Difficulty (balanced distribution)
+    bloom_difficulty_pairs = orchestration_service.assign_bloom_and_difficulty(
+        num_questions=len(concept_type_pairs)
+    )
+    
+    return concept_type_pairs, bloom_difficulty_pairs
+
+
+async def _generate_questions_parallel(
+    concept_type_pairs: List[tuple],
+    bloom_difficulty_pairs: List[tuple],
+    user_id: str,
+    user_token: str,
+    trace_id: str,
+    orchestration_service: QuizOrchestrationService
+) -> List[Dict]:
+    """
+    Generate questions in parallel with retry logic for failures.
+    
+    Returns:
+        List of valid generated question dictionaries
+        
+    Raises:
+        ValueError: If no valid questions could be generated
+    """
+    async def generate_one(idx: int, concept: Dict, q_type: str):
+        bloom_level, difficulty = bloom_difficulty_pairs[idx]
+        return await orchestration_service.generate_question_for_concept(
+            concept=concept,
+            question_type=q_type,
+            user_id=user_id,
+            user_token=user_token,
+            trace_id=trace_id,
+            bloom_level=bloom_level,
+            difficulty=difficulty
+        )
+    
+    # Generate all questions in parallel
+    tasks = [generate_one(i, c, t) for i, (c, t) in enumerate(concept_type_pairs)]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    
+    valid_questions = []
+    failed_indices = []
+    
+    for i, res in enumerate(results):
+        if isinstance(res, dict):
+            valid_questions.append(res)
+        else:
+            logger.error(f"Question generation failed for index {i}: {res}")
+            failed_indices.append(i)
+    
+    # Retry logic for failed questions (max 1 retry)
+    if failed_indices:
+        logger.info(f"Retrying {len(failed_indices)} failed questions...")
+        retry_tasks = []
+        for idx in failed_indices:
+            concept, q_type = concept_type_pairs[idx]
+            retry_tasks.append(generate_one(idx, concept, q_type))
+        
+        retry_results = await asyncio.gather(*retry_tasks, return_exceptions=True)
+        
+        for res in retry_results:
+            if isinstance(res, dict):
+                valid_questions.append(res)
+            else:
+                logger.error(f"Retry failed: {res}")
+    
+    if not valid_questions:
+        raise ValueError(
+            "Failed to generate any valid questions after multiple attempts. "
+            "This may happen when content is too vague, lacks educational structure, or contains mostly lists/tables. "
+            "Try providing narrative text with clear concepts, definitions, and explanations."
+        )
+    
+    return valid_questions
+
+
+def _build_enhanced_questions(valid_questions: List[Dict]) -> List[EnhancedQuestion]:
+    """
+    Convert raw question dictionaries to EnhancedQuestion Pydantic models.
+    
+    Returns:
+        List of EnhancedQuestion objects
+    """
+    final_questions = []
+    for q in valid_questions:
+        eq = EnhancedQuestion(
+            # Required fields - use direct indexing
+            type=q["type"],
+            question=q["question"],
+            correct_answer=q["correct_answer"],
+            explanation=q["explanation"],
+            source=q["source"],
+            bloom_level=BloomLevel(q["bloom_level"]),
+            difficulty=Difficulty(q["difficulty"]),
+            # Optional fields - use .get() for safe access
+            options=q.get("options"),
+            left=q.get("left"),
+            right=q.get("right"),
+            concept_id=q.get("concept_id"),
+            concept_name=q.get("concept_name"),
+            chunk_id=q.get("chunk_id"),
+            confidence_score=q.get("confidence_score")
+        )
+        final_questions.append(eq)
+    return final_questions
+
 def sanitize_filename(filename: str) -> str:
     """
     Sanitize filename to make it safe for storage URLs.
@@ -638,234 +936,95 @@ async def generate_quiz_rag_async(
     """
     trace_id = str(uuid4())
     
-    # 0. Validate User Quota FIRST (before any expensive operations)
-    await validate_user_quota(user_id, user_token)
+    # Step 1: Validate request (quota and content length)
+    await _validate_quiz_request(request, user_id, user_token)
     
-    # 0b. Validate Content Length
-    if len(request.content) < MIN_CONTENT_LENGTH:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Content too short. Minimum {MIN_CONTENT_LENGTH} characters required, got {len(request.content)}."
-        )
-    
-    # ========== STANDARD MODE: Fast path using existing generation ==========
+    # Step 2: Route to appropriate generation mode
     if request.mode == "standard":
         try:
-            # Use the existing fast generation path
-            total_questions = request.num_questions
-            
-            # Normalize question_type to list
-            if request.question_type == "mixed":
-                question_types = ["mixed"]
-            elif isinstance(request.question_type, list):
-                question_types = list(request.question_type)
-            else:
-                question_types = [request.question_type]
-            
-            quizzes = await generate_quizzes_single_async(
-                request.content,
-                total_questions,
-                question_types=question_types,
+            return await _generate_standard_mode(
+                request=request,
                 user_id=user_id,
-                trace_id=trace_id
-            )
-            
-            # Save to database with proper content source tracking
-            quiz_id, saved_questions = save_quiz_to_database(
-                title=request.title,
-                quizzes=quizzes,
-                created_by=user_id,
+                user_token=user_token,
+                trace_id=trace_id,
                 content_source_type=content_source_type,
-                content_source_reference=content_source_reference,
-                user_token=user_token
+                content_source_reference=content_source_reference
             )
-            
-            # Convert to EnhancedQuestion format (with None for enhanced fields)
-            final_questions = []
-            for q in saved_questions:
-                # Handle both dict and Pydantic model
-                q_dict = q if isinstance(q, dict) else q.model_dump() if hasattr(q, 'model_dump') else vars(q)
-                eq = EnhancedQuestion(
-                    id=q_dict.get("id"),
-                    quiz_id=q_dict.get("quiz_id"),
-                    type=q_dict.get("type"),
-                    question=q_dict.get("question"),
-                    options=q_dict.get("options"),
-                    left=q_dict.get("left"),
-                    right=q_dict.get("right"),
-                    correct_answer=q_dict.get("correct_answer"),
-                    explanation=q_dict.get("explanation", ""),
-                    source=q_dict.get("source", ""),
-                    bloom_level=BloomLevel.UNDERSTAND,  # Default for standard mode
-                    difficulty=Difficulty.MEDIUM,  # Default for standard mode
-                    concept_id=None,
-                    chunk_id=None,
-                    confidence_score=None
-                )
-                final_questions.append(eq)
-            
-            return EnhancedQuizGenerationResponse(
-                quiz_id=quiz_id,
-                title=request.title,
-                message="Quiz generated successfully (standard mode)",
-                questions=final_questions,
-                generation_stats={
-                    "mode": "standard",
-                    "questions_generated": len(final_questions)
-                }
-            )
-            
         except HTTPException:
             raise
         except Exception as e:
             logger.error(f"Standard Quiz Generation failed: {str(e)}")
             raise HTTPException(status_code=500, detail="Quiz generation failed. Please try again.")
     
-    # ========== ENHANCED MODE: Full RAG pipeline ==========
+    # Step 3: Enhanced mode - Full RAG pipeline
+    return await _generate_enhanced_mode(
+        request=request,
+        user_id=user_id,
+        user_token=user_token,
+        trace_id=trace_id,
+        content_source_type=content_source_type,
+        content_source_reference=content_source_reference
+    )
+
+
+async def _generate_enhanced_mode(
+    request: EnhancedTextQuizRequest,
+    user_id: str,
+    user_token: str,
+    trace_id: str,
+    content_source_type: str,
+    content_source_reference: str
+) -> EnhancedQuizGenerationResponse:
+    """
+    Generate quiz using enhanced (RAG) mode with full pipeline.
+    
+    Pipeline:
+    1. Ingest content and extract concepts
+    2. Select concepts and assign question types
+    3. Generate questions in parallel
+    4. Build and save response
+    
+    Returns:
+        EnhancedQuizGenerationResponse with generated questions
+    """
     # Initialize services
     ingestion_service = IngestionService()
     concept_service = ConceptExtractionService()
     orchestration_service = QuizOrchestrationService()
     
     try:
-        # 1. Ingest Content (with user_token for RLS)
-        ingestion_result = await ingestion_service.ingest_content(
+        # Step 1: Ingest content and extract concepts
+        document_id, chunks, concepts = await _ingest_and_extract_concepts(
+            request=request,
             user_id=user_id,
             user_token=user_token,
-            content=request.content,
-            title=request.title,
-            source_type="text",
-            trace_id=trace_id
+            trace_id=trace_id,
+            ingestion_service=ingestion_service,
+            concept_service=concept_service
         )
-        document_id = ingestion_result["document_id"]
-        chunks = ingestion_result.get("chunks", [])
         
-        # 2. Extract Concepts (with user_token for RLS)
-        concepts = await concept_service.extract_concepts(
-            chunks=chunks,
+        # Step 2: Select concepts and assign types/bloom/difficulty
+        concept_type_pairs, bloom_difficulty_pairs = _select_and_assign_concepts(
+            concepts=concepts,
+            num_questions=request.num_questions,
+            question_type=request.question_type,
+            orchestration_service=orchestration_service
+        )
+        
+        # Step 3: Generate questions in parallel
+        valid_questions = await _generate_questions_parallel(
+            concept_type_pairs=concept_type_pairs,
+            bloom_difficulty_pairs=bloom_difficulty_pairs,
             user_id=user_id,
             user_token=user_token,
-            document_id=document_id,
-            trace_id=trace_id
+            trace_id=trace_id,
+            orchestration_service=orchestration_service
         )
         
-        if not concepts:
-            raise ValueError(
-                f"No concepts could be extracted from the content. "
-                f"Please ensure your content is at least {MIN_CONTENT_LENGTH} characters long and contains "
-                f"sufficient educational detail. Try providing more specific terminology, definitions, or examples."
-            )
+        # Step 4: Convert to Pydantic models
+        final_questions = _build_enhanced_questions(valid_questions)
         
-        # 3. Select Concepts & Assign Types
-        # Sort by relevance and select top N
-        concepts.sort(key=lambda x: x.get("relevance_score", 0), reverse=True)
-        selected_concepts = concepts[:request.num_questions]
-        
-        # If not enough concepts, pad with cycling through existing ones
-        if len(selected_concepts) < request.num_questions:
-            original_count = len(selected_concepts)
-            while len(selected_concepts) < request.num_questions:
-                idx = len(selected_concepts) % original_count
-                selected_concepts.append(selected_concepts[idx])
-        
-        # 4. Assign Question Types (using centralized constant from schemas)
-        concept_type_pairs = []
-        
-        if request.question_type == "mixed":
-            # Random distribution of all types
-            for c in selected_concepts:
-                concept_type_pairs.append((c, random.choice(ALL_QUESTION_TYPES)))
-        elif isinstance(request.question_type, list):
-            # Round robin through specified types
-            for i, c in enumerate(selected_concepts):
-                t = request.question_type[i % len(request.question_type)]
-                concept_type_pairs.append((c, t))
-        else:
-            # Single type for all
-            for c in selected_concepts:
-                concept_type_pairs.append((c, request.question_type))
-        
-        # 5. Assign Bloom Levels and Difficulty (balanced distribution)
-        bloom_difficulty_pairs = orchestration_service.assign_bloom_and_difficulty(
-            num_questions=len(concept_type_pairs)
-        )
-                
-        # 6. Generate Questions in Parallel
-        async def generate_one(idx: int, concept: Dict, q_type: str):
-            bloom_level, difficulty = bloom_difficulty_pairs[idx]
-            return await orchestration_service.generate_question_for_concept(
-                concept=concept,
-                question_type=q_type,
-                user_id=user_id,
-                user_token=user_token,
-                trace_id=trace_id,
-                bloom_level=bloom_level,
-                difficulty=difficulty
-            )
-            
-        tasks = [generate_one(i, c, t) for i, (c, t) in enumerate(concept_type_pairs)]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        valid_questions = []
-        failed_indices = []
-        
-        for i, res in enumerate(results):
-            if isinstance(res, dict):
-                valid_questions.append(res)
-            else:
-                logger.error(f"Question generation failed for index {i}: {res}")
-                failed_indices.append(i)
-                
-        # Retry logic for failed questions (max 1 retry)
-        if failed_indices:
-            logger.info(f"Retrying {len(failed_indices)} failed questions...")
-            retry_tasks = []
-            for idx in failed_indices:
-                concept, q_type = concept_type_pairs[idx]
-                # Retry with a slightly different configuration or just retry
-                retry_tasks.append(generate_one(idx, concept, q_type))
-                
-            retry_results = await asyncio.gather(*retry_tasks, return_exceptions=True)
-            
-            for res in retry_results:
-                if isinstance(res, dict):
-                    valid_questions.append(res)
-                else:
-                    logger.error(f"Retry failed: {res}")
-
-        if not valid_questions:
-            raise ValueError(
-                "Failed to generate any valid questions after multiple attempts. "
-                "This may happen when content is too vague, lacks educational structure, or contains mostly lists/tables. "
-                "Try providing narrative text with clear concepts, definitions, and explanations."
-            )
-
-        # 7. Convert to Pydantic models
-        final_questions = []
-        for q in valid_questions:
-            eq = EnhancedQuestion(
-                # Required fields - use direct indexing
-                type=q["type"],
-                question=q["question"],
-                correct_answer=q["correct_answer"],
-                explanation=q["explanation"],
-                source=q["source"],
-                bloom_level=BloomLevel(q["bloom_level"]),
-                difficulty=Difficulty(q["difficulty"]),
-                # Optional fields - use .get() for safe access
-                options=q.get("options"),
-                left=q.get("left"),
-                right=q.get("right"),
-                concept_id=q.get("concept_id"),
-                concept_name=q.get("concept_name"),
-                chunk_id=q.get("chunk_id"),
-                confidence_score=q.get("confidence_score")
-            )
-            final_questions.append(eq)
-            
-        # 8. Save to Database with proper content source tracking
-        # For enhanced mode, we use the document_id as a secondary reference
-        # but preserve the original content_source_type (file/url/text)
+        # Step 5: Save to Database
         quiz_id, _ = save_quiz_to_database(
             title=request.title,
             quizzes=final_questions,
@@ -875,6 +1034,7 @@ async def generate_quiz_rag_async(
             user_token=user_token
         )
         
+        # Step 6: Build response
         return EnhancedQuizGenerationResponse(
             quiz_id=quiz_id,
             title=request.title,
@@ -885,16 +1045,14 @@ async def generate_quiz_rag_async(
                 "document_id": document_id,
                 "chunks_count": len(chunks),
                 "concepts_extracted": len(concepts),
-                "concepts_used": len(selected_concepts),
+                "concepts_used": len(concept_type_pairs),
                 "questions_generated": len(final_questions)
             }
         )
         
     except HTTPException:
-        # Re-raise HTTP exceptions (quota, validation errors)
         raise
     except ValueError as e:
-        # User-facing errors
         logger.warning(f"RAG Quiz Generation validation error: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
