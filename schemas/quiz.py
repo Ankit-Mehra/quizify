@@ -25,6 +25,7 @@ class QuestionBase(BaseModel):
     bloom_level: Optional[str] = None
     difficulty: Optional[str] = None
     concept_id: Optional[UUID] = None
+    concept_name: Optional[str] = None  # Human-readable concept name
     chunk_id: Optional[UUID] = None
     confidence_score: Optional[float] = None
 
@@ -207,6 +208,7 @@ class EnhancedQuestion(BaseModel):
     bloom_level: BloomLevel
     difficulty: Difficulty
     concept_id: Optional[UUID] = None
+    concept_name: Optional[str] = None  # Human-readable concept name (e.g., "Photosynthesis")
     chunk_id: Optional[UUID] = None
     confidence_score: Optional[float] = None
 

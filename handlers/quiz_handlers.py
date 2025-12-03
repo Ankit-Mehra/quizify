@@ -856,6 +856,7 @@ async def generate_quiz_rag_async(
                 bloom_level=BloomLevel(q["bloom_level"]),
                 difficulty=Difficulty(q["difficulty"]),
                 concept_id=q["concept_id"],
+                concept_name=q.get("concept_name"),  # Human-readable concept name (enhanced mode only)
                 chunk_id=q["chunk_id"],
                 confidence_score=q.get("confidence_score")
             )

@@ -193,6 +193,7 @@ class QuizOrchestrationService:
             result["difficulty"] = difficulty.value
             # Convert UUIDs to strings for JSON serialization
             result["concept_id"] = str(concept.get("id")) if concept.get("id") else None
+            result["concept_name"] = concept.get("name")  # Human-readable concept name
             result["chunk_id"] = str(concept.get("chunk_id")) if concept.get("chunk_id") else None
             result["source"] = "RAG"
             
