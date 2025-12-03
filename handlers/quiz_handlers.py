@@ -852,8 +852,9 @@ async def generate_quiz_rag_async(
                 correct_answer=q["correct_answer"],
                 explanation=q["explanation"],
                 source=q["source"],
-                bloom_level=q["bloom_level"],
-                difficulty=q["difficulty"],
+                # Convert string values to enums for Pydantic validation
+                bloom_level=BloomLevel(q["bloom_level"]),
+                difficulty=Difficulty(q["difficulty"]),
                 concept_id=q["concept_id"],
                 chunk_id=q["chunk_id"],
                 confidence_score=q.get("confidence_score")

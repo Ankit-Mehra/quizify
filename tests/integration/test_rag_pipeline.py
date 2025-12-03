@@ -60,7 +60,7 @@ async def test_rag_pipeline_flow():
                 "explanation": "Exp",
                 "source": "RAG",
                 "bloom_level": "remember",
-                "difficulty": "medium",
+                "difficulty": "easy",  # Match mocked assignment
                 "concept_id": concept_id_1,
                 "chunk_id": chunk_id,
                 "confidence_score": 0.9
@@ -71,7 +71,7 @@ async def test_rag_pipeline_flow():
                 "correct_answer": True,
                 "explanation": "Exp",
                 "source": "RAG",
-                "bloom_level": "remember",
+                "bloom_level": "understand",  # Match mocked assignment
                 "difficulty": "medium",
                 "concept_id": concept_id_2,
                 "chunk_id": chunk_id,

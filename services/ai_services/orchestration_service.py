@@ -191,8 +191,9 @@ class QuizOrchestrationService:
             result["type"] = question_type
             result["bloom_level"] = bloom_level.value
             result["difficulty"] = difficulty.value
-            result["concept_id"] = concept.get("id")
-            result["chunk_id"] = concept.get("chunk_id")
+            # Convert UUIDs to strings for JSON serialization
+            result["concept_id"] = str(concept.get("id")) if concept.get("id") else None
+            result["chunk_id"] = str(concept.get("chunk_id")) if concept.get("chunk_id") else None
             result["source"] = "RAG"
             
             return result
