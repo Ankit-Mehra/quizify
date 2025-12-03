@@ -1,7 +1,7 @@
 import json
 import time
 from typing import Dict, Any, List, Tuple
-from services.ai_services.openai_service import get_openai_client
+from services.ai_services.openai_service import get_openai_client, _build_posthog_kwargs
 from services.db_services.supabase_llm_analytics import track_llm_call
 from services.ai_services.pricing import calculate_cost
 from services.logger import ai_logger as logger
@@ -122,6 +122,13 @@ class ExplanationService:
                 options=options_str,
                 context=context[:2000]  # Limit context size
             )
+            
+            # Build PostHog tracking kwargs
+            posthog_kwargs = _build_posthog_kwargs(
+                user_id=user_id,
+                trace_id=trace_id,
+                properties={"call_type": "verify_explain"}
+            )
 
             response = await self.client.chat.completions.create(
                 model=model,
@@ -130,7 +137,8 @@ class ExplanationService:
                     {"role": "user", "content": prompt}
                 ],
                 response_format={"type": "json_object"},
-                temperature=0.2
+                temperature=0.2,
+                **posthog_kwargs
             )
             
             latency_ms = int((time.time() - start_time) * 1000)
@@ -183,6 +191,13 @@ class ExplanationService:
                 correct_answer=question_data.get("correct_answer"),
                 context=context[:2000] # Limit context size
             )
+            
+            # Build PostHog tracking kwargs
+            posthog_kwargs = _build_posthog_kwargs(
+                user_id=user_id,
+                trace_id=trace_id,
+                properties={"call_type": "verification"}
+            )
 
             response = await self.client.chat.completions.create(
                 model=model,
@@ -191,7 +206,8 @@ class ExplanationService:
                     {"role": "user", "content": prompt}
                 ],
                 response_format={"type": "json_object"},
-                temperature=0.1
+                temperature=0.1,
+                **posthog_kwargs
             )
             
             latency_ms = int((time.time() - start_time) * 1000)
@@ -247,6 +263,13 @@ class ExplanationService:
                 distractors=distractors,
                 context=context[:2000]
             )
+            
+            # Build PostHog tracking kwargs
+            posthog_kwargs = _build_posthog_kwargs(
+                user_id=user_id,
+                trace_id=trace_id,
+                properties={"call_type": "explanation"}
+            )
 
             response = await self.client.chat.completions.create(
                 model=model,
@@ -255,7 +278,8 @@ class ExplanationService:
                     {"role": "user", "content": prompt}
                 ],
                 response_format={"type": "json_object"},
-                temperature=0.7
+                temperature=0.7,
+                **posthog_kwargs
             )
             
             latency_ms = int((time.time() - start_time) * 1000)
