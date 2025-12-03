@@ -3,7 +3,7 @@ import time
 import random
 from typing import Literal, Dict, Any, Optional, List
 
-from services.ai_services.openai_service import get_openai_client
+from services.ai_services.openai_service import get_openai_client, _build_posthog_kwargs
 from services.ai_services.context_service import ContextService
 from services.ai_services.pricing import calculate_cost
 from services.ai_services.explanation_service import ExplanationService
@@ -118,8 +118,13 @@ class QuizOrchestrationService:
             context=context
         )
         
-        # 4. Call LLM
+        # 4. Call LLM with PostHog tracking
         model = "gpt-4o"  # Use stronger model for generation
+        posthog_kwargs = _build_posthog_kwargs(
+            user_id=user_id,
+            trace_id=trace_id,
+            properties={"call_type": "question_generation", "bloom_level": bloom_level.value}
+        )
         
         try:
             response = await self.client.chat.completions.create(
@@ -129,7 +134,8 @@ class QuizOrchestrationService:
                     {"role": "user", "content": prompt}
                 ],
                 response_format={"type": "json_object"},
-                temperature=0.7
+                temperature=0.7,
+                **posthog_kwargs
             )
             
             latency_ms = int((time.time() - start_time) * 1000)
@@ -163,9 +169,8 @@ class QuizOrchestrationService:
                 }
             )
             
-            # 7. Verify and Generate Explanation (New Step)
-            # Verify question quality
-            is_valid, confidence, issues = await self.explanation_service.verify_question(
+            # 7. Verify + Explain in ONE LLM call (50% faster than separate calls)
+            is_valid, confidence, issues, explanation = await self.explanation_service.verify_and_explain(
                 question_data=result,
                 context=context,
                 user_id=user_id,
@@ -176,14 +181,6 @@ class QuizOrchestrationService:
                 logger.warning(f"Question verification failed: {issues}")
                 # Strictly filter out low-quality questions
                 raise ValueError(f"Question rejected by verification: {issues}")
-            
-            # Generate detailed explanation
-            explanation = await self.explanation_service.generate_explanation(
-                question_data=result,
-                context=context,
-                user_id=user_id,
-                trace_id=trace_id
-            )
             
             # 8. Format Result with metadata
             # Use .value for JSON serialization compatibility

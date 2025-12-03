@@ -4,7 +4,7 @@ import asyncio
 from typing import List, Dict, Any, Optional
 from uuid import uuid4
 
-from services.ai_services.openai_service import get_openai_client
+from services.ai_services.openai_service import get_openai_client, _build_posthog_kwargs
 from services.logger import ai_logger as logger
 from services.db_services.supabase_concepts import create_concepts
 from services.db_services.supabase_llm_analytics import track_llm_call
@@ -118,12 +118,16 @@ class ConceptExtractionService:
         
         logger.info(f"Extracting concepts from {len(chunks)} chunks for doc {document_id}")
         
-        # Limit chunks to process
-        if len(chunks) > config.MAX_CHUNKS_PER_DOCUMENT:
-            chunks = chunks[:config.MAX_CHUNKS_PER_DOCUMENT]
+        # Limit chunks to process - use smaller limit for faster quiz generation
+        # Most quizzes need 10-20 questions, so 20 chunks is plenty
+        max_chunks_for_extraction = min(20, config.MAX_CHUNKS_PER_DOCUMENT)
+        if len(chunks) > max_chunks_for_extraction:
+            logger.info(f"Limiting chunk processing from {len(chunks)} to {max_chunks_for_extraction} for faster extraction")
+            chunks = chunks[:max_chunks_for_extraction]
         
         # Process chunks in parallel with rate limiting
-        semaphore = asyncio.Semaphore(5)  # Max 5 concurrent requests
+        # Increased from 5 to 10 for faster processing (gpt-4o-mini handles it well)
+        semaphore = asyncio.Semaphore(10)
         
         async def process_chunk(chunk):
             async with semaphore:
@@ -174,6 +178,13 @@ class ConceptExtractionService:
         start_time = time.time()
         model = "gpt-4o-mini"
         
+        # Build PostHog tracking kwargs
+        posthog_kwargs = _build_posthog_kwargs(
+            user_id=user_id,
+            trace_id=trace_id,
+            properties={"call_type": "concept_extraction", "document_id": document_id}
+        )
+        
         try:
             response = await self.client.chat.completions.create(
                 model=model,
@@ -182,7 +193,8 @@ class ConceptExtractionService:
                     {"role": "user", "content": CONCEPT_EXTRACTION_PROMPT.format(chunk_text=chunk["content"])}
                 ],
                 response_format={"type": "json_object"},
-                temperature=0.3
+                temperature=0.3,
+                **posthog_kwargs
             )
             
             latency_ms = int((time.time() - start_time) * 1000)
