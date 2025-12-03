@@ -143,7 +143,8 @@ def create_presigned_url(file_id: str, user_id: str = Depends(get_current_user_i
         logger.debug(f"Creating presigned URL for file {file_id}")
         logger.debug(f"User ID: {user_id}")
 
-        file_record = get_file_record(file_id)
+        # Use authenticated client to fetch file record (enforces RLS)
+        file_record = get_file_record(file_id, token)
         logger.debug(f"File data: {file_record}")
         
         if not file_record:

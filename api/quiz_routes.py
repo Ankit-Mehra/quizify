@@ -1,10 +1,12 @@
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, HTTPException, Response, Depends
 from schemas.quiz import (
     QuizMetadata, 
     QuizGenerationResponse,
     QuizzesResponse,
     MyQuizzesResponse,
-    DeleteQuizResponse
+    DeleteQuizResponse,
+    EnhancedTextQuizRequest,
+    EnhancedQuizGenerationResponse
 )
 from handlers.quiz_handlers import (
     generate_quiz_from_file_openai,
@@ -14,8 +16,10 @@ from handlers.quiz_handlers import (
     get_user_quizzes_handler,
     get_quiz_by_id_handler,
     get_metadata_handler,
-    delete_quiz_by_id_handler
+    delete_quiz_by_id_handler,
+    generate_quiz_rag_async
 )
+from dependencies.auth_dependencies import get_current_user_id, get_current_user_token
 from typing import List
 from services.logger import app_logger as logger
 
@@ -135,3 +139,22 @@ router.add_api_route(
     response_model=DeleteQuizResponse,
     tags=["Quiz Management"]
 )
+
+# === V2 RAG Pipeline Endpoints ===
+
+@router.post(
+    "/v2/quiz/text",
+    response_model=EnhancedQuizGenerationResponse,
+    summary="Generate Enhanced Quiz from Text (RAG)",
+    tags=["Quiz Generation V2"]
+)
+async def generate_quiz_from_text_v2(
+    request: EnhancedTextQuizRequest,
+    user_id: str = Depends(get_current_user_id),
+    user_token: str = Depends(get_current_user_token)
+):
+    """
+    Generate a high-quality quiz from text using the RAG pipeline.
+    Includes concept extraction, Bloom's taxonomy classification, and difficulty leveling.
+    """
+    return await generate_quiz_rag_async(request, user_id, user_token)

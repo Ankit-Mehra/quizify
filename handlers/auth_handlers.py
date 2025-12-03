@@ -408,7 +408,8 @@ async def logout(
 
 
 async def change_password(request: ChangePasswordRequest,
-                           user_id: str = Depends(get_current_user_id)):
+                           user_id: str = Depends(get_current_user_id),
+                           user_token: str = Depends(get_current_user_token)):
     """
     Change password for authenticated user.
     
@@ -418,11 +419,14 @@ async def change_password(request: ChangePasswordRequest,
     User is identified by JWT token (user_id), not by email in request body.
     """
     try:
-        supabase = get_supabase()
         logger.info(f"Password change requested for user ID: {_short_user_id(user_id)}")
         
+        # Use authenticated client for user operations
+        supabase = app_config.get_authenticated_supabase_client(user_token)
+        
         # SECURITY: Get user's email for current password verification
-        user_response = supabase.auth.admin.get_user_by_id(user_id)
+        # With authenticated client, we can get the user's own details
+        user_response = supabase.auth.get_user()
         if not user_response or not user_response.user:
             raise HTTPException(status_code=404, detail="User not found")
         
@@ -431,8 +435,10 @@ async def change_password(request: ChangePasswordRequest,
             raise HTTPException(status_code=400, detail="User has no email configured")
         
         # SECURITY: Verify current password by attempting sign-in
+        # We use a fresh client for this to avoid messing with the current session
+        auth_client = get_supabase()
         try:
-            supabase.auth.sign_in_with_password({
+            auth_client.auth.sign_in_with_password({
                 "email": user_email,
                 "password": request.current_password
             })
@@ -444,8 +450,8 @@ async def change_password(request: ChangePasswordRequest,
             # Re-raise unexpected auth errors
             raise
         
-        # Current password verified, now update to new password
-        supabase.auth.admin.update_user_by_id(user_id, {"password": request.new_password})
+        # Current password verified, now update to new password using authenticated client
+        supabase.auth.update_user({"password": request.new_password})
         logger.info(f"Password updated successfully for user ID: {_short_user_id(user_id)}")
         return {"message": "Password updated successfully"}
     except HTTPException:
