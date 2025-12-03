@@ -844,20 +844,21 @@ async def generate_quiz_rag_async(
         final_questions = []
         for q in valid_questions:
             eq = EnhancedQuestion(
+                # Required fields - use direct indexing
                 type=q["type"],
                 question=q["question"],
-                options=q.get("options"),
-                left=q.get("left"),
-                right=q.get("right"),
                 correct_answer=q["correct_answer"],
                 explanation=q["explanation"],
                 source=q["source"],
-                # Convert string values to enums for Pydantic validation
                 bloom_level=BloomLevel(q["bloom_level"]),
                 difficulty=Difficulty(q["difficulty"]),
-                concept_id=q["concept_id"],
-                concept_name=q.get("concept_name"),  # Human-readable concept name (enhanced mode only)
-                chunk_id=q["chunk_id"],
+                # Optional fields - use .get() for safe access
+                options=q.get("options"),
+                left=q.get("left"),
+                right=q.get("right"),
+                concept_id=q.get("concept_id"),
+                concept_name=q.get("concept_name"),
+                chunk_id=q.get("chunk_id"),
                 confidence_score=q.get("confidence_score")
             )
             final_questions.append(eq)

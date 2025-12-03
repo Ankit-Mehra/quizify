@@ -192,9 +192,12 @@ class QuizOrchestrationService:
             result["bloom_level"] = bloom_level.value
             result["difficulty"] = difficulty.value
             # Convert UUIDs to strings for JSON serialization
-            result["concept_id"] = str(concept.get("id")) if concept.get("id") else None
-            result["concept_name"] = concept.get("name")  # Human-readable concept name
-            result["chunk_id"] = str(concept.get("chunk_id")) if concept.get("chunk_id") else None
+            # Use .get() for optional fields from concept dict
+            concept_id = concept.get("id")
+            result["concept_id"] = str(concept_id) if concept_id else None
+            result["concept_name"] = concept.get("name")
+            chunk_id = concept.get("chunk_id")
+            result["chunk_id"] = str(chunk_id) if chunk_id else None
             result["source"] = "RAG"
             
             return result
