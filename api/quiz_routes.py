@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Response, Depends
+from fastapi import APIRouter, HTTPException, Response
 from schemas.quiz import (
     QuizMetadata, 
     QuizzesResponse,
@@ -16,7 +16,6 @@ from handlers.quiz_handlers import (
     get_metadata_handler,
     delete_quiz_by_id_handler
 )
-from dependencies.auth_dependencies import get_current_user_id, get_current_user_token
 from typing import List
 from services.logger import app_logger as logger
 

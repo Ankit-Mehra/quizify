@@ -8,20 +8,8 @@ from services.ai_services.openai_service import get_openai_client
 from services.logger import ai_logger as logger
 from services.db_services.supabase_concepts import create_concepts
 from services.db_services.supabase_llm_analytics import track_llm_call
+from services.ai_services.pricing import calculate_cost
 from config import config
-
-# Pricing per 1K tokens (as of Dec 2024)
-LLM_PRICING = {
-    "gpt-4o": {"input": 0.0025, "output": 0.01},
-    "gpt-4o-mini": {"input": 0.00015, "output": 0.0006},
-    "text-embedding-3-small": {"input": 0.00002, "output": 0},
-}
-
-
-def calculate_cost(model: str, input_tokens: int, output_tokens: int) -> float:
-    """Calculate USD cost for an LLM call."""
-    pricing = LLM_PRICING.get(model, {"input": 0, "output": 0})
-    return (input_tokens * pricing["input"] / 1000) + (output_tokens * pricing["output"] / 1000)
 
 
 CONCEPT_EXTRACTION_PROMPT = """

@@ -12,16 +12,7 @@ from services.db_services.supabase_documents import create_document
 from services.db_services.supabase_chunks import create_chunks
 from services.ai_services.openai_service import get_openai_client
 from services.db_services.supabase_llm_analytics import track_llm_call
-
-# Pricing per 1K tokens (as of Dec 2024)
-LLM_PRICING = {
-    "text-embedding-3-small": {"input": 0.00002, "output": 0},
-}
-
-def calculate_cost(model: str, input_tokens: int, output_tokens: int) -> float:
-    """Calculate USD cost for an LLM call."""
-    pricing = LLM_PRICING.get(model, {"input": 0, "output": 0})
-    return (input_tokens * pricing["input"] / 1000) + (output_tokens * pricing["output"] / 1000)
+from services.ai_services.pricing import calculate_cost
 
 
 class IngestionService:
