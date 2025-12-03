@@ -118,12 +118,16 @@ class ConceptExtractionService:
         
         logger.info(f"Extracting concepts from {len(chunks)} chunks for doc {document_id}")
         
-        # Limit chunks to process
-        if len(chunks) > config.MAX_CHUNKS_PER_DOCUMENT:
-            chunks = chunks[:config.MAX_CHUNKS_PER_DOCUMENT]
+        # Limit chunks to process - use smaller limit for faster quiz generation
+        # Most quizzes need 10-20 questions, so 20 chunks is plenty
+        max_chunks_for_extraction = min(20, config.MAX_CHUNKS_PER_DOCUMENT)
+        if len(chunks) > max_chunks_for_extraction:
+            logger.info(f"Limiting chunk processing from {len(chunks)} to {max_chunks_for_extraction} for faster extraction")
+            chunks = chunks[:max_chunks_for_extraction]
         
         # Process chunks in parallel with rate limiting
-        semaphore = asyncio.Semaphore(5)  # Max 5 concurrent requests
+        # Increased from 5 to 10 for faster processing (gpt-4o-mini handles it well)
+        semaphore = asyncio.Semaphore(10)
         
         async def process_chunk(chunk):
             async with semaphore:

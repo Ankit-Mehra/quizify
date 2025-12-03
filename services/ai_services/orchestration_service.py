@@ -163,9 +163,8 @@ class QuizOrchestrationService:
                 }
             )
             
-            # 7. Verify and Generate Explanation (New Step)
-            # Verify question quality
-            is_valid, confidence, issues = await self.explanation_service.verify_question(
+            # 7. Verify + Explain in ONE LLM call (50% faster than separate calls)
+            is_valid, confidence, issues, explanation = await self.explanation_service.verify_and_explain(
                 question_data=result,
                 context=context,
                 user_id=user_id,
@@ -176,14 +175,6 @@ class QuizOrchestrationService:
                 logger.warning(f"Question verification failed: {issues}")
                 # Strictly filter out low-quality questions
                 raise ValueError(f"Question rejected by verification: {issues}")
-            
-            # Generate detailed explanation
-            explanation = await self.explanation_service.generate_explanation(
-                question_data=result,
-                context=context,
-                user_id=user_id,
-                trace_id=trace_id
-            )
             
             # 8. Format Result with metadata
             # Use .value for JSON serialization compatibility
