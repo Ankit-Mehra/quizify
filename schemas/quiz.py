@@ -1,12 +1,18 @@
 # schemas/quiz.py
 from pydantic import BaseModel, Field, model_validator, ConfigDict
-from typing import List, Optional, Literal, Union
+from typing import List, Optional, Literal, Union, Dict, Any
 from uuid import UUID
+from enum import Enum
 
 # Content source type options
 # IMPORTANT: These values MUST match migrations/001_add_missing_features.sql CHECK constraint
 # Database constraint: CHECK (content_source_type IN ('file', 'url', 'text'))
 CONTENT_SOURCE_TYPES = Literal["file", "url", "text"]
+
+# Question type constants - used for validation and random selection
+# IMPORTANT: Keep in sync with QUESTION_TYPE_PROMPTS in openai_service.py
+QUESTION_TYPE = Literal["multiple_choice", "true_false", "fill_blank", "matching"]
+ALL_QUESTION_TYPES: List[str] = ["multiple_choice", "true_false", "fill_blank", "matching"]
 
 # === 1. Question type models ===
 class QuestionBase(BaseModel):
@@ -15,6 +21,13 @@ class QuestionBase(BaseModel):
     quiz_id: Optional[UUID] = None
     explanation: str = ""
     source: str = ""
+    # Enhanced metadata (optional for backward compatibility)
+    bloom_level: Optional[str] = None
+    difficulty: Optional[str] = None
+    concept_id: Optional[UUID] = None
+    concept_name: Optional[str] = None  # Human-readable concept name
+    chunk_id: Optional[UUID] = None
+    confidence_score: Optional[float] = None
 
 class MCQQuestion(QuestionBase):
     type: Literal["multiple_choice"]
@@ -85,6 +98,9 @@ class QuizMetadata(BaseModel):
     created_by: Optional[str] = None
     question_count: Optional[int] = None
 
+# Generation mode options
+GENERATION_MODE = Literal["standard", "enhanced"]
+
 class TextQuizRequest(BaseModel):
     model_config = ConfigDict(strict=True, validate_assignment=True)
     title: str = Field(..., description="Title of the quiz")
@@ -92,6 +108,7 @@ class TextQuizRequest(BaseModel):
     question_type: List[Literal[
         "multiple_choice", "true_false", "fill_blank","matching","mixed"]] = ["mixed"]
     num_questions: Optional[int] = Field(10, gt=0, le=50, description="Number of questions to generate")
+    mode: GENERATION_MODE = Field("standard", description="Generation mode: 'standard' for fast generation, 'enhanced' for RAG-based quality with Bloom's taxonomy")
 
     @model_validator(mode='after')
     def validate_fields(self) -> 'TextQuizRequest':
@@ -109,6 +126,7 @@ class FileQuizRequest(BaseModel):
     num_questions: Optional[int] = Field(10, gt=0, le=50, description="Number of questions to generate")
     question_type: List[Literal[
         "multiple_choice", "true_false", "fill_blank","matching","mixed"]] = ["mixed"]
+    mode: GENERATION_MODE = Field("standard", description="Generation mode: 'standard' for fast generation, 'enhanced' for RAG-based quality")
 
 class WebQuizRequest(BaseModel):
     """Request to generate quiz from web URL (basic/pro tiers only)"""
@@ -118,6 +136,7 @@ class WebQuizRequest(BaseModel):
     question_type: List[Literal[
         "multiple_choice", "true_false", "fill_blank","matching","mixed"]] = ["mixed"]
     num_questions: Optional[int] = Field(10, gt=0, le=50, description="Number of questions to generate")
+    mode: GENERATION_MODE = Field("standard", description="Generation mode: 'standard' for fast generation, 'enhanced' for RAG-based quality")
 
     @model_validator(mode='after')
     def validate_web_fields(self) -> 'WebQuizRequest':
@@ -157,3 +176,67 @@ class MyQuizzesResponse(BaseModel):
 class DeleteQuizResponse(BaseModel):
     """Response for quiz deletion"""
     message: str
+
+# === 5. Enhanced RAG Pipeline Models ===
+
+class BloomLevel(str, Enum):
+    REMEMBER = "remember"
+    UNDERSTAND = "understand"
+    APPLY = "apply"
+    ANALYZE = "analyze"
+    EVALUATE = "evaluate"
+    CREATE = "create"
+
+class Difficulty(str, Enum):
+    EASY = "easy"
+    MEDIUM = "medium"
+    HARD = "hard"
+
+class EnhancedQuestion(BaseModel):
+    """Enhanced question with quality metadata"""
+    id: Optional[UUID] = None
+    quiz_id: Optional[UUID] = None
+    type: Literal["multiple_choice", "true_false", "fill_blank", "matching"]
+    question: str
+    options: Optional[List[str]] = None
+    # For matching questions
+    left: Optional[List[str]] = None
+    right: Optional[List[str]] = None
+    correct_answer: Union[str, bool, List[int]]
+    explanation: str
+    source: str
+    bloom_level: BloomLevel
+    difficulty: Difficulty
+    concept_id: Optional[UUID] = None
+    concept_name: Optional[str] = None  # Human-readable concept name (e.g., "Photosynthesis")
+    chunk_id: Optional[UUID] = None
+    confidence_score: Optional[float] = None
+
+class QuizGenerationOptions(BaseModel):
+    """Options for quiz generation
+    
+    Note: Dict keys use string values for JSON serialization compatibility.
+    BloomLevel/Difficulty enum values should be used as keys (e.g., "remember", "easy").
+    """
+    bloom_distribution: Optional[Dict[str, float]] = None  # {"remember": 0.3, "understand": 0.4, ...}
+    difficulty_distribution: Optional[Dict[str, float]] = None  # {"easy": 0.3, "medium": 0.5, "hard": 0.2}
+    enable_rag: bool = True
+    enable_fact_check: bool = True
+
+class EnhancedTextQuizRequest(BaseModel):
+    title: str
+    content: str
+    # Allow mixed, single type, or list of types
+    question_type: Union[Literal["mixed"], Literal["multiple_choice", "true_false", "fill_blank", "matching"], List[Literal["multiple_choice", "true_false", "fill_blank", "matching"]]] = "mixed"
+    num_questions: int = Field(10, gt=0, le=50)
+    mode: GENERATION_MODE = Field("enhanced", description="Generation mode: 'standard' for fast generation, 'enhanced' for RAG-based quality")
+    options: Optional[QuizGenerationOptions] = None
+
+class EnhancedQuizGenerationResponse(BaseModel):
+    quiz_id: str
+    title: str
+    message: str
+    questions: List[EnhancedQuestion]
+    generation_stats: Dict[str, Any] = Field(default_factory=dict)  # Chunks, concepts, tokens used, etc.
+    source_url: Optional[str] = None
+    file_id: Optional[str] = None

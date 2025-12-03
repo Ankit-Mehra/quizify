@@ -47,6 +47,23 @@ class Config:
         "Mozilla/5.0 (compatible; QuizifyBot/1.0; +https://quizify.app/bot)"
     )
     
+    # LlamaIndex & RAG Configuration
+    EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
+    EMBEDDING_DIMENSIONS: int = int(os.getenv("EMBEDDING_DIMENSIONS", "1536"))
+    CHUNK_SIZE: int = int(os.getenv("CHUNK_SIZE", "512"))
+    CHUNK_OVERLAP: int = int(os.getenv("CHUNK_OVERLAP", "50"))
+    
+    # Quality Settings
+    ENABLE_RAG_PIPELINE: bool = os.getenv("ENABLE_RAG_PIPELINE", "true").lower() == "true"
+    ENABLE_CONCEPT_EXTRACTION: bool = os.getenv("ENABLE_CONCEPT_EXTRACTION", "true").lower() == "true"
+    ENABLE_BLOOM_CLASSIFICATION: bool = os.getenv("ENABLE_BLOOM_CLASSIFICATION", "true").lower() == "true"
+    ENABLE_FACT_CHECK: bool = os.getenv("ENABLE_FACT_CHECK", "true").lower() == "true"
+    
+    # Performance Limits
+    MAX_CHUNKS_PER_DOCUMENT: int = int(os.getenv("MAX_CHUNKS_PER_DOCUMENT", "100"))
+    MAX_CONCEPTS_PER_DOCUMENT: int = int(os.getenv("MAX_CONCEPTS_PER_DOCUMENT", "50"))
+    EMBEDDING_BATCH_SIZE: int = int(os.getenv("EMBEDDING_BATCH_SIZE", "20"))
+    
     # ============================================================================
     # Redis Configuration (for distributed state management)
     # ============================================================================

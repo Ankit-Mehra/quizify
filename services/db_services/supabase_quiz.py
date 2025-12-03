@@ -104,6 +104,18 @@ def save_quiz_to_database(
                 "explanation": q.explanation,
                 "source": q.source
             }
+            
+            # Add enhanced metadata if present
+            if hasattr(q, "bloom_level") and q.bloom_level:
+                base["bloom_level"] = q.bloom_level
+            if hasattr(q, "difficulty") and q.difficulty:
+                base["difficulty"] = q.difficulty
+            if hasattr(q, "concept_id") and q.concept_id:
+                base["concept_id"] = str(q.concept_id)
+            if hasattr(q, "chunk_id") and q.chunk_id:
+                base["chunk_id"] = str(q.chunk_id)
+            if hasattr(q, "confidence_score") and q.confidence_score is not None:
+                base["confidence_score"] = q.confidence_score
 
             if q.type == "multiple_choice":
                 base["options"] = q.options
