@@ -21,36 +21,118 @@ BLOOM_DESCRIPTIONS = {
     "create": "producing original work (design, construct, propose)"
 }
 
-QUESTION_GENERATION_PROMPT = """
-You are an expert educational content creator.
-Create a {difficulty} difficulty {question_type} question at the {bloom_level} Bloom's Taxonomy level.
+# Question-type specific prompts to avoid confusion
+# Each prompt shows EXACTLY what JSON format is expected for that type
+
+PROMPT_MCQ = """You are an expert educational content creator.
+Create a {difficulty} difficulty multiple choice question at the {bloom_level} Bloom's Taxonomy level.
 
 Target Concept: {concept_name}
 Concept Type: {concept_type}
-
-Bloom Level Description: {bloom_description}
+Bloom Level: {bloom_description}
 
 Context:
 {context}
 
 Requirements:
 1. Question must be clear, unambiguous, and directly test the concept.
-2. For multiple_choice: provide exactly 4 options with 1 correct answer and 3 plausible distractors.
-3. For true_false: create a statement that is clearly true or false based on the context.
-4. For fill_blank: create a sentence with a key term removed, marked with _____.
-5. For matching: provide 4 pairs of related items. Return "left" and "right" lists, and "correct_answer" as list of indices [0, 1, 2, 3] mapping left to right.
-6. Assign a confidence score (0.0-1.0) based on how well the question tests the concept.
+2. Provide exactly 4 options with 1 correct answer and 3 plausible distractors.
+3. Do NOT use labels like "A)", "B)", "1." in options - just the text.
+4. correct_answer must exactly match one of the options.
 
-Return JSON format:
+Return this exact JSON format:
 {{
-  "question": "...",
-  "options": ["A) ...", "B) ...", "C) ...", "D) ..."],  // for multiple_choice only
-  "left": ["Item 1", "Item 2", ...], // for matching only
-  "right": ["Match A", "Match B", ...], // for matching only
-  "correct_answer": "A" or true/false or "term" or [0,1,2,3],  // type-dependent
+  "question": "Your question text here?",
+  "options": ["Option 1", "Option 2", "Option 3", "Option 4"],
+  "correct_answer": "Option 1",
   "confidence_score": 0.95
 }}
 """
+
+PROMPT_TRUE_FALSE = """You are an expert educational content creator.
+Create a {difficulty} difficulty true/false question at the {bloom_level} Bloom's Taxonomy level.
+
+Target Concept: {concept_name}
+Concept Type: {concept_type}
+Bloom Level: {bloom_description}
+
+Context:
+{context}
+
+Requirements:
+1. Create a statement that is clearly true or false based on the context.
+2. The statement should test understanding, not trick the reader.
+3. correct_answer must be a boolean: true or false.
+
+Return this exact JSON format:
+{{
+  "question": "Statement that is either true or false.",
+  "correct_answer": true,
+  "confidence_score": 0.95
+}}
+"""
+
+PROMPT_FILL_BLANK = """You are an expert educational content creator.
+Create a {difficulty} difficulty fill-in-the-blank question at the {bloom_level} Bloom's Taxonomy level.
+
+Target Concept: {concept_name}
+Concept Type: {concept_type}
+Bloom Level: {bloom_description}
+
+Context:
+{context}
+
+Requirements:
+1. Create a sentence with ONE key term removed, marked with _____ (five underscores).
+2. You MUST provide exactly 4 options including the correct answer.
+3. Options should be plausible alternatives to make the question challenging.
+4. correct_answer must exactly match one of the options.
+
+Return this exact JSON format:
+{{
+  "question": "The _____ is responsible for generating ATP in cells.",
+  "options": ["mitochondria", "nucleus", "ribosome", "cytoplasm"],
+  "correct_answer": "mitochondria",
+  "confidence_score": 0.95
+}}
+"""
+
+PROMPT_MATCHING = """You are an expert educational content creator.
+Create a {difficulty} difficulty matching question at the {bloom_level} Bloom's Taxonomy level.
+
+Target Concept: {concept_name}
+Concept Type: {concept_type}
+Bloom Level: {bloom_description}
+
+Context:
+{context}
+
+Requirements:
+1. Create exactly 4 pairs of related items to match.
+2. "left" contains 4 items (e.g., terms, names, concepts).
+3. "right" contains 4 corresponding matches (e.g., definitions, discoveries, descriptions).
+4. "correct_answer" is a list of 4 indices showing which right item matches each left item.
+   - Index 0 means the first item in "right" matches the corresponding "left" item.
+   - Example: [0, 1, 2, 3] means left[0]→right[0], left[1]→right[1], etc.
+   - Example: [2, 0, 3, 1] means left[0]→right[2], left[1]→right[0], etc.
+
+Return this exact JSON format:
+{{
+  "question": "Match each scientist with their discovery.",
+  "left": ["Einstein", "Newton", "Curie", "Darwin"],
+  "right": ["Relativity", "Gravity", "Radioactivity", "Evolution"],
+  "correct_answer": [0, 1, 2, 3],
+  "confidence_score": 0.95
+}}
+"""
+
+# Map question types to their specific prompts
+QUESTION_TYPE_PROMPTS = {
+    "multiple_choice": PROMPT_MCQ,
+    "true_false": PROMPT_TRUE_FALSE,
+    "fill_blank": PROMPT_FILL_BLANK,
+    "matching": PROMPT_MATCHING,
+}
 
 
 class QuizOrchestrationService:
@@ -153,12 +235,14 @@ class QuizOrchestrationService:
         # 2. Get Context (sync call - fast enough for single chunk)
         context = self.context_service.get_context_for_concept(concept, user_token, mode)
         
-        # 3. Build Prompt with Bloom description
+        # 3. Build Prompt - use question-type-specific prompt for clarity
         bloom_description = BLOOM_DESCRIPTIONS.get(bloom_level.value, "testing knowledge")
         
-        prompt = QUESTION_GENERATION_PROMPT.format(
+        # Select the appropriate prompt template for this question type
+        prompt_template = QUESTION_TYPE_PROMPTS.get(question_type, PROMPT_MCQ)
+        
+        prompt = prompt_template.format(
             difficulty=difficulty.value,
-            question_type=question_type,
             bloom_level=bloom_level.value,
             bloom_description=bloom_description,
             concept_name=concept["name"],
