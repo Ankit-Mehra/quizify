@@ -1,8 +1,11 @@
 # schemas/quiz.py
-from pydantic import BaseModel, Field, model_validator, ConfigDict
+from pydantic import BaseModel, Field, model_validator, field_validator, ConfigDict
 from typing import List, Optional, Literal, Union, Dict, Any
 from uuid import UUID
 from enum import Enum
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Content source type options
 # IMPORTANT: These values MUST match migrations/001_add_missing_features.sql CHECK constraint
@@ -34,6 +37,15 @@ class MCQQuestion(QuestionBase):
     question: str
     options: List[str]
     correct_answer: str
+    
+    @field_validator('options', mode='before')
+    @classmethod
+    def ensure_options_list(cls, v):
+        """Handle LLM returning null for options field."""
+        if v is None:
+            logger.warning("MCQ question received null options, defaulting to empty list")
+            return []
+        return v
 
 class TrueFalseQuestion(QuestionBase):
     type: Literal["true_false"]
@@ -45,6 +57,20 @@ class FillBlankQuestion(QuestionBase):
     question: str  # use ____ or {{blank}} in question
     options: List[str]
     correct_answer: str
+    
+    @field_validator('options', mode='before')
+    @classmethod
+    def ensure_options_list(cls, v):
+        """Handle LLM returning null for options field.
+        
+        The LLM sometimes returns {"options": null} despite prompts
+        requiring a list. This validator ensures we don't fail validation
+        and instead log a warning for monitoring.
+        """
+        if v is None:
+            logger.warning("FillBlank question received null options, defaulting to empty list")
+            return []
+        return v
 
 class MatchingQuestion(QuestionBase):
     type: Literal["matching"]
@@ -52,6 +78,33 @@ class MatchingQuestion(QuestionBase):
     left: List[str]
     right: List[str]
     correct_answer: List[int]  # list of matching indices
+    
+    @field_validator('left', mode='before')
+    @classmethod
+    def ensure_left_list(cls, v):
+        """Handle LLM returning null for left field."""
+        if v is None:
+            logger.warning("Matching question received null left, defaulting to empty list")
+            return []
+        return v
+    
+    @field_validator('right', mode='before')
+    @classmethod
+    def ensure_right_list(cls, v):
+        """Handle LLM returning null for right field."""
+        if v is None:
+            logger.warning("Matching question received null right, defaulting to empty list")
+            return []
+        return v
+    
+    @field_validator('correct_answer', mode='before')
+    @classmethod
+    def ensure_correct_answer_list(cls, v):
+        """Handle LLM returning null for correct_answer field."""
+        if v is None:
+            logger.warning("Matching question received null correct_answer, defaulting to empty list")
+            return []
+        return v
 
 # === 2. Discriminated union ===
 
