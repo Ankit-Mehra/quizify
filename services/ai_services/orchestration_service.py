@@ -186,10 +186,11 @@ class QuizOrchestrationService:
             )
             
             # 8. Format Result with metadata
+            # Use .value for JSON serialization compatibility
             result["explanation"] = explanation
             result["type"] = question_type
-            result["bloom_level"] = bloom_level
-            result["difficulty"] = difficulty
+            result["bloom_level"] = bloom_level.value
+            result["difficulty"] = difficulty.value
             result["concept_id"] = concept.get("id")
             result["chunk_id"] = concept.get("chunk_id")
             result["source"] = "RAG"

@@ -9,6 +9,11 @@ from enum import Enum
 # Database constraint: CHECK (content_source_type IN ('file', 'url', 'text'))
 CONTENT_SOURCE_TYPES = Literal["file", "url", "text"]
 
+# Question type constants - used for validation and random selection
+# IMPORTANT: Keep in sync with QUESTION_TYPE_PROMPTS in openai_service.py
+QUESTION_TYPE = Literal["multiple_choice", "true_false", "fill_blank", "matching"]
+ALL_QUESTION_TYPES: List[str] = ["multiple_choice", "true_false", "fill_blank", "matching"]
+
 # === 1. Question type models ===
 class QuestionBase(BaseModel):
     """Base class for questions with database IDs (used in retrieval/submission)"""
@@ -206,9 +211,13 @@ class EnhancedQuestion(BaseModel):
     confidence_score: Optional[float] = None
 
 class QuizGenerationOptions(BaseModel):
-    """Options for quiz generation"""
-    bloom_distribution: Optional[Dict[BloomLevel, float]] = None
-    difficulty_distribution: Optional[Dict[Difficulty, float]] = None
+    """Options for quiz generation
+    
+    Note: Dict keys use string values for JSON serialization compatibility.
+    BloomLevel/Difficulty enum values should be used as keys (e.g., "remember", "easy").
+    """
+    bloom_distribution: Optional[Dict[str, float]] = None  # {"remember": 0.3, "understand": 0.4, ...}
+    difficulty_distribution: Optional[Dict[str, float]] = None  # {"easy": 0.3, "medium": 0.5, "hard": 0.2}
     enable_rag: bool = True
     enable_fact_check: bool = True
 

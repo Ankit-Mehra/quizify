@@ -1,4 +1,6 @@
 from fastapi import HTTPException, Depends, Path, Body, UploadFile, File, Form
+import asyncio
+import random
 import re
 from uuid import uuid4
 from services.ai_services.doc_service import ( 
@@ -19,7 +21,7 @@ from dependencies.auth_dependencies import get_current_user_id, get_current_user
 from schemas.quiz import (
     TextQuizRequest, FileQuizRequest, WebQuizRequest,
     EnhancedTextQuizRequest, EnhancedQuizGenerationResponse, EnhancedQuestion,
-    BloomLevel, Difficulty
+    BloomLevel, Difficulty, ALL_QUESTION_TYPES
 )
 from typing import Dict, Any, List
 from services.ai_services.ingestion_service import IngestionService
@@ -648,9 +650,6 @@ async def generate_quiz_rag_async(
     Raises:
         HTTPException: 403 if quota exceeded, 400 if content too short, 500 on error
     """
-    import asyncio
-    import random
-    
     trace_id = str(uuid4())
     
     # 0. Validate User Quota FIRST (before any expensive operations)
@@ -765,7 +764,11 @@ async def generate_quiz_rag_async(
         )
         
         if not concepts:
-            raise ValueError("No concepts could be extracted from the content. Please provide more detailed content.")
+            raise ValueError(
+                f"No concepts could be extracted from the content. "
+                f"Please ensure your content is at least {MIN_CONTENT_LENGTH} characters long and contains "
+                f"sufficient educational detail. Try providing more specific terminology, definitions, or examples."
+            )
         
         # 3. Select Concepts & Assign Types
         # Sort by relevance and select top N
@@ -779,8 +782,7 @@ async def generate_quiz_rag_async(
                 idx = len(selected_concepts) % original_count
                 selected_concepts.append(selected_concepts[idx])
         
-        # 4. Assign Question Types
-        ALL_QUESTION_TYPES = ["multiple_choice", "true_false", "fill_blank", "matching"]
+        # 4. Assign Question Types (using centralized constant from schemas)
         concept_type_pairs = []
         
         if request.question_type == "mixed":
@@ -846,7 +848,11 @@ async def generate_quiz_rag_async(
                     logger.error(f"Retry failed: {res}")
 
         if not valid_questions:
-            raise ValueError("Failed to generate any valid questions. Please try again with different content.")
+            raise ValueError(
+                "Failed to generate any valid questions after multiple attempts. "
+                "This may happen when content is too vague, lacks educational structure, or contains mostly lists/tables. "
+                "Try providing narrative text with clear concepts, definitions, and explanations."
+            )
 
         # 7. Convert to Pydantic models
         final_questions = []
