@@ -64,6 +64,54 @@ class QuizOrchestrationService:
         self.client = get_openai_client()
         self.context_service = ContextService()
         self.explanation_service = ExplanationService()
+    
+    def _validate_question_structure(self, result: Dict[str, Any], question_type: str) -> None:
+        """
+        Validate that LLM response has required fields for the question type.
+        
+        This catches malformed responses BEFORE expensive verification calls.
+        Raises ValueError if validation fails.
+        """
+        if not result.get("question"):
+            raise ValueError("Question text is missing or empty")
+        
+        if question_type == "multiple_choice":
+            options = result.get("options")
+            if not options or len(options) < 2:
+                raise ValueError(f"MCQ requires at least 2 options, got: {options}")
+            if not result.get("correct_answer"):
+                raise ValueError("MCQ correct_answer is missing")
+                
+        elif question_type == "fill_blank":
+            options = result.get("options")
+            if not options or len(options) < 2:
+                raise ValueError(f"Fill-blank requires options, got: {options}")
+            if not result.get("correct_answer"):
+                raise ValueError("Fill-blank correct_answer is missing")
+            # Check for blank marker in question
+            question = result.get("question", "")
+            if "_____" not in question and "____" not in question and "{{blank}}" not in question.lower():
+                logger.warning(f"Fill-blank question may be missing blank marker: {question[:50]}...")
+                
+        elif question_type == "matching":
+            left = result.get("left")
+            right = result.get("right")
+            correct_answer = result.get("correct_answer")
+            
+            if not left or not isinstance(left, list) or len(left) < 2:
+                raise ValueError(f"Matching question requires 'left' list with at least 2 items, got: {left}")
+            if not right or not isinstance(right, list) or len(right) < 2:
+                raise ValueError(f"Matching question requires 'right' list with at least 2 items, got: {right}")
+            if len(left) != len(right):
+                raise ValueError(f"Matching 'left' ({len(left)}) and 'right' ({len(right)}) must have same length")
+            if not correct_answer or not isinstance(correct_answer, list):
+                raise ValueError(f"Matching correct_answer must be a list of indices, got: {correct_answer}")
+            if len(correct_answer) != len(left):
+                raise ValueError(f"Matching correct_answer length ({len(correct_answer)}) must match items ({len(left)})")
+                
+        elif question_type == "true_false":
+            if result.get("correct_answer") is None:
+                raise ValueError("True/false correct_answer is missing")
         
     async def generate_question_for_concept(
         self,
@@ -148,6 +196,10 @@ class QuizOrchestrationService:
             except json.JSONDecodeError:
                 logger.error(f"Failed to parse JSON from question generation: {content[:100]}...")
                 raise ValueError("Invalid JSON response from LLM")
+            
+            # 5b. Pre-validate required fields BEFORE expensive verification call
+            # This catches malformed LLM responses early and saves verification tokens
+            self._validate_question_structure(result, question_type)
                 
             # 6. Track Analytics (sync, fire-and-forget)
             cost = calculate_cost(model, usage.prompt_tokens, usage.completion_tokens)
