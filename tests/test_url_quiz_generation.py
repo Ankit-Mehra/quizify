@@ -74,10 +74,11 @@ class TestGenerateQuizFromUrl:
             user_token='test-token'
         )
         
-        assert result['quiz_id'] == 'quiz-id-123'
-        assert result['title'] == 'ML Quiz'
-        assert 'Quiz generated successfully from URL' in result['message']  # Message includes mode info
-        assert result['source_url'] == 'https://example.com/article'
+        # Result is now EnhancedQuizGenerationResponse object
+        assert result.quiz_id == 'quiz-id-123'
+        assert result.title == 'ML Quiz'
+        assert 'Quiz generated successfully from URL' in result.message  # Message includes mode info
+        assert result.source_url == 'https://example.com/article'
         
         # Verify calls - quota validated at both URL handler and unified generator level
         assert mock_validate_quota.call_count >= 1  # Called at least once
@@ -152,10 +153,11 @@ class TestGenerateQuizFromUrl:
             user_token='test-token'
         )
         
-        assert result['quiz_id'] == 'quiz-id-123'
-        assert result['title'] == 'ML Quiz'
-        assert 'Quiz generated successfully from URL' in result['message']  # Message includes mode info
-        assert result['source_url'] == 'https://example.com/article'
+        # Result is now EnhancedQuizGenerationResponse object
+        assert result.quiz_id == 'quiz-id-123'
+        assert result.title == 'ML Quiz'
+        assert 'Quiz generated successfully from URL' in result.message  # Message includes mode info
+        assert result.source_url == 'https://example.com/article'
 
         # Verify calls - quota validated at both URL handler and unified generator level
         assert mock_validate_quota.call_count >= 1  # Called at least once
@@ -224,9 +226,10 @@ class TestGenerateQuizFromUrl:
             user_token='test-token'
         )
         
-        assert result['quiz_id'] == 'quiz-id-456'
-        assert result['title'] == 'Photosynthesis Quiz'
-        assert 'successfully' in result['message'].lower()
+        # Result is now EnhancedQuizGenerationResponse object
+        assert result.quiz_id == 'quiz-id-456'
+        assert result.title == 'Photosynthesis Quiz'
+        assert 'successfully' in result.message.lower()
     
     @pytest.mark.asyncio
     @patch('handlers.quiz_handlers.validate_user_quota')

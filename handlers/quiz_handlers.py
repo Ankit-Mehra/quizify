@@ -195,12 +195,10 @@ async def generate_quiz_from_file_openai(
         }
         save_metadata(metadata, user_token=user_token)
         
-        return {
-            "quiz_id": result.quiz_id,
-            "title": result.title,
-            "message": f"Quiz generated successfully from file ({mode} mode)",
-            "questions": [q.model_dump() for q in result.questions]
-        }
+        # Update message and return EnhancedQuizGenerationResponse directly
+        result.message = f"Quiz generated successfully from file ({mode} mode)"
+        result.file_id = file_id
+        return result
     
     except HTTPException:
         # Re-raise HTTP exceptions as-is
@@ -300,12 +298,10 @@ async def generate_quiz_from_fileid(
         save_metadata(metadata, user_token=user_token)
         logger.info(f"Saved quiz with ID: {result.quiz_id}")
 
-        return {
-            "quiz_id": result.quiz_id, 
-            "title": result.title,
-            "message": f"Quiz generated successfully from file ({data.mode} mode)",
-            "questions": [q.model_dump() for q in result.questions]
-        }
+        # Update message and return EnhancedQuizGenerationResponse
+        result.message = f"Quiz generated successfully from file ({data.mode} mode)"
+        result.file_id = file_id
+        return result
     except HTTPException as he:
         # Re-raise HTTP exceptions
         raise he
@@ -344,13 +340,9 @@ async def generate_quiz_from_text(
             content_source_reference=None  # Text input has no reference
         )
         
-        # Return response with questions for immediate display
-        return {
-            "quiz_id": result.quiz_id, 
-            "title": result.title,
-            "message": f"Quiz generated successfully from text ({data.mode} mode)",
-            "questions": [q.model_dump() for q in result.questions]
-        }
+        # Update message and return EnhancedQuizGenerationResponse directly
+        result.message = f"Quiz generated successfully from text ({data.mode} mode)"
+        return result
     
     except HTTPException as he:
         # Re-raise HTTP exceptions as-is
@@ -590,21 +582,15 @@ async def generate_quiz_from_url(
         save_metadata(metadata, user_token=user_token)
         logger.info(f"Saved quiz from URL with ID: {result.quiz_id}")
         
-        # Build response
-        response = {
-            "quiz_id": result.quiz_id,
-            "title": result.title,
-            "message": f"Quiz generated successfully from URL ({data.mode} mode)",
-            "questions": [q.model_dump() for q in result.questions],
-            "source_url": str(data.url)
-        }
-        
-        # If PDF was saved, include file info
+        # Update result with URL-specific info and return directly
+        result.source_url = str(data.url)
         if file_info:
-            response["file_id"] = file_info.get('file_id')
-            response["message"] = f"Quiz generated successfully from PDF URL ({data.mode} mode, PDF saved to your files)"
+            result.file_id = file_info.get('file_id')
+            result.message = f"Quiz generated successfully from PDF URL ({data.mode} mode, PDF saved to your files)"
+        else:
+            result.message = f"Quiz generated successfully from URL ({data.mode} mode)"
         
-        return response
+        return result
         
     except HTTPException:
         raise

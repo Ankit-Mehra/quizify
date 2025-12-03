@@ -235,6 +235,6 @@ class EnhancedQuizGenerationResponse(BaseModel):
     title: str
     message: str
     questions: List[EnhancedQuestion]
-    generation_stats: Dict[str, Any]  # Chunks, concepts, tokens used, etc.
+    generation_stats: Dict[str, Any] = Field(default_factory=dict)  # Chunks, concepts, tokens used, etc.
     source_url: Optional[str] = None
     file_id: Optional[str] = None

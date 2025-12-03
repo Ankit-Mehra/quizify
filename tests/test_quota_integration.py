@@ -226,11 +226,11 @@ class TestQuotaEnforcementTextEndpoint:
                 user_token='test-token'
             )
             
-            # Assertions
-            assert 'quiz_id' in result
-            assert isinstance(result['quiz_id'], str)
-            assert len(result['quiz_id']) > 0  # Valid quiz ID returned
-            assert 'Quiz generated successfully' in result['message']
+            # Assertions - result is now EnhancedQuizGenerationResponse object
+            assert hasattr(result, 'quiz_id')
+            assert isinstance(result.quiz_id, str)
+            assert len(result.quiz_id) > 0  # Valid quiz ID returned
+            assert 'Quiz generated successfully' in result.message
             mocks['generate'].assert_called_once()
             mocks['save_quiz'].assert_called_once()
         
@@ -298,11 +298,11 @@ class TestQuotaEnforcementTextEndpoint:
                 user_token='test-token'
             )
             
-            # Assertions
-            assert 'quiz_id' in result
-            assert isinstance(result['quiz_id'], str)
-            assert len(result['quiz_id']) > 0  # Valid quiz ID returned
-            assert 'Quiz generated successfully' in result['message']
+            # Assertions - result is now EnhancedQuizGenerationResponse object
+            assert hasattr(result, 'quiz_id')
+            assert isinstance(result.quiz_id, str)
+            assert len(result.quiz_id) > 0  # Valid quiz ID returned
+            assert 'Quiz generated successfully' in result.message
             mocks['generate'].assert_called_once()
             mocks['save_quiz'].assert_called_once()
 
@@ -379,11 +379,11 @@ class TestQuotaEnforcementTextEndpoint:
             user_token='test-token'
         )
         
-        # Assertions
-        assert 'quiz_id' in result
-        assert isinstance(result['quiz_id'], str)
-        assert len(result['quiz_id']) > 0  # Valid quiz ID returned
-        assert 'Quiz generated successfully' in result['message']
+        # Assertions - result is now EnhancedQuizGenerationResponse object
+        assert hasattr(result, 'quiz_id')
+        assert isinstance(result.quiz_id, str)
+        assert len(result.quiz_id) > 0  # Valid quiz ID returned
+        assert 'Quiz generated successfully' in result.message
         mock_generate.assert_called_once()
         mock_save_quiz.assert_called_once()
         
@@ -628,11 +628,11 @@ class TestQuotaEnforcementFileIdEndpoint:
             user_token='test-token'
         )
         
-        # Assertions
-        assert 'quiz_id' in result
-        assert isinstance(result['quiz_id'], str)
-        assert len(result['quiz_id']) > 0  # Valid quiz ID returned
-        assert 'Quiz generated successfully' in result['message']
+        # Assertions - result is now EnhancedQuizGenerationResponse object
+        assert hasattr(result, 'quiz_id')
+        assert isinstance(result.quiz_id, str)
+        assert len(result.quiz_id) > 0  # Valid quiz ID returned
+        assert 'Quiz generated successfully' in result.message
         mock_generate.assert_called_once()
         mock_save_quiz.assert_called_once()
         
