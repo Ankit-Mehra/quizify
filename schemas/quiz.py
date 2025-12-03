@@ -44,11 +44,11 @@ class MCQQuestion(QuestionBase):
         """Handle LLM returning null for options field.
         
         Converts null to empty list to prevent validation crash.
-        Note: Questions with empty options are rejected upstream by
+        Note: Questions with empty options will be later rejected by
         _validate_question_structure() before verification.
         """
         if v is None:
-            logger.error("MCQ question received null options - LLM output quality issue")
+            logger.warning("MCQ question received null options - LLM output quality issue")
             return []
         return v
 
@@ -70,11 +70,11 @@ class FillBlankQuestion(QuestionBase):
         
         The LLM sometimes returns {"options": null} despite prompts
         requiring a list. Converts null to empty list to prevent crash.
-        Note: Questions with empty options are rejected upstream by
+        Note: Questions with empty options will be later rejected by
         _validate_question_structure() before verification.
         """
         if v is None:
-            logger.error("FillBlank question received null options - LLM output quality issue")
+            logger.warning("FillBlank question received null options - LLM output quality issue")
             return []
         return v
 
@@ -90,11 +90,11 @@ class MatchingQuestion(QuestionBase):
     def ensure_left_list(cls, v):
         """Handle LLM returning null for left field.
         
-        Note: Questions with empty left/right are rejected upstream by
+        Note: Questions with empty left/right will be later rejected by
         _validate_question_structure() before verification.
         """
         if v is None:
-            logger.error("Matching question received null left - LLM output quality issue")
+            logger.warning("Matching question received null left - LLM output quality issue")
             return []
         return v
     
@@ -103,7 +103,7 @@ class MatchingQuestion(QuestionBase):
     def ensure_right_list(cls, v):
         """Handle LLM returning null for right field."""
         if v is None:
-            logger.error("Matching question received null right - LLM output quality issue")
+            logger.warning("Matching question received null right - LLM output quality issue")
             return []
         return v
     
@@ -112,7 +112,7 @@ class MatchingQuestion(QuestionBase):
     def ensure_correct_answer_list(cls, v):
         """Handle LLM returning null for correct_answer field."""
         if v is None:
-            logger.error("Matching question received null correct_answer - LLM output quality issue")
+            logger.warning("Matching question received null correct_answer - LLM output quality issue")
             return []
         return v
 

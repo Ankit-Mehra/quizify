@@ -45,7 +45,7 @@ class QuizOrchestrationService:
         elif question_type == "fill_blank":
             options = result.get("options")
             if not options or len(options) < 2:
-                raise ValueError(f"Fill-blank requires options, got: {options}")
+                raise ValueError(f"Fill-blank requires at least 2 options, got: {options}")
             if not result.get("correct_answer"):
                 raise ValueError("Fill-blank correct_answer is missing")
             # Check for blank marker in question

@@ -86,7 +86,7 @@ class TestQuestionStructureValidation:
             "options": None,
             "correct_answer": "blue"
         }
-        with pytest.raises(ValueError, match="Fill-blank requires options"):
+        with pytest.raises(ValueError, match="Fill-blank requires at least 2 options"):
             service._validate_question_structure(result, "fill_blank")
     
     def test_fill_blank_missing_correct_answer(self, service):
