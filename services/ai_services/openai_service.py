@@ -97,9 +97,33 @@ QUESTION_TYPE_PROMPTS = {
     "matching": build_quiz_prompt_matching,
 }
 
+# LRU cache for user_id → email mapping (avoids DB call on every LLM request)
+# Max 1000 users, entries auto-evicted when full
+from functools import lru_cache
+
+@lru_cache(maxsize=1000)
+def _get_user_email_cached(user_id: str) -> Optional[str]:
+    """
+    Get user email from user_id with LRU caching.
+    
+    Uses service role client to query user_tier_info view.
+    Cached to avoid DB call on every LLM request.
+    """
+    try:
+        from config import config
+        supabase = config.get_supabase_client()
+        response = supabase.table("user_tier_info").select("email").eq("id", user_id).execute()
+        if response.data and len(response.data) > 0:
+            return response.data[0].get("email")
+        return None
+    except Exception as e:
+        logger.warning(f"Failed to get email for user {user_id[:8]}...: {e}")
+        return None
+
 
 def _build_posthog_kwargs(
     user_id: Optional[str] = None,
+    user_email: Optional[str] = None,
     trace_id: Optional[str] = None,
     properties: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
@@ -111,7 +135,8 @@ def _build_posthog_kwargs(
     raise TypeError for unexpected keyword arguments.
     
     Args:
-        user_id: User's distinct ID for analytics attribution
+        user_id: User's UUID (used to lookup email if user_email not provided)
+        user_email: User's email for PostHog distinct_id (preferred over user_id)
         trace_id: Trace ID for correlating multi-step workflows
         properties: Additional custom properties to track
         
@@ -125,8 +150,14 @@ def _build_posthog_kwargs(
     if not is_posthog_wrapper_active():
         return kwargs
     
-    if user_id:
-        kwargs["posthog_distinct_id"] = user_id
+    # Prefer email as distinct_id (shows nicely in PostHog UI)
+    # Fall back to user_id if email not available
+    if user_email:
+        kwargs["posthog_distinct_id"] = user_email
+    elif user_id:
+        # Try to get email from cache
+        email = _get_user_email_cached(user_id)
+        kwargs["posthog_distinct_id"] = email if email else user_id
     
     if trace_id:
         kwargs["posthog_trace_id"] = trace_id
