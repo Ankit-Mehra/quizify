@@ -92,6 +92,9 @@ class QuizMetadata(BaseModel):
     created_by: Optional[str] = None
     question_count: Optional[int] = None
 
+# Generation mode options
+GENERATION_MODE = Literal["standard", "enhanced"]
+
 class TextQuizRequest(BaseModel):
     model_config = ConfigDict(strict=True, validate_assignment=True)
     title: str = Field(..., description="Title of the quiz")
@@ -99,6 +102,7 @@ class TextQuizRequest(BaseModel):
     question_type: List[Literal[
         "multiple_choice", "true_false", "fill_blank","matching","mixed"]] = ["mixed"]
     num_questions: Optional[int] = Field(10, gt=0, le=50, description="Number of questions to generate")
+    mode: GENERATION_MODE = Field("standard", description="Generation mode: 'standard' for fast generation, 'enhanced' for RAG-based quality with Bloom's taxonomy")
 
     @model_validator(mode='after')
     def validate_fields(self) -> 'TextQuizRequest':
@@ -116,6 +120,7 @@ class FileQuizRequest(BaseModel):
     num_questions: Optional[int] = Field(10, gt=0, le=50, description="Number of questions to generate")
     question_type: List[Literal[
         "multiple_choice", "true_false", "fill_blank","matching","mixed"]] = ["mixed"]
+    mode: GENERATION_MODE = Field("standard", description="Generation mode: 'standard' for fast generation, 'enhanced' for RAG-based quality")
 
 class WebQuizRequest(BaseModel):
     """Request to generate quiz from web URL (basic/pro tiers only)"""
@@ -125,6 +130,7 @@ class WebQuizRequest(BaseModel):
     question_type: List[Literal[
         "multiple_choice", "true_false", "fill_blank","matching","mixed"]] = ["mixed"]
     num_questions: Optional[int] = Field(10, gt=0, le=50, description="Number of questions to generate")
+    mode: GENERATION_MODE = Field("standard", description="Generation mode: 'standard' for fast generation, 'enhanced' for RAG-based quality")
 
     @model_validator(mode='after')
     def validate_web_fields(self) -> 'WebQuizRequest':
@@ -212,6 +218,7 @@ class EnhancedTextQuizRequest(BaseModel):
     # Allow mixed, single type, or list of types
     question_type: Union[Literal["mixed"], Literal["multiple_choice", "true_false", "fill_blank", "matching"], List[Literal["multiple_choice", "true_false", "fill_blank", "matching"]]] = "mixed"
     num_questions: int = Field(10, gt=0, le=50)
+    mode: GENERATION_MODE = Field("enhanced", description="Generation mode: 'standard' for fast generation, 'enhanced' for RAG-based quality")
     options: Optional[QuizGenerationOptions] = None
 
 class EnhancedQuizGenerationResponse(BaseModel):

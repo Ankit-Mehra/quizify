@@ -18,7 +18,8 @@ from services.db_services.supabase_file import (
 from dependencies.auth_dependencies import get_current_user_id, get_current_user_token
 from schemas.quiz import (
     TextQuizRequest, FileQuizRequest, WebQuizRequest,
-    EnhancedTextQuizRequest, EnhancedQuizGenerationResponse, EnhancedQuestion
+    EnhancedTextQuizRequest, EnhancedQuizGenerationResponse, EnhancedQuestion,
+    BloomLevel, Difficulty
 )
 from typing import Dict, Any, List
 from services.ai_services.ingestion_service import IngestionService
@@ -117,6 +118,7 @@ async def generate_quiz_from_file_openai(
     title: str = Form(...),
     num_questions: int = Form(10),
     question_type: List[str] = Form(["mixed"]),
+    mode: str = Form("standard"),  # "standard" or "enhanced"
     current_user_id: str = Depends(get_current_user_id),
     user_token: str = Depends(get_current_user_token)
 ):
@@ -162,45 +164,40 @@ async def generate_quiz_from_file_openai(
         file_result = save_file_to_supabase(current_user_id, file_bytes, original_filename, user_token, file.content_type)
         file_id = file_result.get('file_id')
         
-        # Generate quiz questions with PostHog LLM analytics
-        trace_id = str(uuid4())  # Unique trace for this quiz generation
-        quizzes = await generate_quizzes_single_async(
-            parsed_text, 
-            num_questions,
-            question_types=question_type,
-            user_id=current_user_id,
-            trace_id=trace_id
+        # Use unified generation function that handles both modes
+        enhanced_request = EnhancedTextQuizRequest(
+            title=title,
+            content=parsed_text,
+            question_type="mixed" if "mixed" in question_type else question_type,
+            num_questions=num_questions,
+            mode=mode  # Pass mode from request (standard or enhanced)
+        )
+        result = await generate_quiz_rag_async(
+            enhanced_request, 
+            current_user_id, 
+            user_token,
+            content_source_type="file",
+            content_source_reference=file_id
         )
         
-        # Save quiz to database with file reference
-        quiz_id, saved_questions = save_quiz_to_database(
-            title, 
-            quizzes, 
-            current_user_id,
-            content_source_type="file",
-            content_source_reference=file_id,
-            user_token=user_token
-        )
-
+        # Save metadata for file-based quiz
         metadata = {
-            "quiz_id": quiz_id,
+            "quiz_id": result.quiz_id,
             "content_type": "file",
             "file_name": file.filename,
             "file_type": file.content_type,
             "word_count": len(parsed_text.split()),
             "created_by": current_user_id,
             "created_at": datetime.now().isoformat(),
-            "question_count": num_questions
+            "question_count": len(result.questions)
         }
-
-        #save metadata to database
         save_metadata(metadata, user_token=user_token)
-
+        
         return {
-            "quiz_id": quiz_id, 
-            "title": title,
-            "message": "Quiz generated successfully from file",
-            "questions": saved_questions  # Return saved questions with IDs
+            "quiz_id": result.quiz_id,
+            "title": result.title,
+            "message": f"Quiz generated successfully from file ({mode} mode)",
+            "questions": [q.model_dump() for q in result.questions]
         }
     
     except HTTPException:
@@ -270,52 +267,42 @@ async def generate_quiz_from_fileid(
     try:
         logger.info(f"Generating quiz questions from file content (length: {len(file_content)})")
         total_questions = data.num_questions if data.num_questions is not None else 10
-        # Generate quiz questions with PostHog LLM analytics
-        trace_id = str(uuid4())  # Unique trace for this quiz generation
-        quizzes = await generate_quizzes_single_async(
-            file_content, 
-            total_questions,
-            question_types=list(data.question_type),
-            user_id=current_user_id,
-            trace_id=trace_id
+        
+        # Use unified generation function that handles both modes
+        enhanced_request = EnhancedTextQuizRequest(
+            title=data.title,
+            content=file_content,
+            question_type="mixed" if "mixed" in data.question_type else data.question_type,
+            num_questions=total_questions,
+            mode=data.mode  # Pass mode from request (standard or enhanced)
         )
-        
-        if not quizzes or len(quizzes) == 0:
-            logger.error(f"No questions were generated for file {file_id}")
-            raise HTTPException(status_code=500, detail="No questions were generated. The AI service may have failed.")
-        
-        logger.info(f"Generated {len(quizzes)} questions")
-        for i, q in enumerate(quizzes):
-            logger.info(f"Question {i+1}: type={q.type}, correct_answer={q.correct_answer}")
-        
-        quiz_id, saved_questions = save_quiz_to_database(
-            data.title, 
-            quizzes, 
-            current_user_id,
+        result = await generate_quiz_rag_async(
+            enhanced_request, 
+            current_user_id, 
+            user_token,
             content_source_type="file",
-            content_source_reference=file_id,
-            user_token=user_token
+            content_source_reference=file_id
         )
-        logger.info(f"Saved quiz with ID: {quiz_id}")
-
+        
+        # Save metadata for file-based quiz
         metadata = {
-            "quiz_id": quiz_id,
+            "quiz_id": result.quiz_id,
             "content_type": file_record["file_type"],
             "file_name": file_record["original_filename"],
             "file_type": file_record["file_type"],
             "word_count": len(file_content.split()),
             "created_by": current_user_id,
             "created_at": datetime.now().isoformat(),
-            "question_count": len(quizzes)
+            "question_count": len(result.questions)
         }
         save_metadata(metadata, user_token=user_token)
-        logger.info(f"Saved metadata for quiz {quiz_id}")
+        logger.info(f"Saved quiz with ID: {result.quiz_id}")
 
         return {
-            "quiz_id": quiz_id, 
-            "title": data.title,
-            "message": "Quiz generated successfully from file",
-            "questions": saved_questions  # Return saved questions with IDs
+            "quiz_id": result.quiz_id, 
+            "title": result.title,
+            "message": f"Quiz generated successfully from file ({data.mode} mode)",
+            "questions": [q.model_dump() for q in result.questions]
         }
     except HTTPException as he:
         # Re-raise HTTP exceptions
@@ -339,74 +326,28 @@ async def generate_quiz_from_text(
                 detail="Authentication required to generate quiz"
             )
         
-        # Validate quota BEFORE generation (don't waste AI API calls)
-        await validate_user_quota(current_user_id, user_token)
-        # Generate quiz questions with PostHog LLM analytics
-        total_questions = data.num_questions if data.num_questions is not None else 10
-        trace_id = str(uuid4())  # Unique trace for this quiz generation
-        quizzes = await generate_quizzes_single_async(
-            data.content, 
-            total_questions,
-            question_types=list(data.question_type),
-            user_id=current_user_id,
-            trace_id=trace_id
-        )
-        
-        # Save text as a file in Supabase Storage FIRST (for consistent user experience)
-        # This allows users to access their text content later, same as uploaded files
-        text_bytes = data.content.encode('utf-8')
-        file_size = len(text_bytes)
-        
-        # Validate text size (same 10MB limit as file uploads)
-        MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
-        if file_size > MAX_FILE_SIZE:
-            raise HTTPException(
-                status_code=413,
-                detail=f"Text content too large. Maximum size is 10MB ({MAX_FILE_SIZE} bytes). Your text is {file_size} bytes."
-            )
-        
-        # Create safe filename (remove spaces and special characters)
-        safe_title = sanitize_filename(data.title)
-        filename = f"{safe_title}.txt"
-        
-        file_result = save_file_to_supabase(
-            current_user_id, 
-            text_bytes, 
-            filename, 
-            user_token, 
-            "text/plain"
-        )
-        file_id = file_result.get('file_id')
-            
-        # Save quiz to database with file reference
-        quiz_id, saved_questions = save_quiz_to_database(
+        # Use unified generation function that handles both modes
+        enhanced_request = EnhancedTextQuizRequest(
             title=data.title,
-            quizzes=quizzes,
-            created_by=current_user_id,
-            content_source_type="text",
-            content_source_reference=file_id,  # Link to the saved text file
-            user_token=user_token
+            content=data.content,
+            question_type="mixed" if "mixed" in data.question_type else data.question_type,
+            num_questions=data.num_questions or 10,
+            mode=data.mode  # Pass mode from request (standard or enhanced)
         )
-
-        # Save metadata for analytics/tracking
-        metedata = {
-            "quiz_id": quiz_id,
-            "content_type": "text",
-            "file_name": filename,
-            "file_type": "text/plain",
-            "word_count": len(data.content.split()),
-            "created_by": current_user_id,
-            "created_at": datetime.now().isoformat(),
-            "question_count": total_questions
-        }
-        save_metadata(metedata, user_token=user_token)
+        result = await generate_quiz_rag_async(
+            enhanced_request, 
+            current_user_id, 
+            user_token,
+            content_source_type="text",
+            content_source_reference=None  # Text input has no reference
+        )
         
         # Return response with questions for immediate display
         return {
-            "quiz_id": quiz_id, 
-            "title": data.title,
-            "message": "Quiz generated successfully from text",
-            "questions": saved_questions  # Return saved questions with IDs
+            "quiz_id": result.quiz_id, 
+            "title": result.title,
+            "message": f"Quiz generated successfully from text ({data.mode} mode)",
+            "questions": [q.model_dump() for q in result.questions]
         }
     
     except HTTPException as he:
@@ -414,7 +355,6 @@ async def generate_quiz_from_text(
         raise he
     except ValueError as ve:
         # Handle validation errors
-
         raise HTTPException(status_code=422, detail=str(ve))
     except Exception as e:
         # Handle all other errors
@@ -616,55 +556,51 @@ async def generate_quiz_from_url(
         else:
             content_source_reference = str(data.url)
         
-        # Generate quiz with PostHog LLM analytics
+        # Generate quiz using unified function that handles both modes
         total_questions = data.num_questions if data.num_questions is not None else 10
-        trace_id = str(uuid4())  # Unique trace for this quiz generation
-        quizzes = await generate_quizzes_single_async(
-            content,
-            total_questions,
-            question_types=list(data.question_type),
-            user_id=current_user_id,
-            trace_id=trace_id
-        )
         
-        # Save to database
-        quiz_id, saved_questions = save_quiz_to_database(
-            data.title, 
-            quizzes, 
-            current_user_id,
+        enhanced_request = EnhancedTextQuizRequest(
+            title=data.title,
+            content=content,
+            question_type="mixed" if "mixed" in data.question_type else data.question_type,
+            num_questions=total_questions,
+            mode=data.mode  # Pass mode from request (standard or enhanced)
+        )
+        result = await generate_quiz_rag_async(
+            enhanced_request, 
+            current_user_id, 
+            user_token,
             content_source_type="url",
-            content_source_reference=content_source_reference,  # file_id if PDF, URL otherwise
-            user_token=user_token
+            content_source_reference=content_source_reference  # file_id if PDF, URL otherwise
         )
-        logger.info(f"Saved quiz from URL with ID: {quiz_id}")
         
-        # Save metadata
+        # Save metadata for URL-based quiz
         metadata = {
-            "quiz_id": quiz_id,
+            "quiz_id": result.quiz_id,
             "content_type": "url",
             "file_name": str(data.url),
             "file_type": "application/pdf" if file_info else "text/html",
             "word_count": len(content.split()),
             "created_by": current_user_id,
             "created_at": datetime.now().isoformat(),
-            "question_count": len(quizzes)
+            "question_count": len(result.questions)
         }
         save_metadata(metadata, user_token=user_token)
-        logger.info(f"Saved metadata for URL quiz {quiz_id}")
+        logger.info(f"Saved quiz from URL with ID: {result.quiz_id}")
         
         # Build response
         response = {
-            "quiz_id": quiz_id,
-            "title": data.title,
-            "message": "Quiz generated successfully from URL",
-            "questions": saved_questions,  # Return saved questions with IDs
+            "quiz_id": result.quiz_id,
+            "title": result.title,
+            "message": f"Quiz generated successfully from URL ({data.mode} mode)",
+            "questions": [q.model_dump() for q in result.questions],
             "source_url": str(data.url)
         }
         
         # If PDF was saved, include file info
         if file_info:
             response["file_id"] = file_info.get('file_id')
-            response["message"] = "Quiz generated successfully from PDF URL (PDF saved to your files)"
+            response["message"] = f"Quiz generated successfully from PDF URL ({data.mode} mode, PDF saved to your files)"
         
         return response
         
@@ -680,12 +616,18 @@ async def generate_quiz_from_url(
 async def generate_quiz_rag_async(
     request: EnhancedTextQuizRequest,
     user_id: str,
-    user_token: str
+    user_token: str,
+    content_source_type: str = "text",
+    content_source_reference: str = None
 ) -> EnhancedQuizGenerationResponse:
     """
-    Generate a quiz using the RAG pipeline.
+    Generate a quiz with support for both standard and enhanced (RAG) modes.
     
-    Pipeline:
+    Modes:
+    - standard: Fast generation using direct LLM calls (generate_quizzes_single_async)
+    - enhanced: Full RAG pipeline with concept extraction, Bloom's taxonomy, etc.
+    
+    Pipeline (enhanced mode):
     1. Validate quota and content length
     2. Ingest content (chunk & embed)
     3. Extract concepts from chunks
@@ -694,9 +636,11 @@ async def generate_quiz_rag_async(
     6. Save to database
     
     Args:
-        request: Enhanced quiz request with content, title, options
+        request: Enhanced quiz request with content, title, options, and mode
         user_id: UUID of the user
         user_token: JWT token for RLS enforcement
+        content_source_type: "text", "file", or "url"
+        content_source_reference: file_id or URL for tracking the source
         
     Returns:
         EnhancedQuizGenerationResponse with generated questions
@@ -719,6 +663,80 @@ async def generate_quiz_rag_async(
             detail=f"Content too short. Minimum {MIN_CONTENT_LENGTH} characters required, got {len(request.content)}."
         )
     
+    # ========== STANDARD MODE: Fast path using existing generation ==========
+    if request.mode == "standard":
+        try:
+            # Use the existing fast generation path
+            total_questions = request.num_questions
+            
+            # Normalize question_type to list
+            if request.question_type == "mixed":
+                question_types = ["mixed"]
+            elif isinstance(request.question_type, list):
+                question_types = list(request.question_type)
+            else:
+                question_types = [request.question_type]
+            
+            quizzes = await generate_quizzes_single_async(
+                request.content,
+                total_questions,
+                question_types=question_types,
+                user_id=user_id,
+                trace_id=trace_id
+            )
+            
+            # Save to database with proper content source tracking
+            quiz_id, saved_questions = save_quiz_to_database(
+                title=request.title,
+                quizzes=quizzes,
+                created_by=user_id,
+                content_source_type=content_source_type,
+                content_source_reference=content_source_reference,
+                user_token=user_token
+            )
+            
+            # Convert to EnhancedQuestion format (with None for enhanced fields)
+            final_questions = []
+            for q in saved_questions:
+                # Handle both dict and Pydantic model
+                q_dict = q if isinstance(q, dict) else q.model_dump() if hasattr(q, 'model_dump') else vars(q)
+                eq = EnhancedQuestion(
+                    id=q_dict.get("id"),
+                    quiz_id=q_dict.get("quiz_id"),
+                    type=q_dict.get("type"),
+                    question=q_dict.get("question"),
+                    options=q_dict.get("options"),
+                    left=q_dict.get("left"),
+                    right=q_dict.get("right"),
+                    correct_answer=q_dict.get("correct_answer"),
+                    explanation=q_dict.get("explanation", ""),
+                    source=q_dict.get("source", ""),
+                    bloom_level=BloomLevel.UNDERSTAND,  # Default for standard mode
+                    difficulty=Difficulty.MEDIUM,  # Default for standard mode
+                    concept_id=None,
+                    chunk_id=None,
+                    confidence_score=None
+                )
+                final_questions.append(eq)
+            
+            return EnhancedQuizGenerationResponse(
+                quiz_id=quiz_id,
+                title=request.title,
+                message="Quiz generated successfully (standard mode)",
+                questions=final_questions,
+                generation_stats={
+                    "mode": "standard",
+                    "questions_generated": len(final_questions)
+                }
+            )
+            
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Standard Quiz Generation failed: {str(e)}")
+            raise HTTPException(status_code=500, detail="Quiz generation failed. Please try again.")
+    
+    # ========== ENHANCED MODE: Full RAG pipeline ==========
     # Initialize services
     ingestion_service = IngestionService()
     concept_service = ConceptExtractionService()
@@ -850,22 +868,25 @@ async def generate_quiz_rag_async(
             )
             final_questions.append(eq)
             
-        # 8. Save to Database
+        # 8. Save to Database with proper content source tracking
+        # For enhanced mode, we use the document_id as a secondary reference
+        # but preserve the original content_source_type (file/url/text)
         quiz_id, _ = save_quiz_to_database(
             title=request.title,
             quizzes=final_questions,
             created_by=user_id,
-            content_source_type="text",
-            content_source_reference=document_id,  # Link to the RAG document
+            content_source_type=content_source_type,
+            content_source_reference=content_source_reference or document_id,
             user_token=user_token
         )
         
         return EnhancedQuizGenerationResponse(
             quiz_id=quiz_id,
             title=request.title,
-            message="Quiz generated successfully using RAG pipeline",
+            message="Quiz generated successfully using RAG pipeline (enhanced mode)",
             questions=final_questions,
             generation_stats={
+                "mode": "enhanced",
                 "document_id": document_id,
                 "chunks_count": len(chunks),
                 "concepts_extracted": len(concepts),

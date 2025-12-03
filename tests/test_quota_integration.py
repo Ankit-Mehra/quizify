@@ -16,15 +16,15 @@ from schemas.quiz import TextQuizRequest, FileQuizRequest
 
 @pytest.fixture
 def mock_question():
-    """Create a mock question object."""
-    question = MagicMock()
-    question.type = "multiple_choice"
-    question.question = "Test question?"
-    question.options = ["A", "B", "C", "D"]
-    question.correct_answer = "A"
-    question.explanation = "Test explanation"
-    question.source = "Test source"
-    return question
+    """Create a mock question dict that works with both spread operator and attribute access."""
+    return {
+        "type": "multiple_choice",
+        "question": "Test question?",
+        "options": ["A", "B", "C", "D"],
+        "correct_answer": "A",
+        "explanation": "Test explanation",
+        "source": "Test source"
+    }
 
 
 @pytest.fixture
@@ -290,7 +290,7 @@ class TestQuotaEnforcementTextEndpoint:
             question_type=["multiple_choice"]
         )
         
-        with mock_quiz_generation_success(mock_question, tier_info, "quiz-456") as mocks:
+        with mock_quiz_generation_success(mock_question, tier_info) as mocks:  # Uses auto-generated UUID
             # Call handler
             result = await generate_quiz_from_text(
                 data=request_data,
@@ -374,6 +374,7 @@ class TestQuotaEnforcementTextEndpoint:
             title="Test File Quiz",
             num_questions=5,
             question_type=["multiple_choice"],
+            mode="standard",  # Required when calling handler directly (bypasses FastAPI Form resolution)
             current_user_id='test-user-id',
             user_token='test-token'
         )
@@ -413,6 +414,7 @@ class TestQuotaEnforcementTextEndpoint:
                 title="Test File Quiz",
                 num_questions=5,
                 question_type=["multiple_choice"],
+                mode="standard",
                 current_user_id='test-user-id',
                 user_token='test-token'
             )
@@ -451,6 +453,7 @@ class TestQuotaEnforcementTextEndpoint:
                 title="Test File Quiz",
                 num_questions=5,
                 question_type=["multiple_choice"],
+                mode="standard",
                 current_user_id='test-user-id',
                 user_token='test-token'
             )
@@ -536,6 +539,7 @@ class TestQuotaCheckBeforeGeneration:
                 title="Test File Quiz",
                 num_questions=5,
                 question_type=["multiple_choice"],
+                mode="standard",
                 current_user_id='test-user-id',
                 user_token='test-token'
             )
