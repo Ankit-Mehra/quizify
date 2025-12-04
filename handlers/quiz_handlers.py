@@ -2,6 +2,7 @@ from fastapi import HTTPException, Depends, Path, Body, UploadFile, File, Form
 import asyncio
 import random
 import re
+import time
 from uuid import uuid4
 from services.ai_services.doc_service import ( 
     extract_text_from_pdf,
@@ -159,8 +160,6 @@ async def _ingest_and_extract_concepts(
     Raises:
         ValueError: If no concepts could be extracted
     """
-    import time
-    
     # Ingest Content (with user_token for RLS)
     t0 = time.time()
     ingestion_result = await ingestion_service.ingest_content(
@@ -1110,7 +1109,6 @@ async def _generate_enhanced_mode(
     Returns:
         EnhancedQuizGenerationResponse with generated questions
     """
-    import time
     pipeline_start = time.time()
     
     # Initialize services
