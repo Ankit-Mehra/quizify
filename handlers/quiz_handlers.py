@@ -100,7 +100,8 @@ async def _generate_standard_mode(
         created_by=user_id,
         content_source_type=content_source_type,
         content_source_reference=content_source_reference,
-        user_token=user_token
+        user_token=user_token,
+        generation_mode="standard"
     )
     
     # Convert to EnhancedQuestion format (with defaults for enhanced fields)
@@ -1033,7 +1034,8 @@ async def _generate_enhanced_mode(
             created_by=user_id,
             content_source_type=content_source_type,
             content_source_reference=content_source_reference or document_id,
-            user_token=user_token
+            user_token=user_token,
+            generation_mode="enhanced"
         )
         
         # Step 6: Build response

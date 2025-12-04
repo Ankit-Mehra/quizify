@@ -191,7 +191,7 @@ def mock_supabase_client(mock_supabase, mocker, mock_redis_client):
             for i in range(1, min(int(num_questions) + 1, 6))
         ]
     
-    def mock_save_quiz_to_database(title, quizzes, created_by, content_source_type=None, content_source_reference=None, user_token=None):
+    def mock_save_quiz_to_database(title, quizzes, created_by, content_source_type=None, content_source_reference=None, user_token=None, generation_mode=None):
         """Mock saving quiz to database - returns (quiz_id, saved_questions) tuple"""
         import uuid
         # Generate a proper UUID for quiz_id

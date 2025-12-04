@@ -54,7 +54,8 @@ def save_quiz_to_database(
     created_by: str,
     content_source_type: Optional[str] = None,
     content_source_reference: Optional[str] = None,
-    user_token: Optional[str] = None
+    user_token: Optional[str] = None,
+    generation_mode: Optional[str] = None
 ):
     try:
         # Use authenticated client if token provided, otherwise use service role
@@ -88,6 +89,8 @@ def save_quiz_to_database(
             quiz_data["content_source_type"] = content_source_type
         if content_source_reference:
             quiz_data["content_source_reference"] = content_source_reference
+        if generation_mode:
+            quiz_data["generation_mode"] = generation_mode
         
         quiz_response = supabase.table("quizzes").insert(quiz_data).execute()
         quiz_id = quiz_response.data[0]["id"]
@@ -177,6 +180,9 @@ def get_quiz_from_database(quiz_id: str, user_token: str):
             "title": quiz_data["title"],
             "created_by": quiz_data["created_by"],
             "created_at": quiz_data["created_at"],
+            "generation_mode": quiz_data.get("generation_mode", "standard"),
+            "content_source_type": quiz_data.get("content_source_type"),
+            "content_source_reference": quiz_data.get("content_source_reference"),
             "questions": questions_data
         }
     except HTTPException as http_exc:
@@ -339,7 +345,7 @@ def get_user_quizzes(user_id: str, user_token: Optional[str] = None):
         # PERFORMANCE FIX: Get quizzes with question count in single query
         # Uses Supabase's embedded count feature to avoid N+1 queries
         quizzes_data = supabase.table("quizzes").select(
-            "id, title, created_at, created_by, questions(count)"
+            "id, title, created_at, created_by, generation_mode, content_source_type, questions(count)"
         ).eq("created_by", user_id).execute()
         
         if not quizzes_data.data:
@@ -358,6 +364,8 @@ def get_user_quizzes(user_id: str, user_token: Optional[str] = None):
                 "title": quiz["title"],
                 "created_at": quiz["created_at"],
                 "created_by": quiz["created_by"],
+                "generation_mode": quiz.get("generation_mode", "standard"),
+                "content_source_type": quiz.get("content_source_type"),
                 "question_count": question_count
             })
 
