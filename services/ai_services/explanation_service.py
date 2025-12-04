@@ -177,6 +177,13 @@ class ExplanationService:
                                 f"correct_answer does not have index {i} (len: {len(correct_answer)})"
                             )
                 
+                # Log summary if not all left items were matched
+                if left and len(matched_pairs_list) != len(left):
+                    logger.debug(
+                        f"Not all left items were matched: {len(matched_pairs_list)} pairs created "
+                        f"from {len(left)} left items (correct_answer length: {len(correct_answer)})"
+                    )
+                
                 matched_pairs_str = "\n".join(matched_pairs_list) if matched_pairs_list else "N/A (invalid matching data)"
                 
                 prompt = VERIFY_AND_EXPLAIN_MATCHING_PROMPT.format(

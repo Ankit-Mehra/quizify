@@ -150,6 +150,34 @@ class TestMatchingQuestionVerification:
         
         assert matched_pairs_str == "N/A (invalid matching data)"
     
+    def test_correct_answer_longer_than_left(self):
+        """Test behavior when correct_answer list is longer than left list."""
+        mismatched = {
+            "left": ["A", "B"],
+            "right": ["1", "2", "3"],
+            "correct_answer": [0, 1, 2]  # Extra index that exceeds left length
+        }
+        matched_pairs_str = _build_matched_pairs_string(
+            mismatched["left"], mismatched["right"], mismatched["correct_answer"]
+        )
+        # Should only create 2 pairs (one for each left item), ignoring the extra index
+        assert matched_pairs_str.count("→") == 2
+        assert '"A" → "1"' in matched_pairs_str
+        assert '"B" → "2"' in matched_pairs_str
+    
+    def test_non_integer_correct_answer_indices(self):
+        """Test behavior when correct_answer contains non-integer values."""
+        invalid_matching = {
+            "left": ["A", "B"],
+            "right": ["1", "2"],
+            "correct_answer": ["0", 1.5]  # Invalid: string and float
+        }
+        matched_pairs_str = _build_matched_pairs_string(
+            invalid_matching["left"], invalid_matching["right"], invalid_matching["correct_answer"]
+        )
+        # Should skip invalid indices - no pairs created
+        assert matched_pairs_str == "N/A (invalid matching data)"
+    
     @pytest.mark.asyncio
     async def test_verify_and_explain_matching_integration(self, matching_question_data, mock_openai_response):
         """Integration test: verify_and_explain correctly handles matching questions."""
