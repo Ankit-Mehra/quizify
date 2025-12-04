@@ -101,7 +101,11 @@ class MatchingQuestion(QuestionBase):
     @field_validator('right', mode='before')
     @classmethod
     def ensure_right_list(cls, v):
-        """Handle LLM returning null for right field."""
+        """Handle LLM returning null for right field.
+        
+        Converts null to empty list to prevent validation errors.
+        Questions with empty right list are later rejected by structure validation.
+        """
         if v is None:
             logger.warning("Matching question received null right - LLM output quality issue")
             return []

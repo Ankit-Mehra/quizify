@@ -4,6 +4,14 @@ Prompts for quiz generation.
 This module contains all prompts used for quiz generation:
 - build_quiz_prompt_mixed: For standard mode mixed-type quiz generation
 - RAG_PROMPT_*: For enhanced/RAG mode question generation with Bloom's taxonomy
+
+Usage:
+    Standard mode (mixed types):
+        prompt = build_quiz_prompt_mixed(text, num_questions, types)
+
+    Enhanced/RAG mode (single question type per call):
+        Use RAG_PROMPT_MCQ, RAG_PROMPT_TRUE_FALSE, RAG_PROMPT_FILL_BLANK,
+        or RAG_PROMPT_MATCHING directly with format() to inject context.
 """
 from typing import List
 from services.logger import ai_logger as logger
