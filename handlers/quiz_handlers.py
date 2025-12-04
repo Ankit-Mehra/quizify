@@ -267,13 +267,19 @@ async def _generate_questions_parallel(
     to provide enough context for creating 4 matching pairs.
     
     Args:
-        all_concepts: Full list of extracted concepts (used for matching question diversity)
+        concept_type_pairs: List of (concept, question_type) tuples.
+        bloom_difficulty_pairs: List of (bloom_level, difficulty) tuples.
+        user_id: ID of the user generating the quiz.
+        user_token: Authentication token for the user.
+        trace_id: Request trace ID for logging.
+        orchestration_service: Service for orchestrating question generation.
+        all_concepts: Full list of extracted concepts (used for matching question diversity).
     
     Returns:
-        List of valid generated question dictionaries
+        List of valid generated question dictionaries.
         
     Raises:
-        ValueError: If no valid questions could be generated
+        ValueError: If no valid questions could be generated.
     """
     # Separate matching from non-matching questions
     matching_indices = []
@@ -356,7 +362,10 @@ async def _generate_questions_parallel(
             unique_concepts = []
             for c in all_concepts:
                 name = c.get("name", "").lower().strip()
-                if name and name not in seen_names:
+                if not name:
+                    # Keep concepts without names (they may still be valuable)
+                    unique_concepts.append(c)
+                elif name not in seen_names:
                     seen_names.add(name)
                     unique_concepts.append(c)
             
@@ -392,33 +401,42 @@ async def _generate_questions_parallel(
             # Ensure each matching question uses different concepts
             matching_tasks = []
             used_concept_indices = set()
+            concept_pool_idx = 0  # Track position across all matching questions
             
             for i, idx in enumerate(matching_indices):
                 bloom_level, difficulty = bloom_difficulty_pairs[idx]
                 
                 # Get 4 unique concepts for this matching question
-                # Start from a different offset to ensure variety
                 concepts_for_matching = []
-                start_offset = i * 4  # Each matching question starts at a different point
+                attempts = 0
+                max_attempts = len(available_concepts) * 2  # Prevent infinite loops
                 
-                for j in range(len(available_concepts)):
-                    concept_idx = (start_offset + j) % len(available_concepts)
-                    if len(concepts_for_matching) >= 4:
-                        break
+                while len(concepts_for_matching) < 4 and attempts < max_attempts:
+                    concept_idx = concept_pool_idx % len(available_concepts)
+                    
                     # Only use concepts not already used in previous matching questions
-                    # (if we have enough concepts)
+                    # (if we have enough concepts for full uniqueness)
                     if len(available_concepts) > len(matching_indices) * 4:
                         if concept_idx not in used_concept_indices:
                             concepts_for_matching.append(available_concepts[concept_idx])
                             used_concept_indices.add(concept_idx)
                     else:
-                        # Not enough concepts for full uniqueness, allow reuse with offset
-                        concepts_for_matching.append(available_concepts[(start_offset + j) % len(available_concepts)])
+                        # Not enough concepts for full uniqueness, allow reuse
+                        concepts_for_matching.append(available_concepts[concept_idx])
+                    
+                    concept_pool_idx += 1
+                    attempts += 1
                 
-                # If we didn't get enough, fill with any remaining concepts
-                while len(concepts_for_matching) < 4:
-                    fill_idx = len(concepts_for_matching) % len(available_concepts)
-                    concepts_for_matching.append(available_concepts[fill_idx])
+                # Safety check: if we still don't have enough concepts, skip this question
+                if len(concepts_for_matching) < 4:
+                    if available_concepts:
+                        # Fill with remaining concepts
+                        while len(concepts_for_matching) < 4:
+                            fill_idx = len(concepts_for_matching) % len(available_concepts)
+                            concepts_for_matching.append(available_concepts[fill_idx])
+                    else:
+                        logger.error(f"No available concepts for matching question {i}, skipping")
+                        continue
             
                 matching_tasks.append(
                     orchestration_service.generate_matching_question(
