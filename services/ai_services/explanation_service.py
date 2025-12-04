@@ -32,6 +32,39 @@ Return JSON:
 Be strict on accuracy. If the answer isn't clearly supported by context, set is_accurate=false.
 """
 
+# Separate prompt for MATCHING questions (different structure: left/right/indices)
+VERIFY_AND_EXPLAIN_MATCHING_PROMPT = """
+Verify and explain this MATCHING quiz question based on the provided context.
+
+Question: {question}
+
+Left Items (to match FROM):
+{left_items}
+
+Right Items (to match TO):
+{right_items}
+
+Correct Matching (indices): {correct_answer}
+(Each index in the list maps left[i] to right[correct_answer[i]])
+
+Context:
+{context}
+
+Tasks:
+1. VERIFY: Are the matching pairs factually accurate and supported by the context?
+2. EXPLAIN: Why do these pairs match? Reference the context.
+
+Return JSON:
+{{
+    "is_accurate": true/false,
+    "confidence_score": 0.0-1.0,
+    "issues": [],
+    "explanation": "Clear explanation of why the matching pairs are correct, referencing the context."
+}}
+
+Be strict on accuracy. If the matches aren't clearly supported by context, set is_accurate=false.
+"""
+
 # Legacy prompts kept for backward compatibility (individual calls)
 EXPLANATION_PROMPT = """
 You are an expert educator. Provide a detailed explanation for the following quiz question.
@@ -104,6 +137,7 @@ class ExplanationService:
         Combined verification + explanation in a single LLM call.
         
         This is 50% faster than calling verify_question + generate_explanation separately.
+        Handles different question types (MCQ, fill_blank, true_false, matching).
         
         Returns:
             Tuple of (is_valid, confidence_score, issues_list, explanation_text)
@@ -112,22 +146,42 @@ class ExplanationService:
         model = "gpt-4o-mini"
         
         try:
-            # Prepare options string
-            options = question_data.get("options", [])
-            options_str = ", ".join(options) if options else "N/A"
+            # Detect question type and build appropriate prompt
+            question_type = question_data.get("type", "")
             
-            prompt = VERIFY_AND_EXPLAIN_PROMPT.format(
-                question=question_data.get("question"),
-                correct_answer=question_data.get("correct_answer"),
-                options=options_str,
-                context=context[:2000]  # Limit context size
-            )
+            if question_type == "matching":
+                # Matching questions have left/right lists instead of options
+                left = question_data.get("left", [])
+                right = question_data.get("right", [])
+                
+                # Format left/right items for readability
+                left_str = "\n".join([f"  {i}. {item}" for i, item in enumerate(left)]) if left else "N/A"
+                right_str = "\n".join([f"  {i}. {item}" for i, item in enumerate(right)]) if right else "N/A"
+                
+                prompt = VERIFY_AND_EXPLAIN_MATCHING_PROMPT.format(
+                    question=question_data.get("question"),
+                    left_items=left_str,
+                    right_items=right_str,
+                    correct_answer=question_data.get("correct_answer"),
+                    context=context[:2000]  # Limit context size
+                )
+            else:
+                # MCQ, fill_blank, true_false use options
+                options = question_data.get("options", [])
+                options_str = ", ".join(str(opt) for opt in options) if options else "N/A"
+                
+                prompt = VERIFY_AND_EXPLAIN_PROMPT.format(
+                    question=question_data.get("question"),
+                    correct_answer=question_data.get("correct_answer"),
+                    options=options_str,
+                    context=context[:2000]  # Limit context size
+                )
             
             # Build PostHog tracking kwargs
             posthog_kwargs = _build_posthog_kwargs(
                 user_id=user_id,
                 trace_id=trace_id,
-                properties={"call_type": "verify_explain"}
+                properties={"call_type": "verify_explain", "question_type": question_type}
             )
 
             response = await self.client.chat.completions.create(
