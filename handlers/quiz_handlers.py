@@ -121,7 +121,8 @@ async def _generate_standard_mode(
             source=q_dict.get("source", ""),
             bloom_level=BloomLevel.UNDERSTAND,  # Default for standard mode
             difficulty=Difficulty.MEDIUM,  # Default for standard mode
-            concept_id=None,
+            concept_id=None,  # No concepts in standard mode
+            concept_name=None,  # No concepts in standard mode
             chunk_id=None,
             confidence_score=None
         )

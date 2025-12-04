@@ -112,6 +112,8 @@ def save_quiz_to_database(
                 base["difficulty"] = q.difficulty
             if hasattr(q, "concept_id") and q.concept_id:
                 base["concept_id"] = str(q.concept_id)
+            if hasattr(q, "concept_name") and q.concept_name:
+                base["concept_name"] = q.concept_name
             if hasattr(q, "chunk_id") and q.chunk_id:
                 base["chunk_id"] = str(q.chunk_id)
             if hasattr(q, "confidence_score") and q.confidence_score is not None:
