@@ -399,10 +399,15 @@ class QuizOrchestrationService:
             
             if left and right and correct_answer and len(left) == len(right) == len(correct_answer):
                 pairs_explanation = []
-                for i, (l, idx) in enumerate(zip(left, correct_answer)):
+                for left_item, idx in zip(left, correct_answer):
                     if 0 <= idx < len(right):
-                        pairs_explanation.append(f"'{l}' matches with '{right[idx]}'")
-                explanation = "Correct matches: " + "; ".join(pairs_explanation) + "."
+                        pairs_explanation.append(f"'{left_item}' matches with '{right[idx]}'")
+                
+                # Only use pairs explanation if we have valid pairs
+                if pairs_explanation:
+                    explanation = "Correct matches: " + "; ".join(pairs_explanation) + "."
+                else:
+                    explanation = "Match each term on the left with the corresponding term on the right."
             else:
                 explanation = "Match each term on the left with the corresponding term on the right."
             
