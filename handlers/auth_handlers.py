@@ -276,6 +276,14 @@ async def login(request_body: LoginRequest, response: Response, request: Request
         error_message = str(e).lower()
         logger.warning(f"Failed login for {_mask_email(request_body.email)}: {e}")
         
+        # Check for Supabase rate limiting (they return 429 or rate limit messages)
+        if "rate limit" in error_message or "too many requests" in error_message or "429" in error_message:
+            logger.warning(f"Supabase rate limit hit for {_mask_email(request_body.email)}")
+            raise HTTPException(
+                status_code=429,
+                detail="Too many login attempts. Please wait a few minutes before trying again."
+            )
+        
         # Provide specific error messages for common issues
         if "email not confirmed" in error_message or "email confirmation" in error_message:
             raise HTTPException(
