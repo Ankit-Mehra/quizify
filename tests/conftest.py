@@ -181,6 +181,10 @@ def mock_supabase_client(mock_supabase, mocker):
         """Mock saving metadata - now accepts optional user_token parameter"""
         return {"success": True}
     
+    def mock_save_quiz_metadata(quiz_id, content_type, file_name, file_type, word_count, created_by, question_count, user_token=None):
+        """Mock saving quiz metadata helper function"""
+        return {"success": True}
+    
     # Apply all patches using mocker (pytest-mock)
     # NEW PATTERN: Mock get_supabase() functions instead of module-level variables
     mocker.patch("handlers.auth_handlers.get_supabase", return_value=mock_supabase)
@@ -194,6 +198,7 @@ def mock_supabase_client(mock_supabase, mocker):
     mocker.patch("handlers.quiz_handlers.generate_quizzes_single_async", side_effect=mock_generate_quizzes_single_async)
     mocker.patch("handlers.quiz_handlers.save_quiz_to_database", side_effect=mock_save_quiz_to_database)
     mocker.patch("handlers.quiz_handlers.save_metadata", side_effect=mock_save_metadata)
+    mocker.patch("handlers.quiz_handlers.save_quiz_metadata", side_effect=mock_save_quiz_metadata)
     mocker.patch("handlers.quiz_handlers.save_file_to_supabase", side_effect=mock_save_file_to_supabase)
     
     yield mock_supabase
