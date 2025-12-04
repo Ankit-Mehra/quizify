@@ -15,7 +15,7 @@ from services.db_services.supabase_file import (
     parse_file_from_supabase)
 from dependencies.auth_dependencies import get_current_user_id, get_current_user_token
 from schemas.quiz import TextQuizRequest, FileQuizRequest, WebQuizRequest
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from datetime import datetime
 from services.ai_services.chunking_service import generate_quizzes_single_async
 from services.logger import app_logger as logger
@@ -24,6 +24,7 @@ from services.web_scraping_service import scrape_content
 # Content validation constants
 MIN_CONTENT_LENGTH = 50  # Minimum characters required for quiz generation from uploaded files
 MIN_STORED_CONTENT_LENGTH = 10  # Minimum characters required for stored file content validation
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB maximum file size (10485760 bytes)
 
 def sanitize_filename(filename: str) -> str:
     """
@@ -95,6 +96,42 @@ def validate_user_quota(user_id: str):
     logger.info(f"Quota check passed for user {user_id_truncated}: "
                f"{tier_info['current_quiz_count']}/{tier_info['quota_limit']}")
 
+def save_quiz_metadata(
+    quiz_id: str,
+    content_type: str,
+    file_name: str,
+    file_type: str,
+    word_count: int,
+    created_by: str,
+    question_count: int,
+    user_token: Optional[str] = None
+):
+    """
+    Save quiz metadata to database.
+    
+    Args:
+        quiz_id: UUID of the quiz
+        content_type: Type of content ('file', 'url', 'text')
+        file_name: Name of the file or URL
+        file_type: MIME type of the content
+        word_count: Number of words in the content
+        created_by: User ID who created the quiz
+        question_count: Number of questions in the quiz
+        user_token: Optional user authentication token
+    """
+    metadata = {
+        "quiz_id": quiz_id,
+        "content_type": content_type,
+        "file_name": file_name,
+        "file_type": file_type,
+        "word_count": word_count,
+        "created_by": created_by,
+        "created_at": datetime.now().isoformat(),
+        "question_count": question_count
+    }
+    save_metadata(metadata, user_token=user_token)
+    logger.info(f"Saved metadata for quiz {quiz_id}")
+
 
 # === Generate quiz from file ===
 async def generate_quiz_from_file_openai(
@@ -164,19 +201,17 @@ async def generate_quiz_from_file_openai(
             user_token=user_token
         )
 
-        metadata = {
-            "quiz_id": quiz_id,
-            "content_type": "file",
-            "file_name": file.filename,
-            "file_type": file.content_type,
-            "word_count": len(parsed_text.split()),
-            "created_by": current_user_id,
-            "created_at": datetime.now().isoformat(),
-            "question_count": num_questions
-        }
-
-        #save metadata to database
-        save_metadata(metadata, user_token=user_token)
+        # Save metadata to database
+        save_quiz_metadata(
+            quiz_id=quiz_id,
+            content_type="file",
+            file_name=file.filename or "unknown",
+            file_type=file.content_type or "application/octet-stream",
+            word_count=len(parsed_text.split()),
+            created_by=current_user_id,
+            question_count=num_questions,
+            user_token=user_token
+        )
 
         return {
             "quiz_id": quiz_id, 
@@ -276,18 +311,17 @@ async def generate_quiz_from_fileid(
         )
         logger.info(f"Saved quiz with ID: {quiz_id}")
 
-        metadata = {
-            "quiz_id": quiz_id,
-            "content_type": file_record["file_type"],
-            "file_name": file_record["original_filename"],
-            "file_type": file_record["file_type"],
-            "word_count": len(file_content.split()),
-            "created_by": current_user_id,
-            "created_at": datetime.now().isoformat(),
-            "question_count": len(quizzes)
-        }
-        save_metadata(metadata, user_token=user_token)
-        logger.info(f"Saved metadata for quiz {quiz_id}")
+        # Save metadata to database
+        save_quiz_metadata(
+            quiz_id=quiz_id,
+            content_type=file_record["file_type"],
+            file_name=file_record["original_filename"],
+            file_type=file_record["file_type"],
+            word_count=len(file_content.split()),
+            created_by=current_user_id,
+            question_count=len(quizzes),
+            user_token=user_token
+        )
 
         return {
             "quiz_id": quiz_id, 
@@ -333,7 +367,6 @@ async def generate_quiz_from_text(
         file_size = len(text_bytes)
         
         # Validate text size (same 10MB limit as file uploads)
-        MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
         if file_size > MAX_FILE_SIZE:
             raise HTTPException(
                 status_code=413,
@@ -364,17 +397,16 @@ async def generate_quiz_from_text(
         )
 
         # Save metadata for analytics/tracking
-        metedata = {
-            "quiz_id": quiz_id,
-            "content_type": "text",
-            "file_name": filename,
-            "file_type": "text/plain",
-            "word_count": len(data.content.split()),
-            "created_by": current_user_id,
-            "created_at": datetime.now().isoformat(),
-            "question_count": total_questions
-        }
-        save_metadata(metedata, user_token=user_token)
+        save_quiz_metadata(
+            quiz_id=quiz_id,
+            content_type="text",
+            file_name=filename,
+            file_type="text/plain",
+            word_count=len(data.content.split()),
+            created_by=current_user_id,
+            question_count=total_questions,
+            user_token=user_token
+        )
         
         # Return response with questions for immediate display
         return {
@@ -410,7 +442,8 @@ async def get_user_quizzes_handler(
 # === Get quiz by ID ===
 async def get_quiz_by_id_handler(
     quiz_id: str = Path(...),
-    current_user_id: str = Depends(get_current_user_id)
+    current_user_id: str = Depends(get_current_user_id),
+    user_token: str = Depends(get_current_user_token)
 ):
     """Get a specific quiz by ID."""
     try:
@@ -421,9 +454,9 @@ async def get_quiz_by_id_handler(
                 detail="Invalid quiz ID. Please provide a valid quiz ID."
             )
             
-        # Get quiz data from database (this will raise 404 if not found)
+        # Get quiz data from database using authenticated client for RLS consistency
         try:
-            quiz_data = get_quiz_from_database(quiz_id)
+            quiz_data = get_quiz_from_database(quiz_id, user_token)
         except HTTPException as e:
             if e.status_code == 404:
                 # Quiz truly doesn't exist
@@ -451,12 +484,25 @@ async def get_quiz_by_id_handler(
 # === Delete quiz by ID ===
 async def delete_quiz_by_id_handler(
     quiz_id: str = Path(...),
-    current_user_id: str = Depends(get_current_user_id)
+    current_user_id: str = Depends(get_current_user_id),
+    user_token: str = Depends(get_current_user_token)
 ):
     """Delete a quiz by ID."""
     try:
+        # First, verify the user owns this quiz
+        quiz_data = get_quiz_from_database(quiz_id, user_token)
+        
+        if quiz_data["created_by"] != current_user_id:
+            logger.warning(f"Unauthorized delete attempt - User {current_user_id} trying to delete quiz {quiz_id} owned by {quiz_data['created_by']}")
+            raise HTTPException(
+                status_code=403,
+                detail="Access denied. You don't have permission to delete this quiz."
+            )
+        
         delete_quiz_from_database(quiz_id)
         return {"message": "Quiz deleted successfully"}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error deleting quiz: {str(e)}")
 
@@ -539,18 +585,16 @@ async def generate_quiz_from_url(
         logger.info(f"Saved quiz from URL with ID: {quiz_id}")
         
         # Save metadata
-        metadata = {
-            "quiz_id": quiz_id,
-            "content_type": "url",
-            "file_name": str(data.url),
-            "file_type": "text/html",
-            "word_count": len(content.split()),
-            "created_by": current_user_id,
-            "created_at": datetime.now().isoformat(),
-            "question_count": len(quizzes)
-        }
-        save_metadata(metadata, user_token=user_token)
-        logger.info(f"Saved metadata for URL quiz {quiz_id}")
+        save_quiz_metadata(
+            quiz_id=quiz_id,
+            content_type="url",
+            file_name=str(data.url),
+            file_type="text/html",
+            word_count=len(content.split()),
+            created_by=current_user_id,
+            question_count=len(quizzes),
+            user_token=user_token
+        )
         
         return {
             "quiz_id": quiz_id,
