@@ -173,7 +173,6 @@ RAG_PROMPT_MATCHING = """You are an expert educational content creator.
 Create a {difficulty} difficulty matching question.
 
 Topic: {concept_name}
-Category: {concept_type}
 
 Context (use this to find 4 matchable pairs):
 {context}
