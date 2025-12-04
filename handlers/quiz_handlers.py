@@ -217,9 +217,14 @@ def _select_and_assign_concepts(
     concept_type_pairs = []
     
     if question_type == "mixed":
-        # Random distribution of all types
-        for c in selected_concepts:
-            concept_type_pairs.append((c, random.choice(ALL_QUESTION_TYPES)))
+        # Balanced distribution of all types with randomized order
+        # This ensures each type gets roughly equal representation
+        # while still providing variety through shuffled order
+        shuffled_types = ALL_QUESTION_TYPES.copy()
+        random.shuffle(shuffled_types)
+        for i, c in enumerate(selected_concepts):
+            t = shuffled_types[i % len(shuffled_types)]
+            concept_type_pairs.append((c, t))
     elif isinstance(question_type, list):
         # Round robin through specified types
         for i, c in enumerate(selected_concepts):
@@ -281,21 +286,43 @@ async def _generate_questions_parallel(
             logger.error(f"Question generation failed for index {i}: {res}")
             failed_indices.append(i)
     
-    # Retry logic for failed questions (max 1 retry)
+    # Retry logic for failed questions (max 1 retry with same type)
     if failed_indices:
-        logger.info(f"Retrying {len(failed_indices)} failed questions...")
+        logger.info(f"Retrying {len(failed_indices)} failed questions with same type...")
         retry_tasks = []
+        retry_indices = []
         for idx in failed_indices:
             concept, q_type = concept_type_pairs[idx]
             retry_tasks.append(generate_one(idx, concept, q_type))
+            retry_indices.append((idx, q_type))
         
         retry_results = await asyncio.gather(*retry_tasks, return_exceptions=True)
         
-        for res in retry_results:
+        second_retry_indices = []
+        for (idx, original_type), res in zip(retry_indices, retry_results):
             if isinstance(res, dict):
                 valid_questions.append(res)
             else:
-                logger.error(f"Retry failed: {res}")
+                logger.error(f"First retry failed for index {idx} (type={original_type}): {res}")
+                second_retry_indices.append((idx, original_type))
+    
+        # Fallback retry: try with multiple_choice (most reliable type)
+        if second_retry_indices:
+            logger.info(f"Fallback retry: {len(second_retry_indices)} questions switching to multiple_choice")
+            fallback_tasks = []
+            for idx, original_type in second_retry_indices:
+                concept, _ = concept_type_pairs[idx]
+                fallback_type = "multiple_choice"  # Most reliable fallback
+                logger.warning(f"Index {idx}: switching from {original_type} to {fallback_type}")
+                fallback_tasks.append(generate_one(idx, concept, fallback_type))
+            
+            fallback_results = await asyncio.gather(*fallback_tasks, return_exceptions=True)
+            
+            for res in fallback_results:
+                if isinstance(res, dict):
+                    valid_questions.append(res)
+                else:
+                    logger.error(f"Fallback retry also failed: {res}")
     
     if not valid_questions:
         raise ValueError(

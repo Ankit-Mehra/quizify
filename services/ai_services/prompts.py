@@ -49,18 +49,21 @@ Each object in "quizzes" must include these REQUIRED fields:
 
 Formatting rules:
 - "multiple_choice":
-    - 4 plausible answers in `options`
+    - 4 plausible answers in `options` (MUST be a JSON array of 4 strings)
     - No prefixes like A. or 1)
     - `correct_answer` must match one of the options exactly
 - "true_false":
     - `correct_answer` must be a boolean: true or false
 - "fill_blank":
     - `question` must contain a blank: "_____"
-    - `options` MUST be a list of 4 strings (REQUIRED, not optional)
+    - `options` MUST be a JSON array of exactly 4 strings (REQUIRED, not optional, NEVER null)
     - `correct_answer` must match one of the options
 - "matching":
-    - Provide `left` and `right` lists (4 items each)
-    - `correct_answer` should be a list of matching indices like [0, 1, 2, 3]
+    - `left` MUST be a JSON array of exactly 4 strings (NEVER null)
+    - `right` MUST be a JSON array of exactly 4 strings (NEVER null)
+    - `correct_answer` MUST be a JSON array of 4 integer indices like [0, 1, 2, 3] (NEVER null)
+
+CRITICAL: Never return null for options, left, right, or correct_answer fields. Always provide valid arrays.
 
 Rules:
 - Be factual, clear, and based on the provided text.
@@ -176,16 +179,17 @@ Bloom Level: {bloom_description}
 Context:
 {context}
 
-Requirements:
-1. Create exactly 4 pairs of related items to match.
-2. "left" contains 4 items (e.g., terms, names, concepts).
-3. "right" contains 4 corresponding matches (e.g., definitions, discoveries, descriptions).
-4. "correct_answer" is a list of 4 indices showing which right item matches each left item.
+CRITICAL Requirements:
+1. You MUST create exactly 4 pairs of related items to match.
+2. "left" MUST be a JSON array with exactly 4 string items (e.g., terms, names, concepts).
+3. "right" MUST be a JSON array with exactly 4 string items (e.g., definitions, discoveries, descriptions).
+4. "correct_answer" MUST be a JSON array of exactly 4 integer indices [0-3] showing which right item matches each left item.
    - Index 0 means the first item in "right" matches the corresponding "left" item.
    - Example: [0, 1, 2, 3] means left[0]→right[0], left[1]→right[1], etc.
    - Example: [2, 0, 3, 1] means left[0]→right[2], left[1]→right[0], etc.
+5. NEVER return null for left, right, or correct_answer - always provide arrays.
 
-Return this exact JSON format:
+You MUST return this exact JSON format (no null values allowed):
 {{
   "question": "Match each scientist with their discovery.",
   "left": ["Einstein", "Newton", "Curie", "Darwin"],

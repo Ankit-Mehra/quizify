@@ -109,7 +109,9 @@ def build_quiz_prompt_matching(text: str, num_questions: int) -> str:
         "matching",
         sample,
         extra_instructions="""
-        - Include 4 items in both "left" and "right" lists.
-        - "correct_answer" must be a list of integers (0–3) representing the correct index matches.
+        - You MUST include exactly 4 items in both "left" and "right" arrays.
+        - "left" and "right" MUST be JSON arrays of strings, NEVER null.
+        - "correct_answer" MUST be a JSON array of exactly 4 integers (0–3) representing the correct index matches.
+        - NEVER return null values for left, right, or correct_answer.
         """
     )
