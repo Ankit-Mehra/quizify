@@ -1,6 +1,6 @@
 # schemas/quiz.py
-from pydantic import BaseModel, Field, model_validator, field_validator, ConfigDict
-from typing import List, Optional, Literal, Union, Dict, Any
+from pydantic import BaseModel, Field, model_validator, field_validator, ConfigDict, Discriminator
+from typing import List, Optional, Literal, Union, Dict, Any, Annotated
 from uuid import UUID
 from enum import Enum
 import logging
@@ -121,12 +121,17 @@ class MatchingQuestion(QuestionBase):
         return v
 
 # === 2. Discriminated union ===
+# Use discriminator to avoid trying all types and triggering spurious warnings
+# when loading non-matching questions from database (which have left=null, right=null)
 
-Question = Union[
-    MCQQuestion,
-    TrueFalseQuestion,
-    FillBlankQuestion,
-    MatchingQuestion
+Question = Annotated[
+    Union[
+        MCQQuestion,
+        TrueFalseQuestion,
+        FillBlankQuestion,
+        MatchingQuestion
+    ],
+    Discriminator("type")
 ]
 
 # === 3. Wrapper for lists of questions ===

@@ -1,5 +1,5 @@
-from typing import List, Literal, Union
-from pydantic import BaseModel, field_validator
+from typing import List, Literal, Union, Annotated
+from pydantic import BaseModel, field_validator, Discriminator
 import logging
 
 logger = logging.getLogger(__name__)
@@ -90,11 +90,16 @@ class MatchingQuestionParsed(QuestionBaseParsed):
             return []
         return v
 
-QuestionParsed = Union[
-    MCQQuestionParsed,
-    TrueFalseQuestionParsed,
-    FillBlankQuestionParsed,
-    MatchingQuestionParsed,
+# Use discriminator to directly select the correct model based on 'type' field
+# This prevents spurious warnings when parsing non-matching questions
+QuestionParsed = Annotated[
+    Union[
+        MCQQuestionParsed,
+        TrueFalseQuestionParsed,
+        FillBlankQuestionParsed,
+        MatchingQuestionParsed,
+    ],
+    Discriminator("type")
 ]
 
 class QuizzesParsed(BaseModel):
