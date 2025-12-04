@@ -273,7 +273,8 @@ async def _generate_questions_parallel(
         user_token: Authentication token for the user.
         trace_id: Request trace ID for logging.
         orchestration_service: Service for orchestrating question generation.
-        all_concepts: Full list of extracted concepts (used for matching question diversity).
+        all_concepts: Optional full list of extracted concepts for matching question diversity.
+            If None, falls back to concepts assigned to matching slots only.
     
     Returns:
         List of valid generated question dictionaries.
@@ -361,6 +362,7 @@ async def _generate_questions_parallel(
             seen_names = set()
             seen_unnamed = set()
             unique_concepts = []
+            included_empty_source = False  # Only include one concept with empty source_text
             for c in all_concepts:
                 name = c.get("name", "").lower().strip()
                 if name:
@@ -373,9 +375,10 @@ async def _generate_questions_parallel(
                     if concept_key and concept_key not in seen_unnamed:
                         seen_unnamed.add(concept_key)
                         unique_concepts.append(c)
-                    elif not concept_key:
-                        # No source_text, include anyway (rare case)
+                    elif not concept_key and not included_empty_source:
+                        # No source_text - include at most one such concept
                         unique_concepts.append(c)
+                        included_empty_source = True
             
             # Sort by relevance to prioritize important concepts
             unique_concepts.sort(key=lambda x: x.get("relevance_score", 0), reverse=True)
@@ -416,11 +419,15 @@ async def _generate_questions_parallel(
                 
                 # Get 4 unique concepts for this matching question
                 concepts_for_matching = []
-                local_attempts = 0
-                max_attempts = len(available_concepts) * 2  # Prevent infinite loops
+                checked_indices = set()  # Track which indices we've checked this iteration
+                max_checks = len(available_concepts)  # Stop after checking all concepts once
                 
-                while len(concepts_for_matching) < 4 and local_attempts < max_attempts:
+                while len(concepts_for_matching) < 4 and len(checked_indices) < max_checks:
                     concept_idx = concept_pool_idx % len(available_concepts)
+                    
+                    # Track that we've checked this index
+                    if concept_idx not in checked_indices:
+                        checked_indices.add(concept_idx)
                     
                     # Only use concepts not already used in previous matching questions
                     # (if we have enough concepts for full uniqueness)
@@ -428,19 +435,11 @@ async def _generate_questions_parallel(
                         if concept_idx not in used_concept_indices:
                             concepts_for_matching.append(available_concepts[concept_idx])
                             used_concept_indices.add(concept_idx)
-                            concept_pool_idx += 1
-                            local_attempts += 1
-                        else:
-                            # Skip already-used concept, move to next
-                            concept_pool_idx += 1
-                            # Only count as attempt if we've gone through full cycle
-                            if concept_pool_idx % len(available_concepts) == 0:
-                                local_attempts += 1
                     else:
                         # Not enough concepts for full uniqueness, allow reuse
                         concepts_for_matching.append(available_concepts[concept_idx])
-                        concept_pool_idx += 1
-                        local_attempts += 1
+                    
+                    concept_pool_idx += 1
                 
                 # Safety check: if we still don't have enough concepts, skip this question
                 if len(concepts_for_matching) < 4:
