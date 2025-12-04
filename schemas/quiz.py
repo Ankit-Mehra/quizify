@@ -272,8 +272,9 @@ class EnhancedQuestion(BaseModel):
     correct_answer: Union[str, bool, List[int]]
     explanation: str
     source: str
-    bloom_level: BloomLevel
-    difficulty: Difficulty
+    # Enhanced mode fields (optional for standard mode)
+    bloom_level: Optional[BloomLevel] = None
+    difficulty: Optional[Difficulty] = None
     concept_id: Optional[UUID] = None
     concept_name: Optional[str] = None  # Human-readable concept name (e.g., "Photosynthesis")
     chunk_id: Optional[UUID] = None
