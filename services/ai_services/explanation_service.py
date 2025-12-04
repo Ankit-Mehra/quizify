@@ -164,6 +164,18 @@ class ExplanationService:
                             if isinstance(right_idx, int) and right_idx < len(right):
                                 right_item = right[right_idx]
                                 matched_pairs_list.append(f"  • \"{left_item}\" → \"{right_item}\"")
+                            else:
+                                # Log skipped pair for debugging - invalid right index
+                                logger.debug(
+                                    f"Skipping pair: left[{i}] ('{left_item}') - "
+                                    f"invalid right_idx ({right_idx}) or out of bounds (right len: {len(right)})"
+                                )
+                        else:
+                            # Log skipped pair for debugging - no mapping in correct_answer
+                            logger.debug(
+                                f"Skipping pair: left[{i}] ('{left_item}') - "
+                                f"correct_answer does not have index {i} (len: {len(correct_answer)})"
+                            )
                 
                 matched_pairs_str = "\n".join(matched_pairs_list) if matched_pairs_list else "N/A (invalid matching data)"
                 

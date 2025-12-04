@@ -9,6 +9,32 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 
+def _build_matched_pairs_string(left: list, right: list, correct_answer: list) -> str:
+    """
+    Helper to build matched pairs string (mirrors service logic).
+    
+    This replicates the matching pair building logic from verify_and_explain()
+    to test that formatting works correctly.
+    
+    Args:
+        left: List of left-side items
+        right: List of right-side items  
+        correct_answer: List of indices mapping left[i] to right[correct_answer[i]]
+    
+    Returns:
+        Formatted string of matched pairs, or fallback message if data is invalid
+    """
+    matched_pairs_list = []
+    if left and right and correct_answer:
+        for i, left_item in enumerate(left):
+            if i < len(correct_answer):
+                right_idx = correct_answer[i]
+                if isinstance(right_idx, int) and right_idx < len(right):
+                    right_item = right[right_idx]
+                    matched_pairs_list.append(f'  • "{left_item}" → "{right_item}"')
+    return "\n".join(matched_pairs_list) if matched_pairs_list else "N/A (invalid matching data)"
+
+
 class TestMatchingQuestionVerification:
     """Test verify_and_explain correctly routes matching questions."""
     
@@ -80,17 +106,7 @@ class TestMatchingQuestionVerification:
         right = matching_question_data.get("right", [])
         correct_answer = matching_question_data.get("correct_answer", [])
         
-        # Build explicit matched pairs (as done in verify_and_explain)
-        matched_pairs_list = []
-        if left and right and correct_answer:
-            for i, left_item in enumerate(left):
-                if i < len(correct_answer):
-                    right_idx = correct_answer[i]
-                    if isinstance(right_idx, int) and right_idx < len(right):
-                        right_item = right[right_idx]
-                        matched_pairs_list.append(f'  • "{left_item}" → "{right_item}"')
-        
-        matched_pairs_str = "\n".join(matched_pairs_list) if matched_pairs_list else "N/A (invalid matching data)"
+        matched_pairs_str = _build_matched_pairs_string(left, right, correct_answer)
         
         # Verify formatting contains explicit pairs
         assert '"Sprint" → "A time-boxed iteration"' in matched_pairs_str
@@ -112,17 +128,7 @@ class TestMatchingQuestionVerification:
         right = empty_matching.get("right", [])
         correct_answer = empty_matching.get("correct_answer", [])
         
-        # Build explicit matched pairs (as done in verify_and_explain)
-        matched_pairs_list = []
-        if left and right and correct_answer:
-            for i, left_item in enumerate(left):
-                if i < len(correct_answer):
-                    right_idx = correct_answer[i]
-                    if isinstance(right_idx, int) and right_idx < len(right):
-                        right_item = right[right_idx]
-                        matched_pairs_list.append(f'  • "{left_item}" → "{right_item}"')
-        
-        matched_pairs_str = "\n".join(matched_pairs_list) if matched_pairs_list else "N/A (invalid matching data)"
+        matched_pairs_str = _build_matched_pairs_string(left, right, correct_answer)
         
         assert matched_pairs_str == "N/A (invalid matching data)"
     
@@ -140,17 +146,7 @@ class TestMatchingQuestionVerification:
         right = matching_with_none.get("right") or []
         correct_answer = matching_with_none.get("correct_answer") or []
         
-        # Build explicit matched pairs (as done in verify_and_explain)
-        matched_pairs_list = []
-        if left and right and correct_answer:
-            for i, left_item in enumerate(left):
-                if i < len(correct_answer):
-                    right_idx = correct_answer[i]
-                    if isinstance(right_idx, int) and right_idx < len(right):
-                        right_item = right[right_idx]
-                        matched_pairs_list.append(f'  • "{left_item}" → "{right_item}"')
-        
-        matched_pairs_str = "\n".join(matched_pairs_list) if matched_pairs_list else "N/A (invalid matching data)"
+        matched_pairs_str = _build_matched_pairs_string(left, right, correct_answer)
         
         assert matched_pairs_str == "N/A (invalid matching data)"
     
