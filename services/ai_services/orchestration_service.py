@@ -330,9 +330,7 @@ class QuizOrchestrationService:
         prompt = prompt_template.format(
             difficulty=difficulty.value,
             bloom_level=bloom_level.value,
-            bloom_description=BLOOM_DESCRIPTIONS.get(bloom_level.value, "testing knowledge"),
             concept_name=", ".join(concept_names),
-            concept_type="matching across concepts",
             context=context
         )
         

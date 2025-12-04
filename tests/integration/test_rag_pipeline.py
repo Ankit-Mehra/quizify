@@ -111,7 +111,7 @@ async def test_rag_pipeline_flow():
         # The total generated questions should be 2
         non_matching_calls = orchestration_instance.generate_question_for_concept.call_count
         matching_calls = orchestration_instance.generate_matching_question.call_count
-        assert non_matching_calls + matching_calls >= 1  # At least one method was called
+        assert non_matching_calls + matching_calls == 2  # Should generate exactly 2 questions
         mock_save.assert_called_once()
 
 

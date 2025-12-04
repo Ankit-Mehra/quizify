@@ -86,10 +86,11 @@ class ContextService:
         for i, concept in enumerate(concepts[:4]):  # Limit to 4 concepts
             chunk_id = concept.get("chunk_id")
             
-            # Skip if we've already included this chunk
-            if chunk_id in seen_chunk_ids:
+            # Skip if we've already included this chunk (but only for non-None chunk_ids)
+            if chunk_id is not None and chunk_id in seen_chunk_ids:
                 continue
-            seen_chunk_ids.add(chunk_id)
+            if chunk_id is not None:
+                seen_chunk_ids.add(chunk_id)
             
             concept_name = concept.get("name", f"Concept {i+1}")
             
