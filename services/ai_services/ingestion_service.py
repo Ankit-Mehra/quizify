@@ -101,6 +101,7 @@ class IngestionService:
         """
         try:
             logger.info(f"Starting ingestion for user {user_id[:8]}..., title: {title}")
+            ingest_start = time.time()
             
             # 1. Calculate stats
             tokens = self.encoding.encode(content)
@@ -108,6 +109,7 @@ class IngestionService:
             word_count = len(content.split())
             
             # 2. Create Document Record (with user_token for RLS)
+            t1 = time.time()
             document = create_document(
                 user_id=user_id,
                 title=title,
@@ -120,12 +122,13 @@ class IngestionService:
                 metadata=metadata
             )
             document_id = document["id"]
-            logger.debug(f"Created document {document_id}")
+            logger.info(f"[TIMING] Create document took {time.time()-t1:.2f}s")
             
             # 3. Chunk Content using LlamaIndex SentenceSplitter
+            t2 = time.time()
             doc_obj = Document(text=content, metadata={"document_id": document_id})
             nodes = self.splitter.get_nodes_from_documents([doc_obj])
-            logger.debug(f"Split into {len(nodes)} chunks")
+            logger.info(f"[TIMING] Chunking took {time.time()-t2:.2f}s -> {len(nodes)} chunks")
             
             # Limit chunks per document to prevent abuse
             if len(nodes) > config.MAX_CHUNKS_PER_DOCUMENT:
@@ -133,9 +136,11 @@ class IngestionService:
                 nodes = nodes[:config.MAX_CHUNKS_PER_DOCUMENT]
             
             # 4. Generate Embeddings (batch async)
+            t3 = time.time()
             texts = [node.text for node in nodes]
             trace_id = trace_id or str(uuid4())
             embeddings = await self._get_embeddings(texts, user_id, trace_id)
+            logger.info(f"[TIMING] Embeddings took {time.time()-t3:.2f}s for {len(texts)} chunks")
             
             # 5. Prepare Chunks for DB
             chunks_data = []
@@ -152,8 +157,11 @@ class IngestionService:
                 })
             
             # 6. Store Chunks (with user_token for RLS)
+            t4 = time.time()
             stored_chunks = create_chunks(chunks_data, user_token)
-            logger.info(f"Stored {len(stored_chunks)} chunks for document {document_id}")
+            logger.info(f"[TIMING] Store chunks took {time.time()-t4:.2f}s for {len(stored_chunks)} chunks")
+            
+            logger.info(f"[TIMING] TOTAL INGESTION took {time.time()-ingest_start:.2f}s")
             
             return {
                 "document_id": document_id,

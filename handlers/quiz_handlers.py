@@ -159,7 +159,10 @@ async def _ingest_and_extract_concepts(
     Raises:
         ValueError: If no concepts could be extracted
     """
+    import time
+    
     # Ingest Content (with user_token for RLS)
+    t0 = time.time()
     ingestion_result = await ingestion_service.ingest_content(
         user_id=user_id,
         user_token=user_token,
@@ -168,10 +171,14 @@ async def _ingest_and_extract_concepts(
         source_type="text",
         trace_id=trace_id
     )
+    t1 = time.time()
+    logger.info(f"[TIMING] Ingestion took {t1-t0:.2f}s")
+    
     document_id = ingestion_result["document_id"]
     chunks = ingestion_result.get("chunks", [])
     
     # Extract Concepts (with user_token for RLS)
+    t2 = time.time()
     concepts = await concept_service.extract_concepts(
         chunks=chunks,
         user_id=user_id,
@@ -179,6 +186,8 @@ async def _ingest_and_extract_concepts(
         document_id=document_id,
         trace_id=trace_id
     )
+    t3 = time.time()
+    logger.info(f"[TIMING] Concept extraction took {t3-t2:.2f}s for {len(chunks)} chunks -> {len(concepts)} concepts")
     
     if not concepts:
         raise ValueError(
@@ -1101,6 +1110,9 @@ async def _generate_enhanced_mode(
     Returns:
         EnhancedQuizGenerationResponse with generated questions
     """
+    import time
+    pipeline_start = time.time()
+    
     # Initialize services
     ingestion_service = IngestionService()
     concept_service = ConceptExtractionService()
@@ -1108,6 +1120,7 @@ async def _generate_enhanced_mode(
     
     try:
         # Step 1: Ingest content and extract concepts
+        t1 = time.time()
         document_id, chunks, concepts = await _ingest_and_extract_concepts(
             request=request,
             user_id=user_id,
@@ -1116,16 +1129,20 @@ async def _generate_enhanced_mode(
             ingestion_service=ingestion_service,
             concept_service=concept_service
         )
+        logger.info(f"[TIMING] Step 1 (ingest+extract) took {time.time()-t1:.2f}s")
         
         # Step 2: Select concepts and assign types/bloom/difficulty
+        t2 = time.time()
         concept_type_pairs, bloom_difficulty_pairs = _select_and_assign_concepts(
             concepts=concepts,
             num_questions=request.num_questions,
             question_type=request.question_type,
             orchestration_service=orchestration_service
         )
+        logger.info(f"[TIMING] Step 2 (select concepts) took {time.time()-t2:.2f}s")
         
         # Step 3: Generate questions in parallel
+        t3 = time.time()
         valid_questions = await _generate_questions_parallel(
             concept_type_pairs=concept_type_pairs,
             bloom_difficulty_pairs=bloom_difficulty_pairs,
@@ -1134,11 +1151,15 @@ async def _generate_enhanced_mode(
             trace_id=trace_id,
             orchestration_service=orchestration_service
         )
+        logger.info(f"[TIMING] Step 3 (generate questions) took {time.time()-t3:.2f}s")
         
         # Step 4: Convert to Pydantic models
+        t4 = time.time()
         final_questions = _build_enhanced_questions(valid_questions)
+        logger.info(f"[TIMING] Step 4 (build models) took {time.time()-t4:.2f}s")
         
         # Step 5: Save to Database
+        t5 = time.time()
         quiz_id, _ = save_quiz_to_database(
             title=request.title,
             quizzes=final_questions,
@@ -1148,6 +1169,9 @@ async def _generate_enhanced_mode(
             user_token=user_token,
             generation_mode="enhanced"
         )
+        logger.info(f"[TIMING] Step 5 (save quiz) took {time.time()-t5:.2f}s")
+        
+        logger.info(f"[TIMING] TOTAL PIPELINE took {time.time()-pipeline_start:.2f}s")
         
         # Step 6: Build response
         return EnhancedQuizGenerationResponse(
@@ -1161,7 +1185,8 @@ async def _generate_enhanced_mode(
                 "chunks_count": len(chunks),
                 "concepts_extracted": len(concepts),
                 "concepts_used": len(concept_type_pairs),
-                "questions_generated": len(final_questions)
+                "questions_generated": len(final_questions),
+                "total_time_seconds": round(time.time()-pipeline_start, 2)
             }
         )
         
