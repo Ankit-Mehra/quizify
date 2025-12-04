@@ -357,17 +357,25 @@ async def _generate_questions_parallel(
         # Use ALL available concepts for matching (not just those assigned to matching slots)
         # This ensures diverse matching questions with unique concept sets
         if all_concepts:
-            # Deduplicate concepts by name to avoid similar matching questions
+            # Deduplicate concepts by name (or content for unnamed) to avoid similar matching questions
             seen_names = set()
+            seen_unnamed = set()
             unique_concepts = []
             for c in all_concepts:
                 name = c.get("name", "").lower().strip()
-                if not name:
-                    # Keep concepts without names (they may still be valuable)
-                    unique_concepts.append(c)
-                elif name not in seen_names:
-                    seen_names.add(name)
-                    unique_concepts.append(c)
+                if name:
+                    if name not in seen_names:
+                        seen_names.add(name)
+                        unique_concepts.append(c)
+                else:
+                    # Deduplicate unnamed concepts by their content
+                    concept_key = c.get("source_text", "")[:100]  # Use first 100 chars of source
+                    if concept_key and concept_key not in seen_unnamed:
+                        seen_unnamed.add(concept_key)
+                        unique_concepts.append(c)
+                    elif not concept_key:
+                        # No source_text, include anyway (rare case)
+                        unique_concepts.append(c)
             
             # Sort by relevance to prioritize important concepts
             unique_concepts.sort(key=lambda x: x.get("relevance_score", 0), reverse=True)
@@ -408,10 +416,10 @@ async def _generate_questions_parallel(
                 
                 # Get 4 unique concepts for this matching question
                 concepts_for_matching = []
-                attempts = 0
+                local_attempts = 0
                 max_attempts = len(available_concepts) * 2  # Prevent infinite loops
                 
-                while len(concepts_for_matching) < 4 and attempts < max_attempts:
+                while len(concepts_for_matching) < 4 and local_attempts < max_attempts:
                     concept_idx = concept_pool_idx % len(available_concepts)
                     
                     # Only use concepts not already used in previous matching questions
@@ -420,12 +428,19 @@ async def _generate_questions_parallel(
                         if concept_idx not in used_concept_indices:
                             concepts_for_matching.append(available_concepts[concept_idx])
                             used_concept_indices.add(concept_idx)
+                            concept_pool_idx += 1
+                            local_attempts += 1
+                        else:
+                            # Skip already-used concept, move to next
+                            concept_pool_idx += 1
+                            # Only count as attempt if we've gone through full cycle
+                            if concept_pool_idx % len(available_concepts) == 0:
+                                local_attempts += 1
                     else:
                         # Not enough concepts for full uniqueness, allow reuse
                         concepts_for_matching.append(available_concepts[concept_idx])
-                    
-                    concept_pool_idx += 1
-                    attempts += 1
+                        concept_pool_idx += 1
+                        local_attempts += 1
                 
                 # Safety check: if we still don't have enough concepts, skip this question
                 if len(concepts_for_matching) < 4:
