@@ -404,7 +404,7 @@ async def generate_quiz_from_text(
             file_type="text/plain",
             word_count=len(data.content.split()),
             created_by=current_user_id,
-            question_count=total_questions,
+            question_count=len(saved_questions),  # Use actual generated count, not requested count
             user_token=user_token
         )
         

@@ -444,8 +444,7 @@ def mock_get_user_quizzes(user_id, user_token=None):
 
 
 def mock_get_quiz_from_database(quiz_id, user_token=None):
-    """Mock getting quiz from database."""
-    # Extract user_id from token if needed, or just use the quiz_id
+    """Mock getting quiz from database. user_token is ignored in mock."""
     return _quiz_storage.get_quiz(quiz_id, user_id=None)
 
 
