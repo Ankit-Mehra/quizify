@@ -1,7 +1,7 @@
 import json
 import time
 import random
-from typing import Literal, Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List
 
 from services.ai_services.openai_service import get_openai_client, _build_posthog_kwargs
 from services.ai_services.context_service import ContextService
@@ -81,37 +81,31 @@ class QuizOrchestrationService:
         user_token: str,
         trace_id: str,
         bloom_level: BloomLevel = BloomLevel.UNDERSTAND,
-        difficulty: Difficulty = Difficulty.MEDIUM,
-        mode: Literal["standard", "enhanced"] = "standard"
+        difficulty: Difficulty = Difficulty.MEDIUM
     ) -> Dict[str, Any]:
         """
         Generate a single question for a concept.
         
         Args:
             concept: Concept dict with name, chunk_id, embedding, etc.
-            question_type: multiple_choice, true_false, fill_blank, matching
+            question_type: multiple_choice, true_false, fill_blank (NOT matching)
             user_id: UUID of the user
             user_token: JWT token for RLS enforcement
             trace_id: Trace ID for analytics
             bloom_level: Target Bloom's taxonomy level
             difficulty: easy, medium, or hard
-            mode: "standard" or "enhanced" context retrieval
             
         Returns:
             Generated question dict with all fields
+            
+        Note:
+            For matching questions, use generate_matching_question() instead
+            which aggregates context from multiple concepts.
         """
         start_time = time.time()
         
-        # 1. Determine context mode based on question type
-        if mode == "standard":
-            # Check if we should use enhanced mode
-            mode = self.context_service.determine_context_mode(
-                question_type=question_type,
-                bloom_level=bloom_level.value
-            )
-        
-        # 2. Get Context (sync call - fast enough for single chunk)
-        context = self.context_service.get_context_for_concept(concept, user_token, mode)
+        # Get Context (chunk + related chunks)
+        context = self.context_service.get_context_for_concept(concept, user_token)
         
         # 3. Build Prompt - use question-type-specific prompt for clarity
         bloom_description = BLOOM_DESCRIPTIONS.get(bloom_level.value, "testing knowledge")
@@ -178,8 +172,7 @@ class QuizOrchestrationService:
                     "concept_id": str(concept.get("id")),
                     "question_type": question_type,
                     "bloom_level": bloom_level.value,
-                    "difficulty": difficulty.value,
-                    "mode": mode
+                    "difficulty": difficulty.value
                 }
             )
             
@@ -292,3 +285,145 @@ class QuizOrchestrationService:
         random.shuffle(difficulties)
         
         return list(zip(bloom_levels[:num_questions], difficulties[:num_questions]))
+
+    async def generate_matching_question(
+        self,
+        concepts: List[Dict[str, Any]],
+        user_id: str,
+        user_token: str,
+        trace_id: str,
+        bloom_level: BloomLevel = BloomLevel.UNDERSTAND,
+        difficulty: Difficulty = Difficulty.MEDIUM
+    ) -> Dict[str, Any]:
+        """
+        Generate a matching question using aggregated context from multiple concepts.
+        
+        Matching questions need 4 pairs, so we aggregate context from 4 concepts
+        to give the LLM enough material to create meaningful matches.
+        
+        Args:
+            concepts: List of 4 concept dicts to use for matching
+            user_id: UUID of the user
+            user_token: JWT token for RLS enforcement
+            trace_id: Trace ID for analytics
+            bloom_level: Target Bloom's taxonomy level
+            difficulty: easy, medium, or hard
+            
+        Returns:
+            Generated matching question dict with all fields
+        """
+        start_time = time.time()
+        
+        # Get aggregated context from multiple concepts
+        context = self.context_service.get_aggregated_context_for_matching(concepts, user_token)
+        
+        if not context:
+            raise ValueError("Could not aggregate context for matching question")
+        
+        # Build Prompt using matching template
+        prompt_template = RAG_QUESTION_TYPE_PROMPTS.get("matching", RAG_PROMPT_MCQ)
+        
+        # Use first concept's name as topic, but note we're matching across concepts
+        primary_concept = concepts[0] if concepts else {}
+        concept_names = [c.get("name", "Unknown") for c in concepts[:4]]
+        
+        prompt = prompt_template.format(
+            difficulty=difficulty.value,
+            bloom_level=bloom_level.value,
+            bloom_description=BLOOM_DESCRIPTIONS.get(bloom_level.value, "testing knowledge"),
+            concept_name=", ".join(concept_names),
+            concept_type="matching across concepts",
+            context=context
+        )
+        
+        # Call LLM
+        model = "gpt-4o"
+        posthog_kwargs = _build_posthog_kwargs(
+            user_id=user_id,
+            trace_id=trace_id,
+            properties={"call_type": "matching_generation", "bloom_level": bloom_level.value}
+        )
+        
+        try:
+            response = await self.client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": "You are a professional quiz generator. Generate clear, educationally valuable matching questions."},
+                    {"role": "user", "content": prompt}
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.7,
+                **posthog_kwargs
+            )
+            
+            latency_ms = int((time.time() - start_time) * 1000)
+            usage = response.usage
+            content = response.choices[0].message.content
+            
+            # Parse Response
+            try:
+                result = json.loads(content)
+            except json.JSONDecodeError:
+                logger.error(f"Failed to parse JSON from matching generation: {content[:100]}...")
+                raise ValueError("Invalid JSON response from LLM")
+            
+            # Validate matching structure
+            self._validate_question_structure(result, "matching")
+            
+            # Track Analytics
+            cost = calculate_cost(model, usage.prompt_tokens, usage.completion_tokens)
+            track_llm_call(
+                user_id=user_id,
+                trace_id=trace_id,
+                call_type="matching_generation",
+                model=model,
+                input_tokens=usage.prompt_tokens,
+                output_tokens=usage.completion_tokens,
+                latency_ms=latency_ms,
+                cost_usd=cost,
+                metadata={
+                    "concept_count": len(concepts),
+                    "question_type": "matching",
+                    "bloom_level": bloom_level.value,
+                    "difficulty": difficulty.value
+                }
+            )
+            
+            # Verify + Explain
+            is_valid, confidence, issues, explanation = await self.explanation_service.verify_and_explain(
+                question_data=result,
+                context=context,
+                user_id=user_id,
+                trace_id=trace_id
+            )
+            
+            if not is_valid:
+                logger.warning(f"Matching question verification failed: {issues}")
+                raise ValueError(f"Matching question rejected by verification: {issues}")
+            
+            # Format Result
+            result["explanation"] = explanation
+            result["type"] = "matching"
+            result["bloom_level"] = bloom_level.value
+            result["difficulty"] = difficulty.value
+            result["concept_id"] = str(primary_concept.get("id")) if primary_concept.get("id") else None
+            result["concept_name"] = ", ".join(concept_names)
+            result["chunk_id"] = None  # Multiple chunks used
+            result["source"] = context[:500] + "..." if len(context) > 500 else context
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error generating matching question: {str(e)}")
+            track_llm_call(
+                user_id=user_id,
+                trace_id=trace_id,
+                call_type="matching_generation",
+                model="gpt-4o",
+                input_tokens=0,
+                output_tokens=0,
+                latency_ms=int((time.time() - start_time) * 1000),
+                success=False,
+                error_message=str(e)
+            )
+            raise

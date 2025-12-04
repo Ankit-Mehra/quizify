@@ -254,75 +254,148 @@ async def _generate_questions_parallel(
     """
     Generate questions in parallel with retry logic for failures.
     
+    Matching questions are handled specially - they aggregate 4 concepts
+    to provide enough context for creating 4 matching pairs.
+    
     Returns:
         List of valid generated question dictionaries
         
     Raises:
         ValueError: If no valid questions could be generated
     """
-    async def generate_one(idx: int, concept: Dict, q_type: str):
-        bloom_level, difficulty = bloom_difficulty_pairs[idx]
-        return await orchestration_service.generate_question_for_concept(
-            concept=concept,
-            question_type=q_type,
-            user_id=user_id,
-            user_token=user_token,
-            trace_id=trace_id,
-            bloom_level=bloom_level,
-            difficulty=difficulty
-        )
+    # Separate matching from non-matching questions
+    matching_indices = []
+    non_matching_pairs = []
+    non_matching_bloom_diff = []
     
-    # Generate all questions in parallel
-    tasks = [generate_one(i, c, t) for i, (c, t) in enumerate(concept_type_pairs)]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    for i, (concept, q_type) in enumerate(concept_type_pairs):
+        if q_type == "matching":
+            matching_indices.append(i)
+        else:
+            non_matching_pairs.append((concept, q_type, i))
+            non_matching_bloom_diff.append(bloom_difficulty_pairs[i])
     
     valid_questions = []
-    failed_indices = []
     
-    for i, res in enumerate(results):
-        if isinstance(res, dict):
-            valid_questions.append(res)
-        else:
-            logger.error(f"Question generation failed for index {i}: {res}")
-            failed_indices.append(i)
-    
-    # Retry logic for failed questions (max 1 retry with same type)
-    if failed_indices:
-        logger.info(f"Retrying {len(failed_indices)} failed questions with same type...")
-        retry_tasks = []
-        retry_indices = []
-        for idx in failed_indices:
-            concept, q_type = concept_type_pairs[idx]
-            retry_tasks.append(generate_one(idx, concept, q_type))
-            retry_indices.append((idx, q_type))
+    # Generate non-matching questions in parallel
+    if non_matching_pairs:
+        async def generate_one(concept: Dict, q_type: str, orig_idx: int):
+            bloom_level, difficulty = bloom_difficulty_pairs[orig_idx]
+            return await orchestration_service.generate_question_for_concept(
+                concept=concept,
+                question_type=q_type,
+                user_id=user_id,
+                user_token=user_token,
+                trace_id=trace_id,
+                bloom_level=bloom_level,
+                difficulty=difficulty
+            )
         
-        retry_results = await asyncio.gather(*retry_tasks, return_exceptions=True)
+        tasks = [generate_one(c, t, idx) for c, t, idx in non_matching_pairs]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
         
-        second_retry_indices = []
-        for (idx, original_type), res in zip(retry_indices, retry_results):
+        failed_items = []
+        for (concept, q_type, orig_idx), res in zip(non_matching_pairs, results):
             if isinstance(res, dict):
                 valid_questions.append(res)
             else:
-                logger.error(f"First retry failed for index {idx} (type={original_type}): {res}")
-                second_retry_indices.append((idx, original_type))
-    
-        # Fallback retry: try with multiple_choice (most reliable type)
-        if second_retry_indices:
-            logger.info(f"Fallback retry: {len(second_retry_indices)} questions switching to multiple_choice")
-            fallback_tasks = []
-            for idx, original_type in second_retry_indices:
-                concept, _ = concept_type_pairs[idx]
-                fallback_type = "multiple_choice"  # Most reliable fallback
-                logger.warning(f"Index {idx}: switching from {original_type} to {fallback_type}")
-                fallback_tasks.append(generate_one(idx, concept, fallback_type))
+                logger.error(f"Question generation failed for index {orig_idx}: {res}")
+                failed_items.append((concept, q_type, orig_idx))
+        
+        # Retry failed non-matching questions with fallback to MCQ
+        if failed_items:
+            logger.info(f"Retrying {len(failed_items)} failed non-matching questions...")
+            retry_tasks = []
+            for concept, q_type, orig_idx in failed_items:
+                # First retry with same type
+                retry_tasks.append(generate_one(concept, q_type, orig_idx))
             
-            fallback_results = await asyncio.gather(*fallback_tasks, return_exceptions=True)
+            retry_results = await asyncio.gather(*retry_tasks, return_exceptions=True)
             
-            for res in fallback_results:
+            fallback_items = []
+            for (concept, q_type, orig_idx), res in zip(failed_items, retry_results):
                 if isinstance(res, dict):
                     valid_questions.append(res)
                 else:
-                    logger.error(f"Fallback retry also failed: {res}")
+                    logger.error(f"Retry failed for index {orig_idx}, will try MCQ fallback")
+                    fallback_items.append((concept, orig_idx))
+            
+            # Fallback to MCQ
+            if fallback_items:
+                logger.info(f"Fallback: {len(fallback_items)} questions switching to multiple_choice")
+                fallback_tasks = [generate_one(c, "multiple_choice", idx) for c, idx in fallback_items]
+                fallback_results = await asyncio.gather(*fallback_tasks, return_exceptions=True)
+                
+                for res in fallback_results:
+                    if isinstance(res, dict):
+                        valid_questions.append(res)
+                    else:
+                        logger.error(f"Fallback also failed: {res}")
+    
+    # Generate matching questions - aggregate 4 concepts per matching question
+    if matching_indices:
+        logger.info(f"Generating {len(matching_indices)} matching question(s) using aggregated concepts")
+        
+        # Get all concepts for matching
+        all_concepts = [concept_type_pairs[i][0] for i in matching_indices]
+        
+        # For each matching question, we need 4 concepts
+        # If we have fewer than 4 concepts per matching question, we'll reuse some
+        matching_tasks = []
+        for i, idx in enumerate(matching_indices):
+            bloom_level, difficulty = bloom_difficulty_pairs[idx]
+            
+            # Get 4 concepts for this matching question
+            # Start from current position and wrap around if needed
+            start = (i * 4) % len(all_concepts) if len(all_concepts) > 0 else 0
+            concepts_for_matching = []
+            for j in range(4):
+                concept_idx = (start + j) % len(all_concepts) if all_concepts else 0
+                if all_concepts:
+                    concepts_for_matching.append(all_concepts[concept_idx])
+            
+            # If we still don't have 4 concepts, use all available concepts
+            if len(concepts_for_matching) < 4 and all_concepts:
+                # Just use what we have, repeating if necessary
+                while len(concepts_for_matching) < 4:
+                    concepts_for_matching.append(all_concepts[len(concepts_for_matching) % len(all_concepts)])
+            
+            matching_tasks.append(
+                orchestration_service.generate_matching_question(
+                    concepts=concepts_for_matching,
+                    user_id=user_id,
+                    user_token=user_token,
+                    trace_id=trace_id,
+                    bloom_level=bloom_level,
+                    difficulty=difficulty
+                )
+            )
+        
+        matching_results = await asyncio.gather(*matching_tasks, return_exceptions=True)
+        
+        for i, res in enumerate(matching_results):
+            if isinstance(res, dict):
+                valid_questions.append(res)
+            else:
+                logger.error(f"Matching question {i} failed: {res}")
+                # Fallback to MCQ for failed matching
+                logger.info(f"Falling back to MCQ for failed matching question {i}")
+                try:
+                    idx = matching_indices[i]
+                    concept = concept_type_pairs[idx][0]
+                    bloom_level, difficulty = bloom_difficulty_pairs[idx]
+                    fallback_result = await orchestration_service.generate_question_for_concept(
+                        concept=concept,
+                        question_type="multiple_choice",
+                        user_id=user_id,
+                        user_token=user_token,
+                        trace_id=trace_id,
+                        bloom_level=bloom_level,
+                        difficulty=difficulty
+                    )
+                    valid_questions.append(fallback_result)
+                except Exception as e:
+                    logger.error(f"Matching fallback to MCQ also failed: {e}")
     
     if not valid_questions:
         raise ValueError(

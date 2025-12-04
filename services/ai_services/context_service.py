@@ -1,37 +1,33 @@
-from typing import Literal, Dict, Any
+from typing import Dict, Any, List
 from services.db_services.supabase_chunks import get_chunk, match_chunks
 from services.logger import ai_logger as logger
 
 
 class ContextService:
     """
-    Manages context retrieval for question generation.
+    Manages context retrieval for RAG-based question generation.
     
-    Two modes:
-    - standard: Uses only the source chunk (~500 tokens) - fast, cheap
-    - enhanced: Uses chunk + related chunks (~1500 tokens) - for comparison questions
+    Always retrieves chunk + related chunks for rich context.
+    For matching questions, aggregates context from multiple concepts.
     """
     
     def get_context_for_concept(
         self,
         concept: Dict[str, Any],
-        user_token: str,
-        mode: Literal["standard", "enhanced"] = "standard"
+        user_token: str
     ) -> str:
         """
-        Retrieve context for a concept based on the selected mode.
+        Retrieve context for a concept (chunk + related chunks).
         
         Args:
             concept: Concept dict with chunk_id, embedding, etc.
             user_token: JWT token for RLS enforcement
-            mode: "standard" (chunk only) or "enhanced" (chunk + related)
             
         Returns:
-            Context string for question generation
+            Context string with primary chunk and related chunks
         """
         chunk_id = concept.get("chunk_id")
         if not chunk_id:
-            # Fallback if no chunk_id (shouldn't happen in normal flow)
             logger.warning(f"No chunk_id for concept {concept.get('id')}, using source_text")
             return concept.get("source_text", "")
             
@@ -43,12 +39,8 @@ class ContextService:
             
         context = f"Primary Source:\n{main_chunk['content']}\n"
         
-        # If standard mode, we are done
-        if mode == "standard":
-            return context
-            
-        # Enhanced mode: find related chunks for cross-referencing
-        if mode == "enhanced" and concept.get("embedding"):
+        # Find related chunks for richer context
+        if concept.get("embedding"):
             related_chunks = match_chunks(
                 query_embedding=concept["embedding"],
                 user_token=user_token,
@@ -67,38 +59,64 @@ class ContextService:
                     
         return context
     
-    def determine_context_mode(
+    def get_aggregated_context_for_matching(
         self,
-        question_type: str,
-        bloom_level: str = None,
-        user_preference: str = None
-    ) -> Literal["standard", "enhanced"]:
+        concepts: List[Dict[str, Any]],
+        user_token: str
+    ) -> str:
         """
-        Determine whether to use standard or enhanced context mode.
+        Aggregate context from multiple concepts for matching questions.
         
-        Standard Mode (~80% of questions):
-            - Faster (no similarity search)
-            - Cheaper (~$0.0003/question)
-            - Good for: define, explain, apply, create questions
+        Matching questions need 4 pairs, so we combine context from 4 concepts
+        to give the LLM enough material to create meaningful matches.
         
-        Enhanced Mode (~20% of questions):
-            - Slower (+100-200ms for similarity search)
-            - More expensive (~$0.0008/question)
-            - Good for: compare, contrast, relationship questions
+        Args:
+            concepts: List of 4 concept dicts to aggregate
+            user_token: JWT token for RLS enforcement
+            
+        Returns:
+            Aggregated context string from all concepts
         """
-        # User can force enhanced mode
-        if user_preference == "enhanced":
-            return "enhanced"
+        if not concepts:
+            return ""
+            
+        aggregated_parts = []
+        seen_chunk_ids = set()
         
-        # Analyze bloom level - "analyze" often needs cross-references
-        if bloom_level == "analyze":
-            return "enhanced"
+        for i, concept in enumerate(concepts[:4]):  # Limit to 4 concepts
+            chunk_id = concept.get("chunk_id")
+            
+            # Skip if we've already included this chunk
+            if chunk_id in seen_chunk_ids:
+                continue
+            seen_chunk_ids.add(chunk_id)
+            
+            concept_name = concept.get("name", f"Concept {i+1}")
+            
+            if not chunk_id:
+                # Fallback to source_text if no chunk_id
+                source_text = concept.get("source_text", "")
+                if source_text:
+                    aggregated_parts.append(f"=== {concept_name} ===\n{source_text}")
+                continue
+                
+            # Get the chunk content
+            chunk = get_chunk(chunk_id, user_token)
+            if chunk:
+                aggregated_parts.append(f"=== {concept_name} ===\n{chunk['content']}")
+            else:
+                # Fallback to source_text
+                source_text = concept.get("source_text", "")
+                if source_text:
+                    aggregated_parts.append(f"=== {concept_name} ===\n{source_text}")
         
-        # Check question type for comparison indicators
-        comparison_keywords = ["compare", "contrast", "versus", "difference", 
-                              "similarity", "relationship", "distinguish"]
-        if any(kw in question_type.lower() for kw in comparison_keywords):
-            return "enhanced"
+        if not aggregated_parts:
+            logger.warning("No content found for matching question aggregation")
+            return ""
+            
+        context = "Use the following sources to create 4 matching pairs:\n\n"
+        context += "\n\n".join(aggregated_parts)
         
-        # Default to standard (covers 80% of cases well)
-        return "standard"
+        logger.debug(f"Aggregated context from {len(aggregated_parts)} concepts for matching")
+        return context
+
