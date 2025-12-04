@@ -257,7 +257,8 @@ async def _generate_questions_parallel(
     user_id: str,
     user_token: str,
     trace_id: str,
-    orchestration_service: QuizOrchestrationService
+    orchestration_service: QuizOrchestrationService,
+    all_concepts: List[Dict] = None
 ) -> List[Dict]:
     """
     Generate questions in parallel with retry logic for failures.
@@ -265,11 +266,21 @@ async def _generate_questions_parallel(
     Matching questions are handled specially - they aggregate 4 concepts
     to provide enough context for creating 4 matching pairs.
     
+    Args:
+        concept_type_pairs: List of (concept, question_type) tuples.
+        bloom_difficulty_pairs: List of (bloom_level, difficulty) tuples.
+        user_id: ID of the user generating the quiz.
+        user_token: Authentication token for the user.
+        trace_id: Request trace ID for logging.
+        orchestration_service: Service for orchestrating question generation.
+        all_concepts: Optional full list of extracted concepts for matching question diversity.
+            If None, falls back to concepts assigned to matching slots only.
+    
     Returns:
-        List of valid generated question dictionaries
+        List of valid generated question dictionaries.
         
     Raises:
-        ValueError: If no valid questions could be generated
+        ValueError: If no valid questions could be generated.
     """
     # Separate matching from non-matching questions
     matching_indices = []
@@ -344,11 +355,41 @@ async def _generate_questions_parallel(
     if matching_indices:
         logger.info(f"Generating {len(matching_indices)} matching question(s) using aggregated concepts")
         
-        # Get all concepts for matching
-        all_concepts = [concept_type_pairs[i][0] for i in matching_indices]
+        # Use ALL available concepts for matching (not just those assigned to matching slots)
+        # This ensures diverse matching questions with unique concept sets
+        if all_concepts:
+            # Deduplicate concepts by name (or content for unnamed) to avoid similar matching questions
+            seen_names = set()
+            seen_unnamed = set()
+            unique_concepts = []
+            included_empty_source = False  # Only include one concept with empty source_text
+            for c in all_concepts:
+                name = c.get("name", "").lower().strip()
+                if name:
+                    if name not in seen_names:
+                        seen_names.add(name)
+                        unique_concepts.append(c)
+                else:
+                    # Deduplicate unnamed concepts by their content
+                    concept_key = c.get("source_text", "")[:100]  # Use first 100 chars of source
+                    if concept_key and concept_key not in seen_unnamed:
+                        seen_unnamed.add(concept_key)
+                        unique_concepts.append(c)
+                    elif not concept_key and not included_empty_source:
+                        # No source_text - include at most one such concept
+                        unique_concepts.append(c)
+                        included_empty_source = True
+            
+            # Sort by relevance to prioritize important concepts
+            unique_concepts.sort(key=lambda x: x.get("relevance_score", 0), reverse=True)
+            available_concepts = unique_concepts
+            logger.info(f"Using {len(available_concepts)} unique concepts for {len(matching_indices)} matching questions")
+        else:
+            # Fallback to concepts assigned to matching slots
+            available_concepts = [concept_type_pairs[i][0] for i in matching_indices]
         
         # Early check: if no concepts available, fall back to MCQ for all matching questions
-        if not all_concepts:
+        if not available_concepts:
             logger.warning("No concepts available for matching questions, falling back to MCQ")
             for idx in matching_indices:
                 concept = concept_type_pairs[idx][0]
@@ -367,16 +408,49 @@ async def _generate_questions_parallel(
                 except Exception as e:
                     logger.error(f"MCQ fallback for empty matching concepts failed: {e}")
         else:
-            # For each matching question, we need 4 concepts (wrapping around if fewer available)
+            # For each matching question, we need 4 UNIQUE concepts
+            # Ensure each matching question uses different concepts
             matching_tasks = []
+            used_concept_indices = set()
+            concept_pool_idx = 0  # Track position across all matching questions
+            
             for i, idx in enumerate(matching_indices):
                 bloom_level, difficulty = bloom_difficulty_pairs[idx]
                 
-                # Get 4 concepts for this matching question, wrapping around as needed
-                start = (i * 4) % len(all_concepts)
-                concepts_for_matching = [
-                    all_concepts[(start + j) % len(all_concepts)] for j in range(4)
-                ]
+                # Get 4 unique concepts for this matching question
+                concepts_for_matching = []
+                checked_indices = set()  # Track which indices we've checked this iteration
+                max_checks = len(available_concepts)  # Stop after checking all concepts once
+                
+                while len(concepts_for_matching) < 4 and len(checked_indices) < max_checks:
+                    concept_idx = concept_pool_idx % len(available_concepts)
+                    
+                    # Track that we've checked this index
+                    if concept_idx not in checked_indices:
+                        checked_indices.add(concept_idx)
+                    
+                    # Only use concepts not already used in previous matching questions
+                    # (if we have enough concepts for full uniqueness)
+                    if len(available_concepts) > len(matching_indices) * 4:
+                        if concept_idx not in used_concept_indices:
+                            concepts_for_matching.append(available_concepts[concept_idx])
+                            used_concept_indices.add(concept_idx)
+                    else:
+                        # Not enough concepts for full uniqueness, allow reuse
+                        concepts_for_matching.append(available_concepts[concept_idx])
+                    
+                    concept_pool_idx += 1
+                
+                # Safety check: if we still don't have enough concepts, skip this question
+                if len(concepts_for_matching) < 4:
+                    if available_concepts:
+                        # Fill with remaining concepts
+                        while len(concepts_for_matching) < 4:
+                            fill_idx = len(concepts_for_matching) % len(available_concepts)
+                            concepts_for_matching.append(available_concepts[fill_idx])
+                    else:
+                        logger.error(f"No available concepts for matching question {i}, skipping")
+                        continue
             
                 matching_tasks.append(
                     orchestration_service.generate_matching_question(
@@ -1147,7 +1221,8 @@ async def _generate_enhanced_mode(
             user_id=user_id,
             user_token=user_token,
             trace_id=trace_id,
-            orchestration_service=orchestration_service
+            orchestration_service=orchestration_service,
+            all_concepts=concepts  # Pass all concepts for matching question diversity
         )
         logger.info(f"[TIMING] Step 3 (generate questions) took {time.time()-t3:.2f}s")
         
