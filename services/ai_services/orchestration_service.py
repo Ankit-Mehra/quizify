@@ -7,50 +7,10 @@ from services.ai_services.openai_service import get_openai_client, _build_postho
 from services.ai_services.context_service import ContextService
 from services.ai_services.pricing import calculate_cost
 from services.ai_services.explanation_service import ExplanationService
+from services.ai_services.prompts import BLOOM_DESCRIPTIONS, RAG_QUESTION_TYPE_PROMPTS, RAG_PROMPT_MCQ
 from services.db_services.supabase_llm_analytics import track_llm_call
 from services.logger import ai_logger as logger
 from schemas.quiz import BloomLevel, Difficulty
-
-# Bloom level descriptions for prompting
-BLOOM_DESCRIPTIONS = {
-    "remember": "recall of facts and basic concepts (define, list, name)",
-    "understand": "explaining ideas or concepts (describe, summarize, explain)",
-    "apply": "using information in new situations (demonstrate, solve, use)",
-    "analyze": "drawing connections among ideas (compare, contrast, differentiate)",
-    "evaluate": "justifying a decision (argue, defend, critique)",
-    "create": "producing original work (design, construct, propose)"
-}
-
-QUESTION_GENERATION_PROMPT = """
-You are an expert educational content creator.
-Create a {difficulty} difficulty {question_type} question at the {bloom_level} Bloom's Taxonomy level.
-
-Target Concept: {concept_name}
-Concept Type: {concept_type}
-
-Bloom Level Description: {bloom_description}
-
-Context:
-{context}
-
-Requirements:
-1. Question must be clear, unambiguous, and directly test the concept.
-2. For multiple_choice: provide exactly 4 options with 1 correct answer and 3 plausible distractors.
-3. For true_false: create a statement that is clearly true or false based on the context.
-4. For fill_blank: create a sentence with a key term removed, marked with _____.
-5. For matching: provide 4 pairs of related items. Return "left" and "right" lists, and "correct_answer" as list of indices [0, 1, 2, 3] mapping left to right.
-6. Assign a confidence score (0.0-1.0) based on how well the question tests the concept.
-
-Return JSON format:
-{{
-  "question": "...",
-  "options": ["A) ...", "B) ...", "C) ...", "D) ..."],  // for multiple_choice only
-  "left": ["Item 1", "Item 2", ...], // for matching only
-  "right": ["Match A", "Match B", ...], // for matching only
-  "correct_answer": "A" or true/false or "term" or [0,1,2,3],  // type-dependent
-  "confidence_score": 0.95
-}}
-"""
 
 
 class QuizOrchestrationService:
@@ -64,6 +24,54 @@ class QuizOrchestrationService:
         self.client = get_openai_client()
         self.context_service = ContextService()
         self.explanation_service = ExplanationService()
+    
+    def _validate_question_structure(self, result: Dict[str, Any], question_type: str) -> None:
+        """
+        Validate that LLM response has required fields for the question type.
+        
+        This catches malformed responses BEFORE expensive verification calls.
+        Raises ValueError if validation fails.
+        """
+        if not result.get("question"):
+            raise ValueError("Question text is missing or empty")
+        
+        if question_type == "multiple_choice":
+            options = result.get("options")
+            if not options or len(options) < 2:
+                raise ValueError(f"MCQ requires at least 2 options, got: {options}")
+            if not result.get("correct_answer"):
+                raise ValueError("MCQ correct_answer is missing")
+                
+        elif question_type == "fill_blank":
+            options = result.get("options")
+            if not options or len(options) < 2:
+                raise ValueError(f"Fill-blank requires at least 2 options, got: {options}")
+            if not result.get("correct_answer"):
+                raise ValueError("Fill-blank correct_answer is missing")
+            # Check for blank marker in question
+            question = result.get("question", "")
+            if "_____" not in question and "____" not in question and "{{blank}}" not in question.lower():
+                logger.warning(f"Fill-blank question may be missing blank marker: {question[:50]}...")
+                
+        elif question_type == "matching":
+            left = result.get("left")
+            right = result.get("right")
+            correct_answer = result.get("correct_answer")
+            
+            if not left or not isinstance(left, list) or len(left) < 2:
+                raise ValueError(f"Matching question requires 'left' list with at least 2 items, got: {left}")
+            if not right or not isinstance(right, list) or len(right) < 2:
+                raise ValueError(f"Matching question requires 'right' list with at least 2 items, got: {right}")
+            if len(left) != len(right):
+                raise ValueError(f"Matching 'left' ({len(left)}) and 'right' ({len(right)}) must have same length")
+            if not correct_answer or not isinstance(correct_answer, list):
+                raise ValueError(f"Matching correct_answer must be a list of indices, got: {correct_answer}")
+            if len(correct_answer) != len(left):
+                raise ValueError(f"Matching correct_answer length ({len(correct_answer)}) must match items ({len(left)})")
+                
+        elif question_type == "true_false":
+            if result.get("correct_answer") is None:
+                raise ValueError("True/false correct_answer is missing")
         
     async def generate_question_for_concept(
         self,
@@ -105,12 +113,14 @@ class QuizOrchestrationService:
         # 2. Get Context (sync call - fast enough for single chunk)
         context = self.context_service.get_context_for_concept(concept, user_token, mode)
         
-        # 3. Build Prompt with Bloom description
+        # 3. Build Prompt - use question-type-specific prompt for clarity
         bloom_description = BLOOM_DESCRIPTIONS.get(bloom_level.value, "testing knowledge")
         
-        prompt = QUESTION_GENERATION_PROMPT.format(
+        # Select the appropriate prompt template for this question type
+        prompt_template = RAG_QUESTION_TYPE_PROMPTS.get(question_type, RAG_PROMPT_MCQ)
+        
+        prompt = prompt_template.format(
             difficulty=difficulty.value,
-            question_type=question_type,
             bloom_level=bloom_level.value,
             bloom_description=bloom_description,
             concept_name=concept["name"],
@@ -148,6 +158,10 @@ class QuizOrchestrationService:
             except json.JSONDecodeError:
                 logger.error(f"Failed to parse JSON from question generation: {content[:100]}...")
                 raise ValueError("Invalid JSON response from LLM")
+            
+            # 5b. Pre-validate required fields BEFORE expensive verification call
+            # This catches malformed LLM responses early and saves verification tokens
+            self._validate_question_structure(result, question_type)
                 
             # 6. Track Analytics (sync, fire-and-forget)
             cost = calculate_cost(model, usage.prompt_tokens, usage.completion_tokens)
