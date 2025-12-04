@@ -40,10 +40,12 @@ Respond in this JSON structure:
   "quizzes": [{{ ... }}]
 }}
 
-Each object in "quizzes" must:
-- Include all required fields for its type.
-- Follow strict formatting rules per type (shown below).
-- Be factual, clear, and based on the provided text.
+Each object in "quizzes" must include these REQUIRED fields:
+- "type": The question type (e.g., "multiple_choice", "true_false", etc.)
+- "question": The question text
+- "explanation": A clear explanation of why the correct answer is right (1-2 sentences)
+- "source": A brief excerpt (1-2 sentences) from the input text that supports this question
+- Type-specific fields (see formatting rules below)
 
 Formatting rules:
 - "multiple_choice":
@@ -61,7 +63,7 @@ Formatting rules:
     - `correct_answer` should be a list of matching indices like [0, 1, 2, 3]
 
 Rules:
-- Do not include explanations or content outside the JSON.
+- Be factual, clear, and based on the provided text.
 - Do not copy any examples.
 - Do not return sample or placeholder questions.
 

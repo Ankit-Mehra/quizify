@@ -143,6 +143,7 @@ class QuizzesResponse(BaseModel):
     created_at: Optional[str] = None
     content_source_type: Optional[CONTENT_SOURCE_TYPES] = None  # NEW
     content_source_reference: Optional[str] = None  # NEW
+    generation_mode: Optional[str] = "standard"  # "standard" or "enhanced"
     questions: List[Question]
 
 class QuizMetadata(BaseModel):
@@ -238,6 +239,7 @@ class MyQuizzesResponse(BaseModel):
     title: Optional[str] = None
     created_by: Optional[str] = None
     created_at: Optional[str] = None
+    generation_mode: Optional[str] = "standard"  # "standard" or "enhanced"
     question_count: Optional[int] = None
 
 class DeleteQuizResponse(BaseModel):
@@ -272,8 +274,9 @@ class EnhancedQuestion(BaseModel):
     correct_answer: Union[str, bool, List[int]]
     explanation: str
     source: str
-    bloom_level: BloomLevel
-    difficulty: Difficulty
+    # Enhanced mode fields (optional for standard mode)
+    bloom_level: Optional[BloomLevel] = None
+    difficulty: Optional[Difficulty] = None
     concept_id: Optional[UUID] = None
     concept_name: Optional[str] = None  # Human-readable concept name (e.g., "Photosynthesis")
     chunk_id: Optional[UUID] = None

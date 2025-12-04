@@ -38,31 +38,30 @@ Verify and explain this MATCHING quiz question based on the provided context.
 
 Question: {question}
 
-Left Items (to match FROM):
-{left_items}
-
-Right Items (to match TO):
-{right_items}
-
-Correct Matching (indices): {correct_answer}
-(Each index in the list maps left[i] to right[correct_answer[i]])
+The correct matching pairs are:
+{matched_pairs}
 
 Context:
 {context}
 
 Tasks:
-1. VERIFY: Are the matching pairs factually accurate and supported by the context?
-2. EXPLAIN: Why do these pairs match? Reference the context.
+1. VERIFY: Are ALL of these matching pairs factually correct based on the context?
+   - Each pair should represent a valid relationship (term→definition, concept→example, etc.)
+   - The pairs do NOT need to appear verbatim in the context
+   - Accept paraphrased, summarized, or logically derived relationships
+   - Only reject if a pair is factually WRONG or contradicts the context
+2. EXPLAIN: Briefly explain why each pair is correct, referencing the context.
 
 Return JSON:
 {{
     "is_accurate": true/false,
     "confidence_score": 0.0-1.0,
     "issues": [],
-    "explanation": "Clear explanation of why the matching pairs are correct, referencing the context."
+    "explanation": "Clear explanation of why the matching pairs are correct."
 }}
 
-Be strict on accuracy. If the matches aren't clearly supported by context, set is_accurate=false.
+IMPORTANT: Be reasonable. Accept matches that are logically correct based on the context's topic,
+even if exact wording differs. Only set is_accurate=false if a pair is genuinely incorrect.
 """
 
 # Legacy prompts kept for backward compatibility (individual calls)
@@ -153,16 +152,43 @@ class ExplanationService:
                 # Matching questions have left/right lists instead of options
                 left = question_data.get("left", [])
                 right = question_data.get("right", [])
+                correct_answer = question_data.get("correct_answer", [])
                 
-                # Format left/right items for readability
-                left_str = "\n".join([f"  {i}. {item}" for i, item in enumerate(left)]) if left else "N/A"
-                right_str = "\n".join([f"  {i}. {item}" for i, item in enumerate(right)]) if right else "N/A"
+                # Build explicit matched pairs for clarity
+                # correct_answer[i] tells us which right item matches left[i]
+                matched_pairs_list = []
+                if left and right and correct_answer:
+                    for i, left_item in enumerate(left):
+                        if i < len(correct_answer):
+                            right_idx = correct_answer[i]
+                            if isinstance(right_idx, int) and right_idx < len(right):
+                                right_item = right[right_idx]
+                                matched_pairs_list.append(f"  • \"{left_item}\" → \"{right_item}\"")
+                            else:
+                                # Log skipped pair for debugging - invalid right index
+                                logger.debug(
+                                    f"Skipping pair: left[{i}] ('{left_item}') - "
+                                    f"invalid right_idx ({right_idx}) or out of bounds (right len: {len(right)})"
+                                )
+                        else:
+                            # Log skipped pair for debugging - no mapping in correct_answer
+                            logger.debug(
+                                f"Skipping pair: left[{i}] ('{left_item}') - "
+                                f"correct_answer does not have index {i} (len: {len(correct_answer)})"
+                            )
+                
+                # Log summary if not all left items were matched
+                if left and len(matched_pairs_list) != len(left):
+                    logger.debug(
+                        f"Not all left items were matched: {len(matched_pairs_list)} pairs created "
+                        f"from {len(left)} left items (correct_answer length: {len(correct_answer)})"
+                    )
+                
+                matched_pairs_str = "\n".join(matched_pairs_list) if matched_pairs_list else "N/A (invalid matching data)"
                 
                 prompt = VERIFY_AND_EXPLAIN_MATCHING_PROMPT.format(
                     question=question_data.get("question"),
-                    left_items=left_str,
-                    right_items=right_str,
-                    correct_answer=question_data.get("correct_answer"),
+                    matched_pairs=matched_pairs_str,
                     context=context[:2000]  # Limit context size
                 )
             else:

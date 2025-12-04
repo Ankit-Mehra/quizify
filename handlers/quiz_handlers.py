@@ -100,7 +100,8 @@ async def _generate_standard_mode(
         created_by=user_id,
         content_source_type=content_source_type,
         content_source_reference=content_source_reference,
-        user_token=user_token
+        user_token=user_token,
+        generation_mode="standard"
     )
     
     # Convert to EnhancedQuestion format (with defaults for enhanced fields)
@@ -119,9 +120,11 @@ async def _generate_standard_mode(
             correct_answer=q_dict.get("correct_answer"),
             explanation=q_dict.get("explanation", ""),
             source=q_dict.get("source", ""),
-            bloom_level=BloomLevel.UNDERSTAND,  # Default for standard mode
-            difficulty=Difficulty.MEDIUM,  # Default for standard mode
+            # Standard mode doesn't have these - leave as None
+            bloom_level=None,
+            difficulty=None,
             concept_id=None,
+            concept_name=None,
             chunk_id=None,
             confidence_score=None
         )
@@ -749,6 +752,7 @@ async def get_quiz_by_id_handler(
             "created_at": metadata["created_at"],
             "content_source_type": metadata.get("content_source_type"),
             "content_source_reference": metadata.get("content_source_reference"),
+            "generation_mode": metadata.get("generation_mode", "standard"),
             "question_count": question_count,
             "questions": questions_response.data
         }
@@ -1031,7 +1035,8 @@ async def _generate_enhanced_mode(
             created_by=user_id,
             content_source_type=content_source_type,
             content_source_reference=content_source_reference or document_id,
-            user_token=user_token
+            user_token=user_token,
+            generation_mode="enhanced"
         )
         
         # Step 6: Build response

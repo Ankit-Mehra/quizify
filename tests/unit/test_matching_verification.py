@@ -9,6 +9,32 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 
+def _build_matched_pairs_string(left: list, right: list, correct_answer: list) -> str:
+    """
+    Helper to build matched pairs string (mirrors service logic).
+    
+    This replicates the matching pair building logic from verify_and_explain()
+    to test that formatting works correctly.
+    
+    Args:
+        left: List of left-side items
+        right: List of right-side items  
+        correct_answer: List of indices mapping left[i] to right[correct_answer[i]]
+    
+    Returns:
+        Formatted string of matched pairs, or fallback message if data is invalid
+    """
+    matched_pairs_list = []
+    if left and right and correct_answer:
+        for i, left_item in enumerate(left):
+            if i < len(correct_answer):
+                right_idx = correct_answer[i]
+                if isinstance(right_idx, int) and right_idx < len(right):
+                    right_item = right[right_idx]
+                    matched_pairs_list.append(f'  • "{left_item}" → "{right_item}"')
+    return "\n".join(matched_pairs_list) if matched_pairs_list else "N/A (invalid matching data)"
+
+
 class TestMatchingQuestionVerification:
     """Test verify_and_explain correctly routes matching questions."""
     
@@ -75,25 +101,21 @@ class TestMatchingQuestionVerification:
         assert "right" not in mcq_question_data
     
     def test_left_right_formatting(self, matching_question_data):
-        """Test that left/right items are formatted correctly with indices."""
+        """Test that matched pairs are formatted correctly with explicit arrows."""
         left = matching_question_data.get("left", [])
         right = matching_question_data.get("right", [])
+        correct_answer = matching_question_data.get("correct_answer", [])
         
-        # Format as done in verify_and_explain
-        left_str = "\n".join([f"  {i}. {item}" for i, item in enumerate(left)]) if left else "N/A"
-        right_str = "\n".join([f"  {i}. {item}" for i, item in enumerate(right)]) if right else "N/A"
+        matched_pairs_str = _build_matched_pairs_string(left, right, correct_answer)
         
-        # Verify formatting
-        assert "0. Sprint" in left_str
-        assert "1. Backlog" in left_str
-        assert "2. Scrum Master" in left_str
-        assert "3. Product Owner" in left_str
-        
-        assert "0. A time-boxed iteration" in right_str
-        assert "1. A prioritized list of work" in right_str
+        # Verify formatting contains explicit pairs
+        assert '"Sprint" → "A time-boxed iteration"' in matched_pairs_str
+        assert '"Backlog" → "A prioritized list of work"' in matched_pairs_str
+        assert '"Scrum Master" → "Facilitates the team"' in matched_pairs_str
+        assert '"Product Owner" → "Represents stakeholders"' in matched_pairs_str
     
     def test_empty_left_right_defaults_to_na(self):
-        """Test that empty left/right lists default to 'N/A'."""
+        """Test that empty left/right/correct_answer lists default to 'N/A'."""
         empty_matching = {
             "type": "matching",
             "question": "Match the items",
@@ -104,31 +126,57 @@ class TestMatchingQuestionVerification:
         
         left = empty_matching.get("left", [])
         right = empty_matching.get("right", [])
+        correct_answer = empty_matching.get("correct_answer", [])
         
-        left_str = "\n".join([f"  {i}. {item}" for i, item in enumerate(left)]) if left else "N/A"
-        right_str = "\n".join([f"  {i}. {item}" for i, item in enumerate(right)]) if right else "N/A"
+        matched_pairs_str = _build_matched_pairs_string(left, right, correct_answer)
         
-        assert left_str == "N/A"
-        assert right_str == "N/A"
+        assert matched_pairs_str == "N/A (invalid matching data)"
     
     def test_none_left_right_defaults_to_na(self):
-        """Test that None left/right lists default to 'N/A'."""
+        """Test that None left/right/correct_answer lists default to 'N/A'."""
         matching_with_none = {
             "type": "matching",
             "question": "Match the items",
             "left": None,
             "right": None,
-            "correct_answer": []
+            "correct_answer": None
         }
         
         left = matching_with_none.get("left") or []
         right = matching_with_none.get("right") or []
+        correct_answer = matching_with_none.get("correct_answer") or []
         
-        left_str = "\n".join([f"  {i}. {item}" for i, item in enumerate(left)]) if left else "N/A"
-        right_str = "\n".join([f"  {i}. {item}" for i, item in enumerate(right)]) if right else "N/A"
+        matched_pairs_str = _build_matched_pairs_string(left, right, correct_answer)
         
-        assert left_str == "N/A"
-        assert right_str == "N/A"
+        assert matched_pairs_str == "N/A (invalid matching data)"
+    
+    def test_correct_answer_longer_than_left(self):
+        """Test behavior when correct_answer list is longer than left list."""
+        mismatched = {
+            "left": ["A", "B"],
+            "right": ["1", "2", "3"],
+            "correct_answer": [0, 1, 2]  # Extra index that exceeds left length
+        }
+        matched_pairs_str = _build_matched_pairs_string(
+            mismatched["left"], mismatched["right"], mismatched["correct_answer"]
+        )
+        # Should only create 2 pairs (one for each left item), ignoring the extra index
+        assert matched_pairs_str.count("→") == 2
+        assert '"A" → "1"' in matched_pairs_str
+        assert '"B" → "2"' in matched_pairs_str
+    
+    def test_non_integer_correct_answer_indices(self):
+        """Test behavior when correct_answer contains non-integer values."""
+        invalid_matching = {
+            "left": ["A", "B"],
+            "right": ["1", "2"],
+            "correct_answer": ["0", 1.5]  # Invalid: string and float
+        }
+        matched_pairs_str = _build_matched_pairs_string(
+            invalid_matching["left"], invalid_matching["right"], invalid_matching["correct_answer"]
+        )
+        # Should skip invalid indices - no pairs created
+        assert matched_pairs_str == "N/A (invalid matching data)"
     
     @pytest.mark.asyncio
     async def test_verify_and_explain_matching_integration(self, matching_question_data, mock_openai_response):
@@ -159,10 +207,12 @@ class TestMatchingQuestionVerification:
             prompt_content = user_message.get("content", "")
             
             # Verify matching-specific prompt elements are present
-            assert "Left Items" in prompt_content or "left" in prompt_content.lower()
-            assert "Right Items" in prompt_content or "right" in prompt_content.lower()
+            # New format uses explicit matched pairs like: "Sprint" → "A time-boxed iteration"
+            assert "matching pairs" in prompt_content.lower()
             assert "Sprint" in prompt_content
             assert "Backlog" in prompt_content
+            # Verify the explicit pairs format (arrow between left and right)
+            assert "→" in prompt_content
             
             # Verify result parsing
             assert is_valid is True
@@ -216,9 +266,7 @@ class TestVerifyAndExplainPromptFormats:
         from services.ai_services.explanation_service import VERIFY_AND_EXPLAIN_MATCHING_PROMPT
         
         assert "{question}" in VERIFY_AND_EXPLAIN_MATCHING_PROMPT
-        assert "{left_items}" in VERIFY_AND_EXPLAIN_MATCHING_PROMPT
-        assert "{right_items}" in VERIFY_AND_EXPLAIN_MATCHING_PROMPT
-        assert "{correct_answer}" in VERIFY_AND_EXPLAIN_MATCHING_PROMPT
+        assert "{matched_pairs}" in VERIFY_AND_EXPLAIN_MATCHING_PROMPT
         assert "{context}" in VERIFY_AND_EXPLAIN_MATCHING_PROMPT
     
     def test_standard_prompt_has_required_placeholders(self):
@@ -234,18 +282,20 @@ class TestVerifyAndExplainPromptFormats:
         """Test that matching prompt can be formatted without errors."""
         from services.ai_services.explanation_service import VERIFY_AND_EXPLAIN_MATCHING_PROMPT
         
+        # New format uses explicit matched pairs
+        matched_pairs = '  • "Term1" → "Def1"\n  • "Term2" → "Def2"'
+        
         # Should not raise
         formatted = VERIFY_AND_EXPLAIN_MATCHING_PROMPT.format(
             question="Match the terms",
-            left_items="  0. Term1\n  1. Term2",
-            right_items="  0. Def1\n  1. Def2",
-            correct_answer="[0, 1]",
+            matched_pairs=matched_pairs,
             context="Some context here"
         )
         
         assert "Match the terms" in formatted
         assert "Term1" in formatted
         assert "Def1" in formatted
+        assert "→" in formatted
     
     def test_standard_prompt_format_succeeds(self):
         """Test that standard prompt can be formatted without errors."""

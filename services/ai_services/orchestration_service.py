@@ -209,7 +209,9 @@ class QuizOrchestrationService:
             result["concept_name"] = concept.get("name")
             chunk_id = concept.get("chunk_id")
             result["chunk_id"] = str(chunk_id) if chunk_id else None
-            result["source"] = "RAG"
+            # Store truncated context as source (the actual text used for generation)
+            # Limit to 500 chars to avoid bloating the database
+            result["source"] = context[:500] + "..." if len(context) > 500 else context
             
             return result
             
