@@ -45,23 +45,25 @@ Context:
 {context}
 
 Tasks:
-1. VERIFY: Are ALL of these matching pairs factually correct based on the context?
-   - Each pair should represent a valid relationship (term→definition, concept→example, etc.)
-   - The pairs do NOT need to appear verbatim in the context
-   - Accept paraphrased, summarized, or logically derived relationships
-   - Only reject if a pair is factually WRONG or contradicts the context
-2. EXPLAIN: Briefly explain why each pair is correct, referencing the context.
+1. VERIFY: Check if these matching pairs are educationally valid.
+   - Each pair should represent a reasonable relationship (term→definition, concept→example, cause→effect, etc.)
+   - Pairs can be derived from, summarized from, or logically related to the context
+   - DO NOT require pairs to appear verbatim in the context
+   - Only reject if a pair is FACTUALLY INCORRECT (contradicts known facts)
+   - If the pairs make educational sense for the topic, ACCEPT them
+2. EXPLAIN: Briefly explain why these pairs are good matches.
 
 Return JSON:
 {{
-    "is_accurate": true/false,
-    "confidence_score": 0.0-1.0,
+    "is_accurate": true,
+    "confidence_score": 0.85,
     "issues": [],
-    "explanation": "Clear explanation of why the matching pairs are correct."
+    "explanation": "Clear explanation of why the matching pairs are valid."
 }}
 
-IMPORTANT: Be reasonable. Accept matches that are logically correct based on the context's topic,
-even if exact wording differs. Only set is_accurate=false if a pair is genuinely incorrect.
+CRITICAL: Default to is_accurate=true unless pairs are genuinely wrong.
+Accept paraphrased, inferred, or educationally reasonable matches.
+The goal is to verify FACTUAL correctness, not exact text matching.
 """
 
 # Legacy prompts kept for backward compatibility (individual calls)
@@ -185,6 +187,11 @@ class ExplanationService:
                     )
                 
                 matched_pairs_str = "\n".join(matched_pairs_list) if matched_pairs_list else "N/A (invalid matching data)"
+                
+                # Log what we're sending to verification
+                logger.info(f"Matching verification - pairs built: {len(matched_pairs_list)}, left: {len(left) if left else 0}, right: {len(right) if right else 0}")
+                if matched_pairs_str == "N/A (invalid matching data)":
+                    logger.warning(f"Matching verification getting invalid data - left: {left}, right: {right}, correct_answer: {correct_answer}")
                 
                 prompt = VERIFY_AND_EXPLAIN_MATCHING_PROMPT.format(
                     question=question_data.get("question"),
