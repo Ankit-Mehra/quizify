@@ -78,6 +78,21 @@ async def test_rag_pipeline_flow():
                 "confidence_score": 0.95
             }
         ])
+        # Mock generate_matching_question for matching questions
+        orchestration_instance.generate_matching_question = AsyncMock(return_value={
+            "type": "matching",
+            "question": "Match the terms",
+            "left": ["A", "B", "C", "D"],
+            "right": ["1", "2", "3", "4"],
+            "correct_answer": [0, 1, 2, 3],
+            "explanation": "Matching explanation",
+            "source": "RAG",
+            "bloom_level": "understand",
+            "difficulty": "medium",
+            "concept_id": concept_id_1,
+            "chunk_id": None,
+            "confidence_score": 0.9
+        })
         
         # Setup Save Mock
         mock_save.return_value = ("quiz_123", [])
@@ -88,12 +103,15 @@ async def test_rag_pipeline_flow():
         # Assertions
         assert response.quiz_id == "quiz_123"
         assert len(response.questions) == 2
-        assert response.questions[0].question == "What is photosynthesis?"
         
         # Verify calls
         ingestion_instance.ingest_content.assert_called_once()
         extraction_instance.extract_concepts.assert_called_once()
-        assert orchestration_instance.generate_question_for_concept.call_count == 2
+        # With mixed types, we may call generate_question_for_concept and/or generate_matching_question
+        # The total generated questions should be 2
+        non_matching_calls = orchestration_instance.generate_question_for_concept.call_count
+        matching_calls = orchestration_instance.generate_matching_question.call_count
+        assert non_matching_calls + matching_calls == 2  # Should generate exactly 2 questions
         mock_save.assert_called_once()
 
 
@@ -203,6 +221,10 @@ async def test_rag_pipeline_all_questions_fail():
         # Simulate all question generations failing
         orchestration_instance.generate_question_for_concept = AsyncMock(
             side_effect=ValueError("Question verification failed")
+        )
+        # Also mock matching to fail
+        orchestration_instance.generate_matching_question = AsyncMock(
+            side_effect=ValueError("Matching question verification failed")
         )
         
         with pytest.raises(HTTPException) as exc_info:

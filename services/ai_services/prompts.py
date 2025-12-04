@@ -49,18 +49,21 @@ Each object in "quizzes" must include these REQUIRED fields:
 
 Formatting rules:
 - "multiple_choice":
-    - 4 plausible answers in `options`
+    - 4 plausible answers in `options` (MUST be a JSON array of 4 strings)
     - No prefixes like A. or 1)
     - `correct_answer` must match one of the options exactly
 - "true_false":
     - `correct_answer` must be a boolean: true or false
 - "fill_blank":
     - `question` must contain a blank: "_____"
-    - `options` MUST be a list of 4 strings (REQUIRED, not optional)
+    - `options` MUST be a JSON array of exactly 4 strings (REQUIRED, not optional, NEVER null)
     - `correct_answer` must match one of the options
 - "matching":
-    - Provide `left` and `right` lists (4 items each)
-    - `correct_answer` should be a list of matching indices like [0, 1, 2, 3]
+    - `left` MUST be a JSON array of exactly 4 strings (NEVER null)
+    - `right` MUST be a JSON array of exactly 4 strings (NEVER null)
+    - `correct_answer` MUST be a JSON array of 4 integer indices like [0, 1, 2, 3] (NEVER null)
+
+CRITICAL: Never return null for options, left, right, or correct_answer fields. Always provide valid arrays.
 
 Rules:
 - Be factual, clear, and based on the provided text.
@@ -167,25 +170,29 @@ Return this exact JSON format:
 """
 
 RAG_PROMPT_MATCHING = """You are an expert educational content creator.
-Create a {difficulty} difficulty matching question at the {bloom_level} Bloom's Taxonomy level.
+Create a {difficulty} difficulty matching question.
 
-Target Concept: {concept_name}
-Concept Type: {concept_type}
-Bloom Level: {bloom_description}
+Topic: {concept_name}
 
-Context:
+Context (use this to find 4 matchable pairs):
 {context}
 
-Requirements:
-1. Create exactly 4 pairs of related items to match.
-2. "left" contains 4 items (e.g., terms, names, concepts).
-3. "right" contains 4 corresponding matches (e.g., definitions, discoveries, descriptions).
-4. "correct_answer" is a list of 4 indices showing which right item matches each left item.
-   - Index 0 means the first item in "right" matches the corresponding "left" item.
-   - Example: [0, 1, 2, 3] means left[0]→right[0], left[1]→right[1], etc.
-   - Example: [2, 0, 3, 1] means left[0]→right[2], left[1]→right[0], etc.
+Your task: Find 4 related terms/concepts from the context and create matching pairs.
+Look for: names & roles, terms & definitions, causes & effects, concepts & examples.
 
-Return this exact JSON format:
+OUTPUT REQUIREMENTS (STRICTLY FOLLOW):
+1. "question" - A clear instruction like "Match each term with its definition"
+2. "left" - MUST be a JSON array with exactly 4 string items
+3. "right" - MUST be a JSON array with exactly 4 string items  
+4. "correct_answer" - MUST be a JSON array of 4 integers [0-3]
+   - The indices show which "right" item matches each "left" item
+   - [0,1,2,3] means left[0]→right[0], left[1]→right[1], etc.
+   - [2,0,3,1] means left[0]→right[2], left[1]→right[0], etc.
+5. "confidence_score" - A float between 0 and 1
+
+NEVER return null for any field. All arrays must have exactly 4 items.
+
+JSON FORMAT (copy this structure exactly):
 {{
   "question": "Match each scientist with their discovery.",
   "left": ["Einstein", "Newton", "Curie", "Darwin"],
