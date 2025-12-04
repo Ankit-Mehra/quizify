@@ -17,6 +17,7 @@ class QuizMetadata(BaseModel):
     question_count: int
     content_source_type: Optional[str] = None
     content_source_reference: Optional[str] = None
+    generation_mode: Optional[str] = "standard"
 
 
 class UserTierInfo(BaseModel):
@@ -275,7 +276,8 @@ async def get_quiz_metadata_cached(quiz_id: str, user_id: str, user_token: Optio
             created_at=quiz_data["created_at"],
             question_count=question_count,
             content_source_type=quiz_data.get("content_source_type"),
-            content_source_reference=quiz_data.get("content_source_reference")
+            content_source_reference=quiz_data.get("content_source_reference"),
+            generation_mode=quiz_data.get("generation_mode", "standard")
         )
     
     # Cache key: "quiz_metadata:{quiz_id}:{user_id}"

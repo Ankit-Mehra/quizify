@@ -752,6 +752,7 @@ async def get_quiz_by_id_handler(
             "created_at": metadata["created_at"],
             "content_source_type": metadata.get("content_source_type"),
             "content_source_reference": metadata.get("content_source_reference"),
+            "generation_mode": metadata.get("generation_mode", "standard"),
             "question_count": question_count,
             "questions": questions_response.data
         }
