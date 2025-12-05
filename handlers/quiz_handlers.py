@@ -1,4 +1,4 @@
-from fastapi import HTTPException, Depends, Path, Body, UploadFile, File, Form
+from fastapi import HTTPException, Depends, Path, Body, UploadFile, File, Form, Query
 import asyncio
 import random
 import re
@@ -24,11 +24,11 @@ from schemas.quiz import (
     EnhancedTextQuizRequest, EnhancedQuizGenerationResponse, EnhancedQuestion,
     BloomLevel, Difficulty, ALL_QUESTION_TYPES
 )
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from services.ai_services.ingestion_service import IngestionService
 from services.ai_services.concept_extraction_service import ConceptExtractionService
 from services.ai_services.orchestration_service import QuizOrchestrationService
-from datetime import datetime
+from datetime import datetime, date
 from services.ai_services.chunking_service import generate_quizzes_single_async
 from services.logger import app_logger as logger
 from services.web_scraping_service import scrape_content
@@ -679,6 +679,8 @@ async def generate_quiz_from_file_openai(
         metadata = {
             "quiz_id": result.quiz_id,
             "content_type": "file",
+            "content_source_type": "file",
+            "content_source_reference": file_id,
             "file_name": file.filename,
             "file_type": file.content_type,
             "word_count": len(parsed_text.split()),
@@ -781,6 +783,8 @@ async def generate_quiz_from_fileid(
         metadata = {
             "quiz_id": result.quiz_id,
             "content_type": file_record["file_type"],
+            "content_source_type": "file",
+            "content_source_reference": file_id,
             "file_name": file_record["original_filename"],
             "file_type": file_record["file_type"],
             "word_count": len(file_content.split()),
@@ -833,6 +837,21 @@ async def generate_quiz_from_text(
             content_source_reference=None  # Text input has no reference
         )
         
+        # Save metadata for text-based quiz
+        metadata = {
+            "quiz_id": result.quiz_id,
+            "content_type": "text",
+            "content_source_type": "text",
+            "content_source_reference": None,
+            "file_name": None,
+            "file_type": "text/plain",
+            "word_count": len(data.content.split()),
+            "created_by": current_user_id,
+            "created_at": datetime.now().isoformat(),
+            "question_count": len(result.questions)
+        }
+        save_metadata(metadata, user_token=user_token)
+        
         # Update message and return EnhancedQuizGenerationResponse directly
         result.message = f"Quiz generated successfully from text ({data.mode} mode)"
         return result
@@ -850,12 +869,63 @@ async def generate_quiz_from_text(
 # === Get user quizzes ===
 async def get_user_quizzes_handler(
     current_user_id: str = Depends(get_current_user_id),
-    user_token: str = Depends(get_current_user_token)
+    user_token: str = Depends(get_current_user_token),
+    title: Optional[str] = Query(None, description="Search quizzes by title (case-insensitive, partial match)"),
+    start_date: Optional[date] = Query(None, description="Filter quizzes created on or after this date (YYYY-MM-DD)"),
+    end_date: Optional[date] = Query(None, description="Filter quizzes created on or before this date (YYYY-MM-DD)"),
+    source_type: Optional[str] = Query(None, description="Filter by content source type: file, url, or text"),
+    mode: Optional[str] = Query(None, description="Filter by generation mode: standard or enhanced"),
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    limit: int = Query(20, ge=1, le=100, description="Number of quizzes per page (max 100)")
 ):
-    """Get all quizzes created by the current user."""
+    """
+    Get all quizzes created by the current user with optional filtering and pagination.
+    
+    Supports filtering by:
+    - title: Case-insensitive partial match
+    - start_date/end_date: Date range filter (inclusive)
+    - source_type: Content source (file, url, text)
+    - mode: Generation mode (standard, enhanced)
+    
+    Returns paginated results with metadata for building pagination UI.
+    """
     try:
-        quizzes = get_user_quizzes(current_user_id, user_token)
-        return quizzes
+        # Validate date range
+        if start_date and end_date and start_date > end_date:
+            raise HTTPException(
+                status_code=400,
+                detail="start_date must be less than or equal to end_date"
+            )
+        
+        # Validate source_type if provided
+        if source_type and source_type not in ("file", "url", "text"):
+            raise HTTPException(
+                status_code=400,
+                detail="source_type must be one of: file, url, text"
+            )
+        
+        # Validate mode if provided
+        if mode and mode not in ("standard", "enhanced"):
+            raise HTTPException(
+                status_code=400,
+                detail="mode must be one of: standard, enhanced"
+            )
+        
+        result = get_user_quizzes(
+            current_user_id,
+            user_token=user_token,
+            title=title,
+            start_date=start_date,
+            end_date=end_date,
+            source_type=source_type,
+            mode=mode,
+            page=page,
+            limit=limit
+        )
+        return result
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1066,6 +1136,8 @@ async def generate_quiz_from_url(
         metadata = {
             "quiz_id": result.quiz_id,
             "content_type": "url",
+            "content_source_type": "url",
+            "content_source_reference": content_source_reference,
             "file_name": str(data.url),
             "file_type": "application/pdf" if file_info else "text/html",
             "word_count": len(content.split()),

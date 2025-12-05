@@ -3,6 +3,7 @@ from schemas.quiz import (
     QuizMetadata, 
     QuizzesResponse,
     MyQuizzesResponse,
+    PaginatedQuizzesResponse,
     DeleteQuizResponse,
     EnhancedQuizGenerationResponse
 )
@@ -93,9 +94,9 @@ router.add_api_route(
     path="/quiz/my-quizzes",
     endpoint=get_user_quizzes_handler,
     methods=["GET"],
-    response_model=List[MyQuizzesResponse],
+    response_model=PaginatedQuizzesResponse,
     summary="Get User Quizzes",
-    description="Returns a list of all quizzes created by the current user, with metadata such as title, creation date, and question count.",
+    description="Returns a paginated list of quizzes created by the current user. Supports filtering by title, date range, source type (file/url/text), and generation mode (standard/enhanced). Use page and limit for pagination.",
     tags=["Quiz Management"]
 )
 

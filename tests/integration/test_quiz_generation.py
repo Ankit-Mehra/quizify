@@ -142,8 +142,10 @@ class TestQuizGenerationFlow:
         assert my_quizzes_response.status_code == 200, \
             f"Failed to retrieve user quizzes: {my_quizzes_response.text}"
         
-        my_quizzes = my_quizzes_response.json()
-        assert isinstance(my_quizzes, list), "User quizzes should be a list"
+        my_quizzes_data = my_quizzes_response.json()
+        assert isinstance(my_quizzes_data, dict), "User quizzes should be a paginated response"
+        assert "quizzes" in my_quizzes_data, "Response should contain quizzes key"
+        my_quizzes = my_quizzes_data["quizzes"]
         
         # Find our quiz in the list
         our_quiz = next((q for q in my_quizzes if q.get("id") == quiz_id or q.get("quiz_id") == quiz_id), None)
