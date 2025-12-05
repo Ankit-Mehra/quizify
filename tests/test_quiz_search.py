@@ -27,11 +27,23 @@ class TestGetUserQuizzesHandler:
             }
         ]
         
-        result = await get_user_quizzes_handler(current_user_id="user-1")
+        result = await get_user_quizzes_handler(
+            current_user_id="user-1",
+            user_token="test-token",
+            title=None,
+            start_date=None,
+            end_date=None
+        )
         
         assert len(result) == 1
         assert result[0]["title"] == "Python Basics"
-        mock_get_quizzes.assert_called_once_with("user-1", title=None, start_date=None, end_date=None)
+        mock_get_quizzes.assert_called_once_with(
+            "user-1",
+            user_token="test-token",
+            title=None,
+            start_date=None,
+            end_date=None
+        )
     
     @pytest.mark.asyncio
     @patch('handlers.quiz_handlers.get_user_quizzes')
@@ -39,9 +51,21 @@ class TestGetUserQuizzesHandler:
         """Test handler passes title filter to service."""
         mock_get_quizzes.return_value = []
         
-        await get_user_quizzes_handler(current_user_id="user-1", title="python")
+        await get_user_quizzes_handler(
+            current_user_id="user-1",
+            user_token="test-token",
+            title="python",
+            start_date=None,
+            end_date=None
+        )
         
-        mock_get_quizzes.assert_called_once_with("user-1", title="python", start_date=None, end_date=None)
+        mock_get_quizzes.assert_called_once_with(
+            "user-1",
+            user_token="test-token",
+            title="python",
+            start_date=None,
+            end_date=None
+        )
     
     @pytest.mark.asyncio
     @patch('handlers.quiz_handlers.get_user_quizzes')
@@ -53,11 +77,19 @@ class TestGetUserQuizzesHandler:
         
         await get_user_quizzes_handler(
             current_user_id="user-1",
+            user_token="test-token",
+            title=None,
             start_date=start,
             end_date=end
         )
         
-        mock_get_quizzes.assert_called_once_with("user-1", title=None, start_date=start, end_date=end)
+        mock_get_quizzes.assert_called_once_with(
+            "user-1",
+            user_token="test-token",
+            title=None,
+            start_date=start,
+            end_date=end
+        )
     
     @pytest.mark.asyncio
     async def test_handler_rejects_invalid_date_range(self):
@@ -68,6 +100,8 @@ class TestGetUserQuizzesHandler:
         with pytest.raises(HTTPException) as exc_info:
             await get_user_quizzes_handler(
                 current_user_id="user-1",
+                user_token="test-token",
+                title=None,
                 start_date=start,
                 end_date=end
             )
@@ -85,6 +119,7 @@ class TestGetUserQuizzesHandler:
         
         await get_user_quizzes_handler(
             current_user_id="user-1",
+            user_token="test-token",
             title="machine learning",
             start_date=start,
             end_date=end
@@ -92,6 +127,7 @@ class TestGetUserQuizzesHandler:
         
         mock_get_quizzes.assert_called_once_with(
             "user-1",
+            user_token="test-token",
             title="machine learning",
             start_date=start,
             end_date=end
@@ -278,6 +314,8 @@ class TestDateValidation:
             mock.return_value = []
             await get_user_quizzes_handler(
                 current_user_id="user-1",
+                user_token="test-token",
+                title=None,
                 start_date=same_date,
                 end_date=same_date
             )
@@ -289,7 +327,10 @@ class TestDateValidation:
             mock.return_value = []
             await get_user_quizzes_handler(
                 current_user_id="user-1",
-                start_date=date(2025, 10, 1)
+                user_token="test-token",
+                title=None,
+                start_date=date(2025, 10, 1),
+                end_date=None
             )
     
     @pytest.mark.asyncio
@@ -299,5 +340,8 @@ class TestDateValidation:
             mock.return_value = []
             await get_user_quizzes_handler(
                 current_user_id="user-1",
+                user_token="test-token",
+                title=None,
+                start_date=None,
                 end_date=date(2025, 10, 31)
             )
