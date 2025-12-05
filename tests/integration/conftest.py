@@ -508,9 +508,11 @@ class MockSupabaseAsyncClient:
         return mock_requests_get(url, headers=headers)
 
 
-def mock_get_user_quizzes(user_id, user_token=None):
-    """Mock getting user quizzes."""
-    return _quiz_storage.get_user_quizzes(user_id)
+def mock_get_user_quizzes(user_id, user_token=None, title=None, start_date=None, end_date=None):
+    """Mock getting user quizzes with optional filtering."""
+    quizzes = _quiz_storage.get_user_quizzes(user_id)
+    # Note: Filtering not implemented in mock - returns all quizzes
+    return quizzes
 
 
 def mock_get_quiz_from_database(quiz_id, user_id=None):

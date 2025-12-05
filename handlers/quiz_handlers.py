@@ -679,6 +679,8 @@ async def generate_quiz_from_file_openai(
         metadata = {
             "quiz_id": result.quiz_id,
             "content_type": "file",
+            "content_source_type": "file",
+            "content_source_reference": file_id,
             "file_name": file.filename,
             "file_type": file.content_type,
             "word_count": len(parsed_text.split()),
@@ -781,6 +783,8 @@ async def generate_quiz_from_fileid(
         metadata = {
             "quiz_id": result.quiz_id,
             "content_type": file_record["file_type"],
+            "content_source_type": "file",
+            "content_source_reference": file_id,
             "file_name": file_record["original_filename"],
             "file_type": file_record["file_type"],
             "word_count": len(file_content.split()),
@@ -832,6 +836,21 @@ async def generate_quiz_from_text(
             content_source_type="text",
             content_source_reference=None  # Text input has no reference
         )
+        
+        # Save metadata for text-based quiz
+        metadata = {
+            "quiz_id": result.quiz_id,
+            "content_type": "text",
+            "content_source_type": "text",
+            "content_source_reference": None,
+            "file_name": None,
+            "file_type": "text/plain",
+            "word_count": len(data.content.split()),
+            "created_by": current_user_id,
+            "created_at": datetime.now().isoformat(),
+            "question_count": len(result.questions)
+        }
+        save_metadata(metadata, user_token=user_token)
         
         # Update message and return EnhancedQuizGenerationResponse directly
         result.message = f"Quiz generated successfully from text ({data.mode} mode)"
@@ -1085,6 +1104,8 @@ async def generate_quiz_from_url(
         metadata = {
             "quiz_id": result.quiz_id,
             "content_type": "url",
+            "content_source_type": "url",
+            "content_source_reference": content_source_reference,
             "file_name": str(data.url),
             "file_type": "application/pdf" if file_info else "text/html",
             "word_count": len(content.split()),
