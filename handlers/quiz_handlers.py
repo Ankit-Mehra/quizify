@@ -82,8 +82,8 @@ async def generate_quiz_from_file_openai(
     validate_user_quota(current_user_id)
 
     try:
-        text = await file.read()
-        file_size = len(text)
+        file_bytes = await file.read()
+        file_size = len(file_bytes)
         
         # Validate file size (10MB limit, inclusive - files up to 10MB accepted)
         if file_size > MAX_FILE_SIZE:
@@ -95,11 +95,11 @@ async def generate_quiz_from_file_openai(
         # Choose the appropriate extractor based on file type
         try:
             if file.content_type == "application/pdf":
-                parsed_text = extract_text_from_pdf(text)
+                parsed_text = extract_text_from_pdf(file_bytes)
             elif file.content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-                parsed_text = extract_text_from_docx(text)
+                parsed_text = extract_text_from_docx(file_bytes)
             else:  # text/plain
-                parsed_text = extract_text_from_plain_text(text)
+                parsed_text = extract_text_from_plain_text(file_bytes)
         except Exception as extraction_error:
             # Extraction errors (corrupted files, invalid format, etc.)
             error_msg = str(extraction_error)
@@ -142,7 +142,7 @@ async def generate_quiz_from_file_openai(
 
         #save file to supabase storage (reuse already-read bytes to avoid double read)
         original_filename = file.filename or f"uploaded_{datetime.now().strftime('%Y%m%d%H%M%S')}"
-        save_file_to_supabase(current_user_id, text, original_filename, user_token, file.content_type)
+        save_file_to_supabase(current_user_id, file_bytes, original_filename, user_token, file.content_type)
 
         return {
             "quiz_id": quiz_id, 

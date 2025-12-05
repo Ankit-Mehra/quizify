@@ -232,7 +232,7 @@ class TestFileSizeValidation:
         assert response.status_code == 413, \
             f"Expected 413 for oversized PDF, got {response.status_code}: {response.text}"
     
-    def test_file_size_validation_works_for_docx(self, mock_supabase_client, auth_bypass, auth_headers):
+    def test_file_size_validation_works_for_docx(self, auth_headers):
         """
         Test that file size validation works for DOCX files.
         
