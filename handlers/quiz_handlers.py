@@ -36,6 +36,7 @@ from services.web_scraping_service import scrape_content
 # Content validation constants
 MIN_CONTENT_LENGTH = 50  # Minimum characters required for quiz generation from uploaded files
 MIN_STORED_CONTENT_LENGTH = 10  # Minimum characters required for stored file content validation
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB = 10,485,760 bytes
 
 
 # =============================================================================
@@ -624,16 +625,24 @@ async def generate_quiz_from_file_openai(
     await validate_user_quota(current_user_id, user_token)
 
     try:
-        text = await file.read()
+        file_bytes = await file.read()
+        file_size = len(file_bytes)
+        
+        # Validate file size (10MB limit, inclusive - files up to 10MB accepted)
+        if file_size > MAX_FILE_SIZE:
+            raise HTTPException(
+                status_code=413,
+                detail=f"File too large. Maximum file size is 10MB ({MAX_FILE_SIZE} bytes). Your file is {file_size} bytes."
+            )
         
         # Choose the appropriate extractor based on file type
         try:
             if file.content_type == "application/pdf":
-                parsed_text = extract_text_from_pdf(text)
+                parsed_text = extract_text_from_pdf(file_bytes)
             elif file.content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-                parsed_text = extract_text_from_docx(text)
+                parsed_text = extract_text_from_docx(file_bytes)
             else:  # text/plain
-                parsed_text = extract_text_from_plain_text(text)
+                parsed_text = extract_text_from_plain_text(file_bytes)
         except Exception as extraction_error:
             # Extraction errors (corrupted files, invalid format, etc.)
             error_msg = str(extraction_error)
@@ -652,9 +661,7 @@ async def generate_quiz_from_file_openai(
                 detail=f"Insufficient content in file. Please provide a document with at least {MIN_CONTENT_LENGTH} characters of text."
             )
 
-        # Save file to supabase storage FIRST to get file_id
-        await file.seek(0)  # Reset file pointer after reading
-        file_bytes = await file.read()
+        # Save file to supabase storage FIRST to get file_id (reuse already-read bytes)
         original_filename = file.filename or f"uploaded_{datetime.now().strftime('%Y%m%d%H%M%S')}"
         file_result = save_file_to_supabase(current_user_id, file_bytes, original_filename, user_token, file.content_type)
         file_id = file_result.get('file_id')
@@ -683,6 +690,7 @@ async def generate_quiz_from_file_openai(
             "content_source_reference": file_id,
             "file_name": file.filename,
             "file_type": file.content_type,
+            "file_size_bytes": file_size,
             "word_count": len(parsed_text.split()),
             "created_by": current_user_id,
             "created_at": datetime.now().isoformat(),
