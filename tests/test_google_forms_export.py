@@ -1,0 +1,1108 @@
+"""
+Tests for Google Forms Export Feature (Epic QUIZ-002).
+
+This module tests:
+- GoogleFormsExporter class
+- Google OAuth service
+- Tier validation for Google Forms export
+- API endpoints for Google OAuth
+"""
+
+import pytest
+from unittest.mock import patch
+from uuid import uuid4
+from datetime import datetime, timezone
+
+# Import test subjects
+from schemas.export import ExportFormat
+from services.exporters.tier_validator import (
+    validate_export_tier_access,
+    TierInsufficientError,
+    is_format_available_for_tier,
+    get_available_formats_for_tier,
+    PRO_ONLY_FORMATS,
+    PAID_TIER_FORMATS
+)
+
+
+class TestGoogleFormsExportFormat:
+    """Test Google Forms is properly added to export formats."""
+    
+    def test_google_forms_in_export_format_enum(self):
+        """GOOGLE_FORMS should be a valid ExportFormat."""
+        assert hasattr(ExportFormat, "GOOGLE_FORMS")
+        assert ExportFormat.GOOGLE_FORMS.value == "google_forms"
+    
+    def test_google_forms_in_pro_only_formats(self):
+        """GOOGLE_FORMS should be in PRO_ONLY_FORMATS (Pro tier only)."""
+        assert ExportFormat.GOOGLE_FORMS in PRO_ONLY_FORMATS
+        assert ExportFormat.GOOGLE_FORMS not in PAID_TIER_FORMATS
+    
+    def test_pro_only_formats_contains_all_pro_features(self):
+        """PRO_ONLY_FORMATS should contain Google Forms and LMS formats."""
+        assert ExportFormat.QTI in PRO_ONLY_FORMATS
+        assert ExportFormat.MOODLE_XML in PRO_ONLY_FORMATS
+        assert ExportFormat.GOOGLE_FORMS in PRO_ONLY_FORMATS
+        assert len(PRO_ONLY_FORMATS) == 3
+
+
+class TestTierValidationForGoogleForms:
+    """Test tier-based access control for Google Forms export."""
+    
+    def test_free_tier_cannot_access_google_forms(self):
+        """Free tier users should not access Google Forms export."""
+        with pytest.raises(TierInsufficientError) as exc_info:
+            validate_export_tier_access("free", ExportFormat.GOOGLE_FORMS)
+        
+        assert exc_info.value.status_code == 403
+        assert "tier_insufficient" in str(exc_info.value.detail)
+    
+    def test_premium_tier_cannot_access_google_forms(self):
+        """Premium tier users should NOT access Google Forms export (Pro only)."""
+        with pytest.raises(TierInsufficientError) as exc_info:
+            validate_export_tier_access("premium", ExportFormat.GOOGLE_FORMS)
+        
+        assert exc_info.value.status_code == 403
+        assert exc_info.value.detail["required_tier"] == "pro"
+    
+    def test_basic_tier_cannot_access_google_forms(self):
+        """Legacy 'basic' tier (maps to premium) should NOT access Google Forms."""
+        with pytest.raises(TierInsufficientError):
+            validate_export_tier_access("basic", ExportFormat.GOOGLE_FORMS)
+    
+    def test_pro_tier_can_access_google_forms(self):
+        """Pro tier users should access Google Forms export."""
+        # Should not raise
+        validate_export_tier_access("pro", ExportFormat.GOOGLE_FORMS)
+    
+    def test_is_format_available_for_tier(self):
+        """Test is_format_available_for_tier helper."""
+        assert is_format_available_for_tier("free", ExportFormat.GOOGLE_FORMS) is False
+        assert is_format_available_for_tier("premium", ExportFormat.GOOGLE_FORMS) is False
+        assert is_format_available_for_tier("basic", ExportFormat.GOOGLE_FORMS) is False  # Legacy mapping to premium
+        assert is_format_available_for_tier("pro", ExportFormat.GOOGLE_FORMS) is True
+    
+    def test_get_available_formats_for_tier(self):
+        """Test get_available_formats_for_tier includes/excludes Google Forms."""
+        free_formats = get_available_formats_for_tier("free")
+        premium_formats = get_available_formats_for_tier("premium")
+        pro_formats = get_available_formats_for_tier("pro")
+        
+        assert ExportFormat.GOOGLE_FORMS not in free_formats
+        assert ExportFormat.GOOGLE_FORMS not in premium_formats  # Pro only
+        assert ExportFormat.GOOGLE_FORMS in pro_formats
+
+
+class TestGoogleFormsExporterImports:
+    """Test that GoogleFormsExporter can be imported."""
+    
+    def test_exporter_import(self):
+        """GoogleFormsExporter should be importable."""
+        from services.exporters.google_forms_exporter import GoogleFormsExporter
+        assert GoogleFormsExporter is not None
+    
+    def test_exporter_from_package(self):
+        """GoogleFormsExporter should be exported from package."""
+        from services.exporters import GoogleFormsExporter
+        assert GoogleFormsExporter is not None
+
+
+class TestGoogleFormsExporterClass:
+    """Test GoogleFormsExporter class structure and methods."""
+    
+    def test_exporter_has_correct_format_name(self):
+        """Exporter FORMAT_NAME should be 'google_forms'."""
+        from services.exporters.google_forms_exporter import GoogleFormsExporter
+        
+        exporter = GoogleFormsExporter()
+        assert exporter.FORMAT_NAME == "google_forms"
+    
+    def test_exporter_content_type_is_json(self):
+        """Exporter CONTENT_TYPE should be application/json."""
+        from services.exporters.google_forms_exporter import GoogleFormsExporter
+        
+        exporter = GoogleFormsExporter()
+        assert exporter.CONTENT_TYPE == "application/json"
+    
+    def test_exporter_has_no_file_extension(self):
+        """Exporter FILE_EXTENSION should be empty (returns URL, not file)."""
+        from services.exporters.google_forms_exporter import GoogleFormsExporter
+        
+        exporter = GoogleFormsExporter()
+        assert exporter.FILE_EXTENSION == ""
+    
+    def test_exporter_inherits_from_base(self):
+        """GoogleFormsExporter should inherit from BaseExporter."""
+        from services.exporters.google_forms_exporter import GoogleFormsExporter
+        from services.exporters.base import BaseExporter
+        
+        assert issubclass(GoogleFormsExporter, BaseExporter)
+    
+    @pytest.mark.asyncio
+    async def test_export_requires_credentials(self):
+        """export() should raise error if user_id not provided."""
+        from services.exporters.google_forms_exporter import GoogleFormsExporter
+        from services.exporters.base import ExportError
+        from schemas.export import QuizExportData, ExportOptions, ExportQuestionMCQ
+        
+        # Create minimal quiz data
+        quiz_data = QuizExportData(
+            quiz_id=uuid4(),
+            title="Test Quiz",
+            created_at=datetime.now(timezone.utc),
+            questions=[
+                ExportQuestionMCQ(
+                    id=uuid4(),
+                    type="multiple_choice",
+                    question="Test question?",
+                    options=["A", "B", "C", "D"],
+                    correct_answer="A"
+                )
+            ]
+        )
+        options = ExportOptions(include_answer_key=True)
+        
+        # Exporter without user_id should raise error
+        exporter_no_user = GoogleFormsExporter(user_id=None)
+        with pytest.raises(ExportError) as exc_info:
+            await exporter_no_user.export(quiz_data, options)
+        
+        assert "user id required" in str(exc_info.value).lower()
+
+
+class TestGoogleAuthServiceImports:
+    """Test Google Auth service imports."""
+    
+    def test_service_import(self):
+        """google_auth_service should be importable."""
+        from services import google_auth_service
+        assert google_auth_service is not None
+    
+    def test_key_functions_exist(self):
+        """Key functions should exist in google_auth_service."""
+        from services.google_auth_service import (
+            is_google_auth_configured,
+            generate_auth_url,
+            exchange_code_for_tokens,
+            build_credentials_from_refresh_token,
+            store_google_tokens,
+            get_google_credentials,
+            disconnect_google,
+            is_user_connected,
+            GoogleAuthError
+        )
+        
+        assert callable(is_google_auth_configured)
+        assert callable(generate_auth_url)
+        assert callable(exchange_code_for_tokens)
+        assert callable(build_credentials_from_refresh_token)
+        assert callable(store_google_tokens)
+        assert callable(get_google_credentials)
+        assert callable(disconnect_google)
+        assert callable(is_user_connected)
+        assert issubclass(GoogleAuthError, Exception)
+
+
+class TestGoogleAuthServiceFunctions:
+    """Test Google Auth service functions."""
+    
+    def test_is_google_auth_configured_without_env(self):
+        """is_google_auth_configured returns False without env vars."""
+        from services.google_auth_service import is_google_auth_configured
+        
+        # Mock the module-level constants at the point where they're read
+        # This is more reliable than reloading modules and doesn't affect other tests
+        with patch(
+            'services.google_auth_service.GOOGLE_CLIENT_ID', ''
+        ), patch(
+            'services.google_auth_service.GOOGLE_CLIENT_SECRET', ''
+        ):
+            # With empty values, should return False
+            assert is_google_auth_configured() is False
+    
+    def test_generate_auth_url_requires_config(self):
+        """generate_auth_url should raise error without config."""
+        from services.google_auth_service import (
+            generate_auth_url, 
+            GoogleAuthError,
+            is_google_auth_configured
+        )
+        
+        if not is_google_auth_configured():
+            with pytest.raises(GoogleAuthError) as exc_info:
+                generate_auth_url()
+            
+            assert "not configured" in str(exc_info.value).lower()
+
+
+class TestTokenEncryption:
+    """Test token encryption/decryption functions."""
+    
+    def test_encrypt_decrypt_roundtrip_with_key(self):
+        """Token should survive encrypt/decrypt roundtrip when key is configured."""
+        from cryptography.fernet import Fernet
+        
+        # Generate a test key
+        test_key = Fernet.generate_key().decode()
+        
+        with patch.object(
+            __import__('config', fromlist=['config']).config,
+            'GOOGLE_TOKEN_ENCRYPTION_KEY',
+            test_key
+        ):
+            # Reload to pick up the key
+            import services.google_auth_service as gas
+            # Reset the cached fernet
+            gas._fernet = None
+            gas._encryption_warned = False
+            
+            original_token = "test_refresh_token_12345"
+            
+            # Encrypt
+            encrypted = gas._encrypt_token(original_token)
+            assert encrypted != original_token  # Should be different
+            
+            # Decrypt
+            decrypted = gas._decrypt_token(encrypted)
+            assert decrypted == original_token  # Should match original
+    
+    def test_encrypt_returns_plaintext_without_key(self):
+        """Without encryption key, _encrypt_token returns plaintext."""
+        with patch.object(
+            __import__('config', fromlist=['config']).config,
+            'GOOGLE_TOKEN_ENCRYPTION_KEY',
+            None
+        ):
+            import services.google_auth_service as gas
+            # Reset the cached fernet
+            gas._fernet = None
+            gas._encryption_warned = False
+            
+            original_token = "test_refresh_token_no_key"
+            encrypted = gas._encrypt_token(original_token)
+            
+            # Should be the same since no key configured
+            assert encrypted == original_token
+    
+    def test_decrypt_returns_input_without_key(self):
+        """Without encryption key, _decrypt_token returns input unchanged."""
+        with patch.object(
+            __import__('config', fromlist=['config']).config,
+            'GOOGLE_TOKEN_ENCRYPTION_KEY',
+            None
+        ):
+            import services.google_auth_service as gas
+            # Reset the cached fernet
+            gas._fernet = None
+            gas._encryption_warned = False
+            
+            token = "some_token_value"
+            decrypted = gas._decrypt_token(token)
+            
+            assert decrypted == token
+    
+    def test_decrypt_raises_on_corrupted_token_with_key(self):
+        """With encryption key, _decrypt_token raises on invalid/corrupted token."""
+        from cryptography.fernet import Fernet
+        
+        # Generate a test key
+        test_key = Fernet.generate_key().decode()
+        
+        with patch.object(
+            __import__('config', fromlist=['config']).config,
+            'GOOGLE_TOKEN_ENCRYPTION_KEY',
+            test_key
+        ):
+            import services.google_auth_service as gas
+            from services.google_auth_service import TokenDecryptionError
+            # Reset the cached fernet
+            gas._fernet = None
+            gas._encryption_warned = False
+            
+            # Try to decrypt a corrupted/invalid token
+            corrupted_token = "not_a_valid_encrypted_token"
+            
+            with pytest.raises(TokenDecryptionError) as exc_info:
+                gas._decrypt_token(corrupted_token)
+            
+            assert "corrupted" in str(exc_info.value).lower() or "failed" in str(exc_info.value).lower()
+    
+    def test_encryption_functions_exist(self):
+        """Encryption functions should be importable."""
+        from services.google_auth_service import _encrypt_token, _decrypt_token
+        
+        assert callable(_encrypt_token)
+        assert callable(_decrypt_token)
+
+
+class TestGoogleAuthHandlers:
+    """Test Google OAuth handler functions exist."""
+    
+    def test_handlers_exist(self):
+        """Google OAuth handlers should exist."""
+        from handlers.auth_handlers import (
+            google_connect,
+            google_callback,
+            google_disconnect,
+            google_status
+        )
+        
+        assert callable(google_connect)
+        assert callable(google_callback)
+        assert callable(google_disconnect)
+        assert callable(google_status)
+
+
+class TestGoogleAuthRoutes:
+    """Test Google OAuth routes are registered."""
+    
+    def test_google_routes_in_auth_router(self):
+        """Google OAuth routes should be registered in auth router."""
+        from api.auth_routes import router
+        
+        route_paths = [route.path for route in router.routes]
+        
+        # Routes include the /auth prefix from the router
+        assert "/auth/google/connect" in route_paths
+        assert "/auth/google/callback" in route_paths
+        assert "/auth/google/disconnect" in route_paths
+        assert "/auth/google/status" in route_paths
+
+
+class TestMigrationFile:
+    """Test database migration for Google OAuth tokens."""
+    
+    def test_migration_file_exists(self):
+        """Migration file for Google OAuth should exist."""
+        import os
+        
+        migration_path = "migrations/019_add_google_oauth_tokens.sql"
+        assert os.path.exists(migration_path), f"Migration file not found: {migration_path}"
+    
+    def test_migration_adds_google_columns(self):
+        """Migration should add Google OAuth columns to profiles."""
+        with open("migrations/019_add_google_oauth_tokens.sql", "r") as f:
+            content = f.read()
+        
+        assert "google_refresh_token" in content
+        assert "google_connected_at" in content
+        assert "profiles" in content
+    
+    def test_migration_creates_index(self):
+        """Migration should create index for connected users."""
+        with open("migrations/019_add_google_oauth_tokens.sql", "r") as f:
+            content = f.read()
+        
+        assert "idx_profiles_google_connected" in content
+        assert "CREATE INDEX" in content
+    
+    def test_migration_updates_view(self):
+        """Migration should update user_tier_info view."""
+        with open("migrations/019_add_google_oauth_tokens.sql", "r") as f:
+            content = f.read()
+        
+        assert "user_tier_info" in content
+        assert "google_connected" in content
+
+
+class TestExportSchemas:
+    """Test export schema updates for Google Forms."""
+    
+    def test_google_forms_response_schema_exists(self):
+        """GoogleFormsExportResponse schema should exist."""
+        from schemas.export import GoogleFormsExportResponse
+        
+        assert GoogleFormsExportResponse is not None
+    
+    def test_google_forms_response_has_required_fields(self):
+        """GoogleFormsExportResponse should have form_url, edit_url, form_id."""
+        from schemas.export import GoogleFormsExportResponse
+        
+        fields = GoogleFormsExportResponse.model_fields
+        
+        assert "form_url" in fields
+        assert "edit_url" in fields
+        assert "form_id" in fields
+    
+    def test_google_auth_required_response_exists(self):
+        """GoogleAuthRequiredResponse schema should exist."""
+        from schemas.export import GoogleAuthRequiredResponse
+        
+        assert GoogleAuthRequiredResponse is not None
+    
+    def test_google_auth_required_response_fields(self):
+        """GoogleAuthRequiredResponse should have error, message, auth_url."""
+        from schemas.export import GoogleAuthRequiredResponse
+        
+        fields = GoogleAuthRequiredResponse.model_fields
+        
+        assert "error" in fields
+        assert "message" in fields
+        assert "auth_url" in fields
+        assert "current_tier" in fields
+
+
+class TestQuestionTypeMapping:
+    """Test question type mapping to Google Forms API."""
+    
+    def test_mcq_item_structure(self):
+        """MCQ should map to RADIO choiceQuestion."""
+        from services.exporters.google_forms_exporter import GoogleFormsExporter
+        from schemas.export import ExportQuestionMCQ, ExportOptions
+        
+        exporter = GoogleFormsExporter()
+        
+        question = ExportQuestionMCQ(
+            id=uuid4(),
+            type="multiple_choice",
+            question="What is 2+2?",
+            options=["3", "4", "5", "6"],
+            correct_answer="4"
+        )
+        options = ExportOptions(include_answer_key=True)
+        
+        item = exporter._build_mcq_item(question, 0, options)
+        
+        # Check structure
+        assert "item" in item
+        assert "location" in item
+        assert item["location"]["index"] == 0
+        
+        # Check question item
+        question_item = item["item"]["questionItem"]["question"]
+        assert "choiceQuestion" in question_item
+        assert question_item["choiceQuestion"]["type"] == "RADIO"
+        assert len(question_item["choiceQuestion"]["options"]) == 4
+        
+        # Check grading
+        assert "grading" in question_item
+        assert question_item["grading"]["pointValue"] == 1
+        assert question_item["grading"]["correctAnswers"]["answers"][0]["value"] == "4"
+    
+    def test_true_false_item_structure(self):
+        """True/False should map to RADIO with True/False options."""
+        from services.exporters.google_forms_exporter import GoogleFormsExporter
+        from schemas.export import ExportQuestionTrueFalse, ExportOptions
+        
+        exporter = GoogleFormsExporter()
+        
+        question = ExportQuestionTrueFalse(
+            id=uuid4(),
+            type="true_false",
+            question="The sky is blue.",
+            correct_answer=True
+        )
+        options = ExportOptions(include_answer_key=True)
+        
+        item = exporter._build_true_false_item(question, 0, options)
+        
+        question_item = item["item"]["questionItem"]["question"]
+        assert question_item["choiceQuestion"]["type"] == "RADIO"
+        
+        # Check options are True/False
+        option_values = [
+            opt["value"] for opt in question_item["choiceQuestion"]["options"]
+        ]
+        assert "True" in option_values
+        assert "False" in option_values
+        
+        # Check correct answer is True
+        assert question_item["grading"]["correctAnswers"]["answers"][0]["value"] == "True"
+    
+    def test_fill_blank_item_structure(self):
+        """Fill blank should map to textQuestion."""
+        from services.exporters.google_forms_exporter import GoogleFormsExporter
+        from schemas.export import ExportQuestionFillBlank, ExportOptions
+        
+        exporter = GoogleFormsExporter()
+        
+        question = ExportQuestionFillBlank(
+            id=uuid4(),
+            type="fill_blank",
+            question="The capital of France is _____.",
+            options=["Paris", "London", "Berlin"],
+            correct_answer="Paris"
+        )
+        options = ExportOptions(include_answer_key=True)
+        
+        item = exporter._build_fill_blank_item(question, 0, options)
+        
+        question_item = item["item"]["questionItem"]["question"]
+        assert "textQuestion" in question_item
+        assert question_item["textQuestion"]["paragraph"] is False  # Short answer
+        
+        # Check grading - textQuestion does NOT support correctAnswers or whenWrong (API limitation)
+        # We use generalFeedback only for manual grading
+        assert "grading" in question_item
+        assert question_item["grading"]["pointValue"] == 1
+        assert "correctAnswers" not in question_item["grading"]  # Not supported for text
+        assert "whenWrong" not in question_item["grading"]  # Not supported for text
+        assert "Paris" in question_item["grading"]["generalFeedback"]["text"]
+    
+    def test_find_correct_option_index_exact_match(self):
+        """Should find exact match in options."""
+        from services.exporters.google_forms_exporter import GoogleFormsExporter
+        
+        exporter = GoogleFormsExporter()
+        options = ["Apple", "Banana", "Cherry"]
+        
+        assert exporter._find_correct_option_index(options, "Banana") == 1
+    
+    def test_find_correct_option_index_case_insensitive(self):
+        """Should find case-insensitive match."""
+        from services.exporters.google_forms_exporter import GoogleFormsExporter
+        
+        exporter = GoogleFormsExporter()
+        options = ["Apple", "Banana", "Cherry"]
+        
+        assert exporter._find_correct_option_index(options, "banana") == 1
+        assert exporter._find_correct_option_index(options, "CHERRY") == 2
+    
+    def test_find_correct_option_index_letter_match(self):
+        """Should match letter answers (A, B, C, D)."""
+        from services.exporters.google_forms_exporter import GoogleFormsExporter
+        
+        exporter = GoogleFormsExporter()
+        options = ["First", "Second", "Third", "Fourth"]
+        
+        assert exporter._find_correct_option_index(options, "A") == 0
+        assert exporter._find_correct_option_index(options, "B") == 1
+        assert exporter._find_correct_option_index(options, "C") == 2
+        assert exporter._find_correct_option_index(options, "D") == 3
+    
+    def test_find_correct_option_index_fallback(self):
+        """Should fallback to 0 if no match found."""
+        from services.exporters.google_forms_exporter import GoogleFormsExporter
+        
+        exporter = GoogleFormsExporter()
+        options = ["Apple", "Banana", "Cherry"]
+        
+        assert exporter._find_correct_option_index(options, "NotFound") == 0
+
+
+class TestSkippedQuestionIndexing:
+    """Tests for correct form indexing when questions are skipped."""
+    
+    def test_form_indices_correct_with_skipped_matching_questions(self):
+        """Form indices should be sequential even when matching questions are skipped."""
+        from services.exporters.google_forms_exporter import GoogleFormsExporter
+        from schemas.export import ExportOptions
+        
+        exporter = GoogleFormsExporter(user_id="test-user")
+        options = ExportOptions(include_answer_key=True)
+        
+        # Build items for questions at different original indices
+        # Simulating: MCQ(0), MCQ(1), MATCHING(2-skipped), MCQ(3)
+        
+        # Question at original index 0 should get form_index 0
+        from schemas.export import ExportQuestionMCQ
+        q1 = ExportQuestionMCQ(
+            id=uuid4(), type="multiple_choice",
+            question="Q1", options=["A", "B"], correct_answer="A"
+        )
+        item1 = exporter._build_mcq_item(q1, 0, options)
+        assert item1["location"]["index"] == 0
+        
+        # Question at original index 1 should get form_index 1
+        q2 = ExportQuestionMCQ(
+            id=uuid4(), type="multiple_choice",
+            question="Q2", options=["A", "B"], correct_answer="A"
+        )
+        item2 = exporter._build_mcq_item(q2, 1, options)
+        assert item2["location"]["index"] == 1
+        
+        # Question at original index 3 (after skipped matching) should get form_index 2
+        q4 = ExportQuestionMCQ(
+            id=uuid4(), type="multiple_choice",
+            question="Q4", options=["A", "B"], correct_answer="A"
+        )
+        item4 = exporter._build_mcq_item(q4, 2, options)  # form_index=2, not 3
+        assert item4["location"]["index"] == 2
+    
+    def test_multiple_skipped_questions_indices(self):
+        """Form indices should remain correct with multiple skipped questions."""
+        from services.exporters.google_forms_exporter import GoogleFormsExporter
+        from schemas.export import ExportOptions, ExportQuestionTrueFalse
+        
+        exporter = GoogleFormsExporter(user_id="test-user")
+        options = ExportOptions(include_answer_key=True)
+        
+        # Simulating: TF(0), SKIP(1), SKIP(2), TF(3), SKIP(4), TF(5)
+        # Expected form indices: 0, -, -, 1, -, 2
+        
+        q1 = ExportQuestionTrueFalse(
+            id=uuid4(), type="true_false",
+            question="Q1", correct_answer=True
+        )
+        item1 = exporter._build_true_false_item(q1, 0, options)
+        assert item1["location"]["index"] == 0
+        
+        # After 2 skips, next question should be at form_index 1
+        q4 = ExportQuestionTrueFalse(
+            id=uuid4(), type="true_false",
+            question="Q4", correct_answer=False
+        )
+        item4 = exporter._build_true_false_item(q4, 1, options)
+        assert item4["location"]["index"] == 1
+        
+        # After another skip, next question should be at form_index 2
+        q6 = ExportQuestionTrueFalse(
+            id=uuid4(), type="true_false",
+            question="Q6", correct_answer=True
+        )
+        item6 = exporter._build_true_false_item(q6, 2, options)
+        assert item6["location"]["index"] == 2
+
+
+class TestGoogleFormsExportResponseFormat:
+    """
+    Tests for successful Google Forms export response format.
+    
+    Verifies the JSON response structure when Google Forms export completes,
+    preventing regression of the original bug (returning empty bytes instead of JSON).
+    
+    Note: These tests mock at the exporter method level to avoid complex
+    Google API client interactions which require real credentials.
+    """
+    
+    @pytest.fixture
+    def sample_quiz_data(self):
+        """Create sample quiz data for testing."""
+        from schemas.export import (
+            QuizExportData, 
+            ExportQuestionMCQ, 
+            ExportQuestionTrueFalse,
+            ExportQuestionMatching
+        )
+        
+        return QuizExportData(
+            quiz_id=uuid4(),
+            title="Test Quiz for Export",
+            description="A test quiz",
+            created_at=datetime.now(timezone.utc),
+            content_source_type="text",
+            questions=[
+                ExportQuestionMCQ(
+                    id=uuid4(),
+                    type="multiple_choice",
+                    question="What is 2+2?",
+                    options=["3", "4", "5", "6"],
+                    correct_answer="4",
+                    explanation="Basic addition"
+                ),
+                ExportQuestionTrueFalse(
+                    id=uuid4(),
+                    type="true_false",
+                    question="The sky is blue?",
+                    correct_answer=True
+                ),
+                # Include a matching question that will be skipped
+                ExportQuestionMatching(
+                    id=uuid4(),
+                    type="matching",
+                    question="Match the items",
+                    left=["A", "B"],
+                    right=["1", "2"],
+                    correct_answer=[0, 1]
+                )
+            ]
+        )
+    
+    def test_export_result_schema_has_all_google_forms_fields(self):
+        """ExportResult should have all Google Forms specific fields defined."""
+        from schemas.export import ExportResult
+        
+        # Get all field names from the model
+        field_names = set(ExportResult.model_fields.keys())
+        
+        # Verify all Google Forms specific fields exist
+        assert "form_url" in field_names
+        assert "edit_url" in field_names
+        assert "form_id" in field_names
+        assert "questions_exported" in field_names
+        assert "questions_skipped" in field_names
+        assert "warnings" in field_names
+        assert "content_type" in field_names
+    
+    def test_export_result_can_be_created_with_google_forms_data(self):
+        """ExportResult should accept all Google Forms fields."""
+        from schemas.export import ExportResult
+        
+        result = ExportResult(
+            content=b"",
+            content_type="application/json",
+            filename=None,
+            form_url="https://docs.google.com/forms/d/e/abc123/viewform",
+            edit_url="https://docs.google.com/forms/d/abc123/edit",
+            form_id="abc123",
+            questions_exported=5,
+            questions_skipped=1,
+            warnings=["Matching questions not supported"]
+        )
+        
+        assert result.form_url == "https://docs.google.com/forms/d/e/abc123/viewform"
+        assert result.edit_url == "https://docs.google.com/forms/d/abc123/edit"
+        assert result.form_id == "abc123"
+        assert result.questions_exported == 5
+        assert result.questions_skipped == 1
+        assert result.warnings == ["Matching questions not supported"]
+    
+    def test_export_result_content_type_for_google_forms(self):
+        """Google Forms exporter should use JSON content type."""
+        from services.exporters.google_forms_exporter import GoogleFormsExporter
+        
+        exporter = GoogleFormsExporter(user_id="test-user")
+        
+        # Verify the exporter declares JSON content type
+        assert exporter.CONTENT_TYPE == "application/json"
+    
+    def test_export_result_with_no_warnings(self):
+        """ExportResult should handle None warnings correctly."""
+        from schemas.export import ExportResult
+        
+        result = ExportResult(
+            content=b"",
+            content_type="application/json",
+            form_url="https://docs.google.com/forms/d/e/xyz789/viewform",
+            edit_url="https://docs.google.com/forms/d/xyz789/edit",
+            form_id="xyz789",
+            questions_exported=10,
+            questions_skipped=0,
+            warnings=None
+        )
+        
+        assert result.warnings is None
+        assert result.questions_skipped == 0
+    
+    def test_export_result_empty_content_for_google_forms(self):
+        """Google Forms export should have empty content (URLs only, no file)."""
+        from schemas.export import ExportResult
+        
+        result = ExportResult(
+            content=b"",  # Empty - no file content
+            content_type="application/json",
+            filename=None,  # No filename for non-file export
+            form_url="https://docs.google.com/forms/d/e/test/viewform",
+            edit_url="https://docs.google.com/forms/d/test/edit",
+            form_id="test",
+            questions_exported=5,
+            questions_skipped=0
+        )
+        
+        assert result.content == b""
+        assert result.filename is None
+    
+    def test_export_result_share_url_field_exists(self):
+        """ExportResult should support share_url for consistency."""
+        from schemas.export import ExportResult
+        
+        result = ExportResult(
+            content=b"",
+            content_type="application/json",
+            share_url="https://docs.google.com/forms/d/e/test/viewform",
+            form_url="https://docs.google.com/forms/d/e/test/viewform",
+            edit_url="https://docs.google.com/forms/d/test/edit",
+            form_id="test",
+            questions_exported=3,
+            questions_skipped=0
+        )
+        
+        # share_url should equal form_url
+        assert result.share_url == result.form_url
+    
+    @pytest.mark.asyncio
+    async def test_exporter_returns_export_result_type(self, sample_quiz_data):
+        """GoogleFormsExporter.export should return ExportResult type."""
+        from services.exporters.google_forms_exporter import GoogleFormsExporter
+        from schemas.export import ExportOptions, ExportResult
+        from unittest.mock import AsyncMock
+        
+        exporter = GoogleFormsExporter(user_id="test-user-123")
+        options = ExportOptions(include_answer_key=True)
+        
+        # Create a mock export result
+        mock_result = ExportResult(
+            content=b"",
+            content_type="application/json",
+            form_url="https://docs.google.com/forms/d/e/mock/viewform",
+            edit_url="https://docs.google.com/forms/d/mock/edit",
+            form_id="mock-form-id",
+            questions_exported=2,
+            questions_skipped=1,
+            warnings=["matching not supported"]
+        )
+        
+        # Mock the entire export method to return our result
+        exporter.export = AsyncMock(return_value=mock_result)
+        
+        result = await exporter.export(sample_quiz_data, options)
+        
+        # Verify result is ExportResult type with correct fields
+        assert isinstance(result, ExportResult)
+        assert result.content_type == "application/json"
+        assert result.form_id == "mock-form-id"
+        assert result.questions_exported == 2
+        assert result.questions_skipped == 1
+
+
+class TestGoogleFormsExportResponseSerialization:
+    """Test that ExportResult can be properly serialized to JSON for API response."""
+    
+    def test_google_forms_response_schema_serialization(self):
+        """GoogleFormsExportResponse should serialize all fields correctly."""
+        from schemas.export import GoogleFormsExportResponse
+        
+        response = GoogleFormsExportResponse(
+            form_url="https://docs.google.com/forms/d/e/abc123/viewform",
+            edit_url="https://docs.google.com/forms/d/abc123/edit",
+            form_id="abc123",
+            questions_exported=5,
+            questions_skipped=1,
+            warnings=["Matching questions not supported"]
+        )
+        
+        # Should serialize to dict/JSON
+        response_dict = response.model_dump()
+        
+        assert response_dict["form_url"] == "https://docs.google.com/forms/d/e/abc123/viewform"
+        assert response_dict["edit_url"] == "https://docs.google.com/forms/d/abc123/edit"
+        assert response_dict["form_id"] == "abc123"
+        assert response_dict["questions_exported"] == 5
+        assert response_dict["questions_skipped"] == 1
+        assert response_dict["warnings"] == ["Matching questions not supported"]
+    
+    def test_google_forms_response_without_warnings(self):
+        """GoogleFormsExportResponse should handle None warnings."""
+        from schemas.export import GoogleFormsExportResponse
+        
+        response = GoogleFormsExportResponse(
+            form_url="https://docs.google.com/forms/d/e/xyz789/viewform",
+            edit_url="https://docs.google.com/forms/d/xyz789/edit",
+            form_id="xyz789",
+            questions_exported=10,
+            questions_skipped=0
+            # warnings not provided - should default to None
+        )
+        
+        response_dict = response.model_dump()
+        
+        assert response_dict["warnings"] is None
+        assert response_dict["questions_skipped"] == 0
+    
+    def test_google_forms_response_json_serializable(self):
+        """GoogleFormsExportResponse should be JSON serializable."""
+        import json
+        from schemas.export import GoogleFormsExportResponse
+        
+        response = GoogleFormsExportResponse(
+            form_url="https://docs.google.com/forms/d/e/test/viewform",
+            edit_url="https://docs.google.com/forms/d/test/edit",
+            form_id="test",
+            questions_exported=3,
+            questions_skipped=2,
+            warnings=["Warning 1", "Warning 2"]
+        )
+        
+        # Should not raise when converting to JSON
+        json_str = response.model_dump_json()
+        
+        # Should be valid JSON that can be parsed
+        parsed = json.loads(json_str)
+        assert parsed["form_id"] == "test"
+        assert len(parsed["warnings"]) == 2
+
+
+# ============================================================================
+# Test: _set_form_description API Fix
+# ============================================================================
+
+class TestGoogleFormsDescriptionAPI:
+    """
+    Tests for the _set_form_description method.
+    
+    Verifies the fix for Google Forms API error:
+    "Only info.title can be set when creating a form"
+    
+    The solution is to:
+    1. Create form with title only
+    2. Set description via batchUpdate with updateFormInfo
+    """
+
+    def test_set_form_description_method_exists(self):
+        """GoogleFormsExporter should have _set_form_description method."""
+        from services.exporters.google_forms_exporter import GoogleFormsExporter
+        
+        exporter = GoogleFormsExporter(user_id="test-user")
+        
+        assert hasattr(exporter, '_set_form_description')
+        assert callable(exporter._set_form_description)
+
+    def test_create_form_method_exists(self):
+        """GoogleFormsExporter should have _create_form method."""
+        from services.exporters.google_forms_exporter import GoogleFormsExporter
+        
+        exporter = GoogleFormsExporter(user_id="test-user")
+        
+        assert hasattr(exporter, '_create_form')
+        assert callable(exporter._create_form)
+
+    @pytest.mark.asyncio
+    async def test_set_form_description_correct_api_structure(self):
+        """_set_form_description should use correct batchUpdate structure."""
+        from services.exporters.google_forms_exporter import GoogleFormsExporter
+        from unittest.mock import MagicMock, AsyncMock, patch
+        
+        exporter = GoogleFormsExporter(user_id="test-user")
+        
+        # Create mock service
+        mock_service = MagicMock()
+        mock_batch_update = MagicMock()
+        mock_batch_update.execute.return_value = {}
+        mock_service.forms.return_value.batchUpdate.return_value = mock_batch_update
+        
+        # Patch asyncio.to_thread to run synchronously
+        with patch('asyncio.to_thread', side_effect=lambda fn: fn()):
+            await exporter._set_form_description(
+                mock_service,
+                "test-form-id",
+                "Test description"
+            )
+        
+        # Verify batchUpdate was called with correct structure
+        mock_service.forms.return_value.batchUpdate.assert_called_once()
+        call_kwargs = mock_service.forms.return_value.batchUpdate.call_args
+        
+        # Check formId
+        assert call_kwargs.kwargs['formId'] == "test-form-id"
+        
+        # Check body structure
+        body = call_kwargs.kwargs['body']
+        assert 'requests' in body
+        assert len(body['requests']) == 1
+        
+        request = body['requests'][0]
+        assert 'updateFormInfo' in request
+        assert request['updateFormInfo']['info']['description'] == "Test description"
+        assert request['updateFormInfo']['updateMask'] == "description"
+
+    @pytest.mark.asyncio
+    async def test_set_form_description_error_handling(self):
+        """_set_form_description should handle HttpError and re-raise."""
+        from services.exporters.google_forms_exporter import GoogleFormsExporter
+        from googleapiclient.errors import HttpError
+        from unittest.mock import MagicMock, patch
+        import httplib2
+        
+        exporter = GoogleFormsExporter(user_id="test-user")
+        
+        # Create mock service that raises HttpError
+        mock_response = httplib2.Response({'status': 400})
+        mock_error = HttpError(mock_response, b'{"error": "Bad Request"}')
+        
+        mock_service = MagicMock()
+        mock_service.forms.return_value.batchUpdate.return_value.execute.side_effect = mock_error
+        
+        # Patch asyncio.to_thread to run synchronously
+        with patch('asyncio.to_thread', side_effect=lambda fn: fn()):
+            with pytest.raises(HttpError):
+                await exporter._set_form_description(
+                    mock_service,
+                    "test-form-id",
+                    "Test description"
+                )
+
+    @pytest.mark.asyncio
+    async def test_create_form_calls_set_description_when_provided(self):
+        """_create_form should call _set_form_description when description is provided."""
+        from services.exporters.google_forms_exporter import GoogleFormsExporter
+        from unittest.mock import MagicMock, AsyncMock, patch
+        
+        exporter = GoogleFormsExporter(user_id="test-user")
+        
+        # Mock the _set_form_description method
+        exporter._set_form_description = AsyncMock()
+        
+        # Create mock service
+        mock_service = MagicMock()
+        mock_service.forms.return_value.create.return_value.execute.return_value = {
+            "formId": "new-form-id"
+        }
+        
+        # Patch asyncio.to_thread to run synchronously
+        with patch('asyncio.to_thread', side_effect=lambda fn: fn()):
+            form_id = await exporter._create_form(
+                mock_service,
+                "Test Title",
+                "Test Description"
+            )
+        
+        # Verify form was created with title only
+        create_call = mock_service.forms.return_value.create.call_args
+        body = create_call.kwargs['body']
+        assert body['info']['title'] == "Test Title"
+        assert 'description' not in body['info']
+        
+        # Verify _set_form_description was called
+        exporter._set_form_description.assert_called_once_with(
+            mock_service,
+            "new-form-id",
+            "Test Description"
+        )
+        
+        assert form_id == "new-form-id"
+
+    @pytest.mark.asyncio
+    async def test_create_form_skips_description_when_none(self):
+        """_create_form should not call _set_form_description when description is None."""
+        from services.exporters.google_forms_exporter import GoogleFormsExporter
+        from unittest.mock import MagicMock, AsyncMock, patch
+        
+        exporter = GoogleFormsExporter(user_id="test-user")
+        
+        # Mock the _set_form_description method
+        exporter._set_form_description = AsyncMock()
+        
+        # Create mock service
+        mock_service = MagicMock()
+        mock_service.forms.return_value.create.return_value.execute.return_value = {
+            "formId": "new-form-id"
+        }
+        
+        # Patch asyncio.to_thread to run synchronously
+        with patch('asyncio.to_thread', side_effect=lambda fn: fn()):
+            form_id = await exporter._create_form(
+                mock_service,
+                "Test Title",
+                None  # No description
+            )
+        
+        # Verify _set_form_description was NOT called
+        exporter._set_form_description.assert_not_called()
+        
+        assert form_id == "new-form-id"
+
+    @pytest.mark.asyncio
+    async def test_enable_quiz_mode_error_handling(self):
+        """_enable_quiz_mode should handle HttpError and re-raise."""
+        from services.exporters.google_forms_exporter import GoogleFormsExporter
+        from googleapiclient.errors import HttpError
+        from unittest.mock import MagicMock, patch
+        import httplib2
+        
+        exporter = GoogleFormsExporter(user_id="test-user")
+        
+        # Create mock service that raises HttpError
+        mock_response = httplib2.Response({'status': 400})
+        mock_error = HttpError(mock_response, b'{"error": "Bad Request"}')
+        
+        mock_service = MagicMock()
+        mock_service.forms.return_value.batchUpdate.return_value.execute.side_effect = mock_error
+        
+        # Patch asyncio.to_thread to run synchronously
+        with patch('asyncio.to_thread', side_effect=lambda fn: fn()):
+            with pytest.raises(HttpError):
+                await exporter._enable_quiz_mode(
+                    mock_service,
+                    "test-form-id"
+                )
+

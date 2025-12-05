@@ -1,0 +1,165 @@
+"""
+Billing Handler - Business Logic for checkout session verification
+"""
+
+import asyncio
+from typing import Dict
+import stripe
+from fastapi import HTTPException
+from services.logger import app_logger as logger
+from services.billing_service import BillingService, _short_stripe_id
+
+
+async def verify_checkout_session(
+    session_id: str, 
+    user_id: str,
+    billing_service: BillingService
+) -> Dict:
+    """
+    Verify checkout session and return subscription details
+    
+    Args:
+        session_id: Stripe Checkout Session ID
+        user_id: Quizify user ID (for verification)
+        billing_service: Injected BillingService instance
+        
+    Returns:
+        Dict with subscription details
+        
+    Raises:
+        HTTPException: If session invalid or user mismatch
+    """
+    try:
+        # Note: stripe.api_key is set by the injected billing_service instance (BillingService.__init__)
+        
+        # Retrieve session from Stripe (wrapped to avoid blocking event loop)
+        session = await asyncio.to_thread(
+            stripe.checkout.Session.retrieve,
+            session_id,
+            expand=["subscription"]
+        )
+        
+        # Verify session belongs to user
+        session_user_id = session.metadata.get("user_id")
+        if session_user_id != user_id:
+            safe_session_user_id = session_user_id[:8] if session_user_id else "None"
+            logger.warning(
+                f"Session {_short_stripe_id(session_id)} user mismatch: "
+                f"expected {user_id[:8]}, got {safe_session_user_id}"
+            )
+            raise HTTPException(
+                status_code=403,
+                detail="Session does not belong to this user"
+            )
+        
+        # Verify payment status
+        if session.payment_status != "paid":
+            logger.warning(
+                f"Session {_short_stripe_id(session_id)} payment not complete: "
+                f"status={session.payment_status}"
+            )
+            raise HTTPException(
+                status_code=400,
+                detail=f"Payment not complete: {session.payment_status}"
+            )
+        
+        # Extract subscription details
+        # Always fetch the full subscription to ensure we have all fields
+        # (expanded subscription from session may be partial)
+        subscription_id = session.subscription
+        if hasattr(subscription_id, 'id'):
+            # Already expanded to an object, get the ID
+            subscription_id = subscription_id.id
+        
+        # Fetch fresh subscription with all fields (wrapped to avoid blocking event loop)
+        subscription = await asyncio.to_thread(
+            stripe.Subscription.retrieve,
+            subscription_id
+        )
+        
+        tier = session.metadata.get("tier", "free")
+        
+        # ------------------------------------------------------------------
+        # PROVISIONING (Temporary Bridge for Epic 2 Testing)
+        # ------------------------------------------------------------------
+        # In a full production setup (Epic 3), this is handled by webhooks.
+        # However, to make the "Upgrade" flow testable immediately without
+        # waiting for async webhooks, we provision the user here synchronously.
+        # This is safe because we verified payment_status="paid" above.
+        # ------------------------------------------------------------------
+        try:
+            # Extract price_id using shared helper (handles both dict and Stripe objects)
+            price_id = billing_service._extract_price_id_from_subscription(
+                subscription,
+                context=f"session {session_id} for user {user_id[:8]}"
+            )
+            
+            if not price_id:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Price ID missing in subscription"
+                )
+            
+            # Extract billing period dates from subscription items
+            # Per Stripe API docs, current_period_start/end are on items.data[].current_period_start/end
+            # NOT on the subscription object itself
+            current_period_start, current_period_end = billing_service._extract_period_dates_from_subscription(
+                subscription,
+                context=f"session {session_id} for user {user_id[:8]}"
+            )
+            
+            await billing_service.provision_subscription(
+                user_id=user_id,
+                customer_id=session.customer,
+                subscription_id=subscription.id,
+                subscription_status=subscription.status,
+                price_id=price_id,
+                current_period_start=current_period_start,
+                current_period_end=current_period_end
+            )
+            logger.info(f"Synchronously provisioned subscription for user {user_id[:8]}")
+            
+        except Exception as e:
+            # Log as CRITICAL because until Epic 3 (Webhooks) is implemented, this failure means
+            # the user paid but didn't get the upgrade.
+            logger.critical(f"Failed to synchronously provision subscription for user {user_id}: {e}")
+            # Raise 500 to inform frontend and trigger retry/support contact
+            raise HTTPException(
+                status_code=500,
+                detail="Payment succeeded but failed to provision subscription. Please contact support."
+            )
+        
+        return {
+            "session_id": session.id,
+            "customer_id": session.customer,
+            "subscription_id": subscription.id,
+            "tier": tier,
+            "status": subscription.status,
+            "current_period_end": current_period_end,
+            "payment_status": session.payment_status
+        }
+        
+    except stripe.InvalidRequestError as e:
+        logger.error(f"Invalid session ID {_short_stripe_id(session_id)}: {e}")
+        raise HTTPException(
+            status_code=404,
+            detail="Checkout session not found"
+        )
+    except stripe.StripeError as e:
+        logger.error(f"Stripe error verifying session {_short_stripe_id(session_id)}: {e}")
+        raise HTTPException(
+            status_code=502,
+            detail="Failed to verify checkout session with Stripe"
+        )
+    except HTTPException:
+        # Re-raise HTTPExceptions
+        raise
+    except Exception as e:
+        logger.error(
+            f"Unexpected error verifying session {_short_stripe_id(session_id)}: {e}",
+            exc_info=True
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="Internal server error"
+        )

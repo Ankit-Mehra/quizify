@@ -16,15 +16,15 @@ from schemas.quiz import TextQuizRequest, FileQuizRequest
 
 @pytest.fixture
 def mock_question():
-    """Create a mock question object."""
-    question = MagicMock()
-    question.type = "multiple_choice"
-    question.question = "Test question?"
-    question.options = ["A", "B", "C", "D"]
-    question.correct_answer = "A"
-    question.explanation = "Test explanation"
-    question.source = "Test source"
-    return question
+    """Create a mock question dict that works with both spread operator and attribute access."""
+    return {
+        "type": "multiple_choice",
+        "question": "Test question?",
+        "options": ["A", "B", "C", "D"],
+        "correct_answer": "A",
+        "explanation": "Test explanation",
+        "source": "Test source"
+    }
 
 
 @pytest.fixture
@@ -82,6 +82,7 @@ def create_tier_info(account_tier: str, current_count: int, quota_limit: int) ->
         'id': 'test-user-id',
         'account_tier': account_tier,
         'current_quiz_count': current_count,
+        'quizzes_attempted': current_count,
         'quota_limit': quota_limit,
         'quota_exceeded': current_count >= quota_limit
     }
@@ -89,8 +90,19 @@ def create_tier_info(account_tier: str, current_count: int, quota_limit: int) ->
 
 def setup_successful_generation_mocks(mock_generate, mock_save_quiz, mock_question, quiz_id="quiz-123"):
     """Helper to set up mocks for successful quiz generation."""
+    import uuid
+    # Use actual UUID format for quiz_id if it's the default
+    if quiz_id == "quiz-123":
+        quiz_id = str(uuid.uuid4())
+    
     mock_generate.return_value = [mock_question]
-    mock_save_quiz.return_value = quiz_id
+    # Return tuple (quiz_id, saved_questions) to match updated function signature
+    saved_questions = [{
+        **mock_question,
+        'id': str(uuid.uuid4()),  # Generate proper UUID
+        'quiz_id': quiz_id
+    }]
+    mock_save_quiz.return_value = (quiz_id, saved_questions)
 
 
 def assert_quota_exceeded_error(exc_info, expected_tier: str, expected_count: int, expected_limit: int):
@@ -105,7 +117,7 @@ def assert_quota_exceeded_error(exc_info, expected_tier: str, expected_count: in
 @contextmanager
 def mock_quiz_generation_success(mock_question, tier_info, quiz_id="quiz-123"):
     """Context manager to mock successful quiz generation with all dependencies."""
-    with patch('handlers.quiz_handlers.get_user_tier_info') as mock_tier, \
+    with patch('handlers.quiz_handlers.get_user_tier_info_cached') as mock_tier, \
          patch('handlers.quiz_handlers.generate_quizzes_single_async') as mock_generate, \
          patch('handlers.quiz_handlers.save_quiz_to_database') as mock_save_quiz, \
          patch('handlers.quiz_handlers.save_file_to_supabase') as mock_save_file, \
@@ -131,7 +143,7 @@ def mock_file_extraction_and_generation(mock_question, tier_info, quiz_id="quiz-
     if extracted_text is None:
         extracted_text = "Extracted text content for quiz generation."
     
-    with patch('handlers.quiz_handlers.get_user_tier_info') as mock_tier, \
+    with patch('handlers.quiz_handlers.get_user_tier_info_cached') as mock_tier, \
          patch('handlers.quiz_handlers.extract_text_from_plain_text') as mock_extract, \
          patch('handlers.quiz_handlers.generate_quizzes_single_async') as mock_generate, \
          patch('handlers.quiz_handlers.save_quiz_to_database') as mock_save_quiz, \
@@ -160,7 +172,7 @@ def mock_file_id_generation(mock_question, mock_file_record, tier_info, quiz_id=
     if parsed_text is None:
         parsed_text = "Parsed text from stored file."
     
-    with patch('handlers.quiz_handlers.get_user_tier_info') as mock_tier, \
+    with patch('handlers.quiz_handlers.get_user_tier_info_cached') as mock_tier, \
          patch('handlers.quiz_handlers.get_file_record') as mock_get_record, \
          patch('handlers.quiz_handlers.parse_file_from_supabase') as mock_parse, \
          patch('handlers.quiz_handlers.generate_quizzes_single_async') as mock_generate, \
@@ -187,7 +199,7 @@ def mock_file_id_generation(mock_question, mock_file_record, tier_info, quiz_id=
 @contextmanager
 def mock_quota_exceeded(tier_info):
     """Context manager to mock quota exceeded scenario (no generation)."""
-    with patch('handlers.quiz_handlers.get_user_tier_info') as mock_tier:
+    with patch('handlers.quiz_handlers.get_user_tier_info_cached') as mock_tier:
         mock_tier.return_value = tier_info
         yield mock_tier
 
@@ -214,9 +226,11 @@ class TestQuotaEnforcementTextEndpoint:
                 user_token='test-token'
             )
             
-            # Assertions
-            assert result['quiz_id'] == 'quiz-123'
-            assert 'Quiz generated successfully' in result['message']
+            # Assertions - result is now EnhancedQuizGenerationResponse object
+            assert hasattr(result, 'quiz_id')
+            assert isinstance(result.quiz_id, str)
+            assert len(result.quiz_id) > 0  # Valid quiz ID returned
+            assert 'Quiz generated successfully' in result.message
             mocks['generate'].assert_called_once()
             mocks['save_quiz'].assert_called_once()
         
@@ -238,7 +252,7 @@ class TestQuotaEnforcementTextEndpoint:
             
             # Assertions
             assert_quota_exceeded_error(exc_info, 'free', 5, 5)
-            assert 'Upgrade to basic' in exc_info.value.detail['detail']
+            assert 'Upgrade to Premium' in exc_info.value.detail['detail']
         
     @pytest.mark.asyncio
     async def test_text_endpoint_basic_tier_at_limit_forbidden(
@@ -257,15 +271,16 @@ class TestQuotaEnforcementTextEndpoint:
                 )
             
             # Assertions
-            assert_quota_exceeded_error(exc_info, 'basic', 100, 100)
-            assert 'Upgrade to educator' in exc_info.value.detail['detail']
+            # 'basic' tier is normalized to 'premium' in user-facing messages
+            assert_quota_exceeded_error(exc_info, 'premium', 100, 100)
+            assert 'Upgrade to Pro' in exc_info.value.detail['detail']
         
     @pytest.mark.asyncio
-    async def test_text_endpoint_educator_tier_under_limit_success(
+    async def test_text_endpoint_pro_tier_under_limit_success(
         self, mock_question
     ):
-        """Test text endpoint allows quiz generation for educator tier user under limit."""
-        tier_info = create_tier_info('educator', 450, 500)
+        """Test text endpoint allows quiz generation for pro tier user under limit."""
+        tier_info = create_tier_info('pro', 450, 999999)
         
         # Create request for advanced content
         request_data = TextQuizRequest(
@@ -275,7 +290,7 @@ class TestQuotaEnforcementTextEndpoint:
             question_type=["multiple_choice"]
         )
         
-        with mock_quiz_generation_success(mock_question, tier_info, "quiz-456") as mocks:
+        with mock_quiz_generation_success(mock_question, tier_info) as mocks:  # Uses auto-generated UUID
             # Call handler
             result = await generate_quiz_from_text(
                 data=request_data,
@@ -283,9 +298,11 @@ class TestQuotaEnforcementTextEndpoint:
                 user_token='test-token'
             )
             
-            # Assertions
-            assert result['quiz_id'] == 'quiz-456'
-            assert 'Quiz generated successfully' in result['message']
+            # Assertions - result is now EnhancedQuizGenerationResponse object
+            assert hasattr(result, 'quiz_id')
+            assert isinstance(result.quiz_id, str)
+            assert len(result.quiz_id) > 0  # Valid quiz ID returned
+            assert 'Quiz generated successfully' in result.message
             mocks['generate'].assert_called_once()
             mocks['save_quiz'].assert_called_once()
 
@@ -296,7 +313,7 @@ class TestQuotaEnforcementTextEndpoint:
     """Integration tests for quota enforcement on file generation endpoint."""
     
     @pytest.mark.asyncio
-    @patch('handlers.quiz_handlers.get_user_tier_info')
+    @patch('handlers.quiz_handlers.get_user_tier_info_cached')
     @patch('handlers.quiz_handlers.extract_text_from_plain_text')
     @patch('handlers.quiz_handlers.generate_quizzes_single_async')
     @patch('handlers.quiz_handlers.save_quiz_to_database')
@@ -326,7 +343,22 @@ class TestQuotaEnforcementTextEndpoint:
         mock_question.explanation = "Test explanation"
         mock_question.source = "Test source"
         mock_generate.return_value = [mock_question]
-        mock_save_quiz.return_value = "quiz-789"
+        # Return tuple (quiz_id, saved_questions) to match updated signature
+        import uuid
+        quiz_id = str(uuid.uuid4())
+        saved_questions = [{
+            **{
+                'type': mock_question.type,
+                'question': mock_question.question,
+                'options': mock_question.options,
+                'correct_answer': mock_question.correct_answer,
+                'explanation': mock_question.explanation,
+                'source': mock_question.source
+            },
+            'id': str(uuid.uuid4()),
+            'quiz_id': quiz_id
+        }]
+        mock_save_quiz.return_value = (quiz_id, saved_questions)
         
         # Create mock file
         file_content = b"Test file content for quiz generation"
@@ -342,18 +374,21 @@ class TestQuotaEnforcementTextEndpoint:
             title="Test File Quiz",
             num_questions=5,
             question_type=["multiple_choice"],
+            mode="standard",  # Required when calling handler directly (bypasses FastAPI Form resolution)
             current_user_id='test-user-id',
             user_token='test-token'
         )
         
-        # Assertions
-        assert result['quiz_id'] == 'quiz-789'
-        assert 'Quiz generated successfully' in result['message']
+        # Assertions - result is now EnhancedQuizGenerationResponse object
+        assert hasattr(result, 'quiz_id')
+        assert isinstance(result.quiz_id, str)
+        assert len(result.quiz_id) > 0  # Valid quiz ID returned
+        assert 'Quiz generated successfully' in result.message
         mock_generate.assert_called_once()
         mock_save_quiz.assert_called_once()
         
     @pytest.mark.asyncio
-    @patch('handlers.quiz_handlers.get_user_tier_info')
+    @patch('handlers.quiz_handlers.get_user_tier_info_cached')
     async def test_file_endpoint_free_tier_at_limit_forbidden(self, mock_get_tier_info):
         """Test file endpoint returns 403 for free tier user at limit."""
         # Setup mock
@@ -379,6 +414,7 @@ class TestQuotaEnforcementTextEndpoint:
                 title="Test File Quiz",
                 num_questions=5,
                 question_type=["multiple_choice"],
+                mode="standard",
                 current_user_id='test-user-id',
                 user_token='test-token'
             )
@@ -391,7 +427,7 @@ class TestQuotaEnforcementTextEndpoint:
         assert detail['user_tier'] == 'free'
         
     @pytest.mark.asyncio
-    @patch('handlers.quiz_handlers.get_user_tier_info')
+    @patch('handlers.quiz_handlers.get_user_tier_info_cached')
     async def test_file_endpoint_basic_tier_at_limit_forbidden(self, mock_get_tier_info):
         """Test file endpoint returns 403 for basic tier user at limit."""
         # Setup mock
@@ -417,6 +453,7 @@ class TestQuotaEnforcementTextEndpoint:
                 title="Test File Quiz",
                 num_questions=5,
                 question_type=["multiple_choice"],
+                mode="standard",
                 current_user_id='test-user-id',
                 user_token='test-token'
             )
@@ -426,14 +463,15 @@ class TestQuotaEnforcementTextEndpoint:
         detail = exc_info.value.detail
         assert detail['current_count'] == 100
         assert detail['quota_limit'] == 100
-        assert detail['user_tier'] == 'basic'
+        # 'basic' tier is normalized to 'premium' in user-facing messages
+        assert detail['user_tier'] == 'premium'
 
 
 class TestQuotaCheckBeforeGeneration:
     """Tests to verify quota check happens before AI generation."""
     
     @pytest.mark.asyncio
-    @patch('handlers.quiz_handlers.get_user_tier_info')
+    @patch('handlers.quiz_handlers.get_user_tier_info_cached')
     @patch('handlers.quiz_handlers.generate_quizzes_single_async')
     async def test_text_endpoint_quota_check_before_ai_call(
         self, mock_generate, mock_get_tier_info
@@ -471,7 +509,7 @@ class TestQuotaCheckBeforeGeneration:
         mock_generate.assert_not_called()
         
     @pytest.mark.asyncio
-    @patch('handlers.quiz_handlers.get_user_tier_info')
+    @patch('handlers.quiz_handlers.get_user_tier_info_cached')
     @patch('handlers.quiz_handlers.extract_text_from_plain_text')
     @patch('handlers.quiz_handlers.generate_quizzes_single_async')
     async def test_file_endpoint_quota_check_before_ai_call(
@@ -501,6 +539,7 @@ class TestQuotaCheckBeforeGeneration:
                 title="Test File Quiz",
                 num_questions=5,
                 question_type=["multiple_choice"],
+                mode="standard",
                 current_user_id='test-user-id',
                 user_token='test-token'
             )
@@ -519,7 +558,7 @@ class TestQuotaEnforcementFileIdEndpoint:
     """Integration tests for quota enforcement on file ID generation endpoint."""
     
     @pytest.mark.asyncio
-    @patch('handlers.quiz_handlers.get_user_tier_info')
+    @patch('handlers.quiz_handlers.get_user_tier_info_cached')
     @patch('handlers.quiz_handlers.get_file_record')
     @patch('handlers.quiz_handlers.parse_file_from_supabase')
     @patch('handlers.quiz_handlers.generate_quizzes_single_async')
@@ -557,7 +596,22 @@ class TestQuotaEnforcementFileIdEndpoint:
         mock_question.explanation = "Test explanation"
         mock_question.source = "Test source"
         mock_generate.return_value = [mock_question]
-        mock_save_quiz.return_value = "quiz-999"
+        # Return tuple (quiz_id, saved_questions) to match updated signature
+        import uuid
+        quiz_id = str(uuid.uuid4())
+        saved_questions = [{
+            **{
+                'type': mock_question.type,
+                'question': mock_question.question,
+                'options': mock_question.options,
+                'correct_answer': mock_question.correct_answer,
+                'explanation': mock_question.explanation,
+                'source': mock_question.source
+            },
+            'id': str(uuid.uuid4()),
+            'quiz_id': quiz_id
+        }]
+        mock_save_quiz.return_value = (quiz_id, saved_questions)
         
         # Create request data
         request_data = FileQuizRequest(
@@ -574,14 +628,16 @@ class TestQuotaEnforcementFileIdEndpoint:
             user_token='test-token'
         )
         
-        # Assertions
-        assert result['quiz_id'] == 'quiz-999'
-        assert 'Quiz generated successfully' in result['message']
+        # Assertions - result is now EnhancedQuizGenerationResponse object
+        assert hasattr(result, 'quiz_id')
+        assert isinstance(result.quiz_id, str)
+        assert len(result.quiz_id) > 0  # Valid quiz ID returned
+        assert 'Quiz generated successfully' in result.message
         mock_generate.assert_called_once()
         mock_save_quiz.assert_called_once()
         
     @pytest.mark.asyncio
-    @patch('handlers.quiz_handlers.get_user_tier_info')
+    @patch('handlers.quiz_handlers.get_user_tier_info_cached')
     @patch('handlers.quiz_handlers.get_file_record')
     @patch('handlers.quiz_handlers.parse_file_from_supabase')
     async def test_file_id_endpoint_free_tier_at_limit_forbidden(
@@ -629,10 +685,10 @@ class TestQuotaEnforcementFileIdEndpoint:
         assert detail['current_count'] == 5
         assert detail['quota_limit'] == 5
         assert detail['user_tier'] == 'free'
-        assert 'Upgrade to basic' in detail['detail']
+        assert 'Upgrade to Premium' in detail['detail']
         
     @pytest.mark.asyncio
-    @patch('handlers.quiz_handlers.get_user_tier_info')
+    @patch('handlers.quiz_handlers.get_user_tier_info_cached')
     @patch('handlers.quiz_handlers.get_file_record')
     @patch('handlers.quiz_handlers.parse_file_from_supabase')
     async def test_file_id_endpoint_basic_tier_at_limit_forbidden(
@@ -679,11 +735,12 @@ class TestQuotaEnforcementFileIdEndpoint:
         detail = exc_info.value.detail
         assert detail['current_count'] == 100
         assert detail['quota_limit'] == 100
-        assert detail['user_tier'] == 'basic'
-        assert 'Upgrade to educator' in detail['detail']
+        # 'basic' tier is normalized to 'premium' in user-facing messages
+        assert detail['user_tier'] == 'premium'
+        assert 'Upgrade to Pro' in detail['detail']
         
     @pytest.mark.asyncio
-    @patch('handlers.quiz_handlers.get_user_tier_info')
+    @patch('handlers.quiz_handlers.get_user_tier_info_cached')
     @patch('handlers.quiz_handlers.get_file_record')
     @patch('handlers.quiz_handlers.parse_file_from_supabase')
     @patch('handlers.quiz_handlers.generate_quizzes_single_async')

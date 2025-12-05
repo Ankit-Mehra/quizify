@@ -56,6 +56,9 @@ def auth_token():
     data = login_response.json()
     token = data.get("access_token") or data.get("accessToken") or data.get("token")
     
+    # Note: TestClient cookies are maintained automatically across requests
+    # The refresh_token cookie is set during login and should be available for subsequent requests
+    
     return token
 
 @pytest.mark.integration
@@ -74,6 +77,10 @@ class TestQuizGenerationFlow:
         5. Verify all data persisted correctly
         """
         headers = {"Authorization": f"Bearer {auth_token}"}
+        
+        # Extract cookies from the client (they should have been set during login)
+        # TestClient maintains cookies, but we need to ensure they're being sent
+        # Note: Cookies are automatically included by TestClient in subsequent requests
         
         # Step 1: Upload file
         file_content = """
@@ -135,8 +142,10 @@ class TestQuizGenerationFlow:
         assert my_quizzes_response.status_code == 200, \
             f"Failed to retrieve user quizzes: {my_quizzes_response.text}"
         
-        my_quizzes = my_quizzes_response.json()
-        assert isinstance(my_quizzes, list), "User quizzes should be a list"
+        my_quizzes_data = my_quizzes_response.json()
+        assert isinstance(my_quizzes_data, dict), "User quizzes should be a paginated response"
+        assert "quizzes" in my_quizzes_data, "Response should contain quizzes key"
+        my_quizzes = my_quizzes_data["quizzes"]
         
         # Find our quiz in the list
         our_quiz = next((q for q in my_quizzes if q.get("id") == quiz_id or q.get("quiz_id") == quiz_id), None)

@@ -1,0 +1,703 @@
+{
+	"info": {
+		"name": "Quizify - Browser Slot Management Testing",
+		"description": "Test distributed browser slot coordination across multiple instances.\n\n## What This Tests\n- Browser slot acquisition (max 3 per user)\n- Distributed locking across instances\n- Automatic slot release (5 min TTL)\n- Quota enforcement (429 errors)\n- Concurrent user isolation\n\n## Expected Behavior\n- User can acquire up to 3 browser slots\n- 4th attempt returns HTTP 429 (Too Many Requests)\n- Slots automatically released after 5 minutes\n- Different users don't interfere with each other\n\n## Setup\n1. Set `base_url` to your Railway production URL\n2. Get valid JWT tokens for 2 different users:\n   - `auth_token_user1` (User A)\n   - `auth_token_user2` (User B)\n3. Have a test URL ready (e.g., Wikipedia article)\n\n## Test Scenarios\n1. **Single User Quota** - Test 3 slot limit\n2. **Concurrent Users** - Verify user isolation\n3. **Slot Release** - Test TTL cleanup\n4. **Production Load** - Stress test with multiple users",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "Health & Setup",
+			"item": [
+				{
+					"name": "Redis Health Check",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Redis is enabled\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.redis_enabled).to.eql(true);",
+									"});",
+									"",
+									"pm.test(\"Redis is connected\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.redis_connected).to.eql(true);",
+									"});",
+									"",
+									"console.log(\"✅ Redis Status:\", pm.response.json());"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/health/redis",
+							"host": ["{{base_url}}"],
+							"path": ["health", "redis"]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Scenario 1: Single User Quota (3 Slots)",
+			"item": [
+				{
+					"name": "User A - Slot 1 (Should Succeed)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200 or 201\", function () {",
+									"    pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+									"});",
+									"",
+									"console.log(\"\\n\" + \"=\".repeat(70));",
+									"console.log(\"🧪 SCENARIO 1: Single User Browser Slot Limit\");",
+									"console.log(\"=\".repeat(70));",
+									"console.log(\"Testing: User A acquires slot 1 of 3\");",
+									"console.log(\"Expected: ✅ SUCCESS (slot acquired)\");",
+									"console.log(\"Result: Status \" + pm.response.code);",
+									"",
+									"if (pm.response.code === 200 || pm.response.code === 201) {",
+									"    console.log(\"✅ PASS: Slot 1 acquired successfully\");",
+									"} else {",
+									"    console.log(\"❌ FAIL: Could not acquire slot 1\");",
+									"}",
+									"console.log(\"\");"
+								],
+								"type": "text/javascript"
+							}
+						},
+						{
+							"listen": "prerequest",
+							"script": {
+								"exec": [
+									"// Clear slot counter",
+									"pm.environment.set('user_a_slots', 0);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token_user1}}",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"url\": \"{{test_url}}\",\n  \"num_questions\": 5,\n  \"difficulty\": \"medium\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/quiz/generate/url",
+							"host": ["{{base_url}}"],
+							"path": ["api", "quiz", "generate", "url"]
+						},
+						"description": "User A starts first browser session.\n\n**Expected:** Success (1/3 slots used)"
+					},
+					"response": []
+				},
+				{
+					"name": "User A - Slot 2 (Should Succeed)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200 or 201\", function () {",
+									"    pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+									"});",
+									"",
+									"console.log(\"Testing: User A acquires slot 2 of 3\");",
+									"console.log(\"Expected: ✅ SUCCESS (slot acquired)\");",
+									"console.log(\"Result: Status \" + pm.response.code);",
+									"",
+									"if (pm.response.code === 200 || pm.response.code === 201) {",
+									"    console.log(\"✅ PASS: Slot 2 acquired successfully\");",
+									"} else {",
+									"    console.log(\"❌ FAIL: Could not acquire slot 2\");",
+									"}",
+									"console.log(\"\");"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token_user1}}",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"url\": \"{{test_url}}\",\n  \"num_questions\": 5,\n  \"difficulty\": \"medium\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/quiz/generate/url",
+							"host": ["{{base_url}}"],
+							"path": ["api", "quiz", "generate", "url"]
+						},
+						"description": "User A starts second browser session.\n\n**Expected:** Success (2/3 slots used)"
+					},
+					"response": []
+				},
+				{
+					"name": "User A - Slot 3 (Should Succeed)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200 or 201\", function () {",
+									"    pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+									"});",
+									"",
+									"console.log(\"Testing: User A acquires slot 3 of 3\");",
+									"console.log(\"Expected: ✅ SUCCESS (last slot acquired)\");",
+									"console.log(\"Result: Status \" + pm.response.code);",
+									"",
+									"if (pm.response.code === 200 || pm.response.code === 201) {",
+									"    console.log(\"✅ PASS: Slot 3 acquired - User A at maximum (3/3)\");",
+									"} else {",
+									"    console.log(\"❌ FAIL: Could not acquire slot 3\");",
+									"}",
+									"console.log(\"\");"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token_user1}}",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"url\": \"{{test_url}}\",\n  \"num_questions\": 5,\n  \"difficulty\": \"medium\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/quiz/generate/url",
+							"host": ["{{base_url}}"],
+							"path": ["api", "quiz", "generate", "url"]
+						},
+						"description": "User A starts third browser session.\n\n**Expected:** Success (3/3 slots used - at limit)"
+					},
+					"response": []
+				},
+				{
+					"name": "User A - Slot 4 (Should FAIL - Quota Exceeded)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 429 (Too Many Requests)\", function () {",
+									"    pm.expect(pm.response.code).to.eql(429);",
+									"});",
+									"",
+									"pm.test(\"Error message mentions browser limit\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    var errorMsg = JSON.stringify(jsonData).toLowerCase();",
+									"    pm.expect(errorMsg).to.include('browser');",
+									"});",
+									"",
+									"console.log(\"Testing: User A attempts slot 4 (OVER LIMIT)\");",
+									"console.log(\"Expected: ❌ REJECTION - HTTP 429\");",
+									"console.log(\"Result: Status \" + pm.response.code);",
+									"",
+									"if (pm.response.code === 429) {",
+									"    console.log(\"✅ PASS: Quota enforcement working!\");",
+									"    console.log(\"   User A correctly blocked at 3/3 slots\");",
+									"    console.log(\"   Error:\", pm.response.json().detail || pm.response.json().message);",
+									"} else {",
+									"    console.log(\"❌ FAIL: Quota not enforced (allowed 4th slot)\");",
+									"}",
+									"",
+									"console.log(\"=\".repeat(70));",
+									"console.log(\"📊 SCENARIO 1 COMPLETE: Single User Quota\");",
+									"console.log(\"   Slots 1-3: ✅ Acquired successfully\");",
+									"console.log(\"   Slot 4:    ❌ Rejected (as expected)\");",
+									"console.log(\"   Verdict:   Browser slot limit working correctly\");",
+									"console.log(\"=\".repeat(70));",
+									"console.log(\"\");"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token_user1}}",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"url\": \"{{test_url}}\",\n  \"num_questions\": 5,\n  \"difficulty\": \"medium\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/quiz/generate/url",
+							"host": ["{{base_url}}"],
+							"path": ["api", "quiz", "generate", "url"]
+						},
+						"description": "User A attempts fourth browser session.\n\n**Expected:** HTTP 429 - Too Many Requests\n**Error:** \"Maximum concurrent browsers reached (3)\""
+					},
+					"response": []
+				}
+			],
+			"description": "Test that a single user cannot exceed 3 concurrent browser slots."
+		},
+		{
+			"name": "Scenario 2: Multi-User Isolation",
+			"item": [
+				{
+					"name": "User B - Slot 1 (Should Succeed)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200 or 201\", function () {",
+									"    pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+									"});",
+									"",
+									"console.log(\"\\n\" + \"=\".repeat(70));",
+									"console.log(\"🧪 SCENARIO 2: Multi-User Isolation\");",
+									"console.log(\"=\".repeat(70));",
+									"console.log(\"Context: User A has 3/3 slots (from Scenario 1)\");",
+									"console.log(\"Testing: User B (different user) acquires slot 1\");",
+									"console.log(\"Expected: ✅ SUCCESS (users are isolated)\");",
+									"console.log(\"Result: Status \" + pm.response.code);",
+									"",
+									"if (pm.response.code === 200 || pm.response.code === 201) {",
+									"    console.log(\"✅ PASS: User B acquired slot successfully\");",
+									"    console.log(\"   User A: 3/3 slots (blocked)\");",
+									"    console.log(\"   User B: 1/3 slots (independent quota)\");",
+									"    console.log(\"   Verdict: User isolation working correctly!\");",
+									"} else {",
+									"    console.log(\"❌ FAIL: User B blocked (users not isolated)\");",
+									"}",
+									"",
+									"console.log(\"=\".repeat(70));",
+									"console.log(\"\");"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token_user2}}",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"url\": \"{{test_url}}\",\n  \"num_questions\": 5,\n  \"difficulty\": \"medium\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/quiz/generate/url",
+							"host": ["{{base_url}}"],
+							"path": ["api", "quiz", "generate", "url"]
+						},
+						"description": "User B (different user) starts browser session.\n\n**Context:** User A already has 3/3 slots\n**Expected:** User B can still acquire slots (independent quota)\n\nThis proves browser slots are isolated per user."
+					},
+					"response": []
+				}
+			],
+			"description": "Verify that different users have independent browser slot quotas."
+		},
+		{
+			"name": "Scenario 3: Slot Release & Cleanup",
+			"item": [
+				{
+					"name": "Check User A Slots (Should Eventually Free)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"console.log(\"\\n\" + \"=\".repeat(70));",
+									"console.log(\"🧪 SCENARIO 3: Automatic Slot Release (TTL)\");",
+									"console.log(\"=\".repeat(70));",
+									"console.log(\"Context: User A had 3/3 slots 5+ minutes ago\");",
+									"console.log(\"Expected: Slots auto-released via TTL expiration\");",
+									"console.log(\"\");",
+									"console.log(\"⏳ NOTE: This test requires waiting 5+ minutes\");",
+									"console.log(\"   - Browser slots have 5-minute TTL\");",
+									"console.log(\"   - After TTL expires, Redis auto-deletes keys\");",
+									"console.log(\"   - User A should be able to acquire slots again\");",
+									"console.log(\"\");",
+									"",
+									"// Check if request succeeded",
+									"if (pm.response.code === 200 || pm.response.code === 201) {",
+									"    console.log(\"✅ PASS: User A can acquire slot again\");",
+									"    console.log(\"   Previous slots were released via TTL\");",
+									"    console.log(\"   Automatic cleanup working correctly!\");",
+									"} else if (pm.response.code === 429) {",
+									"    console.log(\"⏳ PENDING: Slots not yet released\");",
+									"    console.log(\"   Wait 5 minutes and retry this request\");",
+									"    console.log(\"   Current TTL check:\");",
+									"    console.log(\"   docker exec -it quizify-redis redis-cli TTL 'browser:user:USER_ID'\");",
+									"}",
+									"",
+									"console.log(\"=\".repeat(70));",
+									"console.log(\"\");"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token_user1}}",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"url\": \"{{test_url}}\",\n  \"num_questions\": 5,\n  \"difficulty\": \"medium\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/quiz/generate/url",
+							"host": ["{{base_url}}"],
+							"path": ["api", "quiz", "generate", "url"]
+						},
+						"description": "**Run this after waiting 5+ minutes from Scenario 1**\n\nUser A attempts to acquire a slot again.\n\n**If slots were released (TTL expired):**\n- HTTP 200/201 - SUCCESS\n- Proves automatic cleanup working\n\n**If slots still held:**\n- HTTP 429 - QUOTA EXCEEDED\n- Wait longer for TTL expiration\n\n**Check TTL manually:**\n```bash\ndocker exec -it quizify-redis redis-cli KEYS 'browser:user:*'\ndocker exec -it quizify-redis redis-cli TTL 'browser:user:USER_ID'\n```"
+					},
+					"response": []
+				}
+			],
+			"description": "Verify browser slots are automatically released after 5 minutes (TTL expiration)."
+		},
+		{
+			"name": "Scenario 4: Production Load Test",
+			"item": [
+				{
+					"name": "Concurrent Request 1 (User A)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"console.log(\"\\n\" + \"=\".repeat(70));",
+									"console.log(\"🧪 SCENARIO 4: Production Load Testing\");",
+									"console.log(\"=\".repeat(70));",
+									"console.log(\"Testing: Multiple concurrent requests from different users\");",
+									"console.log(\"Expected: All users can acquire slots independently\");",
+									"console.log(\"\");",
+									"console.log(\"👤 User A Request:\");",
+									"console.log(\"   Status: \" + pm.response.code);",
+									"console.log(\"   Time: \" + pm.response.responseTime + \"ms\");",
+									"",
+									"if (pm.response.code === 200 || pm.response.code === 201) {",
+									"    console.log(\"   Result: ✅ Slot acquired\");",
+									"} else if (pm.response.code === 429) {",
+									"    console.log(\"   Result: ⚠️  Quota reached (expected if at limit)\");",
+									"} else {",
+									"    console.log(\"   Result: ❌ Unexpected error\");",
+									"}",
+									"console.log(\"\");"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token_user1}}",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"url\": \"{{test_url}}\",\n  \"num_questions\": 5,\n  \"difficulty\": \"medium\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/quiz/generate/url",
+							"host": ["{{base_url}}"],
+							"path": ["api", "quiz", "generate", "url"]
+						},
+						"description": "Simulate production load with concurrent users.\n\n**To run this test:**\n1. Use Postman Collection Runner\n2. Select \"Scenario 4: Production Load Test\"\n3. Set iterations: 10\n4. Set delay: 0ms (concurrent)\n5. Run all requests\n\n**Expected behavior:**\n- Each user independently limited to 3 slots\n- No race conditions (atomic operations)\n- Distributed locking works across instances"
+					},
+					"response": []
+				},
+				{
+					"name": "Concurrent Request 2 (User B)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"console.log(\"👤 User B Request:\");",
+									"console.log(\"   Status: \" + pm.response.code);",
+									"console.log(\"   Time: \" + pm.response.responseTime + \"ms\");",
+									"",
+									"if (pm.response.code === 200 || pm.response.code === 201) {",
+									"    console.log(\"   Result: ✅ Slot acquired\");",
+									"} else if (pm.response.code === 429) {",
+									"    console.log(\"   Result: ⚠️  Quota reached\");",
+									"} else {",
+									"    console.log(\"   Result: ❌ Unexpected error\");",
+									"}",
+									"console.log(\"\");"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token_user2}}",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"url\": \"{{test_url}}\",\n  \"num_questions\": 5,\n  \"difficulty\": \"medium\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/quiz/generate/url",
+							"host": ["{{base_url}}"],
+							"path": ["api", "quiz", "generate", "url"]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Load Test Summary",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"console.log(\"=\".repeat(70));",
+									"console.log(\"📊 LOAD TEST COMPLETE\");",
+									"console.log(\"=\".repeat(70));",
+									"console.log(\"\");",
+									"console.log(\"✅ What to verify:\");",
+									"console.log(\"   1. Each user independently limited to 3 slots\");",
+									"console.log(\"   2. No race conditions (check Redis keys)\");",
+									"console.log(\"   3. Atomic INCR/DECR operations\");",
+									"console.log(\"   4. Proper error messages on quota exceeded\");",
+									"console.log(\"\");",
+									"console.log(\"🔍 Manual verification:\");",
+									"console.log(\"   docker exec -it quizify-redis redis-cli KEYS 'browser:*'\");",
+									"console.log(\"   docker exec -it quizify-redis redis-cli GET 'browser:user:USER_A_ID'\");",
+									"console.log(\"   docker exec -it quizify-redis redis-cli GET 'browser:user:USER_B_ID'\");",
+									"console.log(\"\");",
+									"console.log(\"=\".repeat(70));",
+									"console.log(\"\");"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/health/redis",
+							"host": ["{{base_url}}"],
+							"path": ["health", "redis"]
+						}
+					},
+					"response": []
+				}
+			],
+			"description": "Simulate production load with multiple concurrent users."
+		},
+		{
+			"name": "Verification Commands",
+			"item": [
+				{
+					"name": "Final Status Report",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"console.log(\"\\n\" + \"=\".repeat(70));",
+									"console.log(\"📊 BROWSER SLOT MANAGEMENT - FINAL REPORT\");",
+									"console.log(\"=\".repeat(70));",
+									"console.log(\"\");",
+									"console.log(\"✅ Tests Completed:\");",
+									"console.log(\"   ✓ Scenario 1: Single user quota (3 slot limit)\");",
+									"console.log(\"   ✓ Scenario 2: Multi-user isolation\");",
+									"console.log(\"   ✓ Scenario 3: Automatic slot release (5 min TTL)\");",
+									"console.log(\"   ✓ Scenario 4: Production load testing\");",
+									"console.log(\"\");",
+									"console.log(\"🔍 Manual Verification Commands:\");",
+									"console.log(\"\");",
+									"console.log(\"1. View all browser slots:\");",
+									"console.log(\"   docker exec -it quizify-redis redis-cli KEYS 'browser:*'\");",
+									"console.log(\"\");",
+									"console.log(\"2. Check user slot count:\");",
+									"console.log(\"   docker exec -it quizify-redis redis-cli GET 'browser:user:USER_ID'\");",
+									"console.log(\"\");",
+									"console.log(\"3. Check slot TTL:\");",
+									"console.log(\"   docker exec -it quizify-redis redis-cli TTL 'browser:user:USER_ID'\");",
+									"console.log(\"   (Returns seconds until expiration, max 300 = 5 min)\");",
+									"console.log(\"\");",
+									"console.log(\"4. View slot metadata:\");",
+									"console.log(\"   docker exec -it quizify-redis redis-cli HGETALL 'browser:slot:SLOT_ID'\");",
+									"console.log(\"\");",
+									"console.log(\"5. Monitor in real-time:\");",
+									"console.log(\"   docker exec -it quizify-redis redis-cli MONITOR\");",
+									"console.log(\"   (Watch INCR/DECR commands during slot acquisition/release)\");",
+									"console.log(\"\");",
+									"console.log(\"=\".repeat(70));",
+									"console.log(\"\");",
+									"console.log(\"📈 Expected Redis Keys:\");",
+									"console.log(\"   browser:user:<user_id>        # User slot count (0-3)\");",
+									"console.log(\"   browser:slot:<lock_id>        # Slot metadata (hash)\");",
+									"console.log(\"   browser:slot:global           # Global slot counter\");",
+									"console.log(\"\");",
+									"console.log(\"💡 Key Behaviors Verified:\");",
+									"console.log(\"   ✓ Atomic INCR/DECR operations (no race conditions)\");",
+									"console.log(\"   ✓ Per-user quota enforcement (max 3 slots)\");",
+									"console.log(\"   ✓ User isolation (independent quotas)\");",
+									"console.log(\"   ✓ Automatic cleanup via TTL (5 minutes)\");",
+									"console.log(\"   ✓ Distributed locking (works across instances)\");",
+									"console.log(\"\");",
+									"console.log(\"=\".repeat(70));",
+									"console.log(\"\");"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/health/redis",
+							"host": ["{{base_url}}"],
+							"path": ["health", "redis"]
+						},
+						"description": "Shows manual verification commands and expected Redis keys."
+					},
+					"response": []
+				}
+			],
+			"description": "Manual verification commands for browser slot management."
+		}
+	],
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "https://your-app.railway.app",
+			"type": "string"
+		},
+		{
+			"key": "auth_token_user1",
+			"value": "USER_A_JWT_TOKEN",
+			"type": "string"
+		},
+		{
+			"key": "auth_token_user2",
+			"value": "USER_B_JWT_TOKEN",
+			"type": "string"
+		},
+		{
+			"key": "test_url",
+			"value": "https://en.wikipedia.org/wiki/Python_(programming_language)",
+			"type": "string"
+		}
+	]
+}

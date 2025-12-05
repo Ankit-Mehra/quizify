@@ -3,7 +3,7 @@ Unit tests for quota validation logic.
 Tests the validate_user_quota function and get_user_tier_info function.
 """
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, AsyncMock
 from fastapi import HTTPException
 from handlers.quiz_handlers import validate_user_quota
 from services.db_services.supabase_quiz import get_user_tier_info
@@ -27,6 +27,7 @@ class TestGetUserTierInfo:
             'account_tier': 'free',
             'current_quiz_count': 3,
             'quota_limit': 5,
+            'quizzes_attempted': 3,
             'quota_exceeded': False
         }]
         mock_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = mock_response
@@ -38,6 +39,7 @@ class TestGetUserTierInfo:
         assert result['account_tier'] == 'free'
         assert result['current_quiz_count'] == 3
         assert result['quota_limit'] == 5
+        assert result['quizzes_attempted'] == 3
         assert result['quota_exceeded'] is False
         
     @patch('services.db_services.supabase_quiz.get_supabase')
@@ -62,9 +64,10 @@ class TestGetUserTierInfo:
 
 class TestValidateUserQuota:
     """Tests for validate_user_quota function."""
+    pytestmark = pytest.mark.asyncio
     
-    @patch('handlers.quiz_handlers.get_user_tier_info')
-    def test_validate_quota_free_tier_under_limit(self, mock_get_tier_info):
+    @patch('handlers.quiz_handlers.get_user_tier_info_cached', new_callable=AsyncMock)
+    async def test_validate_quota_free_tier_under_limit(self, mock_get_tier_info):
         """Test quota validation for free tier user under limit."""
         mock_get_tier_info.return_value = {
             'id': 'test-user-id',
@@ -72,14 +75,15 @@ class TestValidateUserQuota:
             'account_tier': 'free',
             'current_quiz_count': 3,
             'quota_limit': 5,
+            'quizzes_attempted': 3,
             'quota_exceeded': False
         }
-        
+
         # Should not raise exception
-        validate_user_quota('test-user-id')
+        await validate_user_quota('test-user-id')
         
-    @patch('handlers.quiz_handlers.get_user_tier_info')
-    def test_validate_quota_free_tier_at_limit(self, mock_get_tier_info):
+    @patch('handlers.quiz_handlers.get_user_tier_info_cached', new_callable=AsyncMock)
+    async def test_validate_quota_free_tier_at_limit(self, mock_get_tier_info):
         """Test quota validation for free tier user at limit."""
         mock_get_tier_info.return_value = {
             'id': 'test-user-id',
@@ -87,22 +91,23 @@ class TestValidateUserQuota:
             'account_tier': 'free',
             'current_quiz_count': 5,
             'quota_limit': 5,
+            'quizzes_attempted': 5,
             'quota_exceeded': True
         }
         
         # Should raise 403 exception
         with pytest.raises(HTTPException) as exc_info:
-            validate_user_quota('test-user-id')
+            await validate_user_quota('test-user-id')
         
         assert exc_info.value.status_code == 403
         detail = exc_info.value.detail
         assert detail['current_count'] == 5
         assert detail['quota_limit'] == 5
         assert detail['user_tier'] == 'free'
-        assert 'Upgrade to basic for 100 quizzes' in detail['detail']
+        assert 'Upgrade to Premium for 100 quizzes' in detail['detail']
         
-    @patch('handlers.quiz_handlers.get_user_tier_info')
-    def test_validate_quota_basic_tier_under_limit(self, mock_get_tier_info):
+    @patch('handlers.quiz_handlers.get_user_tier_info_cached', new_callable=AsyncMock)
+    async def test_validate_quota_basic_tier_under_limit(self, mock_get_tier_info):
         """Test quota validation for basic tier user under limit."""
         mock_get_tier_info.return_value = {
             'id': 'test-user-id',
@@ -110,14 +115,15 @@ class TestValidateUserQuota:
             'account_tier': 'basic',
             'current_quiz_count': 50,
             'quota_limit': 100,
+            'quizzes_attempted': 50,
             'quota_exceeded': False
         }
-        
+
         # Should not raise exception
-        validate_user_quota('test-user-id')
+        await validate_user_quota('test-user-id')
         
-    @patch('handlers.quiz_handlers.get_user_tier_info')
-    def test_validate_quota_basic_tier_at_limit(self, mock_get_tier_info):
+    @patch('handlers.quiz_handlers.get_user_tier_info_cached', new_callable=AsyncMock)
+    async def test_validate_quota_basic_tier_at_limit(self, mock_get_tier_info):
         """Test quota validation for basic tier user at limit."""
         mock_get_tier_info.return_value = {
             'id': 'test-user-id',
@@ -125,53 +131,57 @@ class TestValidateUserQuota:
             'account_tier': 'basic',
             'current_quiz_count': 100,
             'quota_limit': 100,
+            'quizzes_attempted': 100,
             'quota_exceeded': True
         }
         
         # Should raise 403 exception
         with pytest.raises(HTTPException) as exc_info:
-            validate_user_quota('test-user-id')
+            await validate_user_quota('test-user-id')
         
         assert exc_info.value.status_code == 403
         detail = exc_info.value.detail
         assert detail['current_count'] == 100
         assert detail['quota_limit'] == 100
-        assert detail['user_tier'] == 'basic'
-        assert 'Upgrade to educator for 500 quizzes' in detail['detail']
+        # 'basic' tier is normalized to 'premium' in user-facing messages
+        assert detail['user_tier'] == 'premium'
+        assert 'Upgrade to Pro for unlimited quizzes' in detail['detail']
         
-    @patch('handlers.quiz_handlers.get_user_tier_info')
-    def test_validate_quota_educator_tier_under_limit(self, mock_get_tier_info):
-        """Test quota validation for educator tier user under limit."""
+    @patch('handlers.quiz_handlers.get_user_tier_info_cached', new_callable=AsyncMock)
+    async def test_validate_quota_pro_tier_under_limit(self, mock_get_tier_info):
+        """Test quota validation for pro tier user under limit."""
         mock_get_tier_info.return_value = {
             'id': 'test-user-id',
             'email': 'test@example.com',
-            'account_tier': 'educator',
+            'account_tier': 'pro',
             'current_quiz_count': 450,
-            'quota_limit': 500,
+            'quota_limit': 999999,
+            'quizzes_attempted': 450,
             'quota_exceeded': False
         }
-        
+
         # Should not raise exception
-        validate_user_quota('test-user-id')
+        await validate_user_quota('test-user-id')
         
-    @patch('handlers.quiz_handlers.get_user_tier_info')
-    def test_validate_quota_educator_tier_at_limit(self, mock_get_tier_info):
-        """Test quota validation for educator tier user at limit."""
+    @patch('handlers.quiz_handlers.get_user_tier_info_cached', new_callable=AsyncMock)
+    async def test_validate_quota_pro_tier_at_limit(self, mock_get_tier_info):
+        """Test quota validation for pro tier user at limit."""
         mock_get_tier_info.return_value = {
             'id': 'test-user-id',
             'email': 'test@example.com',
-            'account_tier': 'educator',
-            'current_quiz_count': 500,
-            'quota_limit': 500,
+            'account_tier': 'pro',
+            'current_quiz_count': 999999,
+            'quota_limit': 999999,
+            'quizzes_attempted': 999999,
             'quota_exceeded': True
         }
         
         # Should raise 403 exception
         with pytest.raises(HTTPException) as exc_info:
-            validate_user_quota('test-user-id')
+            await validate_user_quota('test-user-id')
         
         assert exc_info.value.status_code == 403
         detail = exc_info.value.detail
-        assert detail['current_count'] == 500
-        assert detail['quota_limit'] == 500
-        assert detail['user_tier'] == 'educator'
+        assert detail['current_count'] == 999999
+        assert detail['quota_limit'] == 999999
+        assert detail['user_tier'] == 'pro'

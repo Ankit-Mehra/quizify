@@ -1,12 +1,22 @@
 import pytest
 from unittest.mock import Mock
 import os
+import asyncio
 
 os.environ["SUPABASE_URL"] = "https://test.supabase.co"
 os.environ["SUPABASE_KEY"] = "test_key"
 os.environ["SUPABASE_STORAGE_NAME"] = "test-bucket"
 os.environ["OPENAI_API_KEY"] = "sk-test123"
+os.environ["IP_HASH_SECRET"] = "test-secret-for-ip-hashing-min-32-chars"
 os.environ["TESTING"] = "true"
+os.environ["REDIS_ENABLED"] = "false"  # Disable real Redis by default for tests
+
+@pytest.fixture(scope="function")
+def event_loop():
+    """Create an event loop for async fixtures."""
+    loop = asyncio.new_event_loop()
+    yield loop
+    loop.close()
 
 class MockSupabaseAuth:
     def __init__(self):
@@ -22,8 +32,8 @@ class MockSupabaseAuth:
         if email in self._registered_emails:
             raise Exception("User already registered")
         
-        if len(password) < 6:
-            raise Exception("Password should be at least 6 characters")
+        if len(password) < 8:
+            raise Exception("Password should be at least 8 characters")
         
         self._registered_emails.add(email)
         
@@ -63,6 +73,7 @@ class MockSupabaseClient:
                     "account_tier": "free",
                     "current_quiz_count": 0,
                     "quota_limit": 5,
+                    "quizzes_attempted": 0,
                     "quota_exceeded": False
                 }
             ],
@@ -133,13 +144,31 @@ class MockSupabaseClient:
 def mock_supabase():
     return MockSupabaseClient()
 
-@pytest.fixture
-def mock_supabase_client(mock_supabase, mocker):
+@pytest.fixture(scope="function")
+def mock_redis_client(event_loop):
+    """Provide a fakeredis client for tests that need Redis session management."""
+    from fakeredis import aioredis as fakeredis
+    
+    # Create client synchronously using the event loop
+    redis_client = event_loop.run_until_complete(
+        fakeredis.FakeRedis(decode_responses=True)
+    )
+    
+    yield redis_client
+    
+    # Cleanup is automatic for fakeredis - no need to explicitly close
+
+@pytest.fixture(scope="function")
+def mock_supabase_client(mock_supabase, mocker, mock_redis_client):
     """
     Mock Supabase client with all necessary service patches.
     Uses pytest-mock's mocker fixture for cleaner test setup.
+    Also provides a fakeredis client for session management.
     """
     from main import app
+    
+    # Set up fakeredis for session management
+    app.state.redis = mock_redis_client
     
     # Define mock implementations
     def mock_save_file_to_supabase(*args, **kwargs):
@@ -148,8 +177,8 @@ def mock_supabase_client(mock_supabase, mocker):
     def mock_delete_file_from_supabase(*args, **kwargs):
         return {"message": "File deleted successfully"}
     
-    async def mock_generate_quizzes_single_async(text, num_questions, question_types=None):
-        """Mock AI quiz generation"""
+    async def mock_generate_quizzes_single_async(text, num_questions, question_types=None, user_id=None, trace_id=None):
+        """Mock AI quiz generation with PostHog analytics support"""
         return [
             {
                 "type": "multiple_choice",
@@ -162,12 +191,23 @@ def mock_supabase_client(mock_supabase, mocker):
             for i in range(1, min(int(num_questions) + 1, 6))
         ]
     
-    def mock_save_quiz_to_database(title, quizzes, user_id):
-        """Mock saving quiz to database"""
-        return "mock_quiz_123"
+    def mock_save_quiz_to_database(title, quizzes, created_by, content_source_type=None, content_source_reference=None, user_token=None, generation_mode=None):
+        """Mock saving quiz to database - returns (quiz_id, saved_questions) tuple"""
+        import uuid
+        # Generate a proper UUID for quiz_id
+        quiz_id = str(uuid.uuid4())
+        
+        # Add IDs to questions to match real database behavior
+        saved_questions = []
+        for i, q in enumerate(quizzes):
+            question_with_id = q.copy() if isinstance(q, dict) else q.model_dump()
+            question_with_id['id'] = str(uuid.uuid4())  # Generate proper UUID
+            question_with_id['quiz_id'] = quiz_id
+            saved_questions.append(question_with_id)
+        return quiz_id, saved_questions
     
-    def mock_save_metadata(metadata):
-        """Mock saving metadata"""
+    def mock_save_metadata(metadata, user_token=None):
+        """Mock saving metadata - now accepts optional user_token parameter"""
         return {"success": True}
     
     # Apply all patches using mocker (pytest-mock)
@@ -187,7 +227,8 @@ def mock_supabase_client(mock_supabase, mocker):
     
     yield mock_supabase
     
-    # Clear dependency overrides after test
+    # Cleanup
+    app.state.redis = None
     app.dependency_overrides.clear()
 
 @pytest.fixture

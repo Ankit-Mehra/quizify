@@ -1,25 +1,89 @@
 ## Submission Routes
-from fastapi import APIRouter
+from fastapi import APIRouter, Response
 from services.logger import app_logger as logger
-from schemas.submission import SubmissionResponse, QuizSubmission
-from handlers.submission_handler import submit_quiz, get_submission
+from schemas.submission import SubmissionResponse, QuizSubmission, UserSubmissionsResponse, QuizSubmissionsResponse
+from handlers.submission_handler import submit_quiz, get_submission, list_user_submissions, list_quiz_submissions
 
-router = APIRouter(prefix="/submission", tags=["Submission"])
+router = APIRouter(tags=["Quiz Submissions"])
 logger.info("Submission routes initialized")
 
+# OPTIONS handler for quiz submissions
+@router.options("/quiz/{quiz_id}/submit")
+async def quiz_submit_options(quiz_id: str):
+    logger.debug(f"OPTIONS request for /quiz/{quiz_id}/submit")
+    return Response(
+        content="",
+        status_code=200,
+        headers={
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type, Authorization, Accept",
+            "Access-Control-Max-Age": "3600",
+        },
+    )
 
+# Submit quiz answers - RESTful endpoint
 router.add_api_route(
-    path="/submit",
+    path="/quiz/{quiz_id}/submit",
     endpoint=submit_quiz,
     methods=["POST"],
-    summary="Submit a submission",
+    summary="Submit Quiz Answers",
+    description=(
+        "Submit answers for a quiz and receive detailed scoring results.\n\n"
+        "**Important:** The `quiz_id` in the request body must match the `quiz_id` in the URL path. "
+        "This is validated by the API and will return HTTP 400 if they don't match.\n\n"
+        "**Request Body:**\n"
+        "- `quiz_id`: Must match the URL parameter\n"
+        "- `total_questions`: Total number of questions (must be > 0)\n"
+        "- `answers`: List of answer submissions\n\n"
+        "**Response:**\n"
+        "- Submission ID for future reference\n"
+        "- Score (0-100 percentage)\n"
+        "- Correct/wrong counts\n"
+        "- Detailed results for each question"
+    ),
     response_model=SubmissionResponse
 )
 
+# Get submission by ID
 router.add_api_route(
-    path="/{submission_id}",
+    path="/submission/{submission_id}",
     endpoint=get_submission,
     methods=["GET"],
-    summary="Get a submission",
+    summary="Get Submission Details",
+    description="Retrieve details of a previously submitted quiz",
     response_model=QuizSubmission
+)
+
+# List all submissions for current user
+router.add_api_route(
+    path="/submissions",
+    endpoint=list_user_submissions,
+    methods=["GET"],
+    summary="List My Submissions",
+    description=(
+        "Get all quiz submissions for the authenticated user.\n\n"
+        "Returns a list of submissions with:\n"
+        "- Submission ID\n"
+        "- Quiz ID\n"
+        "- Score\n"
+        "- Total questions\n"
+        "- Correct/wrong counts\n"
+        "- Submission timestamp\n\n"
+        "Submissions are ordered by most recent first."
+    ),
+    response_model=UserSubmissionsResponse
+)
+
+# List submissions for a specific quiz
+router.add_api_route(
+    path="/quiz/{quiz_id}/submissions",
+    endpoint=list_quiz_submissions,
+    methods=["GET"],
+    summary="List Quiz Attempts",
+    description=(
+        "Get all attempts (submissions) for a specific quiz by the authenticated user.\n\n"
+        "Useful for viewing attempt history and tracking progress on a particular quiz.\n\n"
+        "Returns submissions ordered by most recent first."
+    ),
+    response_model=QuizSubmissionsResponse
 )

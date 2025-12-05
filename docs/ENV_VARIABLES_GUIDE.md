@@ -109,6 +109,64 @@ ADMIN_USER_IDS=uuid-1,uuid-2,uuid-3
 
 ---
 
+## 🔐 Session Management Security
+
+### 8. IP Hash Secret (REQUIRED for production)
+```bash
+IP_HASH_SECRET=your-random-secret-key-min-32-chars
+```
+**Used by:**
+- `services/redis/sessions.py` - Salted IP address hashing for session metadata
+
+**Why required:**
+- ✅ Prevents rainbow table attacks on stored IP hashes
+- ✅ Makes stored IP addresses non-reversible even if Redis is exposed
+- ⚠️ If not set, IP addresses are stored as "redacted" (privacy fallback)
+
+**How to generate:**
+```bash
+# Generate a secure random secret (Linux/Mac)
+python3 -c "import secrets; print(secrets.token_urlsafe(32))"
+
+# Or use OpenSSL
+openssl rand -base64 32
+```
+
+**Example:**
+```bash
+IP_HASH_SECRET=Kj8s_9Xp2mN4vB7qL1wZ5rT3hY6fD0aE8cG4uI9oP2x
+```
+
+---
+
+## 🌐 Web Scraping Configuration
+
+### 9. Scraper User Agent (Optional)
+```bash
+SCRAPER_USER_AGENT=Mozilla/5.0 (compatible; QuizifyBot/1.0; +https://quizify.app/bot)
+```
+**Used by:**
+- `services/web_scraping_service.py` - User agent for Playwright browser
+- URL quiz generation feature
+
+**Default value:** `Mozilla/5.0 (compatible; QuizifyBot/1.0; +https://quizify.app/bot)`
+
+**When to customize:**
+- ✅ When deploying to your own domain (change URL in user agent)
+- ✅ When you want to identify your bot with a different name
+- ✅ For compliance with website robots.txt policies
+
+**Examples:**
+```bash
+# For your custom domain
+SCRAPER_USER_AGENT=Mozilla/5.0 (compatible; MyQuizBot/1.0; +https://myschool.edu/bot)
+
+# For development/staging environment
+SCRAPER_USER_AGENT=Mozilla/5.0 (compatible; QuizifyBot-Dev/1.0; +https://dev.quizify.app/bot)
+```
+
+---
+
 ## ❌ REMOVED / NO LONGER NEEDED
 
 ### Variables from old architecture:
@@ -147,6 +205,9 @@ SUPABASE_STORAGE_NAME=quiz-files
 
 # AI
 OPENAI_API_KEY=sk-proj-...
+
+# Security - Session Management (REQUIRED)
+IP_HASH_SECRET=your-random-secret-key-min-32-chars
 
 # Production Settings (secure)
 DEVELOPMENT_MODE=false

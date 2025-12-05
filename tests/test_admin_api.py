@@ -54,22 +54,12 @@ def mock_user_tier_data():
         {
             "id": "user-2",
             "email": "user2@example.com",
-            "account_tier": "basic",
+            "account_tier": "premium",
             "current_quiz_count": 15,
             "quota_limit": 100,
             "quota_exceeded": False,
             "created_at": "2025-10-02T10:00:00Z",
             "updated_at": "2025-10-05T14:30:00Z"
-        },
-        {
-            "id": "user-3",
-            "email": "user3@example.com",
-            "account_tier": "educator",
-            "current_quiz_count": 250,
-            "quota_limit": 500,
-            "quota_exceeded": False,
-            "created_at": "2025-09-15T09:00:00Z",
-            "updated_at": "2025-10-08T16:45:00Z"
         }
     ]
     mock_response.error = None
@@ -100,7 +90,7 @@ def mock_profile_data():
     mock_response = Mock()
     mock_response.data = [{
         "id": "user-1",
-        "account_tier": "basic",
+        "account_tier": "premium",
         "created_at": "2025-10-01T10:00:00Z",
         "updated_at": "2025-10-09T12:00:00Z"
     }]
@@ -115,7 +105,7 @@ def mock_profile_data():
 class TestIsAdminFunction:
     """Test admin authorization logic"""
     
-    @patch("handlers.admin_handlers.config.is_testing")
+    @patch("handlers.admin_handlers.app_config.is_testing")
     def test_is_admin_in_testing_mode(self, mock_is_testing):
         """In testing mode, all users should be granted admin access"""
         mock_is_testing.return_value = True
@@ -124,7 +114,7 @@ class TestIsAdminFunction:
         
         assert result is True
     
-    @patch("handlers.admin_handlers.config.is_testing")
+    @patch("handlers.admin_handlers.app_config.is_testing")
     @patch.dict("os.environ", {"ADMIN_USER_IDS": "admin-1,admin-2,admin-3"})
     def test_is_admin_with_env_variable(self, mock_is_testing):
         """Admin IDs from environment variable should be recognized"""
@@ -135,7 +125,7 @@ class TestIsAdminFunction:
         assert is_admin("admin-3") is True
         assert is_admin("regular-user") is False
     
-    @patch("handlers.admin_handlers.config.is_testing")
+    @patch("handlers.admin_handlers.app_config.is_testing")
     @patch.dict("os.environ", {}, clear=True)
     def test_is_admin_no_env_variable(self, mock_is_testing):
         """Without env variable, non-hardcoded users should not be admin"""
@@ -180,11 +170,10 @@ class TestListAllUsers:
         
         result = await list_all_users(mock_admin_user_id, limit=100, offset=0)
         
-        assert len(result) == 3
+        assert len(result) == 2
         assert result[0].id == "user-1"
         assert result[0].account_tier == "free"
-        assert result[1].account_tier == "basic"
-        assert result[2].account_tier == "educator"
+        assert result[1].account_tier == "premium"
         
         # Verify Supabase was called correctly
         mock_supabase.table.assert_called_once_with("user_tier_info")
@@ -409,7 +398,7 @@ class TestUpdateUserTier:
         tier_response.data = [{
             "id": "user-1",
             "email": "user1@example.com",
-            "account_tier": "basic",
+            "account_tier": "premium",
             "current_quiz_count": 2,
             "quota_limit": 100,
             "quota_exceeded": False
@@ -421,17 +410,17 @@ class TestUpdateUserTier:
         # Return different mocks for each table call
         mock_client.table.side_effect = [mock_check_table, mock_update_table, mock_tier_info_table]
         
-        tier_update = UserTierUpdate(new_tier="basic", reason="Test tier update")
+        tier_update = UserTierUpdate(new_tier="premium", reason="Test tier update")
         
         result = await update_user_tier("user-1", tier_update, mock_admin_user_id)
         
         assert result["user_id"] == "user-1"
-        assert result["new_tier"] == "basic"
+        assert result["new_tier"] == "premium"
         assert result["success"] is True
         
         # Verify Supabase was called correctly
         assert mock_client.table.call_count == 3
-        mock_update_table.update.assert_called_once_with({"account_tier": "basic"})
+        mock_update_table.update.assert_called_once_with({"account_tier": "premium"})
     
     @pytest.mark.asyncio
     @patch("handlers.admin_handlers.is_admin")
@@ -443,7 +432,7 @@ class TestUpdateUserTier:
         """Non-admin user should be denied access"""
         mock_is_admin.return_value = False
         
-        tier_update = UserTierUpdate(new_tier="basic", reason="Test unauthorized update")
+        tier_update = UserTierUpdate(new_tier="premium", reason="Test unauthorized update")
         
         with pytest.raises(HTTPException) as exc_info:
             await update_user_tier("user-1", tier_update, mock_regular_user_id)
@@ -506,7 +495,7 @@ class TestUpdateUserTier:
         
         mock_client.table.side_effect = [mock_check_table, mock_update_table]
         
-        tier_update = UserTierUpdate(new_tier="basic", reason="Test database error")
+        tier_update = UserTierUpdate(new_tier="premium", reason="Test database error")
         
         with pytest.raises(HTTPException) as exc_info:
             await update_user_tier("user-1", tier_update, mock_admin_user_id)
@@ -524,11 +513,11 @@ class TestUpdateUserTier:
         mock_admin_user_id,
         mock_profile_data
     ):
-        """Test updating to each valid tier (free, basic, educator)"""
+        """Test updating to each valid tier (free, premium, pro)"""
         mock_is_admin.return_value = True
         
-        valid_tiers = ["free", "basic", "educator"]
-        quota_limits = {"free": 5, "basic": 100, "educator": 500}
+        valid_tiers = ["free", "premium", "pro"]
+        quota_limits = {"free": 5, "premium": 100, "pro": 999999}
         
         for tier in valid_tiers:
             # Create fresh mock client for each iteration
@@ -642,16 +631,17 @@ class TestUpdateUserRole:
         mock_client = Mock()
         mock_supabase.return_value = mock_client
         
-        # Mock check if user exists
+        # Mock check profiles (for admin validation)
         mock_check_table = Mock()
         mock_check_select = Mock()
-        mock_check_eq = Mock()
         check_response = Mock()
-        check_response.data = [{"id": "user-1", "role": "user"}]
+        check_response.data = [
+            {"id": "admin-user-123", "role": "admin"},  # Current admin
+            {"id": "user-1", "role": "user"}  # User to be promoted
+        ]
         check_response.error = None
-        mock_check_eq.execute.return_value = check_response
+        mock_check_select.execute.return_value = check_response
         mock_check_table.select.return_value = mock_check_select
-        mock_check_select.eq.return_value = mock_check_eq
         
         # Mock update role
         mock_update_table = Mock()
@@ -795,16 +785,16 @@ class TestUpdateUserRole:
         mock_client = Mock()
         mock_supabase.return_value = mock_client
         
-        # Mock check user doesn't exist
+        # Mock check profiles - admin exists but target user doesn't
         mock_check_table = Mock()
         mock_check_select = Mock()
-        mock_check_eq = Mock()
         check_response = Mock()
-        check_response.data = []  # Empty - user not found
+        check_response.data = [
+            {"id": "admin-user-123", "role": "admin"}  # Only admin exists, target user missing
+        ]
         check_response.error = None
-        mock_check_eq.execute.return_value = check_response
+        mock_check_select.execute.return_value = check_response
         mock_check_table.select.return_value = mock_check_select
-        mock_check_select.eq.return_value = mock_check_eq
         
         mock_client.table.return_value = mock_check_table
         
@@ -835,16 +825,17 @@ class TestUpdateUserRole:
         mock_client = Mock()
         mock_supabase.return_value = mock_client
         
-        # Mock check user exists with role 'admin'
+        # Mock check profiles - both admin and target user exist
         mock_check_table = Mock()
         mock_check_select = Mock()
-        mock_check_eq = Mock()
         check_response = Mock()
-        check_response.data = [{"id": "user-1", "role": "admin"}]
+        check_response.data = [
+            {"id": "admin-user-123", "role": "admin"},  # Current admin
+            {"id": "user-1", "role": "admin"}  # User already has admin role
+        ]
         check_response.error = None
-        mock_check_eq.execute.return_value = check_response
+        mock_check_select.execute.return_value = check_response
         mock_check_table.select.return_value = mock_check_select
-        mock_check_select.eq.return_value = mock_check_eq
         
         mock_client.table.return_value = mock_check_table
         
@@ -876,16 +867,18 @@ class TestUpdateUserRole:
         mock_client = Mock()
         mock_supabase.return_value = mock_client
         
-        # Mock check user exists with role 'admin'
+        # Mock check profiles - multiple admins exist so demotion is allowed
         mock_check_table = Mock()
         mock_check_select = Mock()
-        mock_check_eq = Mock()
         check_response = Mock()
-        check_response.data = [{"id": "user-2", "role": "admin"}]
+        check_response.data = [
+            {"id": "admin-user-123", "role": "admin"},  # Current admin
+            {"id": "user-2", "role": "admin"},  # Another admin to be demoted
+            {"id": "user-3", "role": "admin"}   # Third admin (ensures not last admin)
+        ]
         check_response.error = None
-        mock_check_eq.execute.return_value = check_response
+        mock_check_select.execute.return_value = check_response
         mock_check_table.select.return_value = mock_check_select
-        mock_check_select.eq.return_value = mock_check_eq
         
         # Mock update role to 'user'
         mock_update_table = Mock()
@@ -957,16 +950,17 @@ class TestUpdateUserRole:
         mock_client = Mock()
         mock_supabase.return_value = mock_client
         
-        # Mock check user exists
+        # Mock check profiles - admin and regular user exist
         mock_check_table = Mock()
         mock_check_select = Mock()
-        mock_check_eq = Mock()
         check_response = Mock()
-        check_response.data = [{"id": "user-3", "role": "user"}]
+        check_response.data = [
+            {"id": "admin-user-123", "role": "admin"},  # Current admin
+            {"id": "user-3", "role": "user"}  # User to be promoted to moderator
+        ]
         check_response.error = None
-        mock_check_eq.execute.return_value = check_response
+        mock_check_select.execute.return_value = check_response
         mock_check_table.select.return_value = mock_check_select
-        mock_check_select.eq.return_value = mock_check_eq
         
         # Mock update role to 'moderator'
         mock_update_table = Mock()
@@ -996,7 +990,7 @@ class TestUpdateUserRole:
             "id": "user-3",
             "email": "user3@example.com",
             "role": "moderator",
-            "account_tier": "educator"
+            "account_tier": "pro"
         }]
         mock_tier_eq.execute.return_value = tier_response
         mock_tier_info_table.select.return_value = mock_tier_select
@@ -1038,16 +1032,17 @@ class TestUpdateUserRole:
         mock_client = Mock()
         mock_supabase.return_value = mock_client
         
-        # Mock check succeeds
+        # Mock check profiles succeeds
         mock_check_table = Mock()
         mock_check_select = Mock()
-        mock_check_eq = Mock()
         check_response = Mock()
-        check_response.data = [{"id": "user-1", "role": "user"}]
+        check_response.data = [
+            {"id": "admin-user-123", "role": "admin"},  # Current admin
+            {"id": "user-1", "role": "user"}  # User to be updated
+        ]
         check_response.error = None
-        mock_check_eq.execute.return_value = check_response
+        mock_check_select.execute.return_value = check_response
         mock_check_table.select.return_value = mock_check_select
-        mock_check_select.eq.return_value = mock_check_eq
         
         # Mock update fails
         mock_update_table = Mock()
@@ -1083,7 +1078,7 @@ class TestIsAdminRBAC:
     """Test the is_admin function with database-backed roles"""
     
     @patch("handlers.admin_handlers.get_supabase")
-    @patch("handlers.admin_handlers.config.is_testing")
+    @patch("handlers.admin_handlers.app_config.is_testing")
     def test_is_admin_checks_database_role(
         self,
         mock_is_testing,
@@ -1113,7 +1108,7 @@ class TestIsAdminRBAC:
         mock_client.table.assert_called_with("profiles")
     
     @patch("handlers.admin_handlers.get_supabase")
-    @patch("handlers.admin_handlers.config.is_testing")
+    @patch("handlers.admin_handlers.app_config.is_testing")
     def test_is_admin_rejects_regular_user(
         self,
         mock_is_testing,
@@ -1142,7 +1137,7 @@ class TestIsAdminRBAC:
         assert result is False
     
     @patch("handlers.admin_handlers.get_supabase")
-    @patch("handlers.admin_handlers.config.is_testing")
+    @patch("handlers.admin_handlers.app_config.is_testing")
     @patch.dict("os.environ", {"ADMIN_USER_IDS": "fallback-admin-123"})
     def test_is_admin_fallback_to_env_variable(
         self,
@@ -1171,7 +1166,7 @@ class TestIsAdminRBAC:
         
         assert result is True  # Found in ADMIN_USER_IDS
     
-    @patch("handlers.admin_handlers.config.is_testing")
+    @patch("handlers.admin_handlers.app_config.is_testing")
     def test_is_admin_testing_mode(
         self,
         mock_is_testing

@@ -1,21 +1,32 @@
-from fastapi import HTTPException, Body, Response, Request
-from fastapi.responses import JSONResponse
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from pydantic import BaseModel
+from typing import Any, Dict, List, Optional
+
+from fastapi import Depends, HTTPException, Query, Request, Response
+from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+
+from config import config as app_config
+from dependencies.auth_dependencies import get_current_user_id, get_current_user_token
+from schemas.auth import (
+    ChangePasswordRequest,
+    ForgotPasswordRequest,
+    LoginRequest,
+    ResendVerificationRequest,
+    ResetPasswordRequest,
+    SignupRequest,
+    UpdateEmailRequest,
+)
+from services.db_services.supabase_quiz import get_user_tier_info_cached
 from services.logger import app_logger as logger
-from fastapi import Depends
-from dependencies.auth_dependencies import get_current_user_id
-from typing import Optional
-from config import config
+from services.redis.sessions import SessionInfo, SessionService, TooManySessionsError
 
 security = HTTPBearer(auto_error=False)
 
 # Lazy load Supabase client to avoid initialization issues in tests
 def get_supabase():
     """Get Supabase client (lazy loaded)"""
-    return config.get_supabase_client()
+    return app_config.get_supabase_client()
 
-if config.is_testing():
+if app_config.is_testing():
     logger.info("Auth handlers initialized in TEST mode")
 else:
     logger.info("Auth handlers initialized with Supabase client")
@@ -23,28 +34,105 @@ else:
 ACCESS_TOKEN_EXPIRE = 3600  # 1 hour
 REFRESH_TOKEN_EXPIRE = 60 * 60 * 24 * 30  # 30 days
 
-# Define request models
-class LoginRequest(BaseModel):
-    email: str
-    password: str
 
-class LogoutRequest(BaseModel):
-    token: Optional[str] = None
+def _short_user_id(user_id: Optional[str]) -> str:
+    """Return obfuscated user identifier for logging."""
+    if not user_id:
+        return "unknown"
+    return f"{user_id[:8]}..."
 
-class UpdateEmailRequest(BaseModel):
-    new_email: str
+
+def _mask_email(email: Optional[str]) -> str:
+    """
+    Mask email for logging to prevent PII exposure.
+    
+    Examples:
+        "john.doe@example.com" -> "j***e@e***.com"
+        "ab@cd.org" -> "a*b@c*.org"
+    """
+    if not email or "@" not in email:
+        return "[no-email]"
+    
+    local, domain = email.split("@", 1)
+    
+    # Mask local part: show first and last char if long enough
+    if len(local) <= 2:
+        masked_local = local[0] + "*"
+    else:
+        masked_local = local[0] + "***" + local[-1]
+    
+    # Mask domain: show first char and TLD
+    domain_parts = domain.rsplit(".", 1)
+    if len(domain_parts) == 2:
+        domain_name, tld = domain_parts
+        if len(domain_name) <= 2:
+            masked_domain = domain_name[0] + "*." + tld
+        else:
+            masked_domain = domain_name[0] + "***." + tld
+    else:
+        masked_domain = domain[0] + "***"
+    
+    return f"{masked_local}@{masked_domain}"
+
+
+def get_redis_client(request: Request) -> Optional[Any]:
+    """
+    Get Redis client from request app state.
+    
+    Returns Redis client stored in app.state during startup, or None if unavailable.
+    This approach is consistent with auth_dependencies and ensures we use the same
+    Redis instance initialized during app startup.
+    """
+    return getattr(request.app.state, "redis", None)
+
+
+def detect_device_type(user_agent: Optional[str]) -> str:
+    """
+    Detect device type from user agent string.
+    
+    Returns:
+        "mobile" for mobile devices
+        "browser" for desktop/laptop browsers
+        "api" for API clients or unknown
+    """
+    if not user_agent:
+        return "api"
+    
+    user_agent_lower = user_agent.lower()
+    
+    # Check for mobile devices
+    mobile_keywords = ["mobile", "android", "iphone", "ipad", "ipod", "windows phone", "blackberry"]
+    if any(keyword in user_agent_lower for keyword in mobile_keywords):
+        return "mobile"
+    
+    # Check for known browsers (desktop)
+    browser_keywords = ["mozilla", "chrome", "safari", "firefox", "edge", "opera"]
+    if any(keyword in user_agent_lower for keyword in browser_keywords):
+        return "browser"
+    
+    # Default to API for unknown user agents (curl, postman, etc.)
+    return "api"
 
 # Remove template rendering functions
-async def signup(email: str = Body(...), password: str = Body(...), name: str = Body(...)):
+async def signup(request: SignupRequest):
     try:
         supabase = get_supabase()
-        logger.info(f"Attempting to sign up user with email: {email}")
+        logger.info(f"Attempting to sign up user with email: {_mask_email(request.email)}")
+
+        # Pydantic already validates min_length=8, but double-check for defense-in-depth
+        # Don't strip() - whitespace is valid in passwords
+        raw_password = request.password or ""
+        if len(raw_password) < 8:
+            logger.warning("Signup rejected for %s due to weak password", _mask_email(request.email))
+            raise HTTPException(status_code=400, detail="Password must be at least 8 characters long")
+        
+        # Sign up user - name goes to raw_user_meta_data
         response = supabase.auth.sign_up({
-            "email": email,
-            "password": password,
+            "email": request.email,
+            "password": raw_password,
             "options": {
                 "data": {
-                    "name": name
+                    "name": request.name
                 }
             }
         })
@@ -54,7 +142,7 @@ async def signup(email: str = Body(...), password: str = Body(...), name: str = 
             content={"message": "User created successfully. Please check your email for verification.", "user_id": response.user.id if response.user else None}
         )
     except Exception as e:
-        logger.error(f"Error during signup: {str(e)}")
+        logger.error(f"Error during signup for {_mask_email(request.email)}: {str(e)}")
         error_message = str(e)
         
         # Handle specific Supabase errors with appropriate status codes
@@ -71,42 +159,96 @@ async def signup(email: str = Body(...), password: str = Body(...), name: str = 
             raise HTTPException(status_code=500, detail=str(e))
 
 
-async def login(request: LoginRequest, response: Response):
+async def login(request_body: LoginRequest, response: Response, request: Request):
     try:
         supabase = get_supabase()
-        logger.info(f"Login attempt for user: {request.email}")
+        logger.info(f"Login attempt for user: {_mask_email(request_body.email)}")
         result = supabase.auth.sign_in_with_password({
-            "email": request.email,
-            "password": request.password
+            "email": request_body.email,
+            "password": request_body.password
         })
         
         session = result.session
-        
+
         if session is None:
-            logger.warning(f"Login failed: No session returned for {request.email}")
+            logger.warning(f"Login failed: No session returned for {_mask_email(request_body.email)}")
             raise HTTPException(status_code=401, detail="Invalid credentials")
-        
+
         access_token = session.access_token
         refresh_token = session.refresh_token
+        user_id = result.user.id if result.user and getattr(result.user, "id", None) else None
+
+        logger.info(f"User logged in: {_short_user_id(user_id)}")
+
+        # Create Redis session for multi-device tracking
+        # SECURITY: Redis is REQUIRED for session management. Fail hard if unavailable.
+        redis_client = get_redis_client(request)
+        if not redis_client:
+            logger.error(
+                "Redis unavailable during login for user %s - failing request",
+                _short_user_id(user_id)
+            )
+            raise HTTPException(
+                status_code=503,
+                detail="Session management service temporarily unavailable. Please try again."
+            )
         
-        logger.info(f"User logged in: {result.user.id if result.user else 'Unknown'}")
+        try:
+            session_service = SessionService(redis_client)
+            user_agent = request.headers.get("user-agent")
+            device_type = detect_device_type(user_agent)
+            client_session_token = await session_service.create_session(
+                user_id=user_id,
+                device_type=device_type,
+                ip_address=request.client.host if request.client else None,
+                user_agent=user_agent,
+                refresh_token=refresh_token  # Enable cookie-based lookup
+            )
+            logger.info(
+                "Redis session created for user %s (device: %s, client_token: %s)",
+                _short_user_id(user_id),
+                device_type,
+                client_session_token[:16] + "..." if len(client_session_token) > 16 else client_session_token
+            )
+        except TooManySessionsError as e:
+            # Hard fail for session limits - this is a security control
+            # User must explicitly manage their sessions (logout or revoke)
+            logger.warning(f"Too many sessions for user {_short_user_id(user_id)}: {e}")
+            raise HTTPException(
+                status_code=429,
+                detail="Too many active sessions. Please logout from other devices or revoke old sessions."
+            )
+        except Exception as redis_error:
+            # Hard fail for any Redis errors - prevents unusable token loop
+            # If session creation fails, subsequent requests will fail with 401
+            logger.error(
+                f"Failed to create Redis session for user {_short_user_id(user_id)}: {redis_error}"
+            )
+            raise HTTPException(
+                status_code=503,
+                detail="Session management service temporarily unavailable. Please try again."
+            )
         
-        # Set access token
+        # Set access token cookie
+        # Domain allows cookie to be shared across all subdomains (www, api, etc.)
+        # Without Domain attribute, cookie would be host-only (locked to api.quizify.ca)
         response.set_cookie(
             key="access_token",
             value=access_token,
             httponly=True,
             secure=True,
             samesite="lax",
+            domain=app_config.COOKIE_DOMAIN if not app_config.is_testing() else None,
             max_age=ACCESS_TOKEN_EXPIRE
         )
-        # Set refresh token
+        # Set refresh token cookie
         response.set_cookie(
             key="refresh_token",
             value=refresh_token,
             httponly=True,
             secure=True,
             samesite="lax",
+            domain=app_config.COOKIE_DOMAIN if not app_config.is_testing() else None,
             max_age=REFRESH_TOKEN_EXPIRE
         )
 
@@ -114,21 +256,41 @@ async def login(request: LoginRequest, response: Response):
         response_data = {
             "message": "Successfully logged in",
             "user": {
-                "id": result.user.id if result.user else None,
+                "id": user_id,
                 "email": result.user.email if result.user else None
-            }
+            },
+            "client_session_token": client_session_token  # HMAC-signed token for UI identification only (XSS-safe)
         }
         
-        # SECURITY: Only expose token in response body during testing or development
-        # In production, token is only available via HttpOnly cookie
-        if config.is_testing() or config.is_development():
+        # SECURITY: Only expose tokens in response body during testing or development
+        # In production, tokens are only available via HttpOnly cookie
+        if app_config.is_testing() or app_config.is_development():
             response_data["access_token"] = access_token
+            response_data["refresh_token"] = refresh_token
         
         return response_data
 
+    except HTTPException:
+        raise
     except Exception as e:
         error_message = str(e).lower()
-        logger.warning(f"Failed login for {request.email}: {e}")
+        logger.warning(f"Failed login for {_mask_email(request_body.email)}: {e}")
+        
+        # Check for Supabase rate limiting
+        # Use specific patterns to avoid false positives (e.g., "429" could match IP "192.168.4.29")
+        is_rate_limited = (
+            "rate limit" in error_message or 
+            "too many requests" in error_message or
+            "status code 429" in error_message or
+            "status: 429" in error_message or
+            "http 429" in error_message
+        )
+        if is_rate_limited:
+            logger.warning(f"Supabase rate limit hit for {_mask_email(request_body.email)}")
+            raise HTTPException(
+                status_code=429,
+                detail="Too many login attempts. Please wait a few minutes before trying again."
+            )
         
         # Provide specific error messages for common issues
         if "email not confirmed" in error_message or "email confirmation" in error_message:
@@ -169,6 +331,7 @@ async def refresh_session(request: Request, response: Response):
             httponly=True,
             secure=True,
             samesite="lax",
+            domain=app_config.COOKIE_DOMAIN if not app_config.is_testing() else None,
             max_age=ACCESS_TOKEN_EXPIRE
         )
         return {"message": "Session refreshed"}
@@ -176,29 +339,141 @@ async def refresh_session(request: Request, response: Response):
         raise HTTPException(status_code=401, detail="Invalid refresh token")
 
 
-async def logout(response: Response, user_id: str = Depends(get_current_user_id)):
+async def logout(
+    request: Request,
+    response: Response,
+    user_id: str = Depends(get_current_user_id),
+    session_id: Optional[str] = Query(None, alias="session_id")
+):
+    """
+    Logout current device.
+    
+    Deletes the Redis session and clears auth cookies.
+    Session lookup priority:
+    1. Query parameter: /auth/logout?session_id=sess_xxx
+    2. request.state.session_id (set during auth validation)
+    3. Lookup via refresh_token cookie (fallback for stale sessions)
+    """
     try:
-        logger.info(f"User {user_id} logout requested")
-        response.delete_cookie(key="access_token", path="/", httponly=True)
-        response.delete_cookie(key="refresh_token", path="/", httponly=True)
-        logger.info(f"User {user_id} logged out successfully")
+        logger.info(f"User {_short_user_id(user_id)} logout requested")
+
+        # Priority 1: Query parameter
+        # Priority 2: request.state (set during auth validation)
+        if not session_id:
+            session_id = getattr(request.state, "session_id", None)
+
+        redis_client = get_redis_client(request)
+        session_service = None
+        
+        # Priority 3: Lookup via refresh_token (header in dev mode, cookie in production)
+        # This is critical for proper cleanup when frontend doesn't pass session_id
+        if not session_id and redis_client:
+            # Match the same logic used in auth_dependencies.py
+            if app_config.is_development():
+                refresh_token_header = request.headers.get("X-Refresh-Token")
+                refresh_token = refresh_token_header or request.cookies.get("refresh_token")
+            else:
+                refresh_token = request.cookies.get("refresh_token")
+            
+            if refresh_token:
+                try:
+                    session_service = SessionService(redis_client)
+                    found_session_id = await session_service.find_session_by_refresh_token(refresh_token)
+                    if found_session_id:
+                        # SECURITY: Verify session belongs to authenticated user before allowing logout
+                        session_info = await session_service.validate_session(found_session_id)
+                        if session_info and session_info.user_id == user_id:
+                            session_id = found_session_id
+                            logger.debug(f"Session found via refresh_token for user {_short_user_id(user_id)}")
+                        else:
+                            if session_info:
+                                logger.warning(
+                                    f"Session {found_session_id[:12]}... does not belong to user {_short_user_id(user_id)} - ignoring"
+                                )
+                            else:
+                                logger.debug(f"Session {found_session_id[:12]}... not found or expired - ignoring")
+                except Exception as lookup_error:
+                    logger.warning(f"Failed to lookup session via refresh_token: {lookup_error}")
+
+        # Delete Redis session if session_id was found
+        if session_id:
+            try:
+                if redis_client:
+                    if not session_service:
+                        session_service = SessionService(redis_client)
+                    success = await session_service.logout(session_id)
+                    if success:
+                        logger.info(f"Redis session deleted for user {_short_user_id(user_id)}")
+                    else:
+                        logger.warning(f"Redis session not found: {session_id[:12]}...")
+            except Exception as redis_error:
+                # Don't fail logout if Redis deletion fails (fallback mode)
+                logger.warning(f"Failed to delete Redis session (fallback mode): {redis_error}")
+        else:
+            logger.warning(f"No session_id found for user {_short_user_id(user_id)} during logout - session may remain in Redis")
+        
+        # Must match domain used when setting cookies
+        domain = app_config.COOKIE_DOMAIN if not app_config.is_testing() else None
+        response.delete_cookie(key="access_token", path="/", domain=domain, httponly=True)
+        response.delete_cookie(key="refresh_token", path="/", domain=domain, httponly=True)
+        logger.info(f"User {_short_user_id(user_id)} logged out successfully")
         return {"message": "Successfully logged out"}
     except Exception as e:
         logger.error(f"Error during logout: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
-async def change_password(email: str = Body(...),
-                           new_password: str = Body(...),
-                           user_id: str = Depends(get_current_user_id)):
+async def change_password(request: ChangePasswordRequest,
+                           user_id: str = Depends(get_current_user_id),
+                           user_token: str = Depends(get_current_user_token)):
+    """
+    Change password for authenticated user.
+    
+    SECURITY: Requires current password verification to prevent unauthorized
+    password changes with stolen tokens.
+    
+    User is identified by JWT token (user_id), not by email in request body.
+    """
     try:
-        supabase = get_supabase()
-        logger.info(f"Password change requested for user: {email}")
-        supabase.auth.admin.update_user_by_id(user_id, {"password": new_password})
-        logger.info(f"Password updated successfully for user: {email}")
+        logger.info(f"Password change requested for user ID: {_short_user_id(user_id)}")
+        
+        # Use authenticated client for user operations
+        supabase = app_config.get_authenticated_supabase_client(user_token)
+        
+        # SECURITY: Get user's email for current password verification
+        # With authenticated client, we can get the user's own details
+        user_response = supabase.auth.get_user()
+        if not user_response or not user_response.user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        user_email = user_response.user.email
+        if not user_email:
+            raise HTTPException(status_code=400, detail="User has no email configured")
+        
+        # SECURITY: Verify current password by attempting sign-in
+        # We use a fresh client for this to avoid messing with the current session
+        auth_client = get_supabase()
+        try:
+            auth_client.auth.sign_in_with_password({
+                "email": user_email,
+                "password": request.current_password
+            })
+        except Exception as auth_error:
+            error_msg = str(auth_error).lower()
+            if "invalid" in error_msg or "credentials" in error_msg or "password" in error_msg:
+                logger.warning(f"Password change failed: incorrect current password for user {_short_user_id(user_id)}")
+                raise HTTPException(status_code=401, detail="Current password is incorrect")
+            # Re-raise unexpected auth errors
+            raise
+        
+        # Current password verified, now update to new password using authenticated client
+        supabase.auth.update_user({"password": request.new_password})
+        logger.info(f"Password updated successfully for user ID: {_short_user_id(user_id)}")
         return {"message": "Password updated successfully"}
+    except HTTPException:
+        raise  # Re-raise HTTP exceptions as-is
     except Exception as e:
-        logger.error(f"Error during password change: {str(e)}", exc_info=True)
+        logger.error(f"Error during password change for user {_short_user_id(user_id)}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 async def delete_account(user_id: str = Depends(get_current_user_id)):
@@ -237,19 +512,20 @@ async def update_email(request: UpdateEmailRequest,
             raise HTTPException(status_code=401, detail="Authentication required")
         
         new_email = request.new_email
-        logger.info(f"Email update requested to: {new_email}")
+        # SECURITY: Log masked email to prevent PII exposure
+        logger.info(f"Email update requested to: {_mask_email(new_email)}")
         
-        supabase = get_supabase()
-        
-        # Set the session with the user's token
-        supabase.auth.set_session(token, token)
+        # Create authenticated Supabase client with user's token
+        # This ensures the update is made on behalf of the authenticated user
+        supabase = app_config.get_authenticated_supabase_client(token)
         
         # Use the Python SDK to update email - triggers Secure Email Change flow
         response = supabase.auth.update_user({"email": new_email})
         
         current_email = response.user.email if response.user else None
         logger.info("Email change initiated. Confirmation emails being sent.")
-        logger.info(f"Update response: email={current_email}, new_email={response.user.new_email if response.user else None}")
+        # SECURITY: Log masked emails to prevent PII exposure
+        logger.info(f"Update response: email={_mask_email(current_email)}, new_email={_mask_email(response.user.new_email if response.user else None)}")
         
         return {
             "message": f"Email change initiated. Please check BOTH email addresses: (1) Confirm the change from your NEW email ({new_email}) (2) Then confirm from your CURRENT email ({current_email}). Both confirmations are required to complete the email change.",
@@ -267,3 +543,766 @@ async def update_email(request: UpdateEmailRequest,
     except Exception as e:
         logger.error(f"Error during email update: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+async def get_user_info(
+    user_id: str = Depends(get_current_user_id),
+    user_token: str = Depends(get_current_user_token)
+):
+    """
+    Get authenticated user's profile information including tier and quota status.
+    
+    Uses Redis caching for 50x performance improvement (5 min TTL).
+    
+    Returns:
+        User profile with tier, role, quota, and display name information
+    """
+    try:
+        logger.info(f"Fetching user info for user ID: {user_id}")
+        # Use cached version for 50x performance improvement (200ms → 4ms)
+        tier_info = await get_user_tier_info_cached(user_id)
+        
+        return {
+            "user_id": str(tier_info["id"]),
+            "email": tier_info["email"],
+            "display_name": tier_info.get("display_name"),
+            "account_tier": tier_info["account_tier"],
+            "role": tier_info.get("role", "user"),
+            "current_quiz_count": tier_info["current_quiz_count"],  # Quizzes created
+            "quizzes_attempted": tier_info.get("quizzes_attempted", 0),  # Quizzes attempted (NEW)
+            "quota_limit": tier_info["quota_limit"],
+            "quota_exceeded": tier_info["quota_exceeded"],
+            "created_at": tier_info.get("created_at")
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching user info: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+async def confirm_email(
+    token: str = Query(..., description="Email confirmation token from Supabase"),
+    type: str = Query(default="signup", description="Confirmation type: signup, email_change, recovery, etc."),
+):
+    """
+    Handle email confirmation from Supabase.
+    This endpoint is called when user clicks the link in their confirmation email.
+    
+    Flow:
+    1. User clicks link in email → redirects to this endpoint with token
+    2. Backend verifies token with Supabase
+    3. Redirects user to frontend with success/error message
+    """
+    try:
+        supabase = get_supabase()
+        logger.info(f"Email confirmation attempt - type: {type}")
+        
+        # Verify the token with Supabase
+        try:
+            response = supabase.auth.verify_otp({
+                "token_hash": token,
+                "type": type  # 'signup', 'email_change', 'recovery', etc.
+            })
+        except Exception as verify_error:
+            logger.warning(f"Token verification failed: {str(verify_error)}")
+            return RedirectResponse(
+                url=f"{app_config.FRONTEND_URL}/login?error=invalid_token&message=Invalid+or+expired+confirmation+link",
+                status_code=302
+            )
+        
+        if not response.user:
+            logger.warning("Email confirmation failed - no user returned")
+            return RedirectResponse(
+                url=f"{app_config.FRONTEND_URL}/login?error=invalid_token&message=Invalid+or+expired+confirmation+link",
+                status_code=302
+            )
+        
+        user_id = response.user.id
+        user_email = response.user.email
+        # SECURITY: Use masked email and short user ID to prevent PII exposure
+        logger.info(f"Email confirmed successfully for user: {_short_user_id(user_id)} ({_mask_email(user_email)})")
+        
+        # Handle different confirmation types
+        if type == "signup":
+            # User just confirmed their signup email
+            return RedirectResponse(
+                url=f"{app_config.FRONTEND_URL}/login?confirmed=true&message=Email+verified+successfully!+You+can+now+log+in.",
+                status_code=302
+            )
+        elif type == "email_change":
+            # User confirmed email change
+            return RedirectResponse(
+                url=f"{app_config.FRONTEND_URL}/dashboard?email_changed=true&message=Email+address+updated+successfully",
+                status_code=302
+            )
+        elif type == "recovery":
+            # Password reset confirmation - token verified, now create session for password update
+            # The verified response contains session tokens we can pass to frontend
+            if response.session:
+                access_token = response.session.access_token
+                refresh_token = response.session.refresh_token
+                # Redirect to password reset page with both tokens
+                # Frontend will use these when calling /reset-password
+                return RedirectResponse(
+                    url=f"{app_config.FRONTEND_URL}/reset-password?access_token={access_token}&refresh_token={refresh_token}&message=Please+enter+your+new+password",
+                    status_code=302
+                )
+            else:
+                logger.error("Recovery token verified but no session returned")
+                return RedirectResponse(
+                    url=f"{app_config.FRONTEND_URL}/login?error=recovery_failed&message=Password+reset+failed.+Please+request+a+new+link.",
+                    status_code=302
+                )
+        else:
+            # Default redirect for unknown types
+            logger.warning(f"Unknown confirmation type: {type}")
+            return RedirectResponse(
+                url=f"{app_config.FRONTEND_URL}/dashboard?confirmed=true",
+                status_code=302
+            )
+            
+    except Exception as e:
+        logger.error(f"Error during email confirmation: {str(e)}", exc_info=True)
+        return RedirectResponse(
+            url=f"{app_config.FRONTEND_URL}/login?error=confirmation_failed&message=Confirmation+failed.+Please+try+again.",
+            status_code=302
+        )
+
+
+async def forgot_password(request: ForgotPasswordRequest):
+    """
+    Trigger password reset email.
+    
+    Sends a password recovery email to the user with a reset link.
+    For security, always returns success even if email doesn't exist
+    (prevents email enumeration attacks).
+    
+    Flow:
+    1. User enters email on forgot password page
+    2. Backend calls Supabase to send recovery email
+    3. Supabase sends email with link to /api/auth/confirm?token=xxx&type=recovery
+    4. User clicks link → backend verifies → redirects to frontend reset-password page
+    5. Frontend calls /api/auth/reset-password with new password
+    """
+    try:
+        email = request.email
+        logger.info(f"Password reset requested for email (first 3 chars): {email[:3]}***")
+        
+        supabase = get_supabase()
+        
+        # Request password reset from Supabase
+        # This sends an email with recovery link to the user
+        try:
+            supabase.auth.reset_password_email(
+                email=email,
+                options={
+                    "redirect_to": f"{app_config.FRONTEND_URL}/reset-password"  # Not used, we handle in /confirm
+                }
+            )
+            logger.info("Password reset email sent successfully")
+        except Exception as supabase_error:
+            # Log error but don't reveal to user (security)
+            logger.warning(f"Supabase password reset error: {str(supabase_error)}")
+        
+        # ALWAYS return success to prevent email enumeration
+        # Even if email doesn't exist, we say we sent it
+        return {
+            "message": "If an account exists with that email, we've sent password reset instructions.",
+            "note": "Check your email inbox (and spam folder). The link expires in 1 hour."
+        }
+        
+    except Exception as e:
+        logger.error(f"Error during forgot password: {str(e)}", exc_info=True)
+        # Still return success for security
+        return {
+            "message": "If an account exists with that email, we've sent password reset instructions.",
+            "note": "Check your email inbox (and spam folder). The link expires in 1 hour."
+        }
+
+
+async def reset_password(request: ResetPasswordRequest):
+    """
+    Reset user password with recovery tokens.
+    
+    This endpoint is called by the frontend after user:
+    1. Clicks reset link in email
+    2. Gets redirected to /reset-password page (via /confirm handler)
+    3. Enters new password in form
+    4. Frontend submits new password + tokens to this endpoint
+    
+    The tokens are provided in the URL by the /confirm handler after
+    validating the recovery token. These tokens give temporary access to update password.
+    """
+    try:
+        access_token = request.token
+        refresh_token = request.refresh_token
+        new_password = request.new_password
+        
+        logger.info("Password reset attempt with recovery tokens")
+        
+        supabase = get_supabase()
+        
+        # Update password using the temporary recovery session tokens
+        try:
+            # Set the session with both access and refresh tokens from recovery
+            # This authenticates the user temporarily for password update
+            if refresh_token:
+                supabase.auth.set_session(access_token, refresh_token)
+            else:
+                # Fallback: if only access_token provided (shouldn't happen with new flow)
+                logger.warning("Only access_token provided, no refresh_token. This may cause issues.")
+                # Use authenticated client approach instead
+                supabase = app_config.get_authenticated_supabase_client(access_token)
+            
+            # Now update the password - user is authenticated via the recovery session
+            response = supabase.auth.update_user({"password": new_password})
+            
+            if not response.user:
+                logger.warning("Password reset failed - invalid or expired token")
+                raise HTTPException(
+                    status_code=401,
+                    detail="Invalid or expired recovery token. Please request a new password reset link."
+                )
+            
+            logger.info(f"Password reset successful for user: {response.user.id}")
+            
+            return {
+                "message": "Password updated successfully! You can now log in with your new password.",
+                "success": True
+            }
+            
+        except HTTPException:
+            raise
+        except Exception as update_error:
+            logger.error(f"Supabase password update error: {str(update_error)}", exc_info=True)
+            raise HTTPException(
+                status_code=400,
+                detail="Failed to update password. The reset link may have expired. Please request a new one."
+            )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error during password reset: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail="An error occurred while resetting your password. Please try again."
+        )
+
+
+async def resend_verification_email(request: ResendVerificationRequest):
+    """
+    Resend email verification link to user.
+    
+    This is useful when:
+    - User didn't receive the original signup confirmation email
+    - Email link expired (24 hours)
+    - User accidentally deleted the email
+    
+    For security, always returns success even if:
+    - Email doesn't exist (prevents email enumeration)
+    - Email is already verified (no harm in sending again)
+    
+    Flow:
+    1. User enters email on "resend verification" page
+    2. Backend calls Supabase to resend verification email
+    3. Supabase sends email with link to /api/auth/confirm?token=xxx&type=signup
+    4. Always returns success message
+    """
+    try:
+        email = request.email
+        logger.info(f"Verification email resend requested for email (first 3 chars): {email[:3]}***")
+        
+        supabase = get_supabase()
+        
+        try:
+            # Resend the confirmation email
+            # Supabase Python SDK v2+ takes a single dictionary parameter
+            supabase.auth.resend({
+                "type": "signup",  # Type: 'signup' or 'email_change'
+                "email": email,
+                "options": {
+                    "email_redirect_to": f"{app_config.FRONTEND_URL}/login"  # Not used, we handle in /confirm
+                }
+            })
+            logger.info("Verification email resent successfully")
+            
+        except Exception as supabase_error:
+            # Log error but don't reveal to user (security)
+            logger.warning(f"Supabase resend error: {str(supabase_error)}")
+        
+        # ALWAYS return success to prevent email enumeration
+        # Even if:
+        # - Email doesn't exist
+        # - Email is already verified  
+        # - Rate limit exceeded
+        return {
+            "message": "If your email is registered and unverified, we've sent a new verification link.",
+            "note": "Check your email inbox (and spam folder). The link expires in 24 hours.",
+            "email": email
+        }
+        
+    except Exception as e:
+        logger.error(f"Error during resend verification: {str(e)}", exc_info=True)
+        # Still return success for security
+        return {
+            "message": "If your email is registered and unverified, we've sent a new verification link.",
+            "note": "Check your email inbox (and spam folder). The link expires in 24 hours."
+        }
+
+
+# ============================================================================
+# SESSION MANAGEMENT ENDPOINTS (Epic 4 - Task 4.3 & 4.4)
+# ============================================================================
+
+async def logout_all_devices(
+    request: Request,
+    response: Response,
+    user_id: str = Depends(get_current_user_id)
+):
+    """
+    Logout all devices for current user.
+    
+    Useful for security actions like:
+    - Password change
+    - Suspicious activity detected
+    - User wants to revoke all sessions
+    
+    This will:
+    1. Delete all Redis sessions for the user
+    2. Clear cookies for current device
+    3. Force re-login on all devices
+    """
+    try:
+        logger.info(f"Logout all devices requested for user {_short_user_id(user_id)}")
+        
+        # Delete all Redis sessions
+        count = 0
+        try:
+            redis_client = get_redis_client(request)
+            if redis_client:
+                session_service = SessionService(redis_client)
+                count = await session_service.logout_all_devices(user_id)
+                logger.info(f"Deleted {count} Redis sessions for user {_short_user_id(user_id)}")
+        except Exception as redis_error:
+            # Don't fail if Redis deletion fails (fallback mode)
+            logger.warning(f"Failed to delete Redis sessions (fallback mode): {redis_error}")
+        
+        # Clear cookies for current device
+        domain = app_config.COOKIE_DOMAIN if not app_config.is_testing() else None
+        response.delete_cookie(key="access_token", path="/", domain=domain, httponly=True)
+        response.delete_cookie(key="refresh_token", path="/", domain=domain, httponly=True)
+        
+        return {
+            "message": f"Successfully logged out from {count} device(s)",
+            "devices_logged_out": count
+        }
+        
+    except Exception as e:
+        logger.error(f"Error during logout all devices: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+async def get_active_sessions(
+    request: Request,
+    user_id: str = Depends(get_current_user_id)
+) -> List[Dict[str, Any]]:
+    """
+    Get list of active sessions for current user across all devices.
+    
+    Returns session metadata:
+    - session_id: Unique identifier
+    - device_type: browser, mobile, api
+    - created_at: When session was created
+    - last_active: Last activity timestamp
+    - ip_address: Hashed IP for privacy
+    - user_agent: Truncated user agent string
+    
+    Frontend can display this in "Active Sessions" page for security management.
+    """
+    try:
+        logger.info(f"Fetching active sessions for user {_short_user_id(user_id)}")
+        
+        # Get current session ID from request state (set by auth middleware)
+        current_session_id = getattr(request.state, "session_id", None)
+        
+        # Get sessions from Redis
+        sessions: List[SessionInfo] = []
+        try:
+            redis_client = get_redis_client(request)
+            if redis_client:
+                session_service = SessionService(redis_client)
+                sessions = await session_service.list_sessions(user_id)
+                logger.info(f"Found {len(sessions)} active sessions for user {_short_user_id(user_id)}")
+        except Exception as redis_error:
+            logger.warning(f"Failed to fetch Redis sessions (fallback mode): {redis_error}")
+            # Return empty list in fallback mode
+            return []
+        
+        # Convert to dict for API response
+        return [
+            {
+                "client_session_token": session.client_session_token,  # HMAC-signed token for UI identification
+                "device_type": session.device_type,
+                "created_at": session.created_at.isoformat(),
+                "last_active": session.last_active.isoformat(),
+                "ip_address": session.ip_address,  # Already hashed
+                "user_agent": session.user_agent,  # Already truncated
+                "is_expired": session.is_expired,
+                "is_current": session.session_id == current_session_id  # Server-computed (no client comparison needed)
+            }
+            for session in sessions
+        ]
+        
+    except Exception as e:
+        logger.error(f"Error fetching active sessions: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+async def revoke_session(
+    session_id_to_revoke: str,
+    request: Request,
+    user_id: str = Depends(get_current_user_id)
+):
+    """
+    Revoke a specific session by ID or client token.
+    
+    Accepts either:
+    - Real session_id (starts with sess_)
+    - Client session token (starts with cst_sess_) - will be mapped to real session_id
+    
+    Security check: Verifies the session belongs to the authenticated user
+    before revoking it. Prevents users from revoking other users' sessions.
+    
+    Use case: User sees suspicious device in "Active Sessions" and wants to logout that device.
+    """
+    try:
+        logger.info(
+            "Session revoke requested: %s by user %s",
+            f"{session_id_to_revoke[:12]}...",
+            _short_user_id(user_id),
+        )
+        
+        redis_client = get_redis_client(request)
+        if not redis_client:
+            raise HTTPException(
+                status_code=503,
+                detail="Session management unavailable (Redis not connected)"
+            )
+        
+        session_service = SessionService(redis_client)
+        
+        # If it's a client token (starts with cst_sess_), map it to real session_id
+        actual_session_id = session_id_to_revoke
+        if session_id_to_revoke.startswith("cst_sess_"):
+            logger.debug("Client token provided, mapping to real session_id")
+            actual_session_id = await session_service.find_session_by_client_token(
+                session_id_to_revoke, user_id
+            )
+            if not actual_session_id:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Session not found for provided client token"
+                )
+            logger.debug(f"Mapped to session: {actual_session_id[:12]}...")
+        
+        # SECURITY: Verify session belongs to user
+        session_info = await session_service.validate_session(actual_session_id)
+        if not session_info:
+            raise HTTPException(
+                status_code=404,
+                detail="Session not found or already expired"
+            )
+        
+        if session_info.user_id != user_id:
+            logger.warning(
+                "User %s attempted to revoke session belonging to %s",
+                _short_user_id(user_id),
+                _short_user_id(session_info.user_id),
+            )
+            raise HTTPException(
+                status_code=403,
+                detail="You can only revoke your own sessions"
+            )
+        
+        # Revoke the session
+        success = await session_service.logout(actual_session_id)
+        
+        if not success:
+            raise HTTPException(status_code=404, detail="Session not found")
+        
+        logger.info(f"Session {actual_session_id[:12]}... revoked successfully")
+        return {
+            "message": "Session revoked successfully",
+            "session_id": actual_session_id
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error revoking session: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# GOOGLE OAUTH ENDPOINTS (Epic QUIZ-002 - Google Forms Export)
+# ============================================================================
+
+async def google_connect(
+    user_id: str = Depends(get_current_user_id)
+):
+    """
+    Initiate Google OAuth flow for Google Forms export.
+    
+    Returns an authorization URL that the frontend should redirect to.
+    After user authorizes, they will be redirected to /auth/google/callback.
+    
+    Requires Pro tier for access.
+    """
+    from services.db_services.supabase_quiz import get_user_tier_info_cached
+    from services.google_auth_service import (
+        GoogleAuthError,
+        generate_auth_url,
+        generate_secure_state_token,
+        is_google_auth_configured,
+    )
+    
+    logger.info(f"Google connect initiated for user {_short_user_id(user_id)}")
+    
+    # Check user tier - Google Forms is Pro-only
+    tier_info = await get_user_tier_info_cached(user_id)
+    user_tier = tier_info.get("account_tier", "free").lower()
+    if user_tier != "pro":
+        logger.warning(f"User {_short_user_id(user_id)} with tier '{user_tier}' attempted to connect Google (Pro only)")
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": "tier_insufficient",
+                "message": "Google Forms export requires a Pro subscription",
+                "required_tier": "pro",
+                "current_tier": user_tier
+            }
+        )
+    
+    # Check if Google OAuth is configured
+    if not is_google_auth_configured():
+        logger.error("Google OAuth not configured")
+        raise HTTPException(
+            status_code=503,
+            detail="Google Forms export is not configured. Please contact support."
+        )
+    
+    try:
+        # Generate secure state token (HMAC-signed) for CSRF protection
+        # Format: timestamp:user_id:signature
+        secure_state = generate_secure_state_token(user_id)
+        
+        # Generate authorization URL with secure state for CSRF protection
+        auth_url, _ = generate_auth_url(state=secure_state)
+        
+        logger.info(f"Google OAuth URL generated for user {_short_user_id(user_id)}")
+        
+        return {
+            "auth_url": auth_url,
+            "state": secure_state,
+            "message": "Redirect to auth_url to connect your Google account"
+        }
+        
+    except GoogleAuthError as e:
+        logger.error(f"Google OAuth error: {e.message}")
+        raise HTTPException(status_code=400, detail=e.message)
+    except Exception as e:
+        logger.error(f"Error generating Google auth URL: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to initiate Google authorization")
+
+
+async def google_callback(
+    code: str = Query(..., description="Authorization code from Google"),
+    state: str = Query(None, description="Signed state parameter for CSRF protection"),
+    error: str = Query(None, description="Error from Google OAuth")
+):
+    """
+    Handle Google OAuth callback.
+    
+    After user authorizes on Google, they are redirected here with an authorization code.
+    We exchange the code for tokens and store the refresh token.
+    
+    SECURITY: 
+    - Validates HMAC-signed state token to prevent CSRF and tampering
+    - State format: "timestamp:user_id:signature"
+    - Validates Pro tier before storing tokens to prevent bypass of google_connect check.
+    """
+    from services.db_services.supabase_quiz import get_user_tier_info_cached
+    from services.google_auth_service import (
+        GoogleAuthError,
+        exchange_code_for_tokens,
+        store_google_tokens,
+        validate_secure_state_token,
+    )
+    
+    # Check for OAuth errors from Google
+    if error:
+        logger.warning(f"Google OAuth error: {error}")
+        return RedirectResponse(
+            url=f"{app_config.FRONTEND_URL}/settings?google_error={error}",
+            status_code=302
+        )
+    
+    # Validate signed state token using shared utility
+    # Use 15 minute window (900 seconds) for OAuth flow completion
+    user_id, redirect_url, error_code = validate_secure_state_token(state, max_age_seconds=900)
+    
+    if error_code:
+        logger.error(f"Invalid state token in Google OAuth callback: {error_code}")
+        return RedirectResponse(
+            url=f"{app_config.FRONTEND_URL}/settings?google_error={error_code}",
+            status_code=302
+        )
+    
+    logger.info(f"Google OAuth callback for user {_short_user_id(user_id)}")
+    
+    # Validate and sanitize redirect_url to prevent open redirects and CRLF injection
+    # Must be a relative path (starts with /) or None
+    safe_redirect_path = None
+    if redirect_url:
+        # Check for control characters that could enable CRLF header injection
+        control_chars = "\r\n\x00"
+        if any(c in redirect_url for c in control_chars):
+            logger.warning(f"Rejecting redirect_url with control characters (CRLF injection attempt)")
+        # Only allow relative paths starting with /
+        elif redirect_url.startswith("/") and not redirect_url.startswith("//"):
+            # Strip any protocol:// that might be embedded
+            if "://" not in redirect_url:
+                safe_redirect_path = redirect_url
+                logger.debug(f"Using custom redirect path: {safe_redirect_path}")
+            else:
+                logger.warning(f"Rejecting redirect_url with protocol: {redirect_url[:50]}...")
+        else:
+            logger.warning(f"Rejecting non-relative redirect_url: {redirect_url[:50]}...")
+    
+    # Helper to build redirect URL with fallback to /settings
+    def build_redirect_url(query_params: str) -> str:
+        if safe_redirect_path:
+            separator = "&" if "?" in safe_redirect_path else "?"
+            return f"{app_config.FRONTEND_URL}{safe_redirect_path}{separator}{query_params}"
+        return f"{app_config.FRONTEND_URL}/settings?{query_params}"
+    
+    # SECURITY: Re-validate Pro tier to prevent bypass via direct callback URL
+    # A user could theoretically get a valid code and bypass google_connect tier check
+    try:
+        tier_info = await get_user_tier_info_cached(user_id)
+        user_tier = tier_info.get("account_tier", "free").lower()
+        if user_tier != "pro":
+            logger.warning(
+                f"User {_short_user_id(user_id)} with tier '{user_tier}' attempted "
+                f"OAuth callback (Pro only) - rejecting"
+            )
+            return RedirectResponse(
+                url=build_redirect_url("google_error=tier_insufficient"),
+                status_code=302
+            )
+    except Exception as tier_error:
+        logger.error(f"Failed to verify user tier in callback: {tier_error}")
+        return RedirectResponse(
+            url=build_redirect_url("google_error=tier_check_failed"),
+            status_code=302
+        )
+    
+    try:
+        # Exchange authorization code for tokens
+        credentials = exchange_code_for_tokens(code)
+        
+        # Store refresh token in database
+        await store_google_tokens(user_id, credentials)
+        
+        logger.info(f"Google account connected for user {_short_user_id(user_id)}")
+        
+        # Redirect to frontend with success (use custom path or /settings)
+        return RedirectResponse(
+            url=build_redirect_url("google_connected=true"),
+            status_code=302
+        )
+        
+    except GoogleAuthError as e:
+        logger.error(f"Google OAuth error: {e.message}")
+        return RedirectResponse(
+            url=build_redirect_url(f"google_error={e.error_code}"),
+            status_code=302
+        )
+    except Exception as e:
+        logger.error(f"Error in Google OAuth callback: {str(e)}", exc_info=True)
+        return RedirectResponse(
+            url=build_redirect_url("google_error=callback_failed"),
+            status_code=302
+        )
+
+
+async def google_disconnect(
+    user_id: str = Depends(get_current_user_id)
+):
+    """
+    Disconnect Google account by removing stored OAuth tokens.
+    
+    After this, user will need to re-authorize to use Google Forms export.
+    """
+    from services.google_auth_service import disconnect_google
+    
+    logger.info(f"Google disconnect requested for user {_short_user_id(user_id)}")
+    
+    try:
+        success = await disconnect_google(user_id)
+        
+        if success:
+            logger.info(f"Google account disconnected for user {_short_user_id(user_id)}")
+            return {
+                "message": "Google account disconnected successfully",
+                "google_connected": False
+            }
+        else:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to disconnect Google account"
+            )
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error disconnecting Google: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to disconnect Google account")
+
+
+async def google_status(
+    user_id: str = Depends(get_current_user_id)
+):
+    """
+    Check if user has connected their Google account.
+    
+    Returns connection status and whether Google Forms export is available.
+    """
+    from services.google_auth_service import (
+        is_google_auth_configured,
+        is_user_connected,
+    )
+    
+    logger.debug(f"Google status check for user {_short_user_id(user_id)}")
+    
+    try:
+        # Check if OAuth is configured at all
+        configured = is_google_auth_configured()
+        
+        # Check if user is connected
+        connected = await is_user_connected(user_id) if configured else False
+        
+        return {
+            "google_configured": configured,
+            "google_connected": connected,
+            "can_export_to_forms": configured and connected
+        }
+        
+    except Exception as e:
+        logger.error(f"Error checking Google status: {str(e)}", exc_info=True)
+        # Return safe defaults on error
+        return {
+            "google_configured": False,
+            "google_connected": False,
+            "can_export_to_forms": False
+        }

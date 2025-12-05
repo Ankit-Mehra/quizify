@@ -20,7 +20,7 @@ BEGIN
 END $$;
 
 -- Ensure account_tier column exists in profiles (should already be there)
--- IMPORTANT: These values MUST match schemas/user.py -> Literal["free", "basic", "educator"]
+-- IMPORTANT: These values MUST match schemas/user.py -> Literal["free", "basic", "pro"]
 -- If you modify tier options, update BOTH this migration AND the schema file
 DO $$
 BEGIN
@@ -30,7 +30,7 @@ BEGIN
                    AND column_name = 'account_tier') THEN
         ALTER TABLE public.profiles 
         ADD COLUMN account_tier TEXT DEFAULT 'free' 
-        CHECK (account_tier IN ('free', 'basic', 'educator'));
+        CHECK (account_tier IN ('free', 'basic', 'pro'));
         
         CREATE INDEX idx_profiles_tier ON public.profiles(account_tier);
     END IF;

@@ -1,54 +1,122 @@
-# Actual vs Specified API Contracts Summary
+# API Contracts Folder Structure
 
-**Last Updated**: 2025-10-08  
-**Branch**: development  
-**Purpose**: Document what's ACTUALLY implemented vs what was specified
-
----
-
-## Overview
-
-This folder contains two sets of API contracts:
-
-### 📋 **Original Contracts** (Specification)
-Files without `IMPLEMENTED_` prefix show the **intended design** from the feature spec:
-- `generate-quiz-quota.md` - What SHOULD be implemented
-- `upgrade-tier.md` - What SHOULD be implemented
-- `search-quizzes.md` - What SHOULD be implemented
-- `generate-quiz-from-url.md` - What SHOULD be implemented
-- `file-upload-validation.md` - What SHOULD be implemented
-
-### ✅ **Actual Implementation Contracts** (Reality)
-Files with `IMPLEMENTED_` prefix show what's **currently in the codebase**:
-- `IMPLEMENTED_generate-quiz-from-text.md` - Actual behavior of text quiz generation
-- `IMPLEMENTED_get-my-quizzes.md` - Actual behavior of quiz listing
-- `IMPLEMENTED_generate-quiz-from-file.md` - Actual behavior of file quiz generation
+**Last Updated**: 2025-10-28  
+**Branch**: test/quiz-generation-and-taking-endpoints  
+**Purpose**: Documentation of all API endpoint contracts
 
 ---
 
-## What's Implemented
+## 📁 Folder Organization
 
-### ✅ Endpoints That Exist
+### ✅ **Current Implementation Contracts** (Source of Truth)
+All files prefixed with `IMPLEMENTED_` document the **actual current behavior** of the API:
 
-| Endpoint | Status | Notes |
-|----------|--------|-------|
-| `POST /api/quiz/generate/text` | ✅ Works | No quota validation |
-| `POST /api/quiz/generate/file` | ✅ Works | No quota validation, no size limit |
-| `GET /api/quiz/my-quizzes` | ✅ Works | No search/filter params |
-| `GET /api/quiz/{quiz_id}` | ✅ Works | Fully functional |
-| `DELETE /api/quiz/{quiz_id}` | ✅ Works | Fully functional |
-| `POST /api/quiz/{quiz_id}/submit` | ✅ Works | Fully functional |
+**Authentication & User Management:**
+- `IMPLEMENTED_auth-endpoints.md` - All 11 auth endpoints (signup, login, password management, etc.)
+- `IMPLEMENTED_admin-endpoints.md` - Admin user management (4 endpoints)
 
-### ❌ Endpoints That Don't Exist
+**Quiz Generation:**
+- `IMPLEMENTED_generate-quiz-from-text.md` - Text-based quiz generation
+- `IMPLEMENTED_generate-quiz-from-file.md` - File-based quiz generation (PDF/DOCX)
+- `IMPLEMENTED_generate-quiz-from-url.md` - URL scraping-based generation
 
-| Endpoint | Priority | Effort |
+**Quiz Management:**
+- `IMPLEMENTED_get-my-quizzes.md` - List user's quizzes
+- `IMPLEMENTED_get-quiz-by-id.md` - Get full quiz details
+- `IMPLEMENTED_get-quiz-metadata.md` - Get content source tracking
+- `IMPLEMENTED_delete-quiz.md` - Delete quiz
+
+**Quiz Submissions:**
+- `IMPLEMENTED_submit-quiz.md` - Submit answers and get results
+- `IMPLEMENTED_get-submission.md` - Get specific submission
+- `IMPLEMENTED_list-user-submissions.md` - List user's submissions
+- `IMPLEMENTED_list-quiz-submissions.md` - List quiz's submissions
+
+**File Management:**
+- `IMPLEMENTED_file-endpoints.md` - File upload/download/delete (4 endpoints)
+
+**Index:**
+- `CONTRACTS_INDEX.md` - Complete index of all 31 endpoints
+
+---
+
+### 📋 **Future Feature Specifications**
+Files that document **planned but not yet implemented** features:
+- `search-quizzes.md` - Future: Search/filter for quizzes
+- `upgrade-tier.md` - Future: Self-service tier upgrade
+
+### 📚 **Historical Documentation**
+- `AUDIT_SUMMARY.md` - Historical audit record (October 2025)
+- `_archive/old-specs/` - Superseded specification files
+
+---
+
+## 🎯 Which File Should I Use?
+
+### For Implementation
+✅ **Always use `IMPLEMENTED_*.md` files** - these reflect actual code behavior
+
+### For Planning Future Features
+📋 Use non-prefixed files (e.g., `search-quizzes.md`, `upgrade-tier.md`)
+
+### For Historical Context
+📚 Check `AUDIT_SUMMARY.md` or `_archive/old-specs/`
+
+---
+
+## 📊 Current Implementation Status
+
+### ✅ Fully Implemented (31 endpoints)
+- **Authentication**: 11 endpoints
+- **Quiz Generation**: 4 endpoints  
+- **Quiz Management**: 4 endpoints
+- **Submissions**: 4 endpoints
+- **Admin**: 4 endpoints
+- **Files**: 4 endpoints
+
+### 📋 Future Features (2 endpoints)
+- `GET /quiz/search` - Search and filter quizzes
+- `POST /auth/upgrade-tier` - Self-service tier upgrade
+
+---
+
+## 🔄 Maintenance Guidelines
+
+### When Implementation Changes:
+1. Update corresponding `IMPLEMENTED_*.md` file
+2. Update `CONTRACTS_INDEX.md` if endpoints added/removed
+3. Run contract verification tests
+
+### When Adding New Features:
+1. Create specification file (no prefix) for planning
+2. Implement feature
+3. Create `IMPLEMENTED_*.md` with actual behavior
+4. Move original spec to `_archive/old-specs/` if superseded
+
+---
+
+## 📖 Documentation Standards
+
+Each `IMPLEMENTED_*.md` contract includes:
+- ✅ Accurate response_model names
+- ✅ Complete request/response examples
+- ✅ All error responses (401, 403, 404, 422, 500)
+- ✅ Security features (RLS, RBAC, SSRF protection)
+- ✅ Implementation details
+- ✅ Usage examples (cURL, JavaScript)
+- ✅ Testing considerations
+- ✅ Integration points
+
+---
+
+**For Complete API Reference**: See `CONTRACTS_INDEX.md`
 |----------|----------|--------|
-| `POST /api/auth/upgrade-tier` | 🔴 HIGH | 3-4 hours |
-| `POST /api/quiz/generate/url` | 🟡 MEDIUM | 6-8 hours |
+| `POST /api/tier/upgrade` | 🟡 MEDIUM | 3-4 hours (needs payment integration) |
+| `GET /api/quiz/search` | 🟡 MEDIUM | 2-3 hours (query params + filtering) |
 
 ---
 
-## Key Differences: Spec vs Reality
+## Key Differences: Spec vs Reality (CORRECTED)
 
 ### 1. Quiz Generation (Text & File)
 
@@ -59,13 +127,13 @@ Files with `IMPLEMENTED_` prefix show what's **currently in the codebase**:
 - ✅ Return question count in response
 
 **Actual**:
-- ❌ No quota checking (unlimited generation)
-- ❌ No tier validation
-- ❌ No threshold checking
-- ⚠️ Text endpoint doesn't return questions
-- ✅ File endpoint returns questions
+- ✅ **Quota checking IS implemented** (validate_user_quota in all handlers)
+- ✅ **Tier validation works** (enforces free/basic/educator limits)
+- ❌ No 75% threshold checking (generates fewer if content insufficient)
+- ⚠️ Text endpoint doesn't return questions array
+- ✅ File endpoint returns questions array
 
-**Impact**: Users can generate unlimited quizzes, preventing monetization.
+**Impact**: Minimal - Only threshold validation missing (non-critical).
 
 ---
 
@@ -127,49 +195,44 @@ Files with `IMPLEMENTED_` prefix show what's **currently in the codebase**:
 - ✅ Save file_size_bytes to database
 
 **Actual**:
-- ❌ No file size limit (unlimited)
-- ⚠️ File type validation works
-- ⚠️ Content length validation works (50 char min)
-- ❌ file_size_bytes not saved
+- ⚠️ **File size enforced during quiz generation** (10MB limit in text processing)
+- ❌ **No size limit in /api/files/upload endpoint** (DoS risk)
+- ✅ File type validation works
+- ✅ Content length validation works (50 char min)
+- ⚠️ file_size_bytes not saved to database
 
-**Impact**: Minor - could accept huge files that crash the server.
+**Impact**: Medium - upload endpoint could accept huge files, but generation will fail.
 
 ---
 
-## Critical Missing Features
+## Critical Missing Features (CORRECTED)
 
 ### 🔴 HIGH Priority (Blocking Production)
 
-1. **Quota Enforcement**
-   - **Why**: Without this, users can generate unlimited quizzes
-   - **Impact**: No business model, potential abuse, database bloat
-   - **Effort**: 4-6 hours
-   - **Blockers**: None (database ready)
-
-2. **Tier Upgrade Endpoint**
-   - **Why**: Users can't upgrade from free to paid tiers
-   - **Impact**: No revenue, all users stuck on free tier
-   - **Effort**: 3-4 hours
-   - **Blockers**: Need verification token strategy (payment gateway or admin tokens)
+1. **File Upload Size Validation**
+   - **Why**: `/api/files/upload` has no size limit (DoS risk)
+   - **Impact**: Users can upload 1GB+ files, exhaust storage/memory
+   - **Effort**: 1-2 hours
+   - **Fix**: Add MAX_FILE_SIZE check in `file_handlers.py`
 
 ### 🟡 MEDIUM Priority (UX/Premium Features)
 
-3. **Quiz Search/Filter**
+2. **Quiz Search/Filter**
    - **Why**: Users with many quizzes have poor UX
    - **Impact**: Bad user experience, client-side performance issues
    - **Effort**: 2-3 hours
    - **Blockers**: None
 
-4. **Web URL Generation**
-   - **Why**: Differentiator for paid tiers
-   - **Impact**: No premium features to justify paid tiers
-   - **Effort**: 6-8 hours
-   - **Blockers**: None (dependencies installed)
+3. **Tier Upgrade Endpoint**
+   - **Why**: Users can't self-service upgrade (admin must do it)
+   - **Impact**: Admin bottleneck, poor UX
+   - **Effort**: 3-4 hours
+   - **Blockers**: Need payment integration or verification token strategy
 
 ### 🟢 LOW Priority (Polish)
 
-5. **File Size Limit**
-   - **Why**: Prevent huge file uploads
+4. **75% Question Threshold**
+   - **Why**: Ensure sufficient questions generated
    - **Impact**: Minor - potential server issues with huge files
    - **Effort**: 1 hour
    - **Blockers**: None

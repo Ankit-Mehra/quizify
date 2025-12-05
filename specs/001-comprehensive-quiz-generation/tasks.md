@@ -1,19 +1,6 @@
 # Tasks: Comprehensive Quiz Generation Platform
 
-**Input**: Design documents from `/specs/001-compreh##### 3.2.4. Submission Tests (T019-T020)
-
-- [x] **T019**: Contract test for POST /api/submission/submit ✅
-  - Valid submission (201)
-  - Invalid quiz_id (404)
-  - Missing answers (422)
-  - Empty answers array (400)
-  - Unauthorized (401)
-  
-- [x] **T020**: Contract test for GET /api/submission/{submission_id} ✅
-  - Retrieve submission (200)
-  - Non-existent submission (404)
-  - Other user's submission (403)
-  - Unauthorized (401)-generation/`  
+**Input**: Design documents from `/specs/001-comprehensive-quiz-generation/`  
 **Prerequisites**: plan.md ✅, research.md ✅, data-model.md ✅, contracts/ ✅  
 **Branch**: `001-comprehensive-quiz-generation`  
 **Date**: 2025-10-03

@@ -1,0 +1,439 @@
+"""
+Billing and subscription Pydantic schemas.
+
+This module defines request/response models for Stripe billing operations,
+including checkout sessions, customer portal, subscription status, and webhooks.
+"""
+
+from datetime import datetime
+from typing import Optional, Literal
+from pydantic import BaseModel, Field, HttpUrl, model_validator
+
+
+# ============================================================================
+# Checkout Session Schemas
+# ============================================================================
+
+class CheckoutSessionRequest(BaseModel):
+    """
+    Request to create a Stripe Checkout session.
+    
+    Frontend sends this when user clicks "Upgrade to Premium" or "Upgrade to Pro".
+    Backend returns a checkout URL to redirect the user to Stripe's hosted payment page.
+    """
+    tier: Literal["premium", "pro"] = Field(
+        ...,
+        description="The subscription tier to purchase (premium or pro)"
+    )
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "tier": "premium"
+            }
+        }
+
+
+class CheckoutSessionResponse(BaseModel):
+    """
+    Response containing Stripe Checkout session URL OR upgrade confirmation.
+    
+    For new subscriptions: Frontend should redirect user to checkout_url.
+    For upgrades: Returns status and message, no redirect needed.
+    
+    Response type is determined by the presence of fields:
+    - If checkout_url is present → new subscription flow
+    - If status is present → upgrade/downgrade flow
+    """
+    # For new subscriptions
+    checkout_url: Optional[HttpUrl] = Field(
+        None,
+        description="Stripe Checkout session URL - redirect user here (only for new subscriptions)"
+    )
+    session_id: Optional[str] = Field(
+        None,
+        description="Stripe Checkout session ID (cs_XXXXXXXXX) (only for new subscriptions)"
+    )
+    
+    # For subscription upgrades/downgrades
+    status: Optional[str] = Field(
+        None,
+        description="Status: 'upgraded', 'downgraded', or 'already_subscribed'"
+    )
+    message: Optional[str] = Field(
+        None,
+        description="Human-readable message about the upgrade/downgrade"
+    )
+    subscription_id: Optional[str] = Field(
+        None,
+        description="Subscription ID (for upgrades/downgrades)"
+    )
+    
+    @model_validator(mode='after')
+    def validate_response_type(self) -> 'CheckoutSessionResponse':
+        """
+        Ensure response is either a checkout response OR an upgrade response, not a mix.
+        This prevents invalid states where some fields from both types are present.
+        """
+        has_checkout = self.checkout_url is not None or self.session_id is not None
+        has_upgrade = self.status is not None
+        
+        if has_checkout and has_upgrade:
+            raise ValueError(
+                "Response cannot contain both checkout fields (checkout_url/session_id) "
+                "and upgrade fields (status). Must be one or the other."
+            )
+        
+        if not has_checkout and not has_upgrade:
+            raise ValueError(
+                "Response must contain either checkout fields (checkout_url, session_id) "
+                "or upgrade fields (status, message, subscription_id)."
+            )
+        
+        # Validate checkout response has both required fields
+        if has_checkout and (self.checkout_url is None or self.session_id is None):
+            raise ValueError(
+                "Checkout response must include both checkout_url and session_id."
+            )
+        
+        # Validate upgrade response has required fields
+        if has_upgrade and (self.message is None or self.subscription_id is None):
+            raise ValueError(
+                "Upgrade response must include status, message, and subscription_id."
+            )
+        
+        return self
+    
+    class Config:
+        json_schema_extra = {
+            "examples": [
+                {
+                    "description": "New subscription checkout",
+                    "value": {
+                        "checkout_url": "https://checkout.stripe.com/c/pay/cs_test_a1b2c3d4...",
+                        "session_id": "cs_test_a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0"
+                    }
+                },
+                {
+                    "description": "Subscription upgrade",
+                    "value": {
+                        "status": "upgraded",
+                        "message": "Successfully upgraded to pro",
+                        "subscription_id": "sub_abc123"
+                    }
+                },
+                {
+                    "description": "Subscription downgrade",
+                    "value": {
+                        "status": "downgraded",
+                        "message": "Successfully downgraded to basic (effective next billing cycle)",
+                        "subscription_id": "sub_abc123"
+                    }
+                }
+            ]
+        }
+
+
+# ============================================================================
+# Customer Portal Schemas
+# ============================================================================
+
+class PortalSessionResponse(BaseModel):
+    """
+    Response containing Stripe Customer Portal URL.
+    
+    Frontend should redirect user to this URL to manage their subscription
+    (view invoices, update payment method, cancel subscription).
+    """
+    portal_url: HttpUrl = Field(
+        ...,
+        description="Stripe Customer Portal URL - redirect user here"
+    )
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "portal_url": "https://billing.stripe.com/p/session/test_YWNjdF8xT..."
+            }
+        }
+
+
+class CheckoutSessionVerification(BaseModel):
+    """Response from checkout session verification"""
+    session_id: str = Field(..., description="Checkout session ID")
+    customer_id: str = Field(..., description="Stripe customer ID")
+    subscription_id: str = Field(..., description="Stripe subscription ID")
+    tier: str = Field(..., description="Account tier (premium/pro)")
+    status: str = Field(..., description="Subscription status")
+    current_period_end: Optional[int] = Field(None, description="Unix timestamp of period end")
+    payment_status: str = Field(..., description="Payment status (paid/unpaid)")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "session_id": "cs_test_a1b2c3d4e5f6g7h8i9j0",
+                "customer_id": "cus_ABC123xyz",
+                "subscription_id": "sub_DEF456uvw",
+                "tier": "premium",
+                "status": "active",
+                "current_period_end": 1734566400,
+                "payment_status": "paid"
+            }
+        }
+
+
+# ============================================================================
+# Subscription Status Schemas
+# ============================================================================
+
+class SubscriptionStatusResponse(BaseModel):
+    """
+    Current subscription and billing status for a user.
+    
+    Returned by GET /api/billing/subscription-status endpoint.
+    Frontend uses this to display billing information and subscription details.
+    """
+    account_tier: Literal["free", "premium", "pro"] = Field(
+        ...,
+        description="Current account tier"
+    )
+    subscription_status: Optional[str] = Field(
+        None,
+        description="Stripe subscription status (null for free tier)"
+    )
+    billing_status: str = Field(
+        ...,
+        description="Human-readable billing status"
+    )
+    stripe_customer_id: Optional[str] = Field(
+        None,
+        description="Stripe customer ID (null if never subscribed)"
+    )
+    stripe_subscription_id: Optional[str] = Field(
+        None,
+        description="Stripe subscription ID (null for free tier)"
+    )
+    subscription_canceled_at: Optional[str] = Field(
+        None,
+        description="ISO timestamp when subscription was canceled (null if active)"
+    )
+    current_period_start: Optional[str] = Field(
+        None,
+        description="ISO timestamp for start of current billing period"
+    )
+    current_period_end: Optional[str] = Field(
+        None,
+        description="ISO timestamp for end of current billing period"
+    )
+    current_quiz_count: int = Field(
+        ...,
+        description="Number of quizzes user has created"
+    )
+    quota_limit: int = Field(
+        ...,
+        description="Maximum quizzes allowed for current tier"
+    )
+    quota_exceeded: bool = Field(
+        ...,
+        description="True if user has reached quota limit"
+    )
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "account_tier": "premium",
+                "subscription_status": "active",
+                "billing_status": "active",
+                "stripe_customer_id": "cus_ABC123XYZ789",
+                "stripe_subscription_id": "sub_DEF456UVW012",
+                "subscription_canceled_at": None,
+                "current_period_start": "2025-11-01T00:00:00Z",
+                "current_period_end": "2025-12-01T00:00:00Z",
+                "in_grace_period": False,
+                "current_quiz_count": 42,
+                "quota_limit": 100,
+                "quota_exceeded": False
+            }
+        }
+
+
+# ============================================================================
+# Webhook Event Schemas
+# ============================================================================
+
+class WebhookEventMetadata(BaseModel):
+    """
+    Metadata extracted from Stripe webhook events.
+    
+    Used internally by webhook handler to process subscription events.
+    Not exposed in API responses.
+    """
+    event_id: str = Field(
+        ...,
+        description="Stripe event ID (evt_XXXXXXXXX) for idempotency"
+    )
+    event_type: str = Field(
+        ...,
+        description="Stripe event type (e.g., customer.subscription.created)"
+    )
+    customer_id: str = Field(
+        ...,
+        description="Stripe customer ID (cus_XXXXXXXXX)"
+    )
+    subscription_id: Optional[str] = Field(
+        None,
+        description="Stripe subscription ID (sub_XXXXXXXXX) if applicable"
+    )
+    subscription_status: Optional[str] = Field(
+        None,
+        description="Stripe subscription status if applicable"
+    )
+    price_id: Optional[str] = Field(
+        None,
+        description="Stripe price ID to determine tier"
+    )
+    cancel_at: Optional[datetime] = Field(
+        None,
+        description="Subscription cancellation timestamp if applicable"
+    )
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "event_id": "evt_1A2B3C4D5E6F7G8H9I0J1K2L",
+                "event_type": "customer.subscription.created",
+                "customer_id": "cus_ABC123XYZ789",
+                "subscription_id": "sub_DEF456UVW012",
+                "subscription_status": "active",
+                "price_id": "price_1A2B3C4D5E6F7G8H",
+                "cancel_at": None
+            }
+        }
+
+
+# ============================================================================
+# Upgrade Preview Schemas
+# ============================================================================
+
+class UpgradePreviewRequest(BaseModel):
+    """
+    Request to preview upgrade/downgrade cost before confirming.
+    
+    Frontend calls this to show the user what they'll be charged (proration)
+    before they confirm the subscription change.
+    """
+    tier: Literal["premium", "pro"] = Field(
+        ...,
+        description="The target subscription tier to preview"
+    )
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "tier": "pro"
+            }
+        }
+
+
+class UpgradePreviewResponse(BaseModel):
+    """
+    Response containing proration preview for subscription upgrade/downgrade.
+    
+    Shows the user exactly what they'll be charged, including:
+    - Credit for unused time on current plan
+    - Charge for remaining time on new plan
+    - Net amount due today
+    - What the next regular invoice will be
+    """
+    # Current subscription info
+    current_tier: str = Field(
+        ...,
+        description="User's current subscription tier"
+    )
+    target_tier: str = Field(
+        ...,
+        description="The tier user wants to upgrade/downgrade to"
+    )
+    
+    # Proration details
+    is_upgrade: bool = Field(
+        ...,
+        description="True if upgrading (higher tier), False if downgrading"
+    )
+    proration_amount: int = Field(
+        ...,
+        description="Amount charged today in cents (positive = charge, negative = credit)"
+    )
+    proration_amount_formatted: str = Field(
+        ...,
+        description="Human-readable proration amount (e.g., '$2.50')"
+    )
+    
+    # Credit/Debit breakdown
+    credit_amount: int = Field(
+        ...,
+        description="Credit for unused time on current plan (in cents, always positive or zero)"
+    )
+    credit_amount_formatted: str = Field(
+        ...,
+        description="Human-readable credit amount"
+    )
+    debit_amount: int = Field(
+        ...,
+        description="Charge for remaining time on new plan (in cents, always positive)"
+    )
+    debit_amount_formatted: str = Field(
+        ...,
+        description="Human-readable debit amount"
+    )
+    
+    # Future billing
+    next_billing_amount: int = Field(
+        ...,
+        description="Amount of next regular billing (in cents)"
+    )
+    next_billing_amount_formatted: str = Field(
+        ...,
+        description="Human-readable next billing amount (e.g., '$15.00/month')"
+    )
+    next_billing_date: datetime = Field(
+        ...,
+        description="Date of next regular billing"
+    )
+    
+    # Payment method
+    card_last4: Optional[str] = Field(
+        None,
+        description="Last 4 digits of card on file (e.g., '4242')"
+    )
+    card_brand: Optional[str] = Field(
+        None,
+        description="Card brand (e.g., 'visa', 'mastercard')"
+    )
+    
+    # For frontend messaging
+    message: str = Field(
+        ...,
+        description="Human-readable summary for the user"
+    )
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "current_tier": "premium",
+                "target_tier": "pro",
+                "is_upgrade": True,
+                "proration_amount": 250,
+                "proration_amount_formatted": "$2.50",
+                "credit_amount": 500,
+                "credit_amount_formatted": "$5.00",
+                "debit_amount": 750,
+                "debit_amount_formatted": "$7.50",
+                "next_billing_amount": 1500,
+                "next_billing_amount_formatted": "$15.00/month",
+                "next_billing_date": "2025-12-15T00:00:00Z",
+                "card_last4": "4242",
+                "card_brand": "visa",
+                "message": "You'll be charged $2.50 today. Then $15.00/month starting Dec 15."
+            }
+        }

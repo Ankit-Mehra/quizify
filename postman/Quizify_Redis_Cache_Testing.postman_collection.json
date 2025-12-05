@@ -1,0 +1,496 @@
+{
+	"info": {
+		"name": "Quizify - Redis Cache Testing",
+		"description": "Test Redis database caching for user tier and quiz metadata.\n\n## What This Tests\n- User tier caching (5 min TTL)\n- Quiz metadata caching (30 min TTL)\n- Cache hit vs miss performance\n- Cache invalidation\n\n## Expected Results\n- First call: 50-200ms (database)\n- Second call: 2-5ms (Redis cache)\n- **50x performance improvement**\n\n## Setup\n1. Set `base_url` in environment (e.g., https://your-app.railway.app)\n2. Get a valid JWT token and set `auth_token`\n3. Set `user_id` from your database\n4. Set `quiz_id` from an existing quiz\n\n## Test Sequence\n1. **Health Check** - Verify Redis is connected\n2. **User Tier (Cache Miss)** - First call hits database\n3. **User Tier (Cache Hit)** - Second call from Redis (FAST!)\n4. **Quiz Metadata (Cache Miss)** - First call hits database\n5. **Quiz Metadata (Cache Hit)** - Second call from Redis (FAST!)\n6. **Performance Comparison** - See timing difference\n\n## How to Verify\n- Check response times in Postman\n- Run Redis MONITOR: `docker exec -it quizify-redis redis-cli MONITOR`\n- First call should show SET command\n- Second call should show GET command",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "Setup & Health",
+			"item": [
+				{
+					"name": "Health Check - Redis Status",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Redis is enabled\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.redis_enabled).to.eql(true);",
+									"});",
+									"",
+									"pm.test(\"Redis is connected\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.redis_connected).to.eql(true);",
+									"});",
+									"",
+									"pm.test(\"Redis latency is acceptable (<50ms)\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.latency_ms).to.be.below(50);",
+									"});",
+									"",
+									"console.log(\"✅ Redis Health:\", pm.response.json());"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/health/redis",
+							"host": ["{{base_url}}"],
+							"path": ["health", "redis"]
+						},
+						"description": "Check Redis connectivity and latency.\n\n**Expected Response:**\n```json\n{\n  \"redis_enabled\": true,\n  \"redis_connected\": true,\n  \"latency_ms\": 2.34\n}\n```\n\n**If Redis is down:**\n```json\n{\n  \"redis_enabled\": true,\n  \"redis_connected\": false,\n  \"error\": \"Connection refused\"\n}\n```"
+					},
+					"response": []
+				},
+				{
+					"name": "Basic Health Check",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"App is healthy\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.status).to.eql(\"healthy\");",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/health",
+							"host": ["{{base_url}}"],
+							"path": ["health"]
+						}
+					},
+					"response": []
+				}
+			],
+			"description": "Verify Redis is connected and ready for testing."
+		},
+		{
+			"name": "User Tier Caching",
+			"item": [
+				{
+					"name": "1. User Tier Info (CACHE MISS - Slow)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"User tier data returned\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('account_tier');",
+									"    pm.expect(jsonData).to.have.property('quota_limit');",
+									"    pm.expect(jsonData).to.have.property('current_quiz_count');",
+									"});",
+									"",
+									"// Record response time",
+									"var responseTime = pm.response.responseTime;",
+									"pm.environment.set('cache_miss_time', responseTime);",
+									"",
+									"console.log(\"🔴 CACHE MISS - First Call (Database Query)\");",
+									"console.log(\"   Response Time: \" + responseTime + \"ms\");",
+									"console.log(\"   Expected: 50-200ms\");",
+									"console.log(\"   User Tier:\", pm.response.json().account_tier);",
+									"",
+									"pm.test(\"Response time is reasonable for database query (50-500ms)\", function () {",
+									"    pm.expect(pm.response.responseTime).to.be.below(500);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						},
+						{
+							"listen": "prerequest",
+							"script": {
+								"exec": [
+									"console.log(\"\\n\" + \"=\".repeat(70));",
+									"console.log(\"🧪 TEST 1: User Tier Info Caching\");",
+									"console.log(\"=\".repeat(70));",
+									"console.log(\"This will make TWO identical requests:\");",
+									"console.log(\"1. First request = CACHE MISS (hits database, slow)\");",
+									"console.log(\"2. Second request = CACHE HIT (from Redis, fast)\");",
+									"console.log(\"\");"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/auth/me",
+							"host": ["{{base_url}}"],
+							"path": ["api", "auth", "me"]
+						},
+						"description": "**First call - Cache Miss (Slow)**\n\nThis request will:\n1. Hit the database (slow)\n2. Cache the result in Redis (TTL: 5 minutes)\n3. Take 50-200ms\n\n**What to watch for:**\n- Response time: 50-200ms\n- Redis MONITOR shows: `SET \"user_tier:...\" \"...\" \"EX\" \"300\"`\n\n**Next:** Run request #2 immediately to see cache hit!"
+					},
+					"response": []
+				},
+				{
+					"name": "2. User Tier Info (CACHE HIT - Fast!)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"User tier data returned\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('account_tier');",
+									"});",
+									"",
+									"// Get times",
+									"var missTime = parseInt(pm.environment.get('cache_miss_time') || '100');",
+									"var hitTime = pm.response.responseTime;",
+									"var speedup = (missTime / hitTime).toFixed(1);",
+									"",
+									"pm.environment.set('cache_hit_time', hitTime);",
+									"pm.environment.set('speedup', speedup);",
+									"",
+									"console.log(\"\\n\" + \"=\".repeat(70));",
+									"console.log(\"✅ CACHE HIT - Second Call (From Redis)\");",
+									"console.log(\"=\".repeat(70));",
+									"console.log(\"🔴 First call (miss):  \" + missTime + \"ms (database)\");",
+									"console.log(\"🟢 Second call (hit):  \" + hitTime + \"ms (Redis cache)\");",
+									"console.log(\"📈 Performance improvement: \" + speedup + \"x faster\");",
+									"console.log(\"=\".repeat(70));",
+									"",
+									"if (parseFloat(speedup) >= 10) {",
+									"    console.log(\"✅ EXCELLENT! Cache is working as expected (>10x speedup)\");",
+									"} else if (parseFloat(speedup) >= 5) {",
+									"    console.log(\"⚠️  GOOD but lower than expected (<10x speedup)\");",
+									"} else {",
+									"    console.log(\"❌ WARNING: Cache may not be working properly (<5x speedup)\");",
+									"}",
+									"console.log(\"\");",
+									"",
+									"pm.test(\"Cache improves performance (at least 5x faster)\", function () {",
+									"    pm.expect(parseFloat(speedup)).to.be.above(5);",
+									"});",
+									"",
+									"pm.test(\"Cache hit is very fast (<50ms)\", function () {",
+									"    pm.expect(hitTime).to.be.below(50);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/auth/me",
+							"host": ["{{base_url}}"],
+							"path": ["api", "auth", "me"]
+						},
+						"description": "**Second call - Cache Hit (Fast!)**\n\nThis request will:\n1. Get data from Redis cache (fast!)\n2. Skip database entirely\n3. Take 2-5ms\n\n**What to watch for:**\n- Response time: 2-5ms (50x faster!)\n- Redis MONITOR shows: `GET \"user_tier:...\"`\n- Console shows speedup calculation\n\n**Expected improvement:** 30-50x faster"
+					},
+					"response": []
+				},
+				{
+					"name": "3. Performance Summary",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var missTime = pm.environment.get('cache_miss_time') || 'N/A';",
+									"var hitTime = pm.environment.get('cache_hit_time') || 'N/A';",
+									"var speedup = pm.environment.get('speedup') || 'N/A';",
+									"",
+									"console.log(\"\\n\" + \"=\".repeat(70));",
+									"console.log(\"📊 USER TIER CACHING - PERFORMANCE SUMMARY\");",
+									"console.log(\"=\".repeat(70));",
+									"console.log(\"Database Query (Cache Miss):  \" + missTime + \"ms\");",
+									"console.log(\"Redis Cache (Cache Hit):       \" + hitTime + \"ms\");",
+									"console.log(\"Performance Improvement:       \" + speedup + \"x faster\");",
+									"console.log(\"=\".repeat(70));",
+									"console.log(\"\");"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/health/redis",
+							"host": ["{{base_url}}"],
+							"path": ["health", "redis"]
+						},
+						"description": "Shows performance summary from previous tests."
+					},
+					"response": []
+				}
+			],
+			"description": "Test user tier caching (5 minute TTL).\n\n**Cache Key Pattern:** `user_tier:<user_id>`\n**TTL:** 300 seconds (5 minutes)\n**Expected Improvement:** 50x faster"
+		},
+		{
+			"name": "Quiz Metadata Caching",
+			"item": [
+				{
+					"name": "1. Get Quiz (CACHE MISS - Slow)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Quiz metadata returned\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('title');",
+									"    pm.expect(jsonData).to.have.property('id');",
+									"});",
+									"",
+									"var responseTime = pm.response.responseTime;",
+									"pm.environment.set('quiz_cache_miss_time', responseTime);",
+									"",
+									"console.log(\"\\n\" + \"=\".repeat(70));",
+									"console.log(\"🧪 TEST 2: Quiz Metadata Caching\");",
+									"console.log(\"=\".repeat(70));",
+									"console.log(\"🔴 CACHE MISS - First Call (Database Query)\");",
+									"console.log(\"   Response Time: \" + responseTime + \"ms\");",
+									"console.log(\"   Quiz Title:\", pm.response.json().title);",
+									"console.log(\"\");"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/quiz/{{quiz_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["api", "quiz", "{{quiz_id}}"]
+						},
+						"description": "**First call - Cache Miss (Slow)**\n\nThis request will:\n1. Fetch quiz metadata from database\n2. Cache it in Redis (TTL: 30 minutes)\n3. Take 50-200ms\n\n**What to watch for:**\n- Response time: 50-200ms\n- Redis MONITOR shows: `SET \"quiz_metadata:...\" \"...\" \"EX\" \"1800\"`"
+					},
+					"response": []
+				},
+				{
+					"name": "2. Get Quiz (CACHE HIT - Fast!)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"var missTime = parseInt(pm.environment.get('quiz_cache_miss_time') || '100');",
+									"var hitTime = pm.response.responseTime;",
+									"var speedup = (missTime / hitTime).toFixed(1);",
+									"",
+									"pm.environment.set('quiz_cache_hit_time', hitTime);",
+									"pm.environment.set('quiz_speedup', speedup);",
+									"",
+									"console.log(\"✅ CACHE HIT - Second Call (From Redis)\");",
+									"console.log(\"=\".repeat(70));",
+									"console.log(\"🔴 First call (miss):  \" + missTime + \"ms (database)\");",
+									"console.log(\"🟢 Second call (hit):  \" + hitTime + \"ms (Redis cache)\");",
+									"console.log(\"📈 Performance improvement: \" + speedup + \"x faster\");",
+									"console.log(\"=\".repeat(70));",
+									"",
+									"if (parseFloat(speedup) >= 10) {",
+									"    console.log(\"✅ EXCELLENT! Quiz cache is working perfectly\");",
+									"} else {",
+									"    console.log(\"⚠️  WARNING: Lower than expected speedup\");",
+									"}",
+									"console.log(\"\");",
+									"",
+									"pm.test(\"Quiz cache improves performance (at least 5x)\", function () {",
+									"    pm.expect(parseFloat(speedup)).to.be.above(5);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/quiz/{{quiz_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["api", "quiz", "{{quiz_id}}"]
+						},
+						"description": "**Second call - Cache Hit (Fast!)**\n\nThis request will:\n1. Get quiz metadata from Redis\n2. Skip database query\n3. Take 2-5ms\n\n**Expected improvement:** 30-50x faster"
+					},
+					"response": []
+				}
+			],
+			"description": "Test quiz metadata caching (30 minute TTL).\n\n**Cache Key Pattern:** `quiz_metadata:<quiz_id>:<user_id>`\n**TTL:** 1800 seconds (30 minutes)\n**Expected Improvement:** 50x faster"
+		},
+		{
+			"name": "Cache Verification",
+			"item": [
+				{
+					"name": "Final Performance Report",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var userMiss = pm.environment.get('cache_miss_time') || 'N/A';",
+									"var userHit = pm.environment.get('cache_hit_time') || 'N/A';",
+									"var userSpeedup = pm.environment.get('speedup') || 'N/A';",
+									"",
+									"var quizMiss = pm.environment.get('quiz_cache_miss_time') || 'N/A';",
+									"var quizHit = pm.environment.get('quiz_cache_hit_time') || 'N/A';",
+									"var quizSpeedup = pm.environment.get('quiz_speedup') || 'N/A';",
+									"",
+									"console.log(\"\\n\" + \"=\".repeat(70));",
+									"console.log(\"📊 REDIS CACHING - FINAL PERFORMANCE REPORT\");",
+									"console.log(\"=\".repeat(70));",
+									"console.log(\"\");",
+									"console.log(\"🔹 USER TIER CACHING:\");",
+									"console.log(\"   Database Query:     \" + userMiss + \"ms\");",
+									"console.log(\"   Redis Cache:        \" + userHit + \"ms\");",
+									"console.log(\"   Improvement:        \" + userSpeedup + \"x faster\");",
+									"console.log(\"\");",
+									"console.log(\"🔹 QUIZ METADATA CACHING:\");",
+									"console.log(\"   Database Query:     \" + quizMiss + \"ms\");",
+									"console.log(\"   Redis Cache:        \" + quizHit + \"ms\");",
+									"console.log(\"   Improvement:        \" + quizSpeedup + \"x faster\");",
+									"console.log(\"\");",
+									"console.log(\"=\".repeat(70));",
+									"",
+									"var avgSpeedup = ((parseFloat(userSpeedup) + parseFloat(quizSpeedup)) / 2).toFixed(1);",
+									"console.log(\"📈 AVERAGE SPEEDUP: \" + avgSpeedup + \"x\");",
+									"",
+									"if (parseFloat(avgSpeedup) >= 20) {",
+									"    console.log(\"✅ EXCELLENT! Redis caching is working perfectly!\");",
+									"    console.log(\"   Expected: 30-50x, Actual: \" + avgSpeedup + \"x\");",
+									"} else if (parseFloat(avgSpeedup) >= 10) {",
+									"    console.log(\"✅ GOOD! Cache is working but slightly below target\");",
+									"} else if (parseFloat(avgSpeedup) >= 5) {",
+									"    console.log(\"⚠️  WARNING: Cache working but performance lower than expected\");",
+									"} else {",
+									"    console.log(\"❌ ERROR: Cache may not be properly configured\");",
+									"}",
+									"",
+									"console.log(\"\\n💡 Next Steps:\");",
+									"console.log(\"   1. Check Redis MONITOR for SET/GET commands\");",
+									"console.log(\"   2. Run: docker exec -it quizify-redis redis-cli KEYS '*'\");",
+									"console.log(\"   3. Verify cache TTL: redis-cli TTL 'user_tier:...'  \");",
+									"console.log(\"=\".repeat(70));",
+									"console.log(\"\");"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/health/redis",
+							"host": ["{{base_url}}"],
+							"path": ["health", "redis"]
+						},
+						"description": "Shows final performance report with average speedup."
+					},
+					"response": []
+				}
+			],
+			"description": "Final verification and performance summary."
+		}
+	],
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "http://localhost:8000",
+			"type": "string"
+		},
+		{
+			"key": "auth_token",
+			"value": "YOUR_JWT_TOKEN_HERE",
+			"type": "string"
+		},
+		{
+			"key": "quiz_id",
+			"value": "YOUR_QUIZ_ID_HERE",
+			"type": "string"
+		}
+	]
+}
