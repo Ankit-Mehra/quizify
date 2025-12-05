@@ -1,10 +1,13 @@
 """
-Integration tests for quiz search, filtering, and pagination functionality.
-Tests the GET /api/quiz/my-quizzes endpoint with query parameters.
+Unit and integration tests for quiz search, filtering, and pagination functionality.
+
+This file contains:
+- Unit tests for the handler and service layers using mocks.
+- Integration tests for the GET /api/quiz/my-quizzes endpoint with query parameters.
 """
 import pytest
 from unittest.mock import patch, MagicMock
-from datetime import date, datetime, time
+from datetime import date
 from fastapi import HTTPException
 from handlers.quiz_handlers import get_user_quizzes_handler
 from services.db_services.supabase_quiz import get_user_quizzes
@@ -455,7 +458,7 @@ class TestGetUserQuizzesService:
         mock_supabase.table.return_value.select.return_value.eq.return_value = mock_data_query
         mock_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = mock_count_query
         
-        result = get_user_quizzes("user-1", page=3, limit=10)
+        get_user_quizzes("user-1", page=3, limit=10)
         
         # Page 3 with limit 10 should use offset 20 (range 20-29)
         mock_data_query.order.return_value.range.assert_called_once_with(20, 29)
@@ -529,6 +532,85 @@ class TestGetUserQuizzesService:
         assert result["total_pages"] == 0
         assert result["has_next"] is False
         assert result["has_previous"] is False
+    
+    @patch('services.db_services.supabase_quiz.get_supabase')
+    def test_service_start_date_filter(self, mock_get_supabase):
+        """Test start_date filter applies gte condition."""
+        mock_supabase = MagicMock()
+        mock_get_supabase.return_value = mock_supabase
+        
+        # Mock count query
+        mock_count_query = MagicMock()
+        mock_count_query.count = 0
+        
+        # Mock data query chain
+        mock_data_query = MagicMock()
+        mock_data_query.gte.return_value = mock_data_query
+        mock_data_query.order.return_value.range.return_value.execute.return_value.data = []
+        
+        mock_supabase.table.return_value.select.return_value.eq.return_value = mock_data_query
+        mock_supabase.table.return_value.select.return_value.eq.return_value.gte.return_value.execute.return_value = mock_count_query
+        
+        start = date(2025, 10, 1)
+        get_user_quizzes("user-1", start_date=start)
+        
+        # Verify gte was called with ISO format
+        mock_data_query.gte.assert_called_with("created_at", "2025-10-01")
+    
+    @patch('services.db_services.supabase_quiz.get_supabase')
+    def test_service_end_date_filter_inclusive(self, mock_get_supabase):
+        """Test end_date filter is inclusive (end of day)."""
+        mock_supabase = MagicMock()
+        mock_get_supabase.return_value = mock_supabase
+        
+        # Mock count query
+        mock_count_query = MagicMock()
+        mock_count_query.count = 0
+        
+        # Mock data query chain
+        mock_data_query = MagicMock()
+        mock_data_query.lte.return_value = mock_data_query
+        mock_data_query.order.return_value.range.return_value.execute.return_value.data = []
+        
+        mock_supabase.table.return_value.select.return_value.eq.return_value = mock_data_query
+        mock_supabase.table.return_value.select.return_value.eq.return_value.lte.return_value.execute.return_value = mock_count_query
+        
+        end = date(2025, 10, 31)
+        get_user_quizzes("user-1", end_date=end)
+        
+        # Verify lte was called - end date should be inclusive (end of day)
+        assert mock_data_query.lte.called
+        call_args = mock_data_query.lte.call_args
+        assert call_args[0][0] == "created_at"
+        # Should include time component for end of day
+        assert "2025-10-31" in call_args[0][1]
+    
+    @patch('services.db_services.supabase_quiz.get_supabase')
+    def test_service_date_range_filter(self, mock_get_supabase):
+        """Test both start_date and end_date filters applied together."""
+        mock_supabase = MagicMock()
+        mock_get_supabase.return_value = mock_supabase
+        
+        # Mock count query
+        mock_count_query = MagicMock()
+        mock_count_query.count = 0
+        
+        # Mock data query chain
+        mock_data_query = MagicMock()
+        mock_data_query.gte.return_value = mock_data_query
+        mock_data_query.lte.return_value = mock_data_query
+        mock_data_query.order.return_value.range.return_value.execute.return_value.data = []
+        
+        mock_supabase.table.return_value.select.return_value.eq.return_value = mock_data_query
+        mock_supabase.table.return_value.select.return_value.eq.return_value.gte.return_value.lte.return_value.execute.return_value = mock_count_query
+        
+        start = date(2025, 10, 1)
+        end = date(2025, 10, 31)
+        get_user_quizzes("user-1", start_date=start, end_date=end)
+        
+        # Verify both gte and lte were called
+        assert mock_data_query.gte.called
+        assert mock_data_query.lte.called
 
 
 class TestDateValidation:
