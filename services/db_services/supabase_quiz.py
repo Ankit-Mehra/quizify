@@ -334,10 +334,14 @@ def get_user_quizzes(
     user_token: Optional[str] = None,
     title: Optional[str] = None,
     start_date: Optional[date] = None,
-    end_date: Optional[date] = None
+    end_date: Optional[date] = None,
+    source_type: Optional[str] = None,
+    mode: Optional[str] = None,
+    page: int = 1,
+    limit: int = 20
 ):
     """
-    Get all quizzes for a user with question counts and optional filtering.
+    Get paginated quizzes for a user with question counts and optional filtering.
     
     PERFORMANCE: Uses a single query with embedded count to avoid N+1 issue.
     Previously made one query per quiz to count questions.
@@ -348,9 +352,13 @@ def get_user_quizzes(
         title: Optional title filter (case-insensitive partial match)
         start_date: Optional start date filter (inclusive)
         end_date: Optional end date filter (inclusive, end of day)
+        source_type: Optional content source type filter (file, url, text)
+        mode: Optional generation mode filter (standard, enhanced)
+        page: Page number (1-indexed, default 1)
+        limit: Number of items per page (default 20, max 100)
     
     Returns:
-        List of quiz dictionaries with question counts
+        PaginatedQuizzesResponse with quizzes and pagination metadata
     """
     try:
         # Use authenticated client if token provided, otherwise use service role
@@ -361,39 +369,52 @@ def get_user_quizzes(
             supabase = get_supabase()
             logger.debug(f"Using service role to fetch quizzes for user: {user_id}")
         
-        logger.info(f"Fetching quizzes for user: {user_id} (title={title}, start_date={start_date}, end_date={end_date})")
+        logger.info(f"Fetching quizzes for user: {user_id} (title={title}, start_date={start_date}, end_date={end_date}, source_type={source_type}, mode={mode}, page={page}, limit={limit})")
         
-        # PERFORMANCE FIX: Get quizzes with question count in single query
-        # Uses Supabase's embedded count feature to avoid N+1 queries
-        query = supabase.table("quizzes").select(
+        # Build base query for counting total matches
+        count_query = supabase.table("quizzes").select("id", count="exact").eq("created_by", user_id)
+        
+        # Build data query with embedded question count
+        data_query = supabase.table("quizzes").select(
             "id, title, created_at, created_by, generation_mode, content_source_type, questions(count)"
         ).eq("created_by", user_id)
         
-        # Apply title filter (case-insensitive partial match)
+        # Apply filters to both queries
         if title:
-            query = query.ilike("title", f"%{title}%")
+            count_query = count_query.ilike("title", f"%{title}%")
+            data_query = data_query.ilike("title", f"%{title}%")
         
-        # Apply start_date filter (inclusive)
         if start_date:
-            query = query.gte("created_at", start_date.isoformat())
+            count_query = count_query.gte("created_at", start_date.isoformat())
+            data_query = data_query.gte("created_at", start_date.isoformat())
         
-        # Apply end_date filter (inclusive - end of day)
         if end_date:
-            # Make end_date inclusive by setting time to end of day
             end_datetime = datetime.combine(end_date, time.max)
-            query = query.lte("created_at", end_datetime.isoformat())
+            count_query = count_query.lte("created_at", end_datetime.isoformat())
+            data_query = data_query.lte("created_at", end_datetime.isoformat())
         
-        # Execute query with ordering
-        quizzes_data = query.order("created_at", desc=True).execute()
+        if source_type:
+            count_query = count_query.eq("content_source_type", source_type)
+            data_query = data_query.eq("content_source_type", source_type)
         
-        if not quizzes_data.data:
-            logger.debug(f"No quizzes found for user: {user_id}")
-            return []
+        if mode:
+            count_query = count_query.eq("generation_mode", mode)
+            data_query = data_query.eq("generation_mode", mode)
+        
+        # Get total count
+        count_result = count_query.execute()
+        total = count_result.count if count_result.count is not None else 0
+        
+        # Calculate pagination values
+        total_pages = (total + limit - 1) // limit if total > 0 else 0
+        offset = (page - 1) * limit
+        
+        # Apply pagination and ordering to data query
+        quizzes_data = data_query.order("created_at", desc=True).range(offset, offset + limit - 1).execute()
         
         # Process the results - extract count from embedded relation
         quizzes = []
-        for quiz in quizzes_data.data:
-            # Supabase returns questions as [{"count": N}] for count queries
+        for quiz in quizzes_data.data or []:
             questions_data = quiz.get("questions", [])
             question_count = questions_data[0].get("count", 0) if questions_data else 0
             
@@ -407,8 +428,17 @@ def get_user_quizzes(
                 "question_count": question_count
             })
 
-        logger.debug(f"Found {len(quizzes)} quizzes for user: {user_id}")
-        return quizzes
+        logger.debug(f"Found {len(quizzes)} quizzes (page {page}/{total_pages}, total: {total}) for user: {user_id}")
+        
+        return {
+            "quizzes": quizzes,
+            "total": total,
+            "page": page,
+            "limit": limit,
+            "total_pages": total_pages,
+            "has_next": page < total_pages,
+            "has_previous": page > 1
+        }
     except Exception as e:
         logger.error(f"Error retrieving user quizzes: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))

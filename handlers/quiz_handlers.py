@@ -872,9 +872,23 @@ async def get_user_quizzes_handler(
     user_token: str = Depends(get_current_user_token),
     title: Optional[str] = Query(None, description="Search quizzes by title (case-insensitive, partial match)"),
     start_date: Optional[date] = Query(None, description="Filter quizzes created on or after this date (YYYY-MM-DD)"),
-    end_date: Optional[date] = Query(None, description="Filter quizzes created on or before this date (YYYY-MM-DD)")
+    end_date: Optional[date] = Query(None, description="Filter quizzes created on or before this date (YYYY-MM-DD)"),
+    source_type: Optional[str] = Query(None, description="Filter by content source type: file, url, or text"),
+    mode: Optional[str] = Query(None, description="Filter by generation mode: standard or enhanced"),
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    limit: int = Query(20, ge=1, le=100, description="Number of quizzes per page (max 100)")
 ):
-    """Get all quizzes created by the current user with optional filtering."""
+    """
+    Get all quizzes created by the current user with optional filtering and pagination.
+    
+    Supports filtering by:
+    - title: Case-insensitive partial match
+    - start_date/end_date: Date range filter (inclusive)
+    - source_type: Content source (file, url, text)
+    - mode: Generation mode (standard, enhanced)
+    
+    Returns paginated results with metadata for building pagination UI.
+    """
     try:
         # Validate date range
         if start_date and end_date and start_date > end_date:
@@ -883,14 +897,32 @@ async def get_user_quizzes_handler(
                 detail="start_date must be less than or equal to end_date"
             )
         
-        quizzes = get_user_quizzes(
+        # Validate source_type if provided
+        if source_type and source_type not in ("file", "url", "text"):
+            raise HTTPException(
+                status_code=400,
+                detail="source_type must be one of: file, url, text"
+            )
+        
+        # Validate mode if provided
+        if mode and mode not in ("standard", "enhanced"):
+            raise HTTPException(
+                status_code=400,
+                detail="mode must be one of: standard, enhanced"
+            )
+        
+        result = get_user_quizzes(
             current_user_id,
             user_token=user_token,
             title=title,
             start_date=start_date,
-            end_date=end_date
+            end_date=end_date,
+            source_type=source_type,
+            mode=mode,
+            page=page,
+            limit=limit
         )
-        return quizzes
+        return result
     except HTTPException:
         # Re-raise HTTP exceptions as-is
         raise

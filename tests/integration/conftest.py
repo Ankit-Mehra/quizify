@@ -508,11 +508,21 @@ class MockSupabaseAsyncClient:
         return mock_requests_get(url, headers=headers)
 
 
-def mock_get_user_quizzes(user_id, user_token=None, title=None, start_date=None, end_date=None):
-    """Mock getting user quizzes with optional filtering."""
+def mock_get_user_quizzes(user_id, user_token=None, title=None, start_date=None, end_date=None, source_type=None, mode=None, page=1, limit=20):
+    """Mock getting user quizzes with optional filtering and pagination."""
     quizzes = _quiz_storage.get_user_quizzes(user_id)
-    # Note: Filtering not implemented in mock - returns all quizzes
-    return quizzes
+    # Note: Filtering not implemented in mock - returns all quizzes with pagination wrapper
+    total = len(quizzes)
+    total_pages = (total + limit - 1) // limit if total > 0 else 0
+    return {
+        "quizzes": quizzes,
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "total_pages": total_pages,
+        "has_next": page < total_pages,
+        "has_previous": page > 1
+    }
 
 
 def mock_get_quiz_from_database(quiz_id, user_id=None):

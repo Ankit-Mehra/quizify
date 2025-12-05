@@ -245,7 +245,21 @@ class MyQuizzesResponse(BaseModel):
     created_by: Optional[str] = None
     created_at: Optional[str] = None
     generation_mode: Optional[str] = "standard"  # "standard" or "enhanced"
+    content_source_type: Optional[str] = None  # "file", "url", or "text"
     question_count: Optional[int] = None
+
+
+class PaginatedQuizzesResponse(BaseModel):
+    """Paginated response for user quizzes with filtering metadata."""
+    model_config = ConfigDict(strict=True)
+    quizzes: List[MyQuizzesResponse] = Field(default_factory=list, description="List of quizzes for current page")
+    total: int = Field(..., description="Total number of quizzes matching the filters")
+    page: int = Field(..., ge=1, description="Current page number (1-indexed)")
+    limit: int = Field(..., ge=1, le=100, description="Number of items per page")
+    total_pages: int = Field(..., ge=0, description="Total number of pages")
+    has_next: bool = Field(..., description="Whether there is a next page")
+    has_previous: bool = Field(..., description="Whether there is a previous page")
+
 
 class DeleteQuizResponse(BaseModel):
     """Response for quiz deletion"""
