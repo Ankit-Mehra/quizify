@@ -85,7 +85,7 @@ async def generate_quiz_from_file_openai(
         text = await file.read()
         file_size = len(text)
         
-        # Validate file size (10MB limit)
+        # Validate file size (10MB limit, inclusive - files up to 10MB accepted)
         if file_size > MAX_FILE_SIZE:
             raise HTTPException(
                 status_code=413,
@@ -140,11 +140,9 @@ async def generate_quiz_from_file_openai(
         #save metadata to database
         save_metadata(metadata)
 
-        #save file to supabase storage
-        await file.seek(0)  # Reset file pointer after reading
-        file_bytes = await file.read()
+        #save file to supabase storage (reuse already-read bytes to avoid double read)
         original_filename = file.filename or f"uploaded_{datetime.now().strftime('%Y%m%d%H%M%S')}"
-        save_file_to_supabase(current_user_id, file_bytes, original_filename, user_token, file.content_type)
+        save_file_to_supabase(current_user_id, text, original_filename, user_token, file.content_type)
 
         return {
             "quiz_id": quiz_id, 
