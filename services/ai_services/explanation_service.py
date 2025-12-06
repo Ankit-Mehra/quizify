@@ -274,7 +274,7 @@ class ExplanationService:
                 exception=e,
                 distinct_id=user_id,
                 properties={
-                    "quiz_type": "enhanced",
+                    "generation_mode": "enhanced",
                     "stage": "verify_and_explain",
                     "model": "gpt-4o-mini",
                     "content_source_type": content_source_type,
@@ -360,7 +360,7 @@ class ExplanationService:
                 exception=e,
                 distinct_id=user_id,
                 properties={
-                    "quiz_type": "enhanced",
+                    "generation_mode": "enhanced",
                     "stage": "verification",
                     "model": "gpt-4o-mini",
                     "content_source_type": content_source_type,
@@ -457,7 +457,7 @@ class ExplanationService:
                 exception=e,
                 distinct_id=user_id,
                 properties={
-                    "quiz_type": "enhanced",
+                    "generation_mode": "enhanced",
                     "stage": "explanation_generation",
                     "model": "gpt-4o-mini",
                     "content_source_type": content_source_type,

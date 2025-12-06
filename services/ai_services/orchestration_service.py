@@ -240,7 +240,7 @@ class QuizOrchestrationService:
                 exception=e,
                 distinct_id=user_id,
                 properties={
-                    "quiz_type": "enhanced",
+                    "generation_mode": "enhanced",
                     "stage": "rag_question_generation",
                     "model": "gpt-4o",
                     "question_type": question_type,
@@ -479,7 +479,7 @@ class QuizOrchestrationService:
                 exception=e,
                 distinct_id=user_id,
                 properties={
-                    "quiz_type": "enhanced",
+                    "generation_mode": "enhanced",
                     "stage": "rag_matching_generation",
                     "model": "gpt-4o",
                     "question_type": "matching",

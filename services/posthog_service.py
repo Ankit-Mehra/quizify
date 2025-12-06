@@ -88,11 +88,11 @@ def get_posthog_client() -> Optional[Posthog]:
                 host=Config.POSTHOG_HOST,
                 # Enable GeoIP lookup for event geolocation
                 disable_geoip=False,
-                # Enable automatic exception capture for unhandled exceptions
+                # Enable automatic exception capture for unhandled exceptions (SDK v3.7.0+)
                 # Note: FastAPI has its own exception handlers, so we also use
                 # capture_exception() manually in our exception handlers
                 enable_exception_autocapture=True,
-                # Capture local variable state when exceptions occur
+                # Capture local variable state when exceptions occur (SDK v3.7.0+)
                 # This gives a debugger-like view in PostHog error tracking
                 capture_exception_code_variables=True,
             )
@@ -232,7 +232,7 @@ def capture_exception(
                 properties={
                     "path": "/api/quiz/generate",
                     "plan": "free",
-                    "quiz_type": "enhanced"
+                    "generation_mode": "enhanced"
                 }
             )
             raise  # Re-raise if needed
