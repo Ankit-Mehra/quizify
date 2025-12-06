@@ -9,7 +9,7 @@ from services.ai_services.pricing import calculate_cost
 from services.ai_services.explanation_service import ExplanationService
 from services.ai_services.prompts import BLOOM_DESCRIPTIONS, RAG_QUESTION_TYPE_PROMPTS, RAG_PROMPT_MCQ
 from services.db_services.supabase_llm_analytics import track_llm_call
-from services.posthog_service import capture_event
+from services.posthog_service import capture_exception
 from services.logger import ai_logger as logger
 from schemas.quiz import BloomLevel, Difficulty
 
@@ -234,18 +234,17 @@ class QuizOrchestrationService:
                 success=False,
                 error_message=str(e)
             )
-            # Capture to PostHog for error analytics
-            capture_event(
+            # Capture to PostHog Error Tracking for proper stack traces
+            # Uses capture_exception as per PostHog docs for error grouping
+            capture_exception(
+                exception=e,
                 distinct_id=user_id,
-                event="llm_error",
                 properties={
                     "quiz_type": "enhanced",
                     "stage": "rag_question_generation",
                     "model": "gpt-4o",
                     "question_type": question_type,
                     "content_source_type": content_source_type,
-                    "error_type": type(e).__name__,
-                    "error_message": str(e)[:500],
                     "trace_id": trace_id,
                 }
             )
@@ -475,18 +474,16 @@ class QuizOrchestrationService:
                 success=False,
                 error_message=str(e)
             )
-            # Capture to PostHog for error analytics
-            capture_event(
+            # Capture to PostHog Error Tracking for proper stack traces
+            capture_exception(
+                exception=e,
                 distinct_id=user_id,
-                event="llm_error",
                 properties={
                     "quiz_type": "enhanced",
                     "stage": "rag_matching_generation",
                     "model": "gpt-4o",
                     "question_type": "matching",
                     "content_source_type": content_source_type,
-                    "error_type": type(e).__name__,
-                    "error_message": str(e)[:500],
                     "trace_id": trace_id,
                 }
             )

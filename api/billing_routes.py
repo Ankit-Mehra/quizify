@@ -28,7 +28,7 @@ from schemas.billing import (
 )
 from services.billing_service import BillingService
 from services.db_services.supabase_quiz import get_supabase
-from services.posthog_service import capture_event
+from services.posthog_service import capture_exception
 from config import Config
 from handlers.billing_handler import verify_checkout_session
 from services.logger import app_logger as logger
@@ -647,13 +647,13 @@ async def stripe_webhook(
     except ValueError as e:
         # Invalid payload
         logger.error(f"Invalid webhook payload: {e}")
-        # Capture billing error to PostHog
-        capture_event(
+        # Capture billing exception to PostHog for proper error tracking with stack trace
+        capture_exception(
+            exception=e,
             distinct_id=None,
-            event="billing_error",
             properties={
+                "context": "billing_webhook",
                 "error_type": "invalid_payload",
-                "error_message": str(e)[:500],
                 "stripe_event_type": "unknown",
             }
         )
@@ -661,13 +661,13 @@ async def stripe_webhook(
     except stripe.SignatureVerificationError as e:
         # Invalid signature - potential replay attack or misconfiguration
         logger.error(f"Invalid webhook signature: {e}")
-        # Capture billing error to PostHog
-        capture_event(
+        # Capture billing exception to PostHog for proper error tracking with stack trace
+        capture_exception(
+            exception=e,
             distinct_id=None,
-            event="billing_error",
             properties={
+                "context": "billing_webhook",
                 "error_type": "signature_verification_failed",
-                "error_message": str(e)[:500],
                 "stripe_event_type": "unknown",
             }
         )
@@ -740,7 +740,7 @@ async def stripe_webhook(
             f"Error processing webhook {event_type} (ID: {event_id_short}...): {e}",
             exc_info=True
         )
-        # Capture billing error to PostHog for analytics and alerting
+        # Capture billing exception to PostHog for proper error tracking with stack trace
         # Extract user_id from webhook data if available
         user_id = None
         subscription_id = None
@@ -749,15 +749,14 @@ async def stripe_webhook(
         if "metadata" in data_object:
             user_id = data_object.get("metadata", {}).get("user_id")
         
-        capture_event(
+        capture_exception(
+            exception=e,
             distinct_id=user_id,
-            event="billing_error",
             properties={
+                "context": "billing_webhook",
                 "stripe_event_type": event_type,
                 "stripe_event_id": event_id,
                 "subscription_id": subscription_id,
-                "error_type": type(e).__name__,
-                "error_message": str(e)[:500],
             }
         )
         # Return 500 so Stripe retries the webhook

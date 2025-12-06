@@ -3,7 +3,7 @@ import time
 from typing import Dict, Any, List, Tuple
 from services.ai_services.openai_service import get_openai_client, _build_posthog_kwargs
 from services.db_services.supabase_llm_analytics import track_llm_call
-from services.posthog_service import capture_event
+from services.posthog_service import capture_exception
 from services.ai_services.pricing import calculate_cost
 from services.logger import ai_logger as logger
 
@@ -269,17 +269,15 @@ class ExplanationService:
             
         except Exception as e:
             logger.error(f"Verify+explain failed: {str(e)}")
-            # Capture to PostHog for error analytics
-            capture_event(
+            # Capture to PostHog Error Tracking for proper stack traces
+            capture_exception(
+                exception=e,
                 distinct_id=user_id,
-                event="llm_error",
                 properties={
                     "quiz_type": "enhanced",
                     "stage": "verify_and_explain",
                     "model": "gpt-4o-mini",
                     "content_source_type": content_source_type,
-                    "error_type": type(e).__name__,
-                    "error_message": str(e)[:500],
                     "trace_id": trace_id,
                 }
             )
@@ -357,17 +355,15 @@ class ExplanationService:
             
         except Exception as e:
             logger.error(f"Verification failed: {str(e)}")
-            # Capture to PostHog for error analytics
-            capture_event(
+            # Capture exception to PostHog for proper error tracking with stack trace
+            capture_exception(
+                exception=e,
                 distinct_id=user_id,
-                event="llm_error",
                 properties={
                     "quiz_type": "enhanced",
                     "stage": "verification",
                     "model": "gpt-4o-mini",
                     "content_source_type": content_source_type,
-                    "error_type": type(e).__name__,
-                    "error_message": str(e)[:500],
                     "trace_id": trace_id,
                 }
             )
@@ -456,17 +452,15 @@ class ExplanationService:
             
         except Exception as e:
             logger.error(f"Explanation generation failed: {str(e)}")
-            # Capture to PostHog for error analytics
-            capture_event(
+            # Capture exception to PostHog for proper error tracking with stack trace
+            capture_exception(
+                exception=e,
                 distinct_id=user_id,
-                event="llm_error",
                 properties={
                     "quiz_type": "enhanced",
                     "stage": "explanation_generation",
                     "model": "gpt-4o-mini",
                     "content_source_type": content_source_type,
-                    "error_type": type(e).__name__,
-                    "error_message": str(e)[:500],
                     "trace_id": trace_id,
                 }
             )

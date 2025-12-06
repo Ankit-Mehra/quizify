@@ -25,7 +25,7 @@ from services.logger import app_logger as logger  # noqa: E402
 from api import auth_routes, quiz_routes, file_routes, submission_routes, admin_routes, health_routes, billing_routes, export_routes, share_routes, contact_routes  # noqa: E402
 from middleware.auto_refresh import SupabaseAutoRefreshMiddleware, close_http_client  # noqa: E402
 from services.redis.client import lifespan as redis_lifespan  # noqa: E402
-from services.posthog_service import shutdown_posthog, is_posthog_enabled, capture_event  # noqa: E402
+from services.posthog_service import shutdown_posthog, is_posthog_enabled, capture_exception  # noqa: E402
 
 # Get the CORS origins from environment variable or use default
 try:
@@ -134,24 +134,26 @@ async def http_exception_handler(request: Request, exc: HTTPException):
     """
     Handle HTTPExceptions (intentional errors like 400, 401, 404, etc.)
     
-    Only log 5xx errors to PostHog since 4xx are often expected (auth failures,
+    Only capture 5xx errors to PostHog since 4xx are often expected (auth failures,
     validation errors, etc.) and would create too much noise.
+    
+    Uses capture_exception() for proper PostHog error tracking integration.
     """
     if exc.status_code >= 500:
         user_id = getattr(request.state, "auth_user_id", None)
         plan = getattr(request.state, "auth_plan", "unknown")
         
-        capture_event(
+        # Use capture_exception for proper error tracking
+        # PostHog will group these by exception type and provide stack traces
+        capture_exception(
+            exception=exc,
             distinct_id=user_id,
-            event="backend_error",
             properties={
                 "path": str(request.url.path),
                 "method": request.method,
                 "plan": plan,
                 "status_code": exc.status_code,
-                "error_type": "HTTPException",
-                "error_message": str(exc.detail),
-                "is_5xx": True,
+                "error_category": "http_5xx",
             }
         )
     
@@ -167,7 +169,10 @@ async def global_exception_handler(request: Request, exc: Exception):
     """
     Global handler for unhandled exceptions.
     
-    Captures all unhandled errors to PostHog for monitoring and debugging.
+    Captures all unhandled errors to PostHog Error Tracking for monitoring
+    and debugging. Uses capture_exception() for proper stack traces and
+    error grouping in PostHog's Error Tracking dashboard.
+    
     Returns a generic 500 error to avoid leaking internal details.
     """
     # Extract user context from request state (set by auth middleware)
@@ -180,17 +185,16 @@ async def global_exception_handler(request: Request, exc: Exception):
         exc_info=True
     )
     
-    # Capture to PostHog for analytics and alerting
-    capture_event(
+    # Capture to PostHog Error Tracking
+    # This provides proper stack traces, error grouping, and debugging tools
+    capture_exception(
+        exception=exc,
         distinct_id=user_id,
-        event="backend_error",
         properties={
             "path": str(request.url.path),
             "method": request.method,
             "plan": plan,
-            "error_type": type(exc).__name__,
-            "error_message": str(exc)[:500],  # Truncate long messages
-            "is_unhandled": True,
+            "error_category": "unhandled",
         }
     )
     

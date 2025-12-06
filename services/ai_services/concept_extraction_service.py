@@ -8,7 +8,7 @@ from services.ai_services.openai_service import get_openai_client, _build_postho
 from services.logger import ai_logger as logger
 from services.db_services.supabase_concepts import create_concepts
 from services.db_services.supabase_llm_analytics import track_llm_call
-from services.posthog_service import capture_event
+from services.posthog_service import capture_exception
 from services.ai_services.pricing import calculate_cost
 from config import config
 
@@ -264,17 +264,15 @@ class ConceptExtractionService:
                 success=False,
                 error_message=str(e)
             )
-            # Capture to PostHog for error analytics
-            capture_event(
+            # Capture to PostHog Error Tracking for proper stack traces
+            capture_exception(
+                exception=e,
                 distinct_id=user_id,
-                event="llm_error",
                 properties={
                     "quiz_type": "enhanced",
                     "stage": "concept_extraction",
                     "model": model,
                     "content_source_type": content_source_type,
-                    "error_type": type(e).__name__,
-                    "error_message": str(e)[:500],
                     "trace_id": trace_id,
                 }
             )
