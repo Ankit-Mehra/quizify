@@ -8,6 +8,7 @@ from services.ai_services.openai_service import get_openai_client, _build_postho
 from services.logger import ai_logger as logger
 from services.db_services.supabase_concepts import create_concepts
 from services.db_services.supabase_llm_analytics import track_llm_call
+from services.posthog_service import capture_exception
 from services.ai_services.pricing import calculate_cost
 from config import config
 
@@ -99,7 +100,8 @@ class ConceptExtractionService:
         user_id: str,
         user_token: str,
         document_id: str,
-        trace_id: Optional[str] = None
+        trace_id: Optional[str] = None,
+        content_source_type: str = "text"
     ) -> List[Dict[str, Any]]:
         """
         Extract concepts from chunks and store them.
@@ -110,6 +112,7 @@ class ConceptExtractionService:
             user_token: JWT token for RLS enforcement
             document_id: UUID of the parent document
             trace_id: Optional trace ID for analytics
+            content_source_type: Source type for analytics (text, file, url)
             
         Returns:
             List of stored concept records
@@ -131,7 +134,7 @@ class ConceptExtractionService:
         
         async def process_chunk(chunk):
             async with semaphore:
-                return await self._extract_from_chunk(chunk, user_id, document_id, trace_id)
+                return await self._extract_from_chunk(chunk, user_id, document_id, trace_id, content_source_type)
 
         tasks = [process_chunk(chunk) for chunk in chunks]
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -172,7 +175,8 @@ class ConceptExtractionService:
         chunk: Dict[str, Any],
         user_id: str,
         document_id: str,
-        trace_id: str
+        trace_id: str,
+        content_source_type: str = "text"
     ) -> List[Dict[str, Any]]:
         """Extract concepts from a single chunk using GPT-4o-mini."""
         start_time = time.time()
@@ -182,7 +186,13 @@ class ConceptExtractionService:
         posthog_kwargs = _build_posthog_kwargs(
             user_id=user_id,
             trace_id=trace_id,
-            properties={"call_type": "concept_extraction", "document_id": document_id}
+            properties={
+                "call_type": "concept_extraction",
+                "document_id": document_id,
+                "generation_mode": "enhanced",
+                "content_source_type": content_source_type,
+                "feature": "quiz_generation",
+            }
         )
         
         try:
@@ -242,7 +252,7 @@ class ConceptExtractionService:
             
         except Exception as e:
             logger.error(f"Error extracting concepts from chunk: {str(e)}")
-            # Track failure (sync)
+            # Track failure to Supabase (sync)
             track_llm_call(
                 user_id=user_id,
                 trace_id=trace_id,
@@ -253,5 +263,17 @@ class ConceptExtractionService:
                 latency_ms=int((time.time() - start_time) * 1000),
                 success=False,
                 error_message=str(e)
+            )
+            # Capture to PostHog Error Tracking for proper stack traces
+            capture_exception(
+                exception=e,
+                distinct_id=user_id,
+                properties={
+                    "generation_mode": "enhanced",
+                    "stage": "concept_extraction",
+                    "model": model,
+                    "content_source_type": content_source_type,
+                    "trace_id": trace_id,
+                }
             )
             return []

@@ -3,6 +3,7 @@ import time
 from typing import Dict, Any, List, Tuple
 from services.ai_services.openai_service import get_openai_client, _build_posthog_kwargs
 from services.db_services.supabase_llm_analytics import track_llm_call
+from services.posthog_service import capture_exception
 from services.ai_services.pricing import calculate_cost
 from services.logger import ai_logger as logger
 
@@ -132,13 +133,21 @@ class ExplanationService:
         question_data: Dict[str, Any],
         context: str,
         user_id: str,
-        trace_id: str
+        trace_id: str,
+        content_source_type: str = "text"
     ) -> Tuple[bool, float, List[str], str]:
         """
         Combined verification + explanation in a single LLM call.
         
         This is 50% faster than calling verify_question + generate_explanation separately.
         Handles different question types (MCQ, fill_blank, true_false, matching).
+        
+        Args:
+            question_data: The question dictionary to verify
+            context: Context text for verification
+            user_id: UUID of the user
+            trace_id: Trace ID for analytics
+            content_source_type: Source type for analytics (text, file, url)
         
         Returns:
             Tuple of (is_valid, confidence_score, issues_list, explanation_text)
@@ -214,7 +223,13 @@ class ExplanationService:
             posthog_kwargs = _build_posthog_kwargs(
                 user_id=user_id,
                 trace_id=trace_id,
-                properties={"call_type": "verify_explain", "question_type": question_type}
+                properties={
+                    "call_type": "verify_explain",
+                    "question_type": question_type,
+                    "generation_mode": "enhanced",
+                    "content_source_type": content_source_type,
+                    "feature": "quiz_generation",
+                }
             )
 
             response = await self.client.chat.completions.create(
@@ -254,6 +269,18 @@ class ExplanationService:
             
         except Exception as e:
             logger.error(f"Verify+explain failed: {str(e)}")
+            # Capture to PostHog Error Tracking for proper stack traces
+            capture_exception(
+                exception=e,
+                distinct_id=user_id,
+                properties={
+                    "generation_mode": "enhanced",
+                    "stage": "verify_and_explain",
+                    "model": "gpt-4o-mini",
+                    "content_source_type": content_source_type,
+                    "trace_id": trace_id,
+                }
+            )
             return False, 0.0, [f"Verification error: {str(e)}"], ""
 
     async def verify_question(
@@ -261,7 +288,8 @@ class ExplanationService:
         question_data: Dict[str, Any],
         context: str,
         user_id: str,
-        trace_id: str
+        trace_id: str,
+        content_source_type: str = "text"
     ) -> Tuple[bool, float, List[str]]:
         """
         Verify question accuracy and quality.
@@ -283,7 +311,12 @@ class ExplanationService:
             posthog_kwargs = _build_posthog_kwargs(
                 user_id=user_id,
                 trace_id=trace_id,
-                properties={"call_type": "verification"}
+                properties={
+                    "call_type": "verification",
+                    "generation_mode": "enhanced",
+                    "content_source_type": content_source_type,
+                    "feature": "quiz_generation",
+                }
             )
 
             response = await self.client.chat.completions.create(
@@ -322,6 +355,18 @@ class ExplanationService:
             
         except Exception as e:
             logger.error(f"Verification failed: {str(e)}")
+            # Capture exception to PostHog for proper error tracking with stack trace
+            capture_exception(
+                exception=e,
+                distinct_id=user_id,
+                properties={
+                    "generation_mode": "enhanced",
+                    "stage": "verification",
+                    "model": "gpt-4o-mini",
+                    "content_source_type": content_source_type,
+                    "trace_id": trace_id,
+                }
+            )
             # Fail safe: if verification crashes, we assume it's risky to proceed
             return False, 0.0, [f"Verification error: {str(e)}"]
 
@@ -330,7 +375,8 @@ class ExplanationService:
         question_data: Dict[str, Any],
         context: str,
         user_id: str,
-        trace_id: str
+        trace_id: str,
+        content_source_type: str = "text"
     ) -> str:
         """
         Generate detailed explanation string.
@@ -355,7 +401,12 @@ class ExplanationService:
             posthog_kwargs = _build_posthog_kwargs(
                 user_id=user_id,
                 trace_id=trace_id,
-                properties={"call_type": "explanation"}
+                properties={
+                    "call_type": "explanation",
+                    "generation_mode": "enhanced",
+                    "content_source_type": content_source_type,
+                    "feature": "quiz_generation",
+                }
             )
 
             response = await self.client.chat.completions.create(
@@ -401,6 +452,18 @@ class ExplanationService:
             
         except Exception as e:
             logger.error(f"Explanation generation failed: {str(e)}")
+            # Capture exception to PostHog for proper error tracking with stack trace
+            capture_exception(
+                exception=e,
+                distinct_id=user_id,
+                properties={
+                    "generation_mode": "enhanced",
+                    "stage": "explanation_generation",
+                    "model": "gpt-4o-mini",
+                    "content_source_type": content_source_type,
+                    "trace_id": trace_id,
+                }
+            )
             # Provide user-friendly fallback that includes the correct answer
             correct_answer = question_data.get("correct_answer", "")
             if correct_answer:

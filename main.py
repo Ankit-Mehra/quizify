@@ -1,7 +1,9 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.security import HTTPBearer
 from fastapi.openapi.utils import get_openapi
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from fastapi.exceptions import HTTPException
 from contextlib import asynccontextmanager
 import os
 import json
@@ -23,7 +25,7 @@ from services.logger import app_logger as logger  # noqa: E402
 from api import auth_routes, quiz_routes, file_routes, submission_routes, admin_routes, health_routes, billing_routes, export_routes, share_routes, contact_routes  # noqa: E402
 from middleware.auto_refresh import SupabaseAutoRefreshMiddleware, close_http_client  # noqa: E402
 from services.redis.client import lifespan as redis_lifespan  # noqa: E402
-from services.posthog_service import shutdown_posthog, is_posthog_enabled  # noqa: E402
+from services.posthog_service import shutdown_posthog, is_posthog_enabled, capture_exception  # noqa: E402
 
 # Get the CORS origins from environment variable or use default
 try:
@@ -121,6 +123,87 @@ app = FastAPI(
     lifespan=app_lifespan
 )
 logger.info("FastAPI application initialized")
+
+
+# =============================================================================
+# Global Exception Handlers for PostHog Error Tracking
+# =============================================================================
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    """
+    Handle HTTPExceptions (intentional errors like 400, 401, 404, etc.)
+    
+    Only capture 5xx errors to PostHog since 4xx are often expected (auth failures,
+    validation errors, etc.) and would create too much noise.
+    
+    Uses capture_exception() for proper PostHog error tracking integration.
+    """
+    if exc.status_code >= 500:
+        user_id = getattr(request.state, "auth_user_id", None)
+        plan = getattr(request.state, "auth_plan", "unknown")
+        
+        # Use capture_exception for proper error tracking
+        # PostHog will group these by exception type and provide stack traces
+        capture_exception(
+            exception=exc,
+            distinct_id=user_id,
+            properties={
+                "path": str(request.url.path),
+                "method": request.method,
+                "plan": plan,
+                "status_code": exc.status_code,
+                "error_category": "http_5xx",
+            }
+        )
+    
+    # Return standard HTTP error response
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail},
+    )
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """
+    Global handler for unhandled exceptions.
+    
+    Captures all unhandled errors to PostHog Error Tracking for monitoring
+    and debugging. Uses capture_exception() for proper stack traces and
+    error grouping in PostHog's Error Tracking dashboard.
+    
+    Returns a generic 500 error to avoid leaking internal details.
+    """
+    # Extract user context from request state (set by auth middleware)
+    user_id = getattr(request.state, "auth_user_id", None)
+    plan = getattr(request.state, "auth_plan", "unknown")
+    
+    # Log to console for debugging
+    logger.error(
+        f"Unhandled exception on {request.method} {request.url.path}: {type(exc).__name__}: {exc}",
+        exc_info=True
+    )
+    
+    # Capture to PostHog Error Tracking
+    # This provides proper stack traces, error grouping, and debugging tools
+    capture_exception(
+        exception=exc,
+        distinct_id=user_id,
+        properties={
+            "path": str(request.url.path),
+            "method": request.method,
+            "plan": plan,
+            "error_category": "unhandled",
+        }
+    )
+    
+    # Return generic error to client (don't leak internal details)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "An internal error occurred. Please try again later."},
+    )
+
 
 # Configure CORS for frontend
 app.add_middleware(

@@ -58,6 +58,8 @@ async def generate_quizzes_async(
     model_token_limit: int = 8000,
     user_id: Optional[str] = None,
     trace_id: Optional[str] = None,
+    generation_mode: str = "standard",
+    content_source_type: Optional[str] = None,
 ) -> List[Question]:
     """
     Generate quiz questions asynchronously with parallel LLM calls per question type.
@@ -69,6 +71,8 @@ async def generate_quizzes_async(
         model_token_limit: Maximum tokens per chunk
         user_id: Optional user ID for PostHog analytics
         trace_id: Optional trace ID for correlating related LLM calls
+        generation_mode: "standard" or "enhanced" for analytics tracking
+        content_source_type: "text", "file", or "url" for analytics tracking
         
     Returns:
         List of generated Question objects
@@ -98,7 +102,9 @@ async def generate_quizzes_async(
         merged_text = "\n\n".join(chunks)
         tasks.append(generate_quiz_for_type(
             qtype, merged_text, q_counts[qtype],
-            user_id=user_id, trace_id=trace_id
+            user_id=user_id, trace_id=trace_id,
+            generation_mode=generation_mode,
+            content_source_type=content_source_type
         ))
 
     results = await asyncio.gather(*tasks)
@@ -115,6 +121,8 @@ async def generate_quizzes_single_async(
     model_token_limit: int = 8000,
     user_id: Optional[str] = None,
     trace_id: Optional[str] = None,
+    generation_mode: str = "standard",
+    content_source_type: Optional[str] = None,
 ) -> List[Question]:
     """
     Asynchronously chunkifies text + calls LLM to generate questions concurrently.
@@ -128,6 +136,8 @@ async def generate_quizzes_single_async(
         model_token_limit: Maximum tokens per chunk
         user_id: Optional user ID for PostHog analytics
         trace_id: Optional trace ID for correlating related LLM calls
+        generation_mode: "standard" or "enhanced" for analytics tracking
+        content_source_type: "text", "file", or "url" for analytics tracking
         
     Returns:
         List of generated Question objects
@@ -151,7 +161,9 @@ async def generate_quizzes_single_async(
         tasks.append(asyncio.create_task(
             generate_quiz_async(
                 chunk, q_for_this_chunk, question_types,
-                user_id=user_id, trace_id=trace_id
+                user_id=user_id, trace_id=trace_id,
+                generation_mode=generation_mode,
+                content_source_type=content_source_type
             )
         ))
 

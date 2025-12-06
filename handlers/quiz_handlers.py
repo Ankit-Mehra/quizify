@@ -92,7 +92,9 @@ async def _generate_standard_mode(
         total_questions,
         question_types=question_types,
         user_id=user_id,
-        trace_id=trace_id
+        trace_id=trace_id,
+        generation_mode="standard",
+        content_source_type=content_source_type
     )
     
     # Save to database with proper content source tracking
@@ -150,7 +152,8 @@ async def _ingest_and_extract_concepts(
     user_token: str,
     trace_id: str,
     ingestion_service: IngestionService,
-    concept_service: ConceptExtractionService
+    concept_service: ConceptExtractionService,
+    content_source_type: str = "text"
 ) -> tuple[str, List[Dict], List[Dict]]:
     """
     Ingest content and extract concepts for enhanced mode.
@@ -184,7 +187,8 @@ async def _ingest_and_extract_concepts(
         user_id=user_id,
         user_token=user_token,
         document_id=document_id,
-        trace_id=trace_id
+        trace_id=trace_id,
+        content_source_type=content_source_type
     )
     t3 = time.time()
     logger.info(f"[TIMING] Concept extraction took {t3-t2:.2f}s for {len(chunks)} chunks -> {len(concepts)} concepts")
@@ -259,7 +263,8 @@ async def _generate_questions_parallel(
     user_token: str,
     trace_id: str,
     orchestration_service: QuizOrchestrationService,
-    all_concepts: List[Dict] = None
+    all_concepts: List[Dict] = None,
+    content_source_type: str = "text"
 ) -> List[Dict]:
     """
     Generate questions in parallel with retry logic for failures.
@@ -276,6 +281,7 @@ async def _generate_questions_parallel(
         orchestration_service: Service for orchestrating question generation.
         all_concepts: Optional full list of extracted concepts for matching question diversity.
             If None, falls back to concepts assigned to matching slots only.
+        content_source_type: Source type for analytics (text, file, url).
     
     Returns:
         List of valid generated question dictionaries.
@@ -308,7 +314,8 @@ async def _generate_questions_parallel(
                 user_token=user_token,
                 trace_id=trace_id,
                 bloom_level=bloom_level,
-                difficulty=difficulty
+                difficulty=difficulty,
+                content_source_type=content_source_type
             )
         
         tasks = [generate_one(c, t, idx) for c, t, idx in non_matching_pairs]
@@ -403,7 +410,8 @@ async def _generate_questions_parallel(
                         user_token=user_token,
                         trace_id=trace_id,
                         bloom_level=bloom_level,
-                        difficulty=difficulty
+                        difficulty=difficulty,
+                        content_source_type=content_source_type
                     )
                     valid_questions.append(fallback_result)
                 except Exception as e:
@@ -460,7 +468,8 @@ async def _generate_questions_parallel(
                         user_token=user_token,
                         trace_id=trace_id,
                         bloom_level=bloom_level,
-                        difficulty=difficulty
+                        difficulty=difficulty,
+                        content_source_type=content_source_type
                     )
                 )
             
@@ -484,7 +493,8 @@ async def _generate_questions_parallel(
                             user_token=user_token,
                             trace_id=trace_id,
                             bloom_level=bloom_level,
-                            difficulty=difficulty
+                            difficulty=difficulty,
+                            content_source_type=content_source_type
                         )
                         valid_questions.append(fallback_result)
                     except Exception as e:
@@ -1279,7 +1289,8 @@ async def _generate_enhanced_mode(
             user_token=user_token,
             trace_id=trace_id,
             ingestion_service=ingestion_service,
-            concept_service=concept_service
+            concept_service=concept_service,
+            content_source_type=content_source_type
         )
         logger.info(f"[TIMING] Step 1 (ingest+extract) took {time.time()-t1:.2f}s")
         
@@ -1302,7 +1313,8 @@ async def _generate_enhanced_mode(
             user_token=user_token,
             trace_id=trace_id,
             orchestration_service=orchestration_service,
-            all_concepts=concepts  # Pass all concepts for matching question diversity
+            all_concepts=concepts,  # Pass all concepts for matching question diversity
+            content_source_type=content_source_type
         )
         logger.info(f"[TIMING] Step 3 (generate questions) took {time.time()-t3:.2f}s")
         

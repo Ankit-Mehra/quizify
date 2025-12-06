@@ -243,6 +243,8 @@ async def generate_quiz_for_type(
     num_questions: int,
     user_id: Optional[str] = None,
     trace_id: Optional[str] = None,
+    generation_mode: str = "standard",
+    content_source_type: Optional[str] = None,
 ) -> List[Question]:
     """
     Generate quiz questions of a specific type using GPT-4o.
@@ -253,6 +255,8 @@ async def generate_quiz_for_type(
         num_questions: Number of questions to generate
         user_id: Optional user ID for PostHog analytics
         trace_id: Optional trace ID for correlating related LLM calls
+        generation_mode: "standard" or "enhanced" for analytics tracking
+        content_source_type: "text", "file", or "url" for analytics tracking
         
     Returns:
         List of generated Question objects
@@ -263,16 +267,21 @@ async def generate_quiz_for_type(
     
     client = get_openai_client()
     
-    # Build PostHog tracking kwargs
+    # Build PostHog tracking kwargs with generation mode and source type
+    properties = {
+        "question_type": qtype,
+        "num_questions": num_questions,
+        "content_length": len(text),
+        "feature": "quiz_generation",
+        "generation_mode": generation_mode,
+    }
+    if content_source_type:
+        properties["content_source_type"] = content_source_type
+    
     posthog_kwargs = _build_posthog_kwargs(
         user_id=user_id,
         trace_id=trace_id,
-        properties={
-            "question_type": qtype,
-            "num_questions": num_questions,
-            "content_length": len(text),
-            "feature": "quiz_generation",
-        }
+        properties=properties
     )
 
     response = await client.chat.completions.create(
@@ -300,6 +309,8 @@ async def generate_quiz_async(
     question_types: List[str],
     user_id: Optional[str] = None,
     trace_id: Optional[str] = None,
+    generation_mode: str = "standard",
+    content_source_type: Optional[str] = None,
 ) -> List[Question]:
     """
     Generate a mixed-type quiz using GPT-4o-mini with structured output.
@@ -313,6 +324,8 @@ async def generate_quiz_async(
         question_types: List of question types to include
         user_id: Optional user ID for PostHog analytics
         trace_id: Optional trace ID for correlating related LLM calls
+        generation_mode: "standard" or "enhanced" for analytics tracking
+        content_source_type: "text", "file", or "url" for analytics tracking
         
     Returns:
         List of generated Question objects
@@ -323,17 +336,29 @@ async def generate_quiz_async(
     
     client = get_openai_client()
     
-    # Build PostHog tracking kwargs
+    # Determine question_type for PostHog (use "mixed" if multiple types, otherwise the single type)
+    # This ensures consistent filtering in PostHog - always use singular "question_type" 
+    if len(question_types) == 1:
+        question_type_value = question_types[0]
+    else:
+        question_type_value = "mixed"
+    
+    # Build PostHog tracking kwargs with generation mode and source type
+    properties = {
+        "question_type": question_type_value,  # Singular, consistent with generate_quiz_for_type
+        "num_questions": num_questions,
+        "content_length": len(text),
+        "feature": "quiz_generation",
+        "model": "gpt-4o-mini",
+        "generation_mode": generation_mode,
+    }
+    if content_source_type:
+        properties["content_source_type"] = content_source_type
+    
     posthog_kwargs = _build_posthog_kwargs(
         user_id=user_id,
         trace_id=trace_id,
-        properties={
-            "question_types": question_types,
-            "num_questions": num_questions,
-            "content_length": len(text),
-            "feature": "quiz_generation",
-            "model": "gpt-4o-mini",
-        }
+        properties=properties
     )
     
     response = await client.beta.chat.completions.parse(

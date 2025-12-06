@@ -9,6 +9,7 @@ from services.ai_services.pricing import calculate_cost
 from services.ai_services.explanation_service import ExplanationService
 from services.ai_services.prompts import BLOOM_DESCRIPTIONS, RAG_QUESTION_TYPE_PROMPTS, RAG_PROMPT_MCQ
 from services.db_services.supabase_llm_analytics import track_llm_call
+from services.posthog_service import capture_exception
 from services.logger import ai_logger as logger
 from schemas.quiz import BloomLevel, Difficulty
 
@@ -81,7 +82,8 @@ class QuizOrchestrationService:
         user_token: str,
         trace_id: str,
         bloom_level: BloomLevel = BloomLevel.UNDERSTAND,
-        difficulty: Difficulty = Difficulty.MEDIUM
+        difficulty: Difficulty = Difficulty.MEDIUM,
+        content_source_type: str = "text"
     ) -> Dict[str, Any]:
         """
         Generate a single question for a concept.
@@ -94,6 +96,7 @@ class QuizOrchestrationService:
             trace_id: Trace ID for analytics
             bloom_level: Target Bloom's taxonomy level
             difficulty: easy, medium, or hard
+            content_source_type: Source type for analytics (text, file, url)
             
         Returns:
             Generated question dict with all fields
@@ -127,7 +130,15 @@ class QuizOrchestrationService:
         posthog_kwargs = _build_posthog_kwargs(
             user_id=user_id,
             trace_id=trace_id,
-            properties={"call_type": "question_generation", "bloom_level": bloom_level.value}
+            properties={
+                "call_type": "question_generation",
+                "bloom_level": bloom_level.value,
+                "difficulty": difficulty.value,
+                "question_type": question_type,
+                "generation_mode": "enhanced",
+                "content_source_type": content_source_type,
+                "feature": "quiz_generation",
+            }
         )
         
         try:
@@ -181,7 +192,8 @@ class QuizOrchestrationService:
                 question_data=result,
                 context=context,
                 user_id=user_id,
-                trace_id=trace_id
+                trace_id=trace_id,
+                content_source_type=content_source_type
             )
             
             if not is_valid:
@@ -210,7 +222,7 @@ class QuizOrchestrationService:
             
         except Exception as e:
             logger.error(f"Error generating question: {str(e)}")
-            # Track failure (sync)
+            # Track failure to Supabase (sync)
             track_llm_call(
                 user_id=user_id,
                 trace_id=trace_id,
@@ -221,6 +233,20 @@ class QuizOrchestrationService:
                 latency_ms=int((time.time() - start_time) * 1000),
                 success=False,
                 error_message=str(e)
+            )
+            # Capture to PostHog Error Tracking for proper stack traces
+            # Uses capture_exception as per PostHog docs for error grouping
+            capture_exception(
+                exception=e,
+                distinct_id=user_id,
+                properties={
+                    "generation_mode": "enhanced",
+                    "stage": "rag_question_generation",
+                    "model": "gpt-4o",
+                    "question_type": question_type,
+                    "content_source_type": content_source_type,
+                    "trace_id": trace_id,
+                }
             )
             raise
 
@@ -293,7 +319,8 @@ class QuizOrchestrationService:
         user_token: str,
         trace_id: str,
         bloom_level: BloomLevel = BloomLevel.UNDERSTAND,
-        difficulty: Difficulty = Difficulty.MEDIUM
+        difficulty: Difficulty = Difficulty.MEDIUM,
+        content_source_type: str = "text"
     ) -> Dict[str, Any]:
         """
         Generate a matching question using aggregated context from multiple concepts.
@@ -308,6 +335,7 @@ class QuizOrchestrationService:
             trace_id: Trace ID for analytics
             bloom_level: Target Bloom's taxonomy level
             difficulty: easy, medium, or hard
+            content_source_type: Source type for analytics (text, file, url)
             
         Returns:
             Generated matching question dict with all fields
@@ -339,7 +367,16 @@ class QuizOrchestrationService:
         posthog_kwargs = _build_posthog_kwargs(
             user_id=user_id,
             trace_id=trace_id,
-            properties={"call_type": "matching_generation", "bloom_level": bloom_level.value}
+            properties={
+                "call_type": "matching_generation",
+                "bloom_level": bloom_level.value,
+                "difficulty": difficulty.value,
+                "question_type": "matching",
+                "generation_mode": "enhanced",
+                "content_source_type": content_source_type,
+                "feature": "quiz_generation",
+                "concepts_used": len(concepts),
+            }
         )
         
         try:
@@ -425,6 +462,7 @@ class QuizOrchestrationService:
             
         except Exception as e:
             logger.error(f"Error generating matching question: {str(e)}")
+            # Track failure to Supabase
             track_llm_call(
                 user_id=user_id,
                 trace_id=trace_id,
@@ -435,5 +473,18 @@ class QuizOrchestrationService:
                 latency_ms=int((time.time() - start_time) * 1000),
                 success=False,
                 error_message=str(e)
+            )
+            # Capture to PostHog Error Tracking for proper stack traces
+            capture_exception(
+                exception=e,
+                distinct_id=user_id,
+                properties={
+                    "generation_mode": "enhanced",
+                    "stage": "rag_matching_generation",
+                    "model": "gpt-4o",
+                    "question_type": "matching",
+                    "content_source_type": content_source_type,
+                    "trace_id": trace_id,
+                }
             )
             raise
