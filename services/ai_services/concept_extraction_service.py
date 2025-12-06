@@ -8,6 +8,7 @@ from services.ai_services.openai_service import get_openai_client, _build_postho
 from services.logger import ai_logger as logger
 from services.db_services.supabase_concepts import create_concepts
 from services.db_services.supabase_llm_analytics import track_llm_call
+from services.posthog_service import capture_event
 from services.ai_services.pricing import calculate_cost
 from config import config
 
@@ -247,7 +248,7 @@ class ConceptExtractionService:
             
         except Exception as e:
             logger.error(f"Error extracting concepts from chunk: {str(e)}")
-            # Track failure (sync)
+            # Track failure to Supabase (sync)
             track_llm_call(
                 user_id=user_id,
                 trace_id=trace_id,
@@ -258,5 +259,18 @@ class ConceptExtractionService:
                 latency_ms=int((time.time() - start_time) * 1000),
                 success=False,
                 error_message=str(e)
+            )
+            # Capture to PostHog for error analytics
+            capture_event(
+                distinct_id=user_id,
+                event="llm_error",
+                properties={
+                    "quiz_type": "enhanced",
+                    "stage": "concept_extraction",
+                    "model": model,
+                    "error_type": type(e).__name__,
+                    "error_message": str(e)[:500],
+                    "trace_id": trace_id,
+                }
             )
             return []

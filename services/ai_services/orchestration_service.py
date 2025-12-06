@@ -9,6 +9,7 @@ from services.ai_services.pricing import calculate_cost
 from services.ai_services.explanation_service import ExplanationService
 from services.ai_services.prompts import BLOOM_DESCRIPTIONS, RAG_QUESTION_TYPE_PROMPTS, RAG_PROMPT_MCQ
 from services.db_services.supabase_llm_analytics import track_llm_call
+from services.posthog_service import capture_event
 from services.logger import ai_logger as logger
 from schemas.quiz import BloomLevel, Difficulty
 
@@ -217,7 +218,7 @@ class QuizOrchestrationService:
             
         except Exception as e:
             logger.error(f"Error generating question: {str(e)}")
-            # Track failure (sync)
+            # Track failure to Supabase (sync)
             track_llm_call(
                 user_id=user_id,
                 trace_id=trace_id,
@@ -228,6 +229,20 @@ class QuizOrchestrationService:
                 latency_ms=int((time.time() - start_time) * 1000),
                 success=False,
                 error_message=str(e)
+            )
+            # Capture to PostHog for error analytics
+            capture_event(
+                distinct_id=user_id,
+                event="llm_error",
+                properties={
+                    "quiz_type": "enhanced",
+                    "stage": "rag_question_generation",
+                    "model": "gpt-4o",
+                    "question_type": question_type,
+                    "error_type": type(e).__name__,
+                    "error_message": str(e)[:500],
+                    "trace_id": trace_id,
+                }
             )
             raise
 
@@ -440,6 +455,7 @@ class QuizOrchestrationService:
             
         except Exception as e:
             logger.error(f"Error generating matching question: {str(e)}")
+            # Track failure to Supabase
             track_llm_call(
                 user_id=user_id,
                 trace_id=trace_id,
@@ -450,5 +466,19 @@ class QuizOrchestrationService:
                 latency_ms=int((time.time() - start_time) * 1000),
                 success=False,
                 error_message=str(e)
+            )
+            # Capture to PostHog for error analytics
+            capture_event(
+                distinct_id=user_id,
+                event="llm_error",
+                properties={
+                    "quiz_type": "enhanced",
+                    "stage": "rag_matching_generation",
+                    "model": "gpt-4o",
+                    "question_type": "matching",
+                    "error_type": type(e).__name__,
+                    "error_message": str(e)[:500],
+                    "trace_id": trace_id,
+                }
             )
             raise

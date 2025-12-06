@@ -8,6 +8,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from config import config
 from services.logger import app_logger as logger
 from services.redis.sessions import SessionService
+from services.db_services.supabase_quiz import get_user_tier_info_cached
 
 security = HTTPBearer(auto_error=False)
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -185,13 +186,23 @@ async def _authenticate_request(
 
         await _validate_request_session(request, user_id)
 
+        # Fetch user plan/tier for error tracking context (uses Redis cache, ~1-5ms)
+        # This is non-blocking on cache hit and gracefully degrades on failure
+        try:
+            tier_info = await get_user_tier_info_cached(user_id)
+            request.state.auth_plan = tier_info.get("account_tier", "free")
+        except Exception as tier_error:
+            # Don't fail auth if tier lookup fails - just set default
+            logger.warning(f"Failed to fetch user tier for context: {tier_error}")
+            request.state.auth_plan = "unknown"
+
         request.state.auth_cached = True
         request.state.access_token = token
         request.state.auth_user_id = user_id
         request.state.auth_email = email
         request.state.auth_token = token
 
-        logger.debug("Authenticated user %s", _short_id(user_id, 8))
+        logger.debug("Authenticated user %s (plan: %s)", _short_id(user_id, 8), request.state.auth_plan)
         return user_id, token
 
     except HTTPException:

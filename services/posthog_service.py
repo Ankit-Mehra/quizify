@@ -148,3 +148,47 @@ def is_posthog_enabled() -> bool:
         Config.POSTHOG_LLM_ANALYTICS_ENABLED 
         and bool(Config.POSTHOG_API_KEY)
     )
+
+
+def capture_event(
+    distinct_id: Optional[str],
+    event: str,
+    properties: Optional[dict] = None
+) -> None:
+    """
+    Capture a custom event to PostHog (non-blocking).
+    
+    This is the primary helper for backend error tracing and custom analytics.
+    The PostHog SDK queues events internally, so this call is non-blocking.
+    
+    Args:
+        distinct_id: User identifier (user_id, email, or None for anonymous)
+        event: Event name (e.g., "backend_error", "llm_error", "billing_error")
+        properties: Additional event properties (path, error_type, etc.)
+        
+    Example:
+        capture_event(
+            distinct_id=user_id,
+            event="backend_error",
+            properties={
+                "path": "/api/quiz/generate",
+                "error_type": "ValueError",
+                "error_message": "Invalid input",
+                "plan": "free"
+            }
+        )
+    """
+    client = get_posthog_client()
+    if not client:
+        return  # PostHog not configured, silently skip
+    
+    try:
+        client.capture(
+            distinct_id=distinct_id or "anonymous_backend",
+            event=event,
+            properties=properties or {}
+        )
+    except Exception as e:
+        # Don't let PostHog errors affect the application
+        logger.warning(f"Failed to capture PostHog event '{event}': {e}")
+

@@ -3,6 +3,7 @@ import time
 from typing import Dict, Any, List, Tuple
 from services.ai_services.openai_service import get_openai_client, _build_posthog_kwargs
 from services.db_services.supabase_llm_analytics import track_llm_call
+from services.posthog_service import capture_event
 from services.ai_services.pricing import calculate_cost
 from services.logger import ai_logger as logger
 
@@ -259,6 +260,19 @@ class ExplanationService:
             
         except Exception as e:
             logger.error(f"Verify+explain failed: {str(e)}")
+            # Capture to PostHog for error analytics
+            capture_event(
+                distinct_id=user_id,
+                event="llm_error",
+                properties={
+                    "quiz_type": "enhanced",
+                    "stage": "verify_and_explain",
+                    "model": "gpt-4o-mini",
+                    "error_type": type(e).__name__,
+                    "error_message": str(e)[:500],
+                    "trace_id": trace_id,
+                }
+            )
             return False, 0.0, [f"Verification error: {str(e)}"], ""
 
     async def verify_question(
@@ -331,6 +345,19 @@ class ExplanationService:
             
         except Exception as e:
             logger.error(f"Verification failed: {str(e)}")
+            # Capture to PostHog for error analytics
+            capture_event(
+                distinct_id=user_id,
+                event="llm_error",
+                properties={
+                    "quiz_type": "enhanced",
+                    "stage": "verification",
+                    "model": "gpt-4o-mini",
+                    "error_type": type(e).__name__,
+                    "error_message": str(e)[:500],
+                    "trace_id": trace_id,
+                }
+            )
             # Fail safe: if verification crashes, we assume it's risky to proceed
             return False, 0.0, [f"Verification error: {str(e)}"]
 
@@ -410,6 +437,19 @@ class ExplanationService:
             
         except Exception as e:
             logger.error(f"Explanation generation failed: {str(e)}")
+            # Capture to PostHog for error analytics
+            capture_event(
+                distinct_id=user_id,
+                event="llm_error",
+                properties={
+                    "quiz_type": "enhanced",
+                    "stage": "explanation_generation",
+                    "model": "gpt-4o-mini",
+                    "error_type": type(e).__name__,
+                    "error_message": str(e)[:500],
+                    "trace_id": trace_id,
+                }
+            )
             # Provide user-friendly fallback that includes the correct answer
             correct_answer = question_data.get("correct_answer", "")
             if correct_answer:
