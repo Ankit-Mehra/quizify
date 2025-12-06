@@ -100,7 +100,8 @@ class ConceptExtractionService:
         user_id: str,
         user_token: str,
         document_id: str,
-        trace_id: Optional[str] = None
+        trace_id: Optional[str] = None,
+        content_source_type: str = "text"
     ) -> List[Dict[str, Any]]:
         """
         Extract concepts from chunks and store them.
@@ -111,6 +112,7 @@ class ConceptExtractionService:
             user_token: JWT token for RLS enforcement
             document_id: UUID of the parent document
             trace_id: Optional trace ID for analytics
+            content_source_type: Source type for analytics (text, file, url)
             
         Returns:
             List of stored concept records
@@ -132,7 +134,7 @@ class ConceptExtractionService:
         
         async def process_chunk(chunk):
             async with semaphore:
-                return await self._extract_from_chunk(chunk, user_id, document_id, trace_id)
+                return await self._extract_from_chunk(chunk, user_id, document_id, trace_id, content_source_type)
 
         tasks = [process_chunk(chunk) for chunk in chunks]
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -173,7 +175,8 @@ class ConceptExtractionService:
         chunk: Dict[str, Any],
         user_id: str,
         document_id: str,
-        trace_id: str
+        trace_id: str,
+        content_source_type: str = "text"
     ) -> List[Dict[str, Any]]:
         """Extract concepts from a single chunk using GPT-4o-mini."""
         start_time = time.time()
@@ -187,6 +190,7 @@ class ConceptExtractionService:
                 "call_type": "concept_extraction",
                 "document_id": document_id,
                 "generation_mode": "enhanced",
+                "content_source_type": content_source_type,
                 "feature": "quiz_generation",
             }
         )
@@ -268,6 +272,7 @@ class ConceptExtractionService:
                     "quiz_type": "enhanced",
                     "stage": "concept_extraction",
                     "model": model,
+                    "content_source_type": content_source_type,
                     "error_type": type(e).__name__,
                     "error_message": str(e)[:500],
                     "trace_id": trace_id,

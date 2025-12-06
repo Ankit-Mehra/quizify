@@ -82,7 +82,8 @@ class QuizOrchestrationService:
         user_token: str,
         trace_id: str,
         bloom_level: BloomLevel = BloomLevel.UNDERSTAND,
-        difficulty: Difficulty = Difficulty.MEDIUM
+        difficulty: Difficulty = Difficulty.MEDIUM,
+        content_source_type: str = "text"
     ) -> Dict[str, Any]:
         """
         Generate a single question for a concept.
@@ -95,6 +96,7 @@ class QuizOrchestrationService:
             trace_id: Trace ID for analytics
             bloom_level: Target Bloom's taxonomy level
             difficulty: easy, medium, or hard
+            content_source_type: Source type for analytics (text, file, url)
             
         Returns:
             Generated question dict with all fields
@@ -134,6 +136,7 @@ class QuizOrchestrationService:
                 "difficulty": difficulty.value,
                 "question_type": question_type,
                 "generation_mode": "enhanced",
+                "content_source_type": content_source_type,
                 "feature": "quiz_generation",
             }
         )
@@ -189,7 +192,8 @@ class QuizOrchestrationService:
                 question_data=result,
                 context=context,
                 user_id=user_id,
-                trace_id=trace_id
+                trace_id=trace_id,
+                content_source_type=content_source_type
             )
             
             if not is_valid:
@@ -239,6 +243,7 @@ class QuizOrchestrationService:
                     "stage": "rag_question_generation",
                     "model": "gpt-4o",
                     "question_type": question_type,
+                    "content_source_type": content_source_type,
                     "error_type": type(e).__name__,
                     "error_message": str(e)[:500],
                     "trace_id": trace_id,
@@ -315,7 +320,8 @@ class QuizOrchestrationService:
         user_token: str,
         trace_id: str,
         bloom_level: BloomLevel = BloomLevel.UNDERSTAND,
-        difficulty: Difficulty = Difficulty.MEDIUM
+        difficulty: Difficulty = Difficulty.MEDIUM,
+        content_source_type: str = "text"
     ) -> Dict[str, Any]:
         """
         Generate a matching question using aggregated context from multiple concepts.
@@ -330,6 +336,7 @@ class QuizOrchestrationService:
             trace_id: Trace ID for analytics
             bloom_level: Target Bloom's taxonomy level
             difficulty: easy, medium, or hard
+            content_source_type: Source type for analytics (text, file, url)
             
         Returns:
             Generated matching question dict with all fields
@@ -367,6 +374,7 @@ class QuizOrchestrationService:
                 "difficulty": difficulty.value,
                 "question_type": "matching",
                 "generation_mode": "enhanced",
+                "content_source_type": content_source_type,
                 "feature": "quiz_generation",
                 "concepts_used": len(concepts),
             }
@@ -476,6 +484,7 @@ class QuizOrchestrationService:
                     "stage": "rag_matching_generation",
                     "model": "gpt-4o",
                     "question_type": "matching",
+                    "content_source_type": content_source_type,
                     "error_type": type(e).__name__,
                     "error_message": str(e)[:500],
                     "trace_id": trace_id,
