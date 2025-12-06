@@ -376,7 +376,7 @@ def create_mock_quiz_response(num_questions, question_types=None, text="sample t
 
 
 # Mock AI services
-async def mock_generate_quizzes_single_async(text, num_questions, question_types=None, user_id=None, trace_id=None):
+async def mock_generate_quizzes_single_async(text, num_questions, question_types=None, user_id=None, trace_id=None, generation_mode=None, content_source_type=None):
     """
     Mock OpenAI quiz generation with PostHog analytics support.
     

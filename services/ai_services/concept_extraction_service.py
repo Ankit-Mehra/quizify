@@ -182,7 +182,12 @@ class ConceptExtractionService:
         posthog_kwargs = _build_posthog_kwargs(
             user_id=user_id,
             trace_id=trace_id,
-            properties={"call_type": "concept_extraction", "document_id": document_id}
+            properties={
+                "call_type": "concept_extraction",
+                "document_id": document_id,
+                "generation_mode": "enhanced",
+                "feature": "quiz_generation",
+            }
         )
         
         try:

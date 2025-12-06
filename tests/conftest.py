@@ -177,7 +177,7 @@ def mock_supabase_client(mock_supabase, mocker, mock_redis_client):
     def mock_delete_file_from_supabase(*args, **kwargs):
         return {"message": "File deleted successfully"}
     
-    async def mock_generate_quizzes_single_async(text, num_questions, question_types=None, user_id=None, trace_id=None):
+    async def mock_generate_quizzes_single_async(text, num_questions, question_types=None, user_id=None, trace_id=None, generation_mode=None, content_source_type=None):
         """Mock AI quiz generation with PostHog analytics support"""
         return [
             {

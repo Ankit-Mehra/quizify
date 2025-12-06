@@ -92,7 +92,9 @@ async def _generate_standard_mode(
         total_questions,
         question_types=question_types,
         user_id=user_id,
-        trace_id=trace_id
+        trace_id=trace_id,
+        generation_mode="standard",
+        content_source_type=content_source_type
     )
     
     # Save to database with proper content source tracking

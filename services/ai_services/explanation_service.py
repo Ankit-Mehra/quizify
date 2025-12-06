@@ -214,7 +214,12 @@ class ExplanationService:
             posthog_kwargs = _build_posthog_kwargs(
                 user_id=user_id,
                 trace_id=trace_id,
-                properties={"call_type": "verify_explain", "question_type": question_type}
+                properties={
+                    "call_type": "verify_explain",
+                    "question_type": question_type,
+                    "generation_mode": "enhanced",
+                    "feature": "quiz_generation",
+                }
             )
 
             response = await self.client.chat.completions.create(
@@ -283,7 +288,11 @@ class ExplanationService:
             posthog_kwargs = _build_posthog_kwargs(
                 user_id=user_id,
                 trace_id=trace_id,
-                properties={"call_type": "verification"}
+                properties={
+                    "call_type": "verification",
+                    "generation_mode": "enhanced",
+                    "feature": "quiz_generation",
+                }
             )
 
             response = await self.client.chat.completions.create(

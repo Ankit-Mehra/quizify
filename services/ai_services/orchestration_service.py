@@ -127,7 +127,14 @@ class QuizOrchestrationService:
         posthog_kwargs = _build_posthog_kwargs(
             user_id=user_id,
             trace_id=trace_id,
-            properties={"call_type": "question_generation", "bloom_level": bloom_level.value}
+            properties={
+                "call_type": "question_generation",
+                "bloom_level": bloom_level.value,
+                "difficulty": difficulty.value,
+                "question_type": question_type,
+                "generation_mode": "enhanced",
+                "feature": "quiz_generation",
+            }
         )
         
         try:
@@ -339,7 +346,15 @@ class QuizOrchestrationService:
         posthog_kwargs = _build_posthog_kwargs(
             user_id=user_id,
             trace_id=trace_id,
-            properties={"call_type": "matching_generation", "bloom_level": bloom_level.value}
+            properties={
+                "call_type": "matching_generation",
+                "bloom_level": bloom_level.value,
+                "difficulty": difficulty.value,
+                "question_type": "matching",
+                "generation_mode": "enhanced",
+                "feature": "quiz_generation",
+                "concepts_used": len(concepts),
+            }
         )
         
         try:
