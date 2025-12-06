@@ -336,9 +336,16 @@ async def generate_quiz_async(
     
     client = get_openai_client()
     
+    # Determine question_type for PostHog (use "mixed" if multiple types, otherwise the single type)
+    # This ensures consistent filtering in PostHog - always use singular "question_type" 
+    if len(question_types) == 1:
+        question_type_value = question_types[0]
+    else:
+        question_type_value = "mixed"
+    
     # Build PostHog tracking kwargs with generation mode and source type
     properties = {
-        "question_types": question_types,
+        "question_type": question_type_value,  # Singular, consistent with generate_quiz_for_type
         "num_questions": num_questions,
         "content_length": len(text),
         "feature": "quiz_generation",
