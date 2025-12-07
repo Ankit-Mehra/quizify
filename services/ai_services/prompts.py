@@ -59,6 +59,7 @@ Formatting rules:
     - `options` MUST be a JSON array of exactly 4 strings (REQUIRED, not optional, NEVER null)
     - `correct_answer` must match one of the options
 - "matching":
+    - `question` must be a clear instruction like "Match each term with its definition" (REQUIRED)
     - `left` MUST be a JSON array of exactly 4 strings (NEVER null)
     - `right` MUST be a JSON array of exactly 4 strings (NEVER null)
     - `correct_answer` MUST be a JSON array of 4 integer indices like [0, 1, 2, 3] (NEVER null)

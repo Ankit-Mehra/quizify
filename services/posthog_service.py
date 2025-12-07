@@ -253,4 +253,3 @@ def capture_exception(
     except Exception as e:
         # Don't let PostHog errors affect the application
         logger.warning(f"Failed to capture PostHog exception: {e}")
-
