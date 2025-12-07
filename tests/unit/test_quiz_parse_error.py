@@ -10,7 +10,6 @@ Tests cover:
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from pydantic import ValidationError
 
 from services.ai_services.openai_service import (
     generate_quiz_async,

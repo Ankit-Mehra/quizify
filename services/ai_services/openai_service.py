@@ -47,7 +47,7 @@ class QuizParseError(Exception):
     This is a domain-specific exception that allows the API layer to
     handle the error and return an appropriate HTTP response.
     """
-    def __init__(self, message: str, raw_response: str | None = None):
+    def __init__(self, message: str, raw_response: Optional[str] = None):
         self.message = message
         self.raw_response = raw_response
         super().__init__(self.message)
