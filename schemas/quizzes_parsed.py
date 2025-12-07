@@ -4,6 +4,9 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Default question text for matching questions when LLM omits the field
+DEFAULT_MATCHING_QUESTION = "Match the items from the left column with the correct items on the right."
+
 
 class QuestionBaseParsed(BaseModel):
     explanation: str
@@ -54,7 +57,7 @@ class FillBlankQuestionParsed(QuestionBaseParsed):
 
 class MatchingQuestionParsed(QuestionBaseParsed):
     type: Literal["matching"]
-    question: str = "Match the items from the left column with the correct items on the right."
+    question: str = DEFAULT_MATCHING_QUESTION
     left: List[str]
     right: List[str]
     correct_answer: List[int]
@@ -69,7 +72,7 @@ class MatchingQuestionParsed(QuestionBaseParsed):
         """
         if v is None or (isinstance(v, str) and not v.strip()):
             logger.warning("Matching question received null/empty question - using default")
-            return "Match the items from the left column with the correct items on the right."
+            return DEFAULT_MATCHING_QUESTION
         return v
     
     @field_validator('left', mode='before')
