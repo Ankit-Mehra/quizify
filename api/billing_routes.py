@@ -28,6 +28,7 @@ from schemas.billing import (
 )
 from services.billing_service import BillingService
 from services.db_services.supabase_quiz import get_supabase
+from services.posthog_service import capture_exception
 from config import Config
 from handlers.billing_handler import verify_checkout_session
 from services.logger import app_logger as logger
@@ -646,10 +647,30 @@ async def stripe_webhook(
     except ValueError as e:
         # Invalid payload
         logger.error(f"Invalid webhook payload: {e}")
+        # Capture billing exception to PostHog for proper error tracking with stack trace
+        capture_exception(
+            exception=e,
+            distinct_id=None,
+            properties={
+                "context": "billing_webhook",
+                "error_type": "invalid_payload",
+                "stripe_event_type": "unknown",
+            }
+        )
         raise HTTPException(status_code=400, detail="Invalid payload")
     except stripe.SignatureVerificationError as e:
-        # Invalid signature
+        # Invalid signature - potential replay attack or misconfiguration
         logger.error(f"Invalid webhook signature: {e}")
+        # Capture billing exception to PostHog for proper error tracking with stack trace
+        capture_exception(
+            exception=e,
+            distinct_id=None,
+            properties={
+                "context": "billing_webhook",
+                "error_type": "signature_verification_failed",
+                "stripe_event_type": "unknown",
+            }
+        )
         raise HTTPException(status_code=400, detail="Invalid signature")
     
     # Idempotency check - prevent duplicate processing (Redis-backed)
@@ -718,6 +739,25 @@ async def stripe_webhook(
         logger.error(
             f"Error processing webhook {event_type} (ID: {event_id_short}...): {e}",
             exc_info=True
+        )
+        # Capture billing exception to PostHog for proper error tracking with stack trace
+        # Extract user_id from webhook data if available
+        user_id = None
+        subscription_id = None
+        if "subscription" in data_object:
+            subscription_id = data_object.get("subscription") or data_object.get("id")
+        if "metadata" in data_object:
+            user_id = data_object.get("metadata", {}).get("user_id")
+        
+        capture_exception(
+            exception=e,
+            distinct_id=user_id,
+            properties={
+                "context": "billing_webhook",
+                "stripe_event_type": event_type,
+                "stripe_event_id": event_id,
+                "subscription_id": subscription_id,
+            }
         )
         # Return 500 so Stripe retries the webhook
         raise HTTPException(

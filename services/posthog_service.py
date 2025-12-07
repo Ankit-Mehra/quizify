@@ -88,9 +88,16 @@ def get_posthog_client() -> Optional[Posthog]:
                 host=Config.POSTHOG_HOST,
                 # Enable GeoIP lookup for event geolocation
                 disable_geoip=False,
+                # Enable automatic exception capture for unhandled exceptions (SDK v3.7.0+)
+                # Note: FastAPI has its own exception handlers, so we also use
+                # capture_exception() manually in our exception handlers
+                enable_exception_autocapture=True,
+                # Capture local variable state when exceptions occur (SDK v3.7.0+)
+                # This gives a debugger-like view in PostHog error tracking
+                capture_exception_code_variables=True,
             )
             _posthog_wrapper_active = True
-            logger.info(f"PostHog LLM analytics initialized successfully (host: {Config.POSTHOG_HOST})")
+            logger.info(f"PostHog LLM analytics initialized with exception autocapture (host: {Config.POSTHOG_HOST})")
             return _posthog_client
         except Exception as e:
             logger.error(f"Failed to initialize PostHog client: {e}")
@@ -148,3 +155,102 @@ def is_posthog_enabled() -> bool:
         Config.POSTHOG_LLM_ANALYTICS_ENABLED 
         and bool(Config.POSTHOG_API_KEY)
     )
+
+
+def capture_event(
+    distinct_id: Optional[str],
+    event: str,
+    properties: Optional[dict] = None
+) -> None:
+    """
+    Capture a custom event to PostHog (non-blocking).
+    
+    This is the primary helper for custom analytics events.
+    For exceptions, use capture_exception() instead which provides
+    better stack traces and error grouping in PostHog.
+    
+    The PostHog SDK queues events internally, so this call is non-blocking.
+    
+    Args:
+        distinct_id: User identifier (user_id, email, or None for anonymous)
+        event: Event name (e.g., "llm_call", "quiz_generated", "billing_error")
+        properties: Additional event properties (path, error_type, etc.)
+        
+    Example:
+        capture_event(
+            distinct_id=user_id,
+            event="quiz_generated",
+            properties={
+                "question_count": 10,
+                "question_type": "multiple_choice",
+                "plan": "pro"
+            }
+        )
+    """
+    client = get_posthog_client()
+    if not client:
+        return  # PostHog not configured, silently skip
+    
+    try:
+        client.capture(
+            distinct_id=distinct_id or "anonymous_backend",
+            event=event,
+            properties=properties or {}
+        )
+    except Exception as e:
+        # Don't let PostHog errors affect the application
+        logger.warning(f"Failed to capture PostHog event '{event}': {e}")
+
+
+def capture_exception(
+    exception: Exception,
+    distinct_id: Optional[str] = None,
+    properties: Optional[dict] = None
+) -> None:
+    """
+    Capture an exception to PostHog Error Tracking (non-blocking).
+    
+    This is the recommended method for error tracking as per PostHog docs.
+    Uses posthog.capture_exception() which provides:
+    - Proper stack trace capture
+    - Error grouping by exception type and message
+    - Integration with PostHog's Error Tracking dashboard
+    - Session replay linking (if frontend is configured)
+    
+    Args:
+        exception: The exception object to capture
+        distinct_id: User identifier (user_id, email, or None for anonymous)
+        properties: Additional context properties (path, plan, etc.)
+        
+    Example:
+        try:
+            risky_operation()
+        except Exception as e:
+            capture_exception(
+                exception=e,
+                distinct_id=user_id,
+                properties={
+                    "path": "/api/quiz/generate",
+                    "plan": "free",
+                    "generation_mode": "enhanced"
+                }
+            )
+            raise  # Re-raise if needed
+    
+    Reference:
+        https://posthog.com/docs/error-tracking/installation/python#manually-capturing-exceptions
+    """
+    client = get_posthog_client()
+    if not client:
+        return  # PostHog not configured, silently skip
+    
+    try:
+        client.capture_exception(
+            exception,
+            distinct_id=distinct_id or "anonymous_backend",
+            properties=properties or {}
+        )
+    except Exception as e:
+        # Don't let PostHog errors affect the application
+        logger.warning(f"Failed to capture PostHog exception: {e}")
+
