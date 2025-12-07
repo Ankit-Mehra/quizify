@@ -16,7 +16,7 @@ async def smart_chunk_text(
     text: str,
     num_questions: int,
     model_token_limit: int = 8000,
-    small_text_threshold: int = 3000
+    small_text_threshold: int = 500
 ) -> List[str]:
     """
     Splits text into a certain number of chunks based on both
@@ -146,6 +146,7 @@ async def generate_quizzes_single_async(
     # 1. Chunk text
     chunks = await smart_chunk_text(text, total_questions, model_token_limit=model_token_limit)
     chunk_count = len(chunks)
+    logger.info("Smart chunked text into %d segments for %d questions (parallel LLM calls)", chunk_count, total_questions)
 
     # 2. Distribute total_questions among chunks
     base_q = total_questions // chunk_count
