@@ -19,7 +19,6 @@ import threading
 from typing import List, Optional, Dict, Any
 from openai import AsyncOpenAI as BaseAsyncOpenAI
 from pydantic import ValidationError
-from fastapi import HTTPException
 import os
 import re
 from uuid import uuid4
@@ -40,6 +39,19 @@ from services.logger import ai_logger as logger
 
 logger.debug("OpenAI service initialized")
 load_dotenv()
+
+
+class QuizParseError(Exception):
+    """Raised when AI-generated quiz response cannot be parsed.
+    
+    This is a domain-specific exception that allows the API layer to
+    handle the error and return an appropriate HTTP response.
+    """
+    def __init__(self, message: str, raw_response: str | None = None):
+        self.message = message
+        self.raw_response = raw_response
+        super().__init__(self.message)
+
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
@@ -338,9 +350,10 @@ async def generate_quiz_async(
         }
     )
     
-    # Use json_object response format instead of structured outputs with Pydantic
-    # OpenAI's structured outputs API doesn't support Union types (generates oneOf in JSON schema)
-    # We parse the JSON manually and validate with Pydantic after
+    # OpenAI's structured outputs API doesn't support Union types (it generates oneOf in the JSON schema).
+    # This is problematic because our QuizzesParsed model uses a discriminated Union for question types.
+    # OpenAI's output may not match the expected schema, causing parsing failures with Pydantic.
+    # Therefore, we parse the JSON manually and validate with Pydantic after.
     response = await client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[{"role": "user", "content": prompt}],
@@ -354,9 +367,9 @@ async def generate_quiz_async(
         logger.warning("OpenAI returned empty content for quiz generation")
         return []
     
-    # Strip triple backticks and "json" if present (defensive parsing)
-    if raw_json.startswith("```json") and raw_json.endswith("```"):
-        raw_json = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw_json.strip())
+    # Strip triple backticks and "json" if present (defensive parsing, case-insensitive)
+    if re.match(r"^```(?:json)?", raw_json, re.IGNORECASE) and raw_json.endswith("```"):
+        raw_json = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw_json, flags=re.IGNORECASE)
     
     logger.debug(f"Raw JSON response for mixed quiz: {raw_json[:200]}...")
     
@@ -365,9 +378,9 @@ async def generate_quiz_async(
         parsed_response = QuizzesParsed.model_validate_json(raw_json)
     except ValidationError as e:
         logger.error(f"Failed to parse quiz response: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to parse AI-generated quiz. Please try again."
+        raise QuizParseError(
+            message="Failed to parse AI-generated quiz. Please try again.",
+            raw_response=raw_json[:500] if raw_json else None
         )
 
     if not parsed_response or not parsed_response.quizzes:

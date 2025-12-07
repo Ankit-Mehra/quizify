@@ -30,6 +30,7 @@ from services.ai_services.concept_extraction_service import ConceptExtractionSer
 from services.ai_services.orchestration_service import QuizOrchestrationService
 from datetime import datetime, date
 from services.ai_services.chunking_service import generate_quizzes_single_async
+from services.ai_services.openai_service import QuizParseError
 from services.logger import app_logger as logger
 from services.web_scraping_service import scrape_content
 
@@ -87,13 +88,20 @@ async def _generate_standard_mode(
     else:
         question_types = [request.question_type]
     
-    quizzes = await generate_quizzes_single_async(
-        request.content,
-        total_questions,
-        question_types=question_types,
-        user_id=user_id,
-        trace_id=trace_id
-    )
+    try:
+        quizzes = await generate_quizzes_single_async(
+            request.content,
+            total_questions,
+            question_types=question_types,
+            user_id=user_id,
+            trace_id=trace_id
+        )
+    except QuizParseError as e:
+        logger.error(f"Quiz parse error for user {user_id[:8]}...: {e.message}")
+        raise HTTPException(
+            status_code=500,
+            detail=e.message
+        )
     
     # Save to database with proper content source tracking
     quiz_id, saved_questions = save_quiz_to_database(
