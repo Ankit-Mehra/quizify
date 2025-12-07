@@ -159,7 +159,8 @@ async def generate_quizzes_single_async(
     # 1. Chunk text
     chunks = await smart_chunk_text(text, total_questions, model_token_limit=model_token_limit)
     chunk_count = len(chunks)
-    logger.info("Smart chunked text into %d segments for %d questions (parallel LLM calls)", chunk_count, total_questions)
+    parallel_note = f" ({chunk_count} parallel LLM calls)" if chunk_count > 1 else " (single LLM call)"
+    logger.info("Smart chunked text into %d segment(s) for %d questions%s", chunk_count, total_questions, parallel_note)
 
     # 2. Distribute total_questions among chunks
     base_q = total_questions // chunk_count
