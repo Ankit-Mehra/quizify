@@ -336,13 +336,26 @@ async def generate_quiz_async(
         }
     )
     
-    response = await client.beta.chat.completions.parse(
+    # Use json_object response format instead of structured outputs with Pydantic
+    # OpenAI's structured outputs API doesn't support Union types (generates oneOf in JSON schema)
+    # We parse the JSON manually and validate with Pydantic after
+    response = await client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[{"role": "user", "content": prompt}],
-        response_format=QuizzesParsed,
+        response_format={"type": "json_object"},
         **posthog_kwargs
     )
-    parsed_response = response.choices[0].message.parsed
+    
+    raw_json = response.choices[0].message.content.strip()
+    
+    # Strip triple backticks and "json" if present (defensive parsing)
+    if raw_json.startswith("```json") and raw_json.endswith("```"):
+        raw_json = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw_json.strip())
+    
+    logger.debug(f"Raw JSON response for mixed quiz: {raw_json[:200]}...")
+    
+    # Validate with Pydantic
+    parsed_response = QuizzesParsed.model_validate_json(raw_json)
 
     if not parsed_response or not parsed_response.quizzes:
         return []
