@@ -16,11 +16,24 @@ async def smart_chunk_text(
     text: str,
     num_questions: int,
     model_token_limit: int = 8000,
-    small_text_threshold: int = 3000
+    small_text_threshold: int = 500
 ) -> List[str]:
     """
-    Splits text into a certain number of chunks based on both
-    text size and # questions, with safeguards against context limit.
+    Splits text into chunks for parallel LLM processing.
+    
+    Chunks are sized based on both text length and number of questions requested,
+    with safeguards to stay within model context limits.
+    
+    Args:
+        text: The input text to chunk
+        num_questions: Number of questions to generate (influences chunk count)
+        model_token_limit: Maximum tokens per chunk (default: 8000)
+        small_text_threshold: Minimum tokens to trigger chunking (default: 500).
+            Text below this threshold returns as a single chunk (no parallelism).
+            Set to 500 tokens (~2KB) to enable parallel LLM calls for most content.
+            
+    Returns:
+        List of text chunks for parallel processing
     """
     logger.debug("Smart chunking text")
     enc = tiktoken.get_encoding("cl100k_base")
@@ -146,6 +159,8 @@ async def generate_quizzes_single_async(
     # 1. Chunk text
     chunks = await smart_chunk_text(text, total_questions, model_token_limit=model_token_limit)
     chunk_count = len(chunks)
+    parallel_note = f" ({chunk_count} parallel LLM calls)" if chunk_count > 1 else " (single LLM call)"
+    logger.info("Smart chunked text into %d segment(s) for %d questions%s", chunk_count, total_questions, parallel_note)
 
     # 2. Distribute total_questions among chunks
     base_q = total_questions // chunk_count
