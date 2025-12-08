@@ -177,6 +177,9 @@ def setup_posthog_logging(
             
         except Exception as e:
             _module_logger.error(f"Failed to initialize PostHog logging: {e}")
+            # Clean up partial initialization to allow retry
+            _logger_provider = None
+            _logging_handler = None
             return False
 
 
@@ -232,10 +235,14 @@ def shutdown_posthog_logging() -> None:
 
 def get_posthog_logger(name: str) -> logging.Logger:
     """
-    Get a logger that will send logs to both local handlers and PostHog.
+    Get a logger that will send logs to PostHog (if propagation is enabled).
     
-    This is a convenience function - you can also just use standard
-    logging.getLogger() since PostHog handler is attached to root logger.
+    This returns a standard Python logger. Logs will reach PostHog only if:
+    1. The logger's propagate attribute is True (default), OR
+    2. The PostHog handler is added directly to this logger
+    
+    Note: Loggers with propagate=False (like those in services/logger.py) won't
+    automatically send logs to PostHog through the root handler.
     
     Args:
         name: Logger name (typically __name__ or module path)

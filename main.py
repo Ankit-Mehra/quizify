@@ -94,7 +94,8 @@ async def app_lifespan(app: FastAPI):
     """
     logger.info("Application startup: initializing resources...")
     
-    # Initialize PostHog OpenTelemetry logging (sends logs to PostHog)
+    # Initialize PostHog OpenTelemetry logging (attaches to root logger)
+    # Note: Only loggers with propagate=True will send logs to PostHog
     if setup_posthog_logging():
         logger.info("PostHog OpenTelemetry logging is enabled")
     else:

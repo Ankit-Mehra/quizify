@@ -25,11 +25,16 @@ def reset_posthog_global_state():
     Reset PostHog logging global state before and after each test.
     
     This prevents test pollution from shared global state.
+    Also cleans up any mock handlers that may have been added to the root logger.
     """
     # Store original state
     original_initialized = posthog_module._posthog_logging_initialized
     original_provider = posthog_module._logger_provider
     original_handler = posthog_module._logging_handler
+    
+    # Store original root logger handlers
+    root_logger = logging.getLogger()
+    original_handlers = root_logger.handlers.copy()
     
     # Reset before test
     posthog_module._posthog_logging_initialized = False
@@ -37,6 +42,15 @@ def reset_posthog_global_state():
     posthog_module._logging_handler = None
     
     yield
+    
+    # Clean up any mock handlers added during test
+    current_handlers = root_logger.handlers.copy()
+    for handler in current_handlers:
+        if isinstance(handler, MagicMock) or handler not in original_handlers:
+            try:
+                root_logger.removeHandler(handler)
+            except Exception:
+                pass
     
     # Restore original state after test
     posthog_module._posthog_logging_initialized = original_initialized
@@ -131,9 +145,9 @@ class TestPostHogLoggingSetup:
         # Verify exporter was created with correct endpoint
         mock_exporter_class.assert_called_once()
         call_kwargs = mock_exporter_class.call_args[1]
-        assert "https://us.i.posthog.com/i/v1/logs" in call_kwargs["endpoint"]
+        assert call_kwargs["endpoint"] == "https://us.i.posthog.com/i/v1/logs"
         assert "Authorization" in call_kwargs["headers"]
-        assert "Bearer test-api-key" in call_kwargs["headers"]["Authorization"]
+        assert call_kwargs["headers"]["Authorization"] == "Bearer test-api-key"
         
         # Verify batch processor was created
         mock_batch_processor_class.assert_called_once()
@@ -151,6 +165,37 @@ class TestPostHogLoggingSetup:
         
         result = setup_posthog_logging()
         assert result is True
+
+    @patch("services.posthog_logging.is_posthog_logging_available")
+    @patch("services.posthog_logging.Config")
+    @patch("services.posthog_logging.Resource")
+    @patch("services.posthog_logging.OTLPLogExporter")
+    def test_setup_handles_initialization_failure(
+        self,
+        mock_exporter_class,
+        mock_resource_class,
+        mock_config,
+        mock_available
+    ):
+        """Should handle exceptions during initialization gracefully and clean up state."""
+        mock_available.return_value = True
+        mock_config.POSTHOG_API_KEY = "test-api-key"
+        mock_config.POSTHOG_HOST = "https://us.i.posthog.com"
+        mock_config.TESTING = False
+        
+        mock_resource = MagicMock()
+        mock_resource_class.create.return_value = mock_resource
+        
+        # Make OTLPLogExporter raise an exception early in setup
+        mock_exporter_class.side_effect = Exception("Exporter creation failed")
+        
+        result = setup_posthog_logging()
+        
+        # Should return False and clean up partial state
+        assert result is False
+        assert posthog_module._logger_provider is None
+        assert posthog_module._logging_handler is None
+        assert posthog_module._posthog_logging_initialized is False
 
 
 class TestPostHogLoggingShutdown:
