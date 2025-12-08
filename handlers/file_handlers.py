@@ -36,7 +36,7 @@ async def delete_file(
     data: dict = Body(...)
 ):
     try:
-        logger.info(f"File deletion initiated by user {user_id}: {data.get('filename', 'unknown')}")
+        logger.info(f"File deletion initiated by user {user_id[:8]}...: {data.get('filename', 'unknown')}")
         delete_file_from_supabase(file_id, user_token, user_id, data["filename"])
         logger.info(f"File successfully deleted: {data.get('filename', 'unknown')}")
         return {"message": "File deleted successfully"}
