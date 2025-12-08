@@ -166,11 +166,28 @@ def setup_posthog_logging(
             
             # Also attach to application-specific loggers that have propagate=False
             # These loggers are defined in services/logger.py and won't propagate to root
-            app_logger_names = ["app", "db_services", "ai_services", "middleware"]
+            # Include both centralized loggers and __name__ pattern loggers used across codebase
+            app_logger_names = [
+                # Centralized loggers from services/logger.py
+                "app", "db_services", "ai_services", "middleware",
+                # __name__ pattern loggers used in various modules
+                "services.db_services.supabase_file",
+                "services.redis.sessions",
+                "services.share_service",
+                "services.ai_services.gemini_service",
+                "services.exporters.csv_anki_exporter",
+                "services.exporters.csv_quizify_exporter",
+                "services.exporters.docx_exporter",
+                "services.exporters.pdf_exporter",
+                "services.exporters.moodle_xml_exporter",
+                "services.exporters.tier_validator",
+                "schemas.quiz",
+                "schemas.quizzes_parsed",
+            ]
             for logger_name in app_logger_names:
                 app_logger = logging.getLogger(logger_name)
-                # Only add if logger exists and doesn't already have this handler
-                if app_logger.handlers and _logging_handler not in app_logger.handlers:
+                # Add handler even if logger has no handlers yet (will be used when logs are emitted)
+                if _logging_handler not in app_logger.handlers:
                     app_logger.addHandler(_logging_handler)
             
             # Note: We don't use atexit.register() here because shutdown_posthog_logging()
@@ -219,8 +236,22 @@ def shutdown_posthog_logging() -> None:
                 root_logger = logging.getLogger()
                 root_logger.removeHandler(_logging_handler)
                 
-                # Remove from application-specific loggers
-                app_logger_names = ["app", "db_services", "ai_services", "middleware"]
+                # Remove from application-specific loggers (must match setup list)
+                app_logger_names = [
+                    "app", "db_services", "ai_services", "middleware",
+                    "services.db_services.supabase_file",
+                    "services.redis.sessions",
+                    "services.share_service",
+                    "services.ai_services.gemini_service",
+                    "services.exporters.csv_anki_exporter",
+                    "services.exporters.csv_quizify_exporter",
+                    "services.exporters.docx_exporter",
+                    "services.exporters.pdf_exporter",
+                    "services.exporters.moodle_xml_exporter",
+                    "services.exporters.tier_validator",
+                    "schemas.quiz",
+                    "schemas.quizzes_parsed",
+                ]
                 for logger_name in app_logger_names:
                     app_logger = logging.getLogger(logger_name)
                     if _logging_handler in app_logger.handlers:

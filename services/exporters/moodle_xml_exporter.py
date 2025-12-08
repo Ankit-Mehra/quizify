@@ -8,12 +8,16 @@ run Moodle as their LMS.
 Reference: https://docs.moodle.org/en/Moodle_XML_format
 """
 
+import logging
 from typing import TYPE_CHECKING, List
 from xml.etree import ElementTree as ET
 from xml.dom import minidom
 
 from services.exporters.base import BaseExporter, ExportError
 from schemas.export import ExportResult
+
+# Module logger for Moodle XML export operations
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from schemas.export import (
@@ -59,6 +63,8 @@ class MoodleXmlExporter(BaseExporter):
         Returns:
             ExportResult with XML file bytes
         """
+        logger.info(f"Exporting quiz '{quiz_data.title}' to Moodle XML format ({len(quiz_data.questions)} questions)")
+        
         try:
             # Create root quiz element
             root = ET.Element("quiz")
@@ -73,6 +79,8 @@ class MoodleXmlExporter(BaseExporter):
             # Convert to pretty XML
             xml_content = self._prettify_xml(root)
             
+            logger.info(f"Moodle XML export successful for quiz '{quiz_data.title}'")
+            
             return ExportResult(
                 content=xml_content.encode("utf-8"),
                 content_type=self.CONTENT_TYPE,
@@ -80,6 +88,7 @@ class MoodleXmlExporter(BaseExporter):
             )
             
         except Exception as e:
+            logger.error(f"Moodle XML export failed for quiz '{quiz_data.title}': {str(e)}", exc_info=True)
             raise ExportError(f"Moodle XML export failed: {str(e)}", self.FORMAT_NAME)
     
     def _add_category(self, root: ET.Element, quiz_title: str):

@@ -36,8 +36,11 @@ async def delete_file(
     data: dict = Body(...)
 ):
     try:
+        logger.info(f"File deletion initiated by user {user_id}: {data.get('filename', 'unknown')}")
         delete_file_from_supabase(file_id, user_token, user_id, data["filename"])
+        logger.info(f"File successfully deleted: {data.get('filename', 'unknown')}")
         return {"message": "File deleted successfully"}
     except Exception as e:
+        logger.error(f"Error deleting file {data.get('filename', 'unknown')}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
