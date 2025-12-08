@@ -8,6 +8,7 @@ import logging
 from unittest.mock import patch, MagicMock
 import pytest
 
+# Import functions directly for convenience in test calls
 from services.posthog_logging import (
     is_posthog_logging_available,
     setup_posthog_logging,
@@ -16,6 +17,7 @@ from services.posthog_logging import (
     log_with_attributes,
     OPENTELEMETRY_AVAILABLE,
 )
+# Import module to access and reset global state variables in tests
 import services.posthog_logging as posthog_module
 
 
@@ -50,6 +52,7 @@ def reset_posthog_global_state():
             try:
                 root_logger.removeHandler(handler)
             except Exception:
+                # Ignore errors during handler removal; handler may already be removed or in an unexpected state.
                 pass
     
     # Restore original state after test
