@@ -160,9 +160,18 @@ def setup_posthog_logging(
                 logger_provider=_logger_provider
             )
             
-            # Attach to root logger to capture all application logs
+            # Attach to root logger to capture logs from loggers with propagate=True
             root_logger = logging.getLogger()
             root_logger.addHandler(_logging_handler)
+            
+            # Also attach to application-specific loggers that have propagate=False
+            # These loggers are defined in services/logger.py and won't propagate to root
+            app_logger_names = ["app", "db_services", "ai_services", "middleware"]
+            for logger_name in app_logger_names:
+                app_logger = logging.getLogger(logger_name)
+                # Only add if logger exists and doesn't already have this handler
+                if app_logger.handlers and _logging_handler not in app_logger.handlers:
+                    app_logger.addHandler(_logging_handler)
             
             # Note: We don't use atexit.register() here because shutdown_posthog_logging()
             # is called explicitly in main.py lifespan. Using atexit would be redundant
@@ -203,11 +212,20 @@ def shutdown_posthog_logging() -> None:
         handler_removed = False
         provider_shutdown = False
         
-        # Step 1: Remove handler from root logger
+        # Step 1: Remove handler from root logger and application-specific loggers
         try:
             if _logging_handler is not None:
+                # Remove from root logger
                 root_logger = logging.getLogger()
                 root_logger.removeHandler(_logging_handler)
+                
+                # Remove from application-specific loggers
+                app_logger_names = ["app", "db_services", "ai_services", "middleware"]
+                for logger_name in app_logger_names:
+                    app_logger = logging.getLogger(logger_name)
+                    if _logging_handler in app_logger.handlers:
+                        app_logger.removeHandler(_logging_handler)
+                
                 _logging_handler = None
                 handler_removed = True
         except Exception as e:
