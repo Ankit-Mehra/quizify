@@ -162,7 +162,7 @@ async def create_share_link(
     
     # Verify ownership
     if quiz.get("created_by") != str(user_id):
-        logger.warning(f"Unauthorized share attempt: user {str(user_id)[:8]}... tried to share quiz {quiz_id} owned by {quiz.get('created_by', 'unknown')[:8]}...")
+        logger.warning(f"Unauthorized share attempt: user {str(user_id)[:8]}... tried to share quiz {quiz_id} (not owner)")
         raise ValueError("You don't have permission to share this quiz")
     
     # If already public, return existing share link
