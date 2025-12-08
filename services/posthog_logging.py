@@ -53,6 +53,27 @@ _posthog_logging_initialized = False
 # Logger for this module (uses standard logging, not PostHog to avoid circular deps)
 _module_logger = logging.getLogger("posthog_logging")
 
+# Application logger names to attach PostHog handler to
+# Includes both centralized loggers (services/logger.py) and __name__ pattern loggers
+# Used in both setup and shutdown to ensure consistent handler management
+_APP_LOGGER_NAMES = [
+    # Centralized loggers from services/logger.py
+    "app", "db_services", "ai_services", "middleware",
+    # __name__ pattern loggers used in various modules
+    "services.db_services.supabase_file",
+    "services.redis.sessions",
+    "services.share_service",
+    "services.ai_services.gemini_service",
+    "services.exporters.csv_anki_exporter",
+    "services.exporters.csv_quizify_exporter",
+    "services.exporters.docx_exporter",
+    "services.exporters.pdf_exporter",
+    "services.exporters.moodle_xml_exporter",
+    "services.exporters.tier_validator",
+    "schemas.quiz",
+    "schemas.quizzes_parsed",
+]
+
 
 def is_posthog_logging_available() -> bool:
     """
@@ -160,9 +181,17 @@ def setup_posthog_logging(
                 logger_provider=_logger_provider
             )
             
-            # Attach to root logger to capture all application logs
+            # Attach to root logger to capture logs from loggers with propagate=True
             root_logger = logging.getLogger()
             root_logger.addHandler(_logging_handler)
+            
+            # Also attach to application-specific loggers that have propagate=False
+            # These loggers are defined in services/logger.py and won't propagate to root
+            for logger_name in _APP_LOGGER_NAMES:
+                app_logger = logging.getLogger(logger_name)
+                # Add handler even if logger has no handlers yet (will be used when logs are emitted)
+                if _logging_handler not in app_logger.handlers:
+                    app_logger.addHandler(_logging_handler)
             
             # Note: We don't use atexit.register() here because shutdown_posthog_logging()
             # is called explicitly in main.py lifespan. Using atexit would be redundant
@@ -203,11 +232,19 @@ def shutdown_posthog_logging() -> None:
         handler_removed = False
         provider_shutdown = False
         
-        # Step 1: Remove handler from root logger
+        # Step 1: Remove handler from root logger and application-specific loggers
         try:
             if _logging_handler is not None:
+                # Remove from root logger
                 root_logger = logging.getLogger()
                 root_logger.removeHandler(_logging_handler)
+                
+                # Remove from application-specific loggers
+                for logger_name in _APP_LOGGER_NAMES:
+                    app_logger = logging.getLogger(logger_name)
+                    if _logging_handler in app_logger.handlers:
+                        app_logger.removeHandler(_logging_handler)
+                
                 _logging_handler = None
                 handler_removed = True
         except Exception as e:

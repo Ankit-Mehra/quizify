@@ -9,10 +9,14 @@ This module enforces tier-based access to export formats:
 Access is validated at the API layer before any export processing begins.
 """
 
+import logging
 from typing import Set
 from fastapi import HTTPException
 
 from schemas.export import ExportFormat
+
+# Module logger for tier validation operations
+logger = logging.getLogger(__name__)
 
 
 # Pro-only formats - require Pro subscription
@@ -100,10 +104,12 @@ def validate_export_tier_access(
     
     # Validate tier value
     if user_tier not in VALID_TIERS:
+        logger.error(f"Invalid tier value: {user_tier}")
         raise ValueError(f"Invalid tier '{user_tier}'. Must be one of: {VALID_TIERS}")
     
     # Free tier has no export access at all
     if user_tier == "free":
+        logger.info(f"Export denied: free tier user attempted {export_format.value} export")
         raise TierInsufficientError(
             current_tier=user_tier,
             requested_format=export_format,
@@ -112,6 +118,7 @@ def validate_export_tier_access(
     
     # Pro-only formats require Pro tier
     if export_format in PRO_ONLY_FORMATS and user_tier != "pro":
+        logger.info(f"Export denied: {user_tier} tier user attempted pro-only {export_format.value} export")
         raise TierInsufficientError(
             current_tier=user_tier,
             requested_format=export_format,

@@ -4,6 +4,7 @@ Service for managing quiz share links.
 Handles slug generation, share link creation, revocation, and public quiz retrieval.
 """
 
+import logging
 import random
 import secrets
 import string
@@ -13,6 +14,9 @@ from uuid import UUID
 
 from config import Config
 from services.db_services.supabase_quiz import get_supabase, get_authed_supabase_client
+
+# Module logger for share operations
+logger = logging.getLogger(__name__)
 
 
 def _shuffle_list(items: List) -> None:
@@ -120,10 +124,13 @@ async def create_share_link(
         ValueError: If quiz not found or user doesn't own it
         RuntimeError: If unable to generate unique slug
     """
+    logger.info(f"Creating share link for quiz {quiz_id} by user {str(user_id)[:8]}...")
+    
     if Config.is_testing():
         # Return mock response in testing mode
         slug = generate_slug()
         now = datetime.now(timezone.utc)
+        logger.debug("Testing mode: returning mock share link")
         return {
             "quiz_id": str(quiz_id),
             "public_slug": slug,
@@ -148,16 +155,19 @@ async def create_share_link(
     )
     
     if not quiz_result.data:
+        logger.warning(f"Quiz not found for sharing: {quiz_id}")
         raise ValueError(f"Quiz not found: {quiz_id}")
     
     quiz = quiz_result.data
     
     # Verify ownership
     if quiz.get("created_by") != str(user_id):
+        logger.warning(f"Unauthorized share attempt: user {str(user_id)[:8]}... tried to share quiz {quiz_id} (not owner)")
         raise ValueError("You don't have permission to share this quiz")
     
     # If already public, return existing share link
     if quiz.get("is_public") and quiz.get("public_slug"):
+        logger.info(f"Quiz {quiz_id} already public with slug {quiz['public_slug']}")
         return {
             "quiz_id": str(quiz_id),
             "public_slug": quiz["public_slug"],
@@ -169,6 +179,8 @@ async def create_share_link(
     # Generate new slug and make public
     slug = await generate_unique_slug()
     now = datetime.now(timezone.utc)
+    
+    logger.debug(f"Generated slug {slug} for quiz {quiz_id}")
     
     update_result = (
         supabase.table("quizzes")
@@ -182,7 +194,10 @@ async def create_share_link(
     )
     
     if not update_result.data:
+        logger.error(f"Failed to update quiz share status: {quiz_id}")
         raise RuntimeError(f"Failed to update quiz share status: {quiz_id}")
+    
+    logger.info(f"Share link created for quiz {quiz_id}: slug={slug}")
     
     return {
         "quiz_id": str(quiz_id),
@@ -214,7 +229,10 @@ async def revoke_share_link(
     Raises:
         ValueError: If quiz not found or user doesn't own it
     """
+    logger.info(f"Revoking share link for quiz {quiz_id} by user {str(user_id)[:8]}...")
+    
     if Config.is_testing():
+        logger.debug("Testing mode: returning mock revoke response")
         return {
             "quiz_id": str(quiz_id),
             "is_public": False,
@@ -237,10 +255,12 @@ async def revoke_share_link(
     )
     
     if not quiz_result.data:
+        logger.warning(f"Quiz not found for revocation: {quiz_id}")
         raise ValueError(f"Quiz not found: {quiz_id}")
     
     # Verify ownership
     if quiz_result.data.get("created_by") != str(user_id):
+        logger.warning(f"Unauthorized revoke attempt: user {str(user_id)[:8]}... tried to revoke quiz {quiz_id}")
         raise ValueError("You don't have permission to revoke this share link")
     
     # Set is_public to False (keep slug for potential re-sharing)
@@ -252,7 +272,10 @@ async def revoke_share_link(
     )
     
     if not update_result.data:
+        logger.error(f"Failed to revoke share link: {quiz_id}")
         raise RuntimeError(f"Failed to revoke share link: {quiz_id}")
+    
+    logger.info(f"Share link revoked for quiz {quiz_id}")
     
     return {
         "quiz_id": str(quiz_id),
@@ -349,6 +372,8 @@ async def get_public_quiz_by_slug(slug: str) -> dict:
     Raises:
         ValueError: If quiz not found or not public
     """
+    logger.info(f"Fetching public quiz by slug: {slug}")
+    
     if Config.is_testing():
         # Return mock public quiz in testing mode
         # Uses API field names (question_type, question_text, question_number)
@@ -389,9 +414,11 @@ async def get_public_quiz_by_slug(slug: str) -> dict:
     )
     
     if not quiz_result.data:
+        logger.warning(f"Public quiz not found for slug: {slug}")
         raise ValueError(f"Quiz not found or not public: {slug}")
     
     quiz = quiz_result.data
+    logger.debug(f"Found public quiz {quiz['id']} for slug {slug}")
     
     # SECURITY: Use sanitized view - excludes correct_answer field at DB level
     # View columns: id, quiz_id, type, question, options, left, right
