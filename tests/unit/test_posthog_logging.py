@@ -5,8 +5,8 @@ Tests the logging initialization, configuration, and shutdown behavior.
 """
 
 import logging
-import pytest
 from unittest.mock import patch, MagicMock
+import pytest
 
 from services.posthog_logging import (
     is_posthog_logging_available,
@@ -16,6 +16,32 @@ from services.posthog_logging import (
     log_with_attributes,
     OPENTELEMETRY_AVAILABLE,
 )
+import services.posthog_logging as posthog_module
+
+
+@pytest.fixture(autouse=True)
+def reset_posthog_global_state():
+    """
+    Reset PostHog logging global state before and after each test.
+    
+    This prevents test pollution from shared global state.
+    """
+    # Store original state
+    original_initialized = posthog_module._posthog_logging_initialized
+    original_provider = posthog_module._logger_provider
+    original_handler = posthog_module._logging_handler
+    
+    # Reset before test
+    posthog_module._posthog_logging_initialized = False
+    posthog_module._logger_provider = None
+    posthog_module._logging_handler = None
+    
+    yield
+    
+    # Restore original state after test
+    posthog_module._posthog_logging_initialized = original_initialized
+    posthog_module._logger_provider = original_provider
+    posthog_module._logging_handler = original_handler
 
 
 class TestPostHogLoggingAvailability:
@@ -58,12 +84,6 @@ class TestPostHogLoggingSetup:
         """Should return False when PostHog logging is not available."""
         mock_available.return_value = False
         
-        # Reset global state
-        import services.posthog_logging as module
-        module._posthog_logging_initialized = False
-        module._logger_provider = None
-        module._logging_handler = None
-        
         result = setup_posthog_logging()
         assert result is False
 
@@ -71,12 +91,16 @@ class TestPostHogLoggingSetup:
     @patch("services.posthog_logging.Config")
     @patch("services.posthog_logging.OTLPLogExporter")
     @patch("services.posthog_logging.LoggerProvider")
+    @patch("services.posthog_logging.BatchLogRecordProcessor")
+    @patch("services.posthog_logging.Resource")
     @patch("services.posthog_logging.set_logger_provider")
     @patch("services.posthog_logging.LoggingHandler")
     def test_setup_initializes_correctly(
         self, 
         mock_handler_class,
         mock_set_provider,
+        mock_resource_class,
+        mock_batch_processor_class,
         mock_provider_class,
         mock_exporter_class,
         mock_config,
@@ -94,11 +118,11 @@ class TestPostHogLoggingSetup:
         mock_handler = MagicMock()
         mock_handler_class.return_value = mock_handler
         
-        # Reset global state
-        import services.posthog_logging as module
-        module._posthog_logging_initialized = False
-        module._logger_provider = None
-        module._logging_handler = None
+        mock_resource = MagicMock()
+        mock_resource_class.create.return_value = mock_resource
+        
+        mock_processor = MagicMock()
+        mock_batch_processor_class.return_value = mock_processor
         
         result = setup_posthog_logging(service_name="test-service")
         
@@ -111,15 +135,19 @@ class TestPostHogLoggingSetup:
         assert "Authorization" in call_kwargs["headers"]
         assert "Bearer test-api-key" in call_kwargs["headers"]["Authorization"]
         
+        # Verify batch processor was created
+        mock_batch_processor_class.assert_called_once()
+        
+        # Verify resource was created
+        mock_resource_class.create.assert_called_once()
+        
         # Verify provider was set
         mock_set_provider.assert_called_once_with(mock_provider)
 
     def test_setup_is_idempotent(self):
         """Setup should be idempotent (safe to call multiple times)."""
-        import services.posthog_logging as module
-        
         # If already initialized, should return True without reinitializing
-        module._posthog_logging_initialized = True
+        posthog_module._posthog_logging_initialized = True
         
         result = setup_posthog_logging()
         assert result is True
@@ -130,24 +158,18 @@ class TestPostHogLoggingShutdown:
 
     def test_shutdown_when_not_initialized(self):
         """Shutdown should be safe to call when not initialized."""
-        import services.posthog_logging as module
-        module._posthog_logging_initialized = False
-        module._logger_provider = None
-        module._logging_handler = None
-        
+        # Global state already reset by fixture
         # Should not raise
         shutdown_posthog_logging()
 
     def test_shutdown_removes_handler_and_provider(self):
         """Shutdown should remove handler and provider."""
-        import services.posthog_logging as module
-        
         mock_handler = MagicMock()
         mock_provider = MagicMock()
         
-        module._posthog_logging_initialized = True
-        module._logging_handler = mock_handler
-        module._logger_provider = mock_provider
+        posthog_module._posthog_logging_initialized = True
+        posthog_module._logging_handler = mock_handler
+        posthog_module._logger_provider = mock_provider
         
         # Add mock handler to root logger
         root_logger = logging.getLogger()
@@ -155,10 +177,16 @@ class TestPostHogLoggingShutdown:
         
         shutdown_posthog_logging()
         
-        assert module._posthog_logging_initialized is False
-        assert module._logger_provider is None
-        assert module._logging_handler is None
+        # Verify global state is cleaned up
+        assert posthog_module._posthog_logging_initialized is False
+        assert posthog_module._logger_provider is None
+        assert posthog_module._logging_handler is None
+        
+        # Verify provider shutdown was called
         mock_provider.shutdown.assert_called_once()
+        
+        # Verify handler was removed from root logger
+        assert mock_handler not in root_logger.handlers
 
 
 class TestPostHogLoggerHelpers:

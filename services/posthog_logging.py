@@ -28,7 +28,6 @@ References:
 
 import logging
 import threading
-import atexit
 from typing import Optional
 
 from config import Config
@@ -165,8 +164,9 @@ def setup_posthog_logging(
             root_logger = logging.getLogger()
             root_logger.addHandler(_logging_handler)
             
-            # Register shutdown handler
-            atexit.register(shutdown_posthog_logging)
+            # Note: We don't use atexit.register() here because shutdown_posthog_logging()
+            # is called explicitly in main.py lifespan. Using atexit would be redundant
+            # and could cause issues with shutdown ordering.
             
             _posthog_logging_initialized = True
             _module_logger.info(
@@ -188,6 +188,8 @@ def shutdown_posthog_logging() -> None:
     log records are sent to PostHog before the process exits.
     
     Thread-safe and idempotent (safe to call multiple times).
+    Each cleanup step is wrapped in its own try-except to ensure
+    we attempt all cleanup operations even if one fails.
     """
     global _logger_provider, _logging_handler, _posthog_logging_initialized
     
@@ -195,23 +197,37 @@ def shutdown_posthog_logging() -> None:
         if not _posthog_logging_initialized:
             return
         
+        handler_removed = False
+        provider_shutdown = False
+        
+        # Step 1: Remove handler from root logger
         try:
-            # Remove handler from root logger
             if _logging_handler is not None:
                 root_logger = logging.getLogger()
                 root_logger.removeHandler(_logging_handler)
                 _logging_handler = None
-            
-            # Shutdown provider (flushes pending logs)
+                handler_removed = True
+        except Exception as e:
+            _module_logger.error(f"Error removing logging handler: {e}")
+        
+        # Step 2: Shutdown provider (flushes pending logs)
+        try:
             if _logger_provider is not None:
                 _logger_provider.shutdown()
                 _logger_provider = None
-            
-            _posthog_logging_initialized = False
-            _module_logger.info("PostHog logging shutdown successfully")
-            
+                provider_shutdown = True
         except Exception as e:
-            _module_logger.error(f"Error shutting down PostHog logging: {e}")
+            _module_logger.error(f"Error shutting down logger provider: {e}")
+        
+        # Always mark as uninitialized to allow re-initialization
+        _posthog_logging_initialized = False
+        
+        if handler_removed and provider_shutdown:
+            _module_logger.info("PostHog logging shutdown successfully")
+        elif handler_removed or provider_shutdown:
+            _module_logger.warning("PostHog logging shutdown completed with errors")
+        else:
+            _module_logger.error("PostHog logging shutdown failed")
 
 
 def get_posthog_logger(name: str) -> logging.Logger:
