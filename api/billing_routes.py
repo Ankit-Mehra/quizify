@@ -53,9 +53,27 @@ async def get_credit_balance(user_id: str = Depends(get_current_user_id)):
     }
 
 
+from pydantic import BaseModel, Field
+
+
+class CreditPackCheckoutRequest(BaseModel):
+    """Request body for credit pack checkout."""
+    pack_size: Literal["5", "10", "15"] = Field(
+        ...,
+        description="Credit pack size to purchase (5, 10, or 15 credits)"
+    )
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "pack_size": "10"
+            }
+        }
+
+
 @router.post("/checkout/credits")
 async def create_credit_pack_checkout(
-    pack_size: Literal["5", "10", "15"],
+    request: CreditPackCheckoutRequest,
     user_id: str = Depends(get_current_user_id),
     email: str = Depends(get_current_user_email),
 ):
@@ -75,6 +93,8 @@ async def create_credit_pack_checkout(
         session_id: Stripe checkout session ID
     """
     from services.billing_service import CREDIT_PACK_UNITS
+    
+    pack_size = request.pack_size
     
     # Map pack size to Stripe price ID
     # Pricing: $5 / $10 / $15 for 5 / 10 / 15 credits

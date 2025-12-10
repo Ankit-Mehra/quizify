@@ -95,16 +95,7 @@ async def reset_monthly_credits(
         error_count: Number of errors encountered  
         errors: First 10 errors for debugging
     """
-    # Verify API key from header (passed via dependency injection in params)
-    # Since we can't use Depends() with Header alias properly, verify manually
-    
-    # The API key is already validated by the Header parameter if CRON_API_KEY is set
-    # For now, we'll rely on the service being internal or add validation in a middleware
-    
-    expected_key = getattr(Config, "CRON_API_KEY", None)
-    if not expected_key:
-        # Allow if not configured (for development/testing)
-        logger.warning("CRON_API_KEY not configured - allowing request")
+    # API key already validated by Depends(verify_cron_api_key) dependency
     
     logger.info("Starting monthly credit reset cron job")
     

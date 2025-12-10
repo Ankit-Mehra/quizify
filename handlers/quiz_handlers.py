@@ -575,15 +575,19 @@ def sanitize_filename(filename: str) -> str:
     
     return sanitized
 
-async def validate_and_consume_credits(user_id: str, quiz_type: str) -> UserBillingState:
+async def validate_and_consume_credits(user_id: str, quiz_type: str) -> None:
     """
     Validate and consume credits for quiz generation.
+    
+    This function consumes credits atomically via the consume_credit_units RPC.
+    On success, credits are already deducted - no need to fetch state again.
     
     Raises:
         HTTPException 402 if insufficient credits
     """
     success = await consume_units(user_id, quiz_type)
     if not success:
+        # Only fetch state when we need to report the error
         state = await get_billing_state(user_id)
         raise HTTPException(
             status_code=402,
@@ -595,7 +599,7 @@ async def validate_and_consume_credits(user_id: str, quiz_type: str) -> UserBill
                 "plan": state.plan
             }
         )
-    return await get_billing_state(user_id)
+    # Success - credits consumed atomically, no need to return state
 
 
 # === Generate quiz from file ===
