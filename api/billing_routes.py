@@ -106,9 +106,11 @@ async def create_credit_pack_checkout(
     
     price_id = price_id_map.get(pack_size)
     if not price_id:
+        # Log configuration issue for operators
+        logger.error(f"Stripe price ID not configured for credit pack size: {pack_size} (user_id={user_id[:8]})")
         raise HTTPException(
             status_code=400,
-            detail=f"Credit pack price not configured for size: {pack_size}"
+            detail="Invalid credit pack size. Please choose 5, 10, or 15 credits."
         )
     
     units = CREDIT_PACK_UNITS.get(pack_size, 0)

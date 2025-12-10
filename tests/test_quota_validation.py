@@ -87,6 +87,8 @@ class TestValidateAndConsumeCredits:
         
         # Verify consume was called
         mock_consume.assert_called_once_with('test-user-id', 'enhanced')
+        # On success, get_billing_state should NOT be called (no need to fetch state)
+        mock_get_state.assert_not_called()
         
     @patch('handlers.quiz_handlers.get_billing_state', new_callable=AsyncMock)
     @patch('handlers.quiz_handlers.consume_units', new_callable=AsyncMock)
@@ -114,6 +116,8 @@ class TestValidateAndConsumeCredits:
         
         # Verify consume was called (it returns False inside validate_and_consume_credits)
         mock_consume.assert_called_once_with('test-user-id', 'enhanced')
+        # On failure, get_billing_state should be called to build error response
+        mock_get_state.assert_called_once_with('test-user-id')
         
     @patch('handlers.quiz_handlers.get_billing_state', new_callable=AsyncMock)
     @patch('handlers.quiz_handlers.consume_units', new_callable=AsyncMock)

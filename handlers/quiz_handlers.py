@@ -19,7 +19,6 @@ from services.db_services.supabase_file import (
     get_file_record, save_file_to_supabase,
     parse_file_from_supabase)
 from services.billing_service import consume_units, get_billing_state
-from schemas.billing import UserBillingState
 from dependencies.auth_dependencies import get_current_user_id, get_current_user_token
 from schemas.quiz import (
     TextQuizRequest, FileQuizRequest, WebQuizRequest,

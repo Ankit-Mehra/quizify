@@ -110,10 +110,10 @@ async def get_billing_state(user_id: str) -> UserBillingState:
         
     free_monthly = data.get("free_credit_units_monthly", FREE_MONTHLY_UNITS)
     free_remaining = data.get("free_credit_units_remaining")
-    # If new free bucket is missing (older rows), derive it from total remaining
+    # If new free bucket is missing (older rows), default to monthly allowance
+    # Don't derive from subscription bucket - they're separate concepts
     if free_remaining is None:
-        total_remaining = data.get("credit_units_remaining", FREE_MONTHLY_UNITS)
-        free_remaining = min(total_remaining, free_monthly)
+        free_remaining = free_monthly
     
     subscription_remaining = data.get("credit_units_remaining", 0)
     
@@ -184,9 +184,9 @@ async def consume_units(user_id: str, quiz_type: str) -> bool:
         if isinstance(data, int):
             return data > 0
         
-        # Last resort: log and coerce to bool
-        logger.warning(f"Unexpected RPC return format for consume_credit_units: type={type(data).__name__}, value={data!r}")
-        return bool(data)
+        # Last resort: log error and return False to avoid masking issues
+        logger.error(f"Unexpected RPC return format for consume_credit_units: type={type(data).__name__}, value={data!r}")
+        return False
         
     except Exception as e:
         logger.error(f"Failed to consume units for user {user_id[:8]}: {e}")
@@ -292,9 +292,12 @@ async def reset_expired_monthly_credits() -> dict:
     
     # Filter to only process free users (no active subscription)
     # Pro users with active/trialing subscriptions are handled by Stripe webhooks
+    # Logic: Include if free plan OR (pro plan but subscription not active/trialing)
     free_profiles = [
         p for p in (response.data or [])
-        if p.get("billing_plan") != "pro" or p.get("subscription_status") not in ["active", "trialing"]
+        if p.get("billing_plan") == "free" or (
+            p.get("billing_plan") == "pro" and p.get("subscription_status") not in ["active", "trialing"]
+        )
     ]
     
     reset_count = 0
