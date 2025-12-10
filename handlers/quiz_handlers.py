@@ -18,6 +18,8 @@ from services.db_services.supabase_quiz import (  # noqa: F401
 from services.db_services.supabase_file import ( 
     get_file_record, save_file_to_supabase,
     parse_file_from_supabase)
+from services.billing_service import consume_units, get_billing_state
+from schemas.billing import UserBillingState
 from dependencies.auth_dependencies import get_current_user_id, get_current_user_token
 from schemas.quiz import (
     TextQuizRequest, FileQuizRequest, WebQuizRequest,
@@ -55,7 +57,7 @@ async def _validate_quiz_request(
     Raises:
         HTTPException: 403 if quota exceeded, 400 if content too short
     """
-    await validate_user_quota(user_id, user_token)
+    await validate_and_consume_credits(user_id, request.mode)
     
     if len(request.content) < MIN_CONTENT_LENGTH:
         raise HTTPException(
@@ -573,52 +575,27 @@ def sanitize_filename(filename: str) -> str:
     
     return sanitized
 
-async def validate_user_quota(user_id: str, user_token: str = None):
+async def validate_and_consume_credits(user_id: str, quiz_type: str) -> UserBillingState:
     """
-    Validate if user has available quota for quiz generation.
+    Validate and consume credits for quiz generation.
     
-    Uses Redis caching for 50x performance improvement.
-    
-    Args:
-        user_id: The UUID of the user
-        user_token: User's authentication token for RLS enforcement (optional)
-        
     Raises:
-        HTTPException: 403 Forbidden if quota is exceeded with detailed error message
+        HTTPException 402 if insufficient credits
     """
-    tier_info = await get_user_tier_info_cached(user_id)
-    
-    if tier_info["quota_exceeded"]:
-        current_count = tier_info["current_quiz_count"]
-        quota_limit = tier_info["quota_limit"]
-        user_tier = tier_info["account_tier"]
-        
-        # Normalize legacy tier naming for user-facing messages
-        # Database may still have "basic" but we display "premium" to users
-        display_tier = "premium" if user_tier == "basic" else user_tier
-        
-        # Create upgrade suggestion based on current tier
-        upgrade_suggestion = ""
-        if user_tier == "free":
-            upgrade_suggestion = "Upgrade to Premium for 100 quizzes."
-        elif user_tier in ("basic", "premium"):  # Support both legacy and new naming
-            upgrade_suggestion = "Upgrade to Pro for unlimited quizzes."
-        
-        detail_message = f"Quiz quota exceeded for {display_tier} tier ({current_count}/{quota_limit}). {upgrade_suggestion}".strip()
-        
-        # Log with truncated user ID for security (server-side only)
-        user_id_truncated = user_id[:8] + "..." if len(user_id) > 8 else user_id
-        logger.warning(f"Quota exceeded for user {user_id_truncated}: {detail_message}")
-        
+    success = await consume_units(user_id, quiz_type)
+    if not success:
+        state = await get_billing_state(user_id)
         raise HTTPException(
-            status_code=403,
+            status_code=402,
             detail={
-                "detail": detail_message,
-                "current_count": current_count,
-                "quota_limit": quota_limit,
-                "user_tier": display_tier  # Return normalized tier name
+                "error": "insufficient_credits",
+                "message": "Not enough credits. Upgrade to Pro or buy more credits.",
+                "available_credits": state.available_credits,
+                "required_credits": 0.5 if quiz_type == "standard" else 1.0,
+                "plan": state.plan
             }
         )
+    return await get_billing_state(user_id)
     
     # Log successful quota check with truncated user ID (server-side only)
     user_id_truncated = user_id[:8] + "..." if len(user_id) > 8 else user_id
@@ -640,7 +617,7 @@ async def generate_quiz_from_file_openai(
         raise HTTPException(status_code=400, detail="Only PDF, DOCX, or TXT files are supported.")
 
     # Validate quota BEFORE file processing and generation (don't waste AI API calls)
-    await validate_user_quota(current_user_id, user_token)
+    await validate_and_consume_credits(current_user_id, mode)
 
     try:
         file_bytes = await file.read()
@@ -783,7 +760,7 @@ async def generate_quiz_from_fileid(
         raise HTTPException(status_code=500, detail=f"Error reading file: {str(e)}")
 
     # Validate quota BEFORE generation (don't waste AI API calls)
-    await validate_user_quota(current_user_id, user_token)
+    await validate_and_consume_credits(current_user_id, data.mode)
 
     try:
         logger.info(f"Generating quiz questions from file content (length: {len(file_content)})")
@@ -1116,7 +1093,7 @@ async def generate_quiz_from_url(
     """Generate quiz from web URL (available for all tiers with quota limits)."""
     
     # Validate quota BEFORE scraping and generation (don't waste resources)
-    await validate_user_quota(current_user_id, user_token)
+    await validate_and_consume_credits(current_user_id, data.mode)
     
     try:
         # Get user tier info for logging (cached for performance)

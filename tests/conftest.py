@@ -210,12 +210,35 @@ def mock_supabase_client(mock_supabase, mocker, mock_redis_client):
         """Mock saving metadata - now accepts optional user_token parameter"""
         return {"success": True}
     
+    async def mock_consume_units(user_id: str, quiz_type: str):
+        """Mock credit consumption - always succeeds in tests"""
+        return True
+    
+    async def mock_get_billing_state(user_id: str):
+        """Mock billing state - returns default free user state"""
+        from schemas.billing import UserBillingState
+        from datetime import datetime, timezone, timedelta
+        return UserBillingState(
+            user_id=user_id,
+            plan="free",
+            credit_units_monthly=6,
+            credit_units_remaining=6,
+            credit_units_purchased=0,
+            period_start=datetime.now(timezone.utc),
+            period_end=datetime.now(timezone.utc) + timedelta(days=30)
+        )
+    
     # Apply all patches using mocker (pytest-mock)
     # NEW PATTERN: Mock get_supabase() functions instead of module-level variables
     mocker.patch("handlers.auth_handlers.get_supabase", return_value=mock_supabase)
     mocker.patch("services.db_services.supabase_quiz.get_supabase", return_value=mock_supabase)
     mocker.patch("services.db_services.supabase_file.get_supabase", return_value=mock_supabase)
     mocker.patch("services.db_services.supabase_submission.get_supabase", return_value=mock_supabase)
+    
+    # Mock billing service functions
+    mocker.patch("handlers.quiz_handlers.consume_units", side_effect=mock_consume_units)
+    mocker.patch("handlers.quiz_handlers.get_billing_state", side_effect=mock_get_billing_state)
+    mocker.patch("services.billing_service.get_billing_state", side_effect=mock_get_billing_state)
     
     # Keep function-level mocks
     mocker.patch("handlers.file_handlers.save_file_to_supabase", side_effect=mock_save_file_to_supabase)

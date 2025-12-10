@@ -257,7 +257,11 @@ class ExplanationService:
                 output_tokens=response.usage.completion_tokens,
                 latency_ms=latency_ms,
                 cost_usd=calculate_cost(model, response.usage.prompt_tokens, response.usage.completion_tokens),
-                metadata={"is_accurate": result.get("is_accurate")}
+                metadata={
+                    "is_accurate": result.get("is_accurate"),
+                    "quiz_type": "enhanced",
+                    "pipeline": "rag_llama_index"
+                }
             )
             
             return (
@@ -344,7 +348,11 @@ class ExplanationService:
                 output_tokens=response.usage.completion_tokens,
                 latency_ms=latency_ms,
                 cost_usd=calculate_cost(model, response.usage.prompt_tokens, response.usage.completion_tokens),
-                metadata={"is_accurate": result.get("is_accurate")}
+                metadata={
+                    "is_accurate": result.get("is_accurate"),
+                    "quiz_type": "enhanced",
+                    "pipeline": "rag_llama_index"
+                }
             )
             
             return (
@@ -433,7 +441,11 @@ class ExplanationService:
                 input_tokens=response.usage.prompt_tokens,
                 output_tokens=response.usage.completion_tokens,
                 latency_ms=latency_ms,
-                cost_usd=calculate_cost(model, response.usage.prompt_tokens, response.usage.completion_tokens)
+                cost_usd=calculate_cost(model, response.usage.prompt_tokens, response.usage.completion_tokens),
+                metadata={
+                    "quiz_type": "enhanced",
+                    "pipeline": "rag_llama_index"
+                }
             )
             
             # Format final string

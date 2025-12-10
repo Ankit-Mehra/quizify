@@ -228,9 +228,10 @@ async def update_user_tier(
         )
     
     try:
-        # Validate tier
-        valid_tiers = ["free", "premium", "pro"]
-        if tier_update.new_tier not in valid_tiers:
+        # Validate tier (premium kept for backward compatibility, maps to pro in billing)
+        valid_tiers = ["free", "pro"]
+        # Also accept premium for backward compatibility with existing admin tools
+        if tier_update.new_tier not in valid_tiers and tier_update.new_tier != "premium":
             raise HTTPException(
                 status_code=400,
                 detail=f"Invalid tier. Must be one of: {', '.join(valid_tiers)}"

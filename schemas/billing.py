@@ -18,18 +18,20 @@ class CheckoutSessionRequest(BaseModel):
     """
     Request to create a Stripe Checkout session.
     
-    Frontend sends this when user clicks "Upgrade to Premium" or "Upgrade to Pro".
+    Frontend sends this when user clicks "Upgrade to Pro".
     Backend returns a checkout URL to redirect the user to Stripe's hosted payment page.
+    
+    Note: 'premium' is accepted for backward compatibility but maps to 'pro'.
     """
-    tier: Literal["premium", "pro"] = Field(
+    tier: Literal["pro"] = Field(
         ...,
-        description="The subscription tier to purchase (premium or pro)"
+        description="The subscription tier to purchase (pro)"
     )
     
     class Config:
         json_schema_extra = {
             "example": {
-                "tier": "premium"
+                "tier": "pro"
             }
         }
 
@@ -192,10 +194,12 @@ class SubscriptionStatusResponse(BaseModel):
     
     Returned by GET /api/billing/subscription-status endpoint.
     Frontend uses this to display billing information and subscription details.
+    
+    Note: account_tier may be 'premium' for legacy users (maps to 'pro').
     """
     account_tier: Literal["free", "premium", "pro"] = Field(
         ...,
-        description="Current account tier"
+        description="Current account tier (premium is legacy, treated as pro)"
     )
     subscription_status: Optional[str] = Field(
         None,
@@ -437,3 +441,35 @@ class UpgradePreviewResponse(BaseModel):
                 "message": "You'll be charged $2.50 today. Then $15.00/month starting Dec 15."
             }
         }
+
+
+# ============================================================================
+# Billing State Schema (Epic 2.2)
+# ============================================================================
+
+class UserBillingState(BaseModel):
+    """
+    Represents the user's current billing and credit state.
+    Maps to the extended profiles table structure.
+    """
+    user_id: str
+    plan: Literal["free", "pro"]
+    credit_units_monthly: int  # legacy monthly field (kept for compatibility)
+    credit_units_remaining: int  # subscription/paid recurring bucket
+    credit_units_purchased: int  # paid one-time (credit packs)
+    free_credit_units_monthly: int = 6
+    free_credit_units_remaining: int = 6
+    period_start: Optional[datetime] = None
+    period_end: Optional[datetime] = None
+    
+    @property
+    def available_units(self) -> int:
+        return (
+            self.credit_units_purchased
+            + self.credit_units_remaining
+            + self.free_credit_units_remaining
+        )
+    
+    @property
+    def available_credits(self) -> float:
+        return self.available_units / 2.0

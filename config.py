@@ -111,8 +111,15 @@ class Config:
     
     # Stripe Price IDs for subscription plans
     # These are created in Stripe Dashboard and map to our tier system
-    STRIPE_PRICE_ID_PREMIUM: str = os.getenv("STRIPE_PRICE_ID_PREMIUM", "")  # $7/mo - 50 quizzes
-    STRIPE_PRICE_ID_PRO: str = os.getenv("STRIPE_PRICE_ID_PRO", "")  # Coming soon - unlimited quizzes + LMS exports
+    STRIPE_PRICE_ID_PREMIUM: str = os.getenv("STRIPE_PRICE_ID_PREMIUM", "")  # Legacy - kept for backward compatibility
+    STRIPE_PRICE_ID_PRO: str = os.getenv("STRIPE_PRICE_ID_PRO", "")  # $15/mo - 30 credits (60 units)
+    
+    # Credit Pack Price IDs (one-time purchases)
+    # These are created in Stripe Dashboard as one-time payment products
+    # Pricing: $5 / $10 / $15 for 5 / 10 / 15 credits respectively
+    STRIPE_PRICE_ID_CREDITS_5: str = os.getenv("STRIPE_PRICE_ID_CREDITS_5", "")   # $5  - 5 credits = 10 units
+    STRIPE_PRICE_ID_CREDITS_10: str = os.getenv("STRIPE_PRICE_ID_CREDITS_10", "")  # $10 - 10 credits = 20 units
+    STRIPE_PRICE_ID_CREDITS_15: str = os.getenv("STRIPE_PRICE_ID_CREDITS_15", "")  # $15 - 15 credits = 30 units
     
     # Frontend URLs for Stripe redirects
     STRIPE_SUCCESS_URL: str = os.getenv("STRIPE_SUCCESS_URL", f"{os.getenv('FRONTEND_URL', 'https://www.quizify.ca')}/billing/success")
@@ -124,6 +131,14 @@ class Config:
     # Billing strict mode - when True, webhooks fail if Redis is unavailable (for multi-instance prod)
     # Set to "true" in production with multiple instances to prevent duplicate processing
     BILLING_REQUIRE_REDIS: bool = os.getenv("BILLING_REQUIRE_REDIS", "false").lower() == "true"
+    
+    # ============================================================================
+    # Cron Job Configuration
+    # ============================================================================
+    
+    # API key for authenticating cron job requests
+    # Generate with: python -c "import secrets; print(secrets.token_urlsafe(32))"
+    CRON_API_KEY: str = os.getenv("CRON_API_KEY", "")
     
     # ============================================================================
     # Google OAuth Configuration (for Google Forms Export - Pro Tier Feature)

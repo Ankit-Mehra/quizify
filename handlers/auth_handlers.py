@@ -571,7 +571,14 @@ async def get_user_info(
             "quizzes_attempted": tier_info.get("quizzes_attempted", 0),  # Quizzes attempted (NEW)
             "quota_limit": tier_info["quota_limit"],
             "quota_exceeded": tier_info["quota_exceeded"],
-            "created_at": tier_info.get("created_at")
+            "created_at": tier_info.get("created_at"),
+            
+            # New credit fields (Epic 6.3)
+            "available_credits": tier_info.get("available_credits"),
+            "monthly_credits": tier_info.get("monthly_credits"),
+            "purchased_credits": tier_info.get("purchased_credits"),
+            "plan": tier_info.get("billing_plan"),
+            "period_end": tier_info.get("period_end")
         }
     except HTTPException:
         raise
