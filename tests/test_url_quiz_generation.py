@@ -274,7 +274,7 @@ class TestGenerateQuizFromUrl:
 
         assert exc_info.value.status_code == 402
         # Credit enforcement blocks before any processing
-        mock_validate_quota.assert_called_once_with('test-user-id', 'standard')
+        mock_validate_quota.assert_called_once_with('test-user-id', request.mode)
 
     @pytest.mark.asyncio
     @patch('handlers.quiz_handlers.validate_and_consume_credits')
