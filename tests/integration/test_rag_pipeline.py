@@ -130,16 +130,22 @@ async def test_rag_pipeline_quota_exceeded():
     )
     
     with patch("handlers.quiz_handlers.validate_and_consume_credits") as mock_validate_credits:
-        # Simulate quota exceeded
+        # Simulate insufficient credits (402 Payment Required)
         mock_validate_credits.side_effect = HTTPException(
-            status_code=403,
-            detail={"message": "Insufficient credits", "required_units": 2, "available_units": 1}
+            status_code=402,
+            detail={
+                "error": "insufficient_credits",
+                "message": "Not enough credits. Upgrade to Pro or buy more credits.",
+                "available_credits": 0.5,
+                "required_credits": 1.0,
+                "plan": "free"
+            }
         )
         
         with pytest.raises(HTTPException) as exc_info:
             await generate_quiz_rag_async(request, user_id, user_token)
         
-        assert exc_info.value.status_code == 403
+        assert exc_info.value.status_code == 402
 
 
 @pytest.mark.asyncio

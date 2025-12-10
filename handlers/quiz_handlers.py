@@ -596,11 +596,6 @@ async def validate_and_consume_credits(user_id: str, quiz_type: str) -> UserBill
             }
         )
     return await get_billing_state(user_id)
-    
-    # Log successful quota check with truncated user ID (server-side only)
-    user_id_truncated = user_id[:8] + "..." if len(user_id) > 8 else user_id
-    logger.info(f"Quota check passed for user {user_id_truncated}: "
-               f"{tier_info['current_quiz_count']}/{tier_info['quota_limit']}")
 
 
 # === Generate quiz from file ===

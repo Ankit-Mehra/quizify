@@ -60,7 +60,9 @@ def verify_cron_api_key(x_cron_api_key: Optional[str] = Header(default=None, ali
             logger.warning("CRON_API_KEY not configured - allowing request (local development only)")
             return True
     
-    if not x_cron_api_key or x_cron_api_key != expected_key:
+    # Use constant-time comparison to prevent timing attacks
+    import secrets
+    if not x_cron_api_key or not secrets.compare_digest(x_cron_api_key, expected_key):
         logger.warning("Invalid cron API key attempt")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

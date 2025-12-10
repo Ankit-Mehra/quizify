@@ -1479,17 +1479,15 @@ class BillingService:
             if units:
                 try:
                     units = int(units)
-                    # Update DB
+                    # Use atomic RPC to add units safely (prevents race conditions)
+                    # This is the same RPC used by add_purchased_units() function
                     from services.db_services.supabase_quiz import get_supabase
                     supabase = get_supabase()
                     
-                    # Fetch current
-                    resp = supabase.table("profiles").select("credit_units_purchased").eq("id", user_id).single().execute()
-                    current = resp.data.get("credit_units_purchased", 0)
-                    
-                    supabase.table("profiles").update({
-                        "credit_units_purchased": current + units
-                    }).eq("id", user_id).execute()
+                    supabase.rpc("add_purchased_credit_units", {
+                        "p_user_id": user_id,
+                        "p_units": units
+                    }).execute()
                     
                     logger.info(f"Added {units} units to user {user_id[:8]}")
                 except Exception as e:
