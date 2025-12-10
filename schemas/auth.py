@@ -78,6 +78,13 @@ class UserInfoResponse(BaseModel):
     quota_limit: int
     quota_exceeded: bool
     created_at: Optional[str] = None
+    
+    # New credit fields (Epic 6.3)
+    available_credits: Optional[float] = None
+    monthly_credits: Optional[float] = None
+    purchased_credits: Optional[float] = None
+    plan: Optional[str] = None
+    period_end: Optional[str] = None
 
 
 class AdminUpdateResponse(BaseModel):

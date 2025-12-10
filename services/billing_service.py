@@ -23,6 +23,7 @@ from supabase import Client
 from services.logger import app_logger as logger
 from services.db_services.supabase_quiz import invalidate_user_tier_cache
 from services.db_services.supabase_quiz import get_authed_supabase_client
+from schemas.billing import UserBillingState
 
 # Subscription status constants
 STATUS_ACTIVE = "active"
@@ -41,7 +42,295 @@ MAX_CHECKOUT_SESSION_ATTEMPTS = 5
 
 # Tier hierarchy for upgrade/downgrade detection
 # Higher number = higher tier. Used to determine if plan change is upgrade or downgrade.
-TIER_ORDER = {"premium": 1, "pro": 2}
+# Note: 'premium' is legacy (kept for backward compatibility), treated same as 'pro'
+TIER_ORDER = {"free": 0, "premium": 2, "pro": 2}
+
+# Credit unit constants (Epic 2.1)
+STANDARD_UNITS = 1   # Standard quiz = 1 unit
+ENHANCED_UNITS = 2   # Enhanced quiz = 2 units
+
+FREE_MONTHLY_UNITS = 6     # 3 credits = 6 units
+PRO_MONTHLY_UNITS = 60     # 30 credits = 60 units
+
+# Credit pack configuration
+# Pack sizes are by CREDITS (not price). Price is set in Stripe.
+# Mapping: pack_size (credits) -> units (1 credit = 2 units)
+CREDIT_PACK_UNITS = {
+    "5": 10,    # $5  - 5 credits = 10 units (5 standard or 2-3 enhanced quizzes)
+    "10": 20,   # $10 - 10 credits = 20 units (10 standard or 5 enhanced quizzes)
+    "15": 30,   # $15 - 15 credits = 30 units (15 standard or 7-8 enhanced quizzes)
+}
+
+# Conversion for display (1 credit = 2 units)
+def units_to_credits(units: int) -> float:
+    return units / 2.0
+
+def credits_to_units(credits: float) -> int:
+    return int(credits * 2)
+
+def quiz_unit_cost(quiz_type: str) -> int:
+    """
+    Get the unit cost for a quiz type.
+    
+    Args:
+        quiz_type: "standard" or "enhanced"
+        
+    Returns:
+        Number of units required (1 for standard, 2 for enhanced)
+        
+    Raises:
+        ValueError: If unknown quiz_type
+    """
+    if quiz_type == "standard":
+        return STANDARD_UNITS
+    elif quiz_type == "enhanced":
+        return ENHANCED_UNITS
+    raise ValueError(f"Unknown quiz_type: {quiz_type}")
+
+
+async def get_billing_state(user_id: str) -> UserBillingState:
+    """Fetch user's current billing state from profiles table."""
+    # Use service role client to ensure we can read billing data
+    from services.db_services.supabase_quiz import get_supabase
+    supabase = get_supabase()
+    
+    response = supabase.table("profiles").select("*").eq("id", user_id).single().execute()
+    
+    if not response.data:
+        # Should not happen if profile exists, but handle gracefully
+        raise HTTPException(status_code=404, detail="User profile not found")
+        
+    data = response.data
+    
+    # Handle potential nulls if backfill hasn't run or race condition
+    plan = data.get("billing_plan") or "free"
+    # Map legacy tiers if needed (though we did backfill)
+    if plan not in ["free", "pro"]:
+        plan = "pro" if data.get("account_tier") in ["basic", "premium", "pro"] else "free"
+        
+    free_monthly = data.get("free_credit_units_monthly", FREE_MONTHLY_UNITS)
+    free_remaining = data.get("free_credit_units_remaining")
+    # If new free bucket is missing (older rows), default to monthly allowance
+    # Don't derive from subscription bucket - they're separate concepts
+    if free_remaining is None:
+        free_remaining = free_monthly
+    
+    subscription_remaining = data.get("credit_units_remaining", 0)
+    
+    return UserBillingState(
+        user_id=user_id,
+        plan=plan,
+        credit_units_monthly=data.get("credit_units_monthly", 6),
+        credit_units_remaining=subscription_remaining,
+        credit_units_purchased=data.get("credit_units_purchased", 0),
+        free_credit_units_monthly=free_monthly,
+        free_credit_units_remaining=free_remaining,
+        period_start=data.get("current_period_start"),
+        period_end=data.get("current_period_end")
+    )
+
+
+async def consume_units(user_id: str, quiz_type: str) -> bool:
+    """
+    Attempt to consume units for quiz generation.
+    
+    Priority order: purchased → free → subscription
+    (Use purchased first, then free allowance, preserve subscription credits longest)
+    
+    Uses atomic SQL to prevent race conditions on concurrent quiz starts.
+    Returns True if successful, False if insufficient units.
+    """
+    needed = quiz_unit_cost(quiz_type)
+    
+    from services.db_services.supabase_quiz import get_supabase
+    supabase = get_supabase()
+    
+    # Use atomic RPC to debit units safely
+    # This prevents double-spending under concurrent load
+    try:
+        result = supabase.rpc("consume_credit_units", {
+            "p_user_id": user_id,
+            "p_units_needed": needed
+        }).execute()
+        
+        # PostgREST scalar function returns: {"data": true/false}
+        # supabase-py parses to: result.data = True/False (Python bool)
+        # 
+        # IMPORTANT: For scalar RPC functions, result.data is the direct value,
+        # NOT wrapped in a list. This is different from table-returning functions.
+        data = result.data
+        
+        # Debug logging to catch unexpected formats in production
+        logger.debug(f"consume_credit_units RPC returned: type={type(data).__name__}, value={data!r}")
+        
+        # Direct boolean check (most common case for scalar BOOLEAN RPC)
+        if data is True or data is False:
+            return data
+        
+        # Fallback: Handle potential edge cases from different Supabase versions
+        # Some versions might wrap scalar in a list
+        if isinstance(data, list):
+            if len(data) == 1:
+                return bool(data[0])
+            elif len(data) == 0:
+                logger.warning(f"consume_credit_units returned empty list for user {user_id[:8]}")
+                return False
+        
+        # String fallback (shouldn't happen but defensive)
+        if isinstance(data, str):
+            return data.lower() in ("true", "1", "t", "yes")
+        
+        # Integer fallback
+        if isinstance(data, int):
+            return data > 0
+        
+        # Last resort: log error and return False to avoid masking issues
+        logger.error(f"Unexpected RPC return format for consume_credit_units: type={type(data).__name__}, value={data!r}")
+        return False
+        
+    except Exception as e:
+        logger.error(f"Failed to consume units for user {user_id[:8]}: {e}")
+        return False
+
+
+async def add_purchased_units(user_id: str, units: int) -> bool:
+    """
+    Add purchased units to user's credit balance.
+    
+    Called when a credit pack purchase is completed via Stripe webhook.
+    Uses atomic SQL increment to prevent race conditions.
+    
+    Args:
+        user_id: User ID
+        units: Number of units to add (e.g., 20, 60, 200 for 10/30/100 credit packs)
+        
+    Returns:
+        True if successful
+    """
+    from services.db_services.supabase_quiz import get_supabase
+    supabase = get_supabase()
+    
+    # Use atomic RPC to add units safely (prevents race conditions)
+    try:
+        supabase.rpc("add_purchased_credit_units", {
+            "p_user_id": user_id,
+            "p_units": units
+        }).execute()
+        
+        logger.info(f"Added {units} units ({units/2} credits) to user {user_id[:8]}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to add purchased units for user {user_id[:8]}: {e}")
+        return False
+
+
+async def reset_monthly_credits_for_user(user_id: str) -> bool:
+    """
+    Reset monthly free credits for a single user.
+    
+    Called by:
+    1. Monthly cron job (free allowance)
+    2. Fallback handler if we need to manually top-up free allowance
+    
+    Args:
+        user_id: User ID
+        
+    Returns:
+        True if successful
+    """
+    from services.db_services.supabase_quiz import get_supabase
+    from datetime import datetime, timezone
+    from dateutil.relativedelta import relativedelta
+    
+    supabase = get_supabase()
+    state = await get_billing_state(user_id)
+    
+    now = datetime.now(timezone.utc)
+    # Use calendar month boundaries for consistency
+    period_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    period_end = period_start + relativedelta(months=1)
+    
+    # Reset only the free bucket; paid/subscription handled separately (Stripe)
+    supabase.table("profiles").update({
+        "free_credit_units_remaining": state.free_credit_units_monthly,
+        "current_period_start": period_start.isoformat(),
+        "current_period_end": period_end.isoformat()
+    }).eq("id", user_id).execute()
+    
+    logger.info(f"Reset monthly free credits for user {user_id[:8]} to {state.free_credit_units_monthly} units")
+    return True
+
+
+async def reset_expired_monthly_credits() -> dict:
+    """
+    Reset monthly free credits for all users whose period has expired.
+    
+    Called by cron job endpoint. Paid/subscription credits are handled separately
+    via Stripe webhooks; this only touches the free allowance bucket.
+    
+    Returns:
+        Dict with reset_count and any errors
+    """
+    from services.db_services.supabase_quiz import get_supabase
+    from datetime import datetime, timezone
+    from dateutil.relativedelta import relativedelta
+    
+    supabase = get_supabase()
+    now = datetime.now(timezone.utc)
+    
+    # Use calendar month boundaries for consistency with Stripe billing cycles
+    # Period starts at beginning of current month, ends at beginning of next month
+    period_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    period_end = period_start + relativedelta(months=1)
+    
+    # Find FREE users only with expired periods (include rows with null period_end)
+    # Pro users have their periods managed by Stripe webhooks - we must not touch them
+    # to avoid desyncing from Stripe billing cycles
+    response = supabase.table("profiles").select(
+        "id, billing_plan, free_credit_units_monthly, current_period_end, subscription_status"
+    ).or_(f"current_period_end.is.null,current_period_end.lt.{now.isoformat()}").execute()
+    
+    # Filter to only process free users (no active subscription)
+    # Pro users with active/trialing subscriptions are handled by Stripe webhooks
+    # Logic: Include if free plan OR (pro plan but subscription not active/trialing)
+    free_profiles = [
+        p for p in (response.data or [])
+        if p.get("billing_plan") == "free" or (
+            p.get("billing_plan") == "pro" and p.get("subscription_status") not in ["active", "trialing"]
+        )
+    ]
+    
+    reset_count = 0
+    errors = []
+    skipped_pro = len(response.data or []) - len(free_profiles)
+    if skipped_pro > 0:
+        logger.info(f"Skipping {skipped_pro} Pro users with active subscriptions (managed by Stripe)")
+    
+    for profile in free_profiles:
+        try:
+            user_id = profile["id"]
+            monthly_units = profile.get("free_credit_units_monthly", FREE_MONTHLY_UNITS)
+            
+            # Update credits and period using calendar month boundaries
+            supabase.table("profiles").update({
+                "free_credit_units_remaining": monthly_units,
+                "current_period_start": period_start.isoformat(),
+                "current_period_end": period_end.isoformat()
+            }).eq("id", user_id).execute()
+            
+            reset_count += 1
+            
+        except Exception as e:
+            errors.append({"user_id": profile.get("id", "unknown")[:8], "error": str(e)})
+            logger.error(f"Failed to reset credits for user {profile.get('id', 'unknown')[:8]}: {e}")
+    
+    logger.info(f"Monthly credit reset complete: {reset_count} users reset, {len(errors)} errors")
+    
+    return {
+        "reset_count": reset_count,
+        "error_count": len(errors),
+        "errors": errors[:10]  # Return first 10 errors for debugging
+    }
 
 
 def _short_stripe_id(stripe_id: str, max_len: int = 12) -> str:
@@ -999,7 +1288,8 @@ class BillingService:
         subscription_status: str,
         price_id: str,
         current_period_start: Optional[int] = None,
-        current_period_end: Optional[int] = None
+        current_period_end: Optional[int] = None,
+        reset_credits: bool = False
     ) -> None:
         """
         Provision or update a subscription in the database.
@@ -1018,6 +1308,7 @@ class BillingService:
             price_id: Stripe price ID to determine tier
             current_period_start: Unix timestamp for start of billing period
             current_period_end: Unix timestamp for end of billing period
+            reset_credits: Whether to reset credit allowance (e.g. on new sub or renewal)
             
         Raises:
             HTTPException: If price_id is invalid or database update fails
@@ -1034,6 +1325,9 @@ class BillingService:
             else:
                 raise HTTPException(status_code=400, detail=f"Invalid price ID or tier: {price_id}")
         
+        # Map tier to plan (Epic 1/3)
+        plan = "pro" if tier in ["basic", "premium", "pro"] else "free"
+
         try:
             # 2. Prepare update data
             update_data = {
@@ -1041,9 +1335,17 @@ class BillingService:
                 "stripe_subscription_id": subscription_id,
                 "subscription_status": subscription_status,
                 "account_tier": tier,
+                "billing_plan": plan,
                 # Clear any stale cancellation timestamp when provisioning a new/active subscription
                 "subscription_canceled_at": None
             }
+
+            # Handle credit reset for Pro plan (Epic 3.4)
+            if reset_credits and plan == "pro" and subscription_status in [STATUS_ACTIVE, STATUS_TRIALING]:
+                update_data["credit_units_monthly"] = PRO_MONTHLY_UNITS
+                update_data["credit_units_remaining"] = PRO_MONTHLY_UNITS
+                # Also reset free credits bucket on subscription renewal
+                update_data["free_credit_units_remaining"] = FREE_MONTHLY_UNITS
             
             # Update billing period for quota tracking (Migration 017)
             if current_period_start:
@@ -1117,7 +1419,13 @@ class BillingService:
             response = self.supabase.table("profiles").update({
                 "subscription_status": STATUS_CANCELED,
                 "subscription_canceled_at": canceled_at.isoformat(),
-                "account_tier": "free"  # Downgrade to free tier
+                "account_tier": "free",  # Downgrade to free tier
+                "billing_plan": "free",  # Downgrade plan (Epic 3.5)
+                "credit_units_monthly": FREE_MONTHLY_UNITS,  # Legacy compatibility
+                "credit_units_remaining": 0,  # Drop any recurring subscription credits
+                "free_credit_units_monthly": FREE_MONTHLY_UNITS,
+                "free_credit_units_remaining": FREE_MONTHLY_UNITS
+                # Note: credit_units_purchased is preserved (Epic 3.5)
             }).eq("id", user_id).execute()
             
             # Verify database update succeeded
@@ -1165,6 +1473,32 @@ class BillingService:
             logger.error(f"SECURITY: Webhook authorization failed for checkout {_short_stripe_id(session.get('id'))}")
             return
         
+        # Handle Credit Pack Purchase (One-time payment) (Epic 3.3)
+        if session.get("mode") == "payment":
+            logger.info(f"Processing credit pack purchase for user {user_id[:8]}")
+            
+            # Extract units from metadata (assuming set during checkout creation)
+            units = session.get("metadata", {}).get("units")
+            if units:
+                try:
+                    units = int(units)
+                    # Use atomic RPC to add units safely (prevents race conditions)
+                    # This is the same RPC used by add_purchased_units() function
+                    from services.db_services.supabase_quiz import get_supabase
+                    supabase = get_supabase()
+                    
+                    supabase.rpc("add_purchased_credit_units", {
+                        "p_user_id": user_id,
+                        "p_units": units
+                    }).execute()
+                    
+                    logger.info(f"Added {units} units to user {user_id[:8]}")
+                except Exception as e:
+                    logger.error(f"Failed to add credits: {e}")
+            else:
+                logger.warning("No 'units' in metadata for credit pack purchase")
+            return
+        
         # Get subscription details
         subscription_id = session.get("subscription")
         if not subscription_id:
@@ -1200,7 +1534,8 @@ class BillingService:
             subscription_status=self._get_attr(subscription, "status"),
             price_id=price_id,
             current_period_start=current_period_start,
-            current_period_end=current_period_end
+            current_period_end=current_period_end,
+            reset_credits=True  # Reset credits for new subscription
         )
     
     async def handle_subscription_created(self, subscription: dict) -> None:
@@ -1443,7 +1778,8 @@ class BillingService:
             subscription_status=STATUS_ACTIVE,
             price_id=price_id,
             current_period_start=current_period_start,
-            current_period_end=current_period_end
+            current_period_end=current_period_end,
+            reset_credits=True  # Reset credits on successful invoice payment (renewal)
         )
     
     async def handle_invoice_payment_failed(self, invoice: dict) -> None:

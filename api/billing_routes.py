@@ -16,6 +16,7 @@ import stripe
 import time
 from collections import OrderedDict
 from threading import Lock
+from typing import Literal
 from dependencies.auth_dependencies import get_current_user_id, get_current_user_token, get_current_user_email
 from schemas.billing import (
     CheckoutSessionRequest,
@@ -26,7 +27,7 @@ from schemas.billing import (
     UpgradePreviewRequest,
     UpgradePreviewResponse,
 )
-from services.billing_service import BillingService
+from services.billing_service import BillingService, get_billing_state
 from services.db_services.supabase_quiz import get_supabase
 from services.posthog_service import capture_exception
 from config import Config
@@ -35,6 +36,137 @@ from services.logger import app_logger as logger
 
 
 router = APIRouter(prefix="/api/billing", tags=["billing"])
+
+
+@router.get("/balance")
+async def get_credit_balance(user_id: str = Depends(get_current_user_id)):
+    """Get user's current credit balance."""
+    state = await get_billing_state(user_id)
+    return {
+        "plan": state.plan,
+        "credits_remaining": state.available_credits,
+        "free_credits_monthly": state.free_credit_units_monthly / 2.0,
+        "free_credits_remaining": state.free_credit_units_remaining / 2.0,
+        "subscription_credits_remaining": state.credit_units_remaining / 2.0,
+        "purchased_credits": state.credit_units_purchased / 2.0,
+        "period_end": state.period_end.isoformat() if state.period_end else None
+    }
+
+
+from pydantic import BaseModel, Field
+
+
+class CreditPackCheckoutRequest(BaseModel):
+    """Request body for credit pack checkout."""
+    pack_size: Literal["5", "10", "15"] = Field(
+        ...,
+        description="Credit pack size to purchase (5, 10, or 15 credits)"
+    )
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "pack_size": "10"
+            }
+        }
+
+
+@router.post("/checkout/credits")
+async def create_credit_pack_checkout(
+    request: CreditPackCheckoutRequest,
+    user_id: str = Depends(get_current_user_id),
+    email: str = Depends(get_current_user_email),
+):
+    """
+    Create Stripe checkout session for credit pack purchase.
+    
+    Credit packs are one-time purchases that add to credit_units_purchased.
+    These credits never expire and are consumed before monthly credits.
+    
+    Pricing:
+        - "5" credits = $5
+        - "10" credits = $10
+        - "15" credits = $15
+        
+    Returns:
+        checkout_url: Stripe hosted checkout page URL
+        session_id: Stripe checkout session ID
+    """
+    from services.billing_service import CREDIT_PACK_UNITS
+    
+    pack_size = request.pack_size
+    
+    # Map pack size to Stripe price ID
+    # Pricing: $5 / $10 / $15 for 5 / 10 / 15 credits
+    price_id_map = {
+        "5": Config.STRIPE_PRICE_ID_CREDITS_5,    # $5
+        "10": Config.STRIPE_PRICE_ID_CREDITS_10,  # $10
+        "15": Config.STRIPE_PRICE_ID_CREDITS_15,  # $15
+    }
+    
+    price_id = price_id_map.get(pack_size)
+    if not price_id:
+        # Log configuration issue for operators
+        logger.error(f"Stripe price ID not configured for credit pack size: {pack_size} (user_id={user_id[:8]})")
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid credit pack size. Please choose 5, 10, or 15 credits."
+        )
+    
+    units = CREDIT_PACK_UNITS.get(pack_size, 0)
+    
+    try:
+        # Get or create Stripe customer
+        supabase = get_supabase()
+        profile = supabase.table("profiles").select("stripe_customer_id").eq("id", user_id).single().execute()
+        
+        customer_id = profile.data.get("stripe_customer_id") if profile.data else None
+        
+        if not customer_id:
+            # Create new Stripe customer
+            customer = stripe.Customer.create(
+                email=email,
+                metadata={"user_id": user_id}
+            )
+            customer_id = customer.id
+            
+            # Save customer ID
+            supabase.table("profiles").update({
+                "stripe_customer_id": customer_id
+            }).eq("id", user_id).execute()
+        
+        # Create checkout session for one-time payment
+        session = stripe.checkout.Session.create(
+            customer=customer_id,
+            payment_method_types=["card"],
+            line_items=[{
+                "price": price_id,
+                "quantity": 1,
+            }],
+            mode="payment",  # One-time payment, not subscription
+            success_url=f"{Config.STRIPE_SUCCESS_URL}?credits={pack_size}",
+            cancel_url=Config.STRIPE_CANCEL_URL,
+            metadata={
+                "user_id": user_id,
+                "pack_size": pack_size,
+                "units": str(units),
+                "type": "credit_pack"
+            }
+        )
+        
+        logger.info(f"Created credit pack checkout for user {user_id[:8]}: {pack_size} credits")
+        
+        return {
+            "checkout_url": session.url,
+            "session_id": session.id
+        }
+        
+    except stripe.error.StripeError as e:
+        logger.error(f"Stripe error creating credit pack checkout: {e}")
+        raise HTTPException(
+            status_code=502,
+            detail=f"Payment service error: {str(e)}"
+        )
 
 
 # ============================================================================

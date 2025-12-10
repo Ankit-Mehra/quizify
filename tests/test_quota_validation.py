@@ -1,12 +1,13 @@
 """
-Unit tests for quota validation logic.
-Tests the validate_user_quota function and get_user_tier_info function.
+Unit tests for credit validation logic.
+Tests the validate_and_consume_credits function and get_user_tier_info function.
 """
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
 from fastapi import HTTPException
-from handlers.quiz_handlers import validate_user_quota
+from handlers.quiz_handlers import validate_and_consume_credits
 from services.db_services.supabase_quiz import get_user_tier_info
+from schemas.billing import UserBillingState
 
 
 class TestGetUserTierInfo:
@@ -28,7 +29,10 @@ class TestGetUserTierInfo:
             'current_quiz_count': 3,
             'quota_limit': 5,
             'quizzes_attempted': 3,
-            'quota_exceeded': False
+            'quota_exceeded': False,
+            'credit_units_monthly': 6,
+            'credit_units_remaining': 4,
+            'credit_units_purchased': 0
         }]
         mock_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = mock_response
         
@@ -37,10 +41,7 @@ class TestGetUserTierInfo:
         
         # Assertions
         assert result['account_tier'] == 'free'
-        assert result['current_quiz_count'] == 3
-        assert result['quota_limit'] == 5
-        assert result['quizzes_attempted'] == 3
-        assert result['quota_exceeded'] is False
+        assert result['credit_units_remaining'] == 4
         
     @patch('services.db_services.supabase_quiz.get_supabase')
     def test_get_user_tier_info_user_not_found(self, mock_get_supabase):
@@ -62,126 +63,81 @@ class TestGetUserTierInfo:
         assert "User not found" in str(exc_info.value.detail)
 
 
-class TestValidateUserQuota:
-    """Tests for validate_user_quota function."""
+class TestValidateAndConsumeCredits:
+    """Tests for validate_and_consume_credits function."""
     pytestmark = pytest.mark.asyncio
     
-    @patch('handlers.quiz_handlers.get_user_tier_info_cached', new_callable=AsyncMock)
-    async def test_validate_quota_free_tier_under_limit(self, mock_get_tier_info):
-        """Test quota validation for free tier user under limit."""
-        mock_get_tier_info.return_value = {
-            'id': 'test-user-id',
-            'email': 'test@example.com',
-            'account_tier': 'free',
-            'current_quiz_count': 3,
-            'quota_limit': 5,
-            'quizzes_attempted': 3,
-            'quota_exceeded': False
-        }
+    @patch('handlers.quiz_handlers.get_billing_state', new_callable=AsyncMock)
+    @patch('handlers.quiz_handlers.consume_units', new_callable=AsyncMock)
+    async def test_validate_credits_sufficient(self, mock_consume, mock_get_state):
+        """Test credit validation when user has sufficient credits."""
+        # Mock billing state with sufficient credits
+        mock_get_state.return_value = UserBillingState(
+            user_id='test-user-id',
+            plan='free',
+            credit_units_monthly=6,
+            credit_units_remaining=4,
+            credit_units_purchased=0
+        )
+        
+        mock_consume.return_value = True
 
         # Should not raise exception
-        await validate_user_quota('test-user-id')
+        await validate_and_consume_credits('test-user-id', quiz_type='enhanced')
         
-    @patch('handlers.quiz_handlers.get_user_tier_info_cached', new_callable=AsyncMock)
-    async def test_validate_quota_free_tier_at_limit(self, mock_get_tier_info):
-        """Test quota validation for free tier user at limit."""
-        mock_get_tier_info.return_value = {
-            'id': 'test-user-id',
-            'email': 'test@example.com',
-            'account_tier': 'free',
-            'current_quiz_count': 5,
-            'quota_limit': 5,
-            'quizzes_attempted': 5,
-            'quota_exceeded': True
-        }
+        # Verify consume was called
+        mock_consume.assert_called_once_with('test-user-id', 'enhanced')
+        # On success, get_billing_state should NOT be called (no need to fetch state)
+        mock_get_state.assert_not_called()
         
-        # Should raise 403 exception
+    @patch('handlers.quiz_handlers.get_billing_state', new_callable=AsyncMock)
+    @patch('handlers.quiz_handlers.consume_units', new_callable=AsyncMock)
+    async def test_validate_credits_insufficient(self, mock_consume, mock_get_state):
+        """Test credit validation when user has insufficient credits."""
+        # Mock billing state with insufficient credits
+        mock_get_state.return_value = UserBillingState(
+            user_id='test-user-id',
+            plan='free',
+            credit_units_monthly=6,
+            credit_units_remaining=1, # Only 1 left
+            credit_units_purchased=0
+        )
+        
+        mock_consume.return_value = False
+        
+        # Should raise 402 exception (Payment Required)
         with pytest.raises(HTTPException) as exc_info:
-            await validate_user_quota('test-user-id')
+            await validate_and_consume_credits('test-user-id', quiz_type='enhanced')
         
-        assert exc_info.value.status_code == 403
+        assert exc_info.value.status_code == 402
         detail = exc_info.value.detail
-        assert detail['current_count'] == 5
-        assert detail['quota_limit'] == 5
-        assert detail['user_tier'] == 'free'
-        assert 'Upgrade to Premium for 100 quizzes' in detail['detail']
+        assert detail['error'] == 'insufficient_credits'
+        assert detail['required_credits'] == 1.0
         
-    @patch('handlers.quiz_handlers.get_user_tier_info_cached', new_callable=AsyncMock)
-    async def test_validate_quota_basic_tier_under_limit(self, mock_get_tier_info):
-        """Test quota validation for basic tier user under limit."""
-        mock_get_tier_info.return_value = {
-            'id': 'test-user-id',
-            'email': 'test@example.com',
-            'account_tier': 'basic',
-            'current_quiz_count': 50,
-            'quota_limit': 100,
-            'quizzes_attempted': 50,
-            'quota_exceeded': False
-        }
+        # Verify consume was called (it returns False inside validate_and_consume_credits)
+        mock_consume.assert_called_once_with('test-user-id', 'enhanced')
+        # On failure, get_billing_state should be called to build error response
+        mock_get_state.assert_called_once_with('test-user-id')
+        
+    @patch('handlers.quiz_handlers.get_billing_state', new_callable=AsyncMock)
+    @patch('handlers.quiz_handlers.consume_units', new_callable=AsyncMock)
+    async def test_validate_credits_consume_failure(self, mock_consume, mock_get_state):
+        """Test credit validation when consume fails (race condition or insufficient)."""
+        # Mock billing state with sufficient credits initially
+        mock_get_state.return_value = UserBillingState(
+            user_id='test-user-id',
+            plan='free',
+            credit_units_monthly=6,
+            credit_units_remaining=4,
+            credit_units_purchased=0
+        )
+        
+        # But consume returns False
+        mock_consume.return_value = False
 
-        # Should not raise exception
-        await validate_user_quota('test-user-id')
-        
-    @patch('handlers.quiz_handlers.get_user_tier_info_cached', new_callable=AsyncMock)
-    async def test_validate_quota_basic_tier_at_limit(self, mock_get_tier_info):
-        """Test quota validation for basic tier user at limit."""
-        mock_get_tier_info.return_value = {
-            'id': 'test-user-id',
-            'email': 'test@example.com',
-            'account_tier': 'basic',
-            'current_quiz_count': 100,
-            'quota_limit': 100,
-            'quizzes_attempted': 100,
-            'quota_exceeded': True
-        }
-        
-        # Should raise 403 exception
+        # Should raise 402 exception
         with pytest.raises(HTTPException) as exc_info:
-            await validate_user_quota('test-user-id')
+            await validate_and_consume_credits('test-user-id', quiz_type='enhanced')
         
-        assert exc_info.value.status_code == 403
-        detail = exc_info.value.detail
-        assert detail['current_count'] == 100
-        assert detail['quota_limit'] == 100
-        # 'basic' tier is normalized to 'premium' in user-facing messages
-        assert detail['user_tier'] == 'premium'
-        assert 'Upgrade to Pro for unlimited quizzes' in detail['detail']
-        
-    @patch('handlers.quiz_handlers.get_user_tier_info_cached', new_callable=AsyncMock)
-    async def test_validate_quota_pro_tier_under_limit(self, mock_get_tier_info):
-        """Test quota validation for pro tier user under limit."""
-        mock_get_tier_info.return_value = {
-            'id': 'test-user-id',
-            'email': 'test@example.com',
-            'account_tier': 'pro',
-            'current_quiz_count': 450,
-            'quota_limit': 999999,
-            'quizzes_attempted': 450,
-            'quota_exceeded': False
-        }
-
-        # Should not raise exception
-        await validate_user_quota('test-user-id')
-        
-    @patch('handlers.quiz_handlers.get_user_tier_info_cached', new_callable=AsyncMock)
-    async def test_validate_quota_pro_tier_at_limit(self, mock_get_tier_info):
-        """Test quota validation for pro tier user at limit."""
-        mock_get_tier_info.return_value = {
-            'id': 'test-user-id',
-            'email': 'test@example.com',
-            'account_tier': 'pro',
-            'current_quiz_count': 999999,
-            'quota_limit': 999999,
-            'quizzes_attempted': 999999,
-            'quota_exceeded': True
-        }
-        
-        # Should raise 403 exception
-        with pytest.raises(HTTPException) as exc_info:
-            await validate_user_quota('test-user-id')
-        
-        assert exc_info.value.status_code == 403
-        detail = exc_info.value.detail
-        assert detail['current_count'] == 999999
-        assert detail['quota_limit'] == 999999
-        assert detail['user_tier'] == 'pro'
+        assert exc_info.value.status_code == 402
+        assert exc_info.value.detail['error'] == 'insufficient_credits'

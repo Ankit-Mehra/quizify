@@ -3,11 +3,16 @@ from datetime import datetime
 from typing import Optional, Literal
 from uuid import UUID
 
-# Account tier options
+# Account tier options (legacy - kept for backward compatibility)
 # IMPORTANT: These values MUST match the database CHECK constraint
 # Database constraint: CHECK (account_tier IN ('free', 'premium', 'pro'))
 # Note: 'basic' was renamed to 'premium' in migration 020
+# DEPRECATED: Use billing_plan ('free'/'pro') for new code - premium maps to pro
 ACCOUNT_TIERS = Literal["free", "premium", "pro"]
+
+# Billing plan options (new credit-based system)
+# This is the preferred model - premium users are mapped to 'pro'
+BILLING_PLANS = Literal["free", "pro"]
 
 # User role options  
 # IMPORTANT: These values MUST match migrations/004_add_rbac_roles.sql CHECK constraint
@@ -37,12 +42,19 @@ class UserTierInfo(BaseModel):
     current_quiz_count: int
     quota_limit: int
     quota_exceeded: bool
+    
+    # New credit fields (Epic 6.3)
+    available_credits: Optional[float] = None
+    monthly_credits: Optional[float] = None
+    purchased_credits: Optional[float] = None
+    plan: Optional[str] = None
+    period_end: Optional[datetime] = None
 
 class TierUpgradeRequest(BaseModel):
     """Request to upgrade user's account tier"""
-    target_tier: Literal["premium", "pro"] = Field(
+    target_tier: Literal["pro"] = Field(
         ..., 
-        description="Target tier to upgrade to (cannot downgrade to free)"
+        description="Target tier to upgrade to (pro is the only paid tier)"
     )
 
 class UserTierUpdate(BaseModel):

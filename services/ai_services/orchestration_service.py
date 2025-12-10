@@ -183,7 +183,9 @@ class QuizOrchestrationService:
                     "concept_id": str(concept.get("id")),
                     "question_type": question_type,
                     "bloom_level": bloom_level.value,
-                    "difficulty": difficulty.value
+                    "difficulty": difficulty.value,
+                    "quiz_type": "enhanced",  # Epic 5.2: Tag RAG calls as enhanced
+                    "pipeline": "rag_llama_index"  # Epic 5.2: Tag pipeline type
                 }
             )
             

@@ -288,9 +288,14 @@ async def generate_quiz_for_type(
         "content_length": len(text),
         "feature": "quiz_generation",
         "generation_mode": generation_mode,
+        "quiz_type": generation_mode,  # Epic 5.1: Add quiz_type (standard/enhanced)
     }
     if content_source_type:
         properties["content_source_type"] = content_source_type
+    
+    # Note: Plan info for PostHog tracking is already included via quiz_type.
+    # Adding plan here would require a DB call per LLM request which is inefficient.
+    # The handler already tracks plan in the capture_event call when needed.
     
     posthog_kwargs = _build_posthog_kwargs(
         user_id=user_id,
@@ -365,6 +370,7 @@ async def generate_quiz_async(
         "feature": "quiz_generation",
         "model": "gpt-4o-mini",
         "generation_mode": generation_mode,
+        "quiz_type": generation_mode,  # Epic 5.1: Add quiz_type (standard/enhanced)
     }
     if content_source_type:
         properties["content_source_type"] = content_source_type

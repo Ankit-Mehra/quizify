@@ -20,8 +20,8 @@ class ExportFormat(str, Enum):
     
     Tier Access:
     - Free: No export access
-    - Premium ($7/mo): PDF, DOCX, CSV (Quizify), CSV (Anki), Share Link (5 formats)
-    - Pro: All Premium formats + QTI 2.1, Moodle XML, Google Forms (8 formats)
+    - Pro ($15/mo): All formats - PDF, DOCX, CSV (Quizify), CSV (Anki), Share Link,
+                    QTI 2.1, Moodle XML, Google Forms (8 formats)
     
     Note: Authoritative tier access control is defined in services.exporters.tier_validator
     """
