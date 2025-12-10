@@ -588,11 +588,18 @@ async def validate_and_consume_credits(user_id: str, quiz_type: str) -> None:
     if not success:
         # Only fetch state when we need to report the error
         state = await get_billing_state(user_id)
+        
+        # Contextual error message based on user's current plan
+        if state.plan == "pro":
+            message = "Not enough credits. Purchase additional credits to continue."
+        else:
+            message = "Not enough credits. Upgrade to Pro or purchase credits."
+        
         raise HTTPException(
             status_code=402,
             detail={
                 "error": "insufficient_credits",
-                "message": "Not enough credits. Upgrade to Pro or buy more credits.",
+                "message": message,
                 "available_credits": state.available_credits,
                 "required_credits": 0.5 if quiz_type == "standard" else 1.0,
                 "plan": state.plan
