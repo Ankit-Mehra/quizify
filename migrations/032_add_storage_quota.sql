@@ -179,10 +179,10 @@ SELECT
      COALESCE(p.credit_units_purchased, 0) + 
      COALESCE(p.free_credit_units_remaining, 0)) / 2.0 AS available_credits,
     
-    -- Monthly allowance: Pro gets subscription (60) + free (6), Free users get just free (6)
+    -- Monthly allowance: Pro gets subscription (80) + free (6), Free users get just free (6)
     CASE 
         WHEN COALESCE(p.billing_plan, 'free') = 'pro' 
-        THEN (COALESCE(p.credit_units_monthly, 60) + COALESCE(p.free_credit_units_monthly, 6)) / 2.0
+        THEN (COALESCE(p.credit_units_monthly, 80) + COALESCE(p.free_credit_units_monthly, 6)) / 2.0
         ELSE COALESCE(p.free_credit_units_monthly, 6) / 2.0
     END AS monthly_credits,
     

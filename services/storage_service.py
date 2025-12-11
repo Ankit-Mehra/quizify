@@ -119,14 +119,16 @@ async def get_storage_usage(user_id: str) -> int:
     """
     supabase = get_supabase()
     
+    # Try RPC function first (more efficient)
     try:
-        # Use RPC function if available, otherwise calculate directly
         result = supabase.rpc("get_storage_usage", {"p_user_id": user_id}).execute()
-        
         if result.data is not None:
             return int(result.data)
-        
-        # Fallback: calculate from user_files table
+    except Exception as e:
+        logger.warning(f"RPC get_storage_usage failed for user {user_id[:8]}: {e}. Falling back to direct query.")
+    
+    # Fallback: calculate from user_files table
+    try:
         response = supabase.table("user_files").select("file_size_bytes").eq("user_id", user_id).execute()
         
         total = 0
@@ -137,7 +139,7 @@ async def get_storage_usage(user_id: str) -> int:
         return total
         
     except Exception as e:
-        logger.error(f"Error getting storage usage for user {user_id[:8]}: {e}")
+        logger.error(f"Fallback user_files query failed for user {user_id[:8]}: {e}")
         # Return 0 on error to avoid blocking uploads
         return 0
 

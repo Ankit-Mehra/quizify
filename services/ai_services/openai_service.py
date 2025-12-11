@@ -16,6 +16,7 @@ and to maintain consistent behavior throughout the application lifecycle.
 """
 
 import os
+import random
 import re
 import threading
 import time
@@ -86,7 +87,7 @@ async def _retry_with_backoff(coro_factory, max_retries: int = LLM_MAX_RETRIES):
     Execute an async operation with exponential backoff retry on transient errors.
     
     Retries on:
-    - RateLimitError: OpenAI rate limits (429)
+    - RateLimitError: OpenAI rate limits (429) - respects Retry-After header if present
     - APIConnectionError: Network issues
     - APITimeoutError: Request timeout
     
@@ -112,14 +113,32 @@ async def _retry_with_backoff(coro_factory, max_retries: int = LLM_MAX_RETRIES):
                 logger.error(f"LLM request failed after {max_retries + 1} attempts: {e}")
                 raise
             
-            # Calculate delay with exponential backoff and jitter
-            jitter = delay * 0.2 * (0.5 - asyncio.get_event_loop().time() % 1)
-            actual_delay = min(delay + jitter, LLM_MAX_DELAY)
+            # For RateLimitError, respect Retry-After header if present
+            if isinstance(e, RateLimitError):
+                retry_after = getattr(e, 'retry_after', None)
+                if retry_after:
+                    actual_delay = min(float(retry_after), LLM_MAX_DELAY)
+                    logger.warning(
+                        f"Rate limited (attempt {attempt + 1}/{max_retries + 1}). "
+                        f"Respecting Retry-After: {actual_delay:.1f}s"
+                    )
+                else:
+                    # Fallback to exponential backoff with jitter
+                    jitter = random.uniform(-delay * 0.1, delay * 0.1)
+                    actual_delay = min(delay + jitter, LLM_MAX_DELAY)
+                    logger.warning(
+                        f"Rate limited (attempt {attempt + 1}/{max_retries + 1}). "
+                        f"Retrying in {actual_delay:.1f}s..."
+                    )
+            else:
+                # For connection/timeout errors, use exponential backoff with jitter
+                jitter = random.uniform(-delay * 0.1, delay * 0.1)
+                actual_delay = min(delay + jitter, LLM_MAX_DELAY)
+                logger.warning(
+                    f"LLM request failed (attempt {attempt + 1}/{max_retries + 1}): {type(e).__name__}. "
+                    f"Retrying in {actual_delay:.1f}s..."
+                )
             
-            logger.warning(
-                f"LLM request failed (attempt {attempt + 1}/{max_retries + 1}): {type(e).__name__}. "
-                f"Retrying in {actual_delay:.1f}s..."
-            )
             await asyncio.sleep(actual_delay)
             delay = min(delay * LLM_BACKOFF_FACTOR, LLM_MAX_DELAY)
     
