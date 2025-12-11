@@ -194,7 +194,7 @@ async def create_credit_pack_checkout(
             "session_id": session.id
         }
         
-    except stripe.error.StripeError as e:
+    except stripe.StripeError as e:
         logger.error(f"Stripe error creating credit pack checkout: {e}")
         raise HTTPException(
             status_code=502,
