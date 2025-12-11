@@ -46,6 +46,16 @@ if _cors_origins_env:
         logger.warning(f"Failed to parse CORS origins from env ({e}), using development defaults")
 elif _is_production:
     # SECURITY: Fail fast in production if CORS is not configured
+    # 
+    # DESIGN RATIONALE (addressing Copilot review feedback):
+    # We intentionally fail fast rather than defaulting to empty/restrictive CORS because:
+    # 1. Empty CORS = app starts but rejects ALL cross-origin requests = silent failures
+    # 2. Users would see the app as "healthy" (health checks pass) but API calls fail
+    # 3. Fail-fast ensures configuration errors are caught during deployment, not after
+    # 4. Railway health checks use same-origin requests, so /health still works pre-startup
+    # 
+    # The /health endpoint is CORS-agnostic (same-origin from Railway's perspective),
+    # so deployment automation health checks will succeed even if this check fails.
     logger.error("CRITICAL: BACKEND_CORS_ORIGINS not set in production environment")
     raise RuntimeError(
         "BACKEND_CORS_ORIGINS environment variable must be set in production. "

@@ -106,17 +106,12 @@ async def verify_checkout_session(
                     f"Session {_short_stripe_id(session_id)} already provisioned by webhook"
                 )
         
-        # Extract period end from subscription items
-        current_period_end = None
-        items = subscription.get("items", {})
-        item_data = items.get("data", []) if isinstance(items, dict) else getattr(items, "data", [])
-        if item_data:
-            first_item = item_data[0]
-            current_period_end = (
-                first_item.get("current_period_end") 
-                if isinstance(first_item, dict) 
-                else getattr(first_item, "current_period_end", None)
-            )
+        # Extract period end from subscription items using centralized helper
+        # This avoids duplicating the dict vs object accessor logic across the codebase
+        _, current_period_end = billing_service._extract_period_dates_from_subscription(
+            subscription,
+            context=f"session {_short_stripe_id(session_id)} for user {user_id[:8]}"
+        )
         
         return {
             "session_id": session.id,
