@@ -1,6 +1,6 @@
 import logging
 import unittest.mock
-import pytest
+
 
 def test_logging_mock_error():
     logger = logging.getLogger("test_logger")

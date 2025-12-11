@@ -1,6 +1,6 @@
 import asyncio
 from fakeredis import aioredis as fakeredis
-import redis.asyncio as redis
+
 
 async def check_eval():
     client = await fakeredis.FakeRedis(decode_responses=True)

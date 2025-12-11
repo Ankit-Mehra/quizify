@@ -142,7 +142,11 @@ async def _retry_with_backoff(coro_factory, max_retries: int = LLM_MAX_RETRIES):
             await asyncio.sleep(actual_delay)
             delay = min(delay * LLM_BACKOFF_FACTOR, LLM_MAX_DELAY)
     
-    raise last_exception  # Should never reach here, but for type safety
+    # For type safety - this line should never be reached since we raise inside the loop
+    if last_exception is not None:
+        raise last_exception
+    else:
+        raise RuntimeError("Retry logic failed: no exception captured to raise.")
 
 
 # Global client instance with thread-safe initialization
