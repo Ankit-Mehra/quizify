@@ -159,6 +159,12 @@ async def create_credit_pack_checkout(
     
     units = CREDIT_PACK_UNITS.get(pack_size, 0)
     
+    # Debug logging for troubleshooting (can be removed once stable)
+    logger.info(
+        f"Credit pack checkout: pack_size={pack_size}, price_id={price_id}, "
+        f"units={units}, user={user_id[:8]}"
+    )
+    
     try:
         # Get or create Stripe customer
         supabase = get_supabase()
@@ -168,6 +174,7 @@ async def create_credit_pack_checkout(
         
         if not customer_id:
             # Create new Stripe customer
+            logger.info(f"Creating new Stripe customer for user {user_id[:8]}")
             customer = stripe.Customer.create(
                 email=email,
                 metadata={"user_id": user_id}
