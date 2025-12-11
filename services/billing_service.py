@@ -50,7 +50,7 @@ STANDARD_UNITS = 1   # Standard quiz = 1 unit
 ENHANCED_UNITS = 2   # Enhanced quiz = 2 units
 
 FREE_MONTHLY_UNITS = 6     # 3 credits = 6 units
-PRO_MONTHLY_UNITS = 60     # 30 credits = 60 units
+PRO_MONTHLY_UNITS = 80     # 40 credits = 80 units
 
 # Credit pack configuration
 # Pack sizes are by CREDITS (not price). Price is set in Stripe.
@@ -137,8 +137,30 @@ async def consume_units(user_id: str, quiz_type: str) -> bool:
     Priority order: purchased → free → subscription
     (Use purchased first, then free allowance, preserve subscription credits longest)
     
-    Uses atomic SQL to prevent race conditions on concurrent quiz starts.
+    Uses atomic SQL RPC to prevent race conditions on concurrent quiz starts.
     Returns True if successful, False if insufficient units.
+    
+    Database RPC: consume_credit_units (migration 030)
+    ------------------------------------------------
+    The underlying PostgreSQL function uses:
+    - FOR UPDATE row locking to prevent concurrent modifications
+    - Atomic UPDATE to debit from multiple credit buckets
+    - Service role only (backend) - not callable by authenticated users
+    
+    Credit consumption order:
+    1. credit_units_purchased (one-time purchases, consumed first)
+    2. free_credit_units_remaining (monthly free allowance)
+    3. credit_units_remaining (subscription credits, preserved longest)
+    
+    Args:
+        user_id: UUID of the user
+        quiz_type: "standard" (1 unit) or "enhanced" (2 units)
+        
+    Returns:
+        True if units were consumed, False if insufficient credits
+        
+    Raises:
+        No exceptions - returns False on any error
     """
     needed = quiz_unit_cost(quiz_type)
     
@@ -200,12 +222,22 @@ async def add_purchased_units(user_id: str, units: int) -> bool:
     Called when a credit pack purchase is completed via Stripe webhook.
     Uses atomic SQL increment to prevent race conditions.
     
+    Database RPC: add_purchased_credit_units (migration 030)
+    --------------------------------------------------------
+    The underlying PostgreSQL function uses:
+    - Atomic UPDATE with increment (no row locking needed for additions)
+    - COALESCE to handle NULL values
+    - Service role only (backend) - not callable by authenticated users
+    
+    Note: The RPC function raises an exception if user doesn't exist,
+    which is caught and logged by this function.
+    
     Args:
-        user_id: User ID
-        units: Number of units to add (e.g., 20, 60, 200 for 10/30/100 credit packs)
+        user_id: UUID of the user
+        units: Number of units to add (e.g., 10, 20, 30 for 5/10/15 credit packs)
         
     Returns:
-        True if successful
+        True if successful, False on error
     """
     from services.db_services.supabase_quiz import get_supabase
     supabase = get_supabase()

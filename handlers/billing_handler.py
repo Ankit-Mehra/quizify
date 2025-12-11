@@ -8,6 +8,7 @@ import stripe
 from fastapi import HTTPException
 from services.logger import app_logger as logger
 from services.billing_service import BillingService, _short_stripe_id
+from services.db_services.supabase_quiz import get_supabase
 
 
 async def verify_checkout_session(
@@ -16,7 +17,19 @@ async def verify_checkout_session(
     billing_service: BillingService
 ) -> Dict:
     """
-    Verify checkout session and return subscription details
+    Verify checkout session and return subscription details.
+    
+    This endpoint is called by the frontend after the user returns from Stripe Checkout.
+    It verifies the session belongs to the user and that payment was successful.
+    
+    IMPORTANT: This endpoint does NOT provision the subscription. Provisioning is handled
+    exclusively by Stripe webhooks (checkout.session.completed) to ensure:
+    1. Single source of truth for subscription state
+    2. No race conditions between sync verification and async webhooks
+    3. Consistent behavior even if user closes browser before returning
+    
+    If the webhook hasn't processed yet, this returns status="pending" and the frontend
+    should poll /subscription-status until the tier is updated.
     
     Args:
         session_id: Stripe Checkout Session ID
@@ -24,14 +37,12 @@ async def verify_checkout_session(
         billing_service: Injected BillingService instance
         
     Returns:
-        Dict with subscription details
+        Dict with subscription details and provisioning status
         
     Raises:
         HTTPException: If session invalid or user mismatch
     """
     try:
-        # Note: stripe.api_key is set by the injected billing_service instance (BillingService.__init__)
-        
         # Retrieve session from Stripe (wrapped to avoid blocking event loop)
         session = await asyncio.to_thread(
             stripe.checkout.Session.retrieve,
@@ -64,14 +75,11 @@ async def verify_checkout_session(
             )
         
         # Extract subscription details
-        # Always fetch the full subscription to ensure we have all fields
-        # (expanded subscription from session may be partial)
         subscription_id = session.subscription
         if hasattr(subscription_id, 'id'):
-            # Already expanded to an object, get the ID
             subscription_id = subscription_id.id
         
-        # Fetch fresh subscription with all fields (wrapped to avoid blocking event loop)
+        # Fetch fresh subscription with all fields
         subscription = await asyncio.to_thread(
             stripe.Subscription.retrieve,
             subscription_id
@@ -79,64 +87,46 @@ async def verify_checkout_session(
         
         tier = session.metadata.get("tier", "free")
         
-        # ------------------------------------------------------------------
-        # PROVISIONING (Temporary Bridge for Epic 2 Testing)
-        # ------------------------------------------------------------------
-        # In a full production setup (Epic 3), this is handled by webhooks.
-        # However, to make the "Upgrade" flow testable immediately without
-        # waiting for async webhooks, we provision the user here synchronously.
-        # This is safe because we verified payment_status="paid" above.
-        # ------------------------------------------------------------------
-        try:
-            # Extract price_id using shared helper (handles both dict and Stripe objects)
-            price_id = billing_service._extract_price_id_from_subscription(
-                subscription,
-                context=f"session {session_id} for user {user_id[:8]}"
-            )
+        # Check if subscription is already provisioned in database
+        # This handles the case where webhook processed before user returned
+        supabase = get_supabase()
+        profile = supabase.table("profiles").select(
+            "stripe_subscription_id", "billing_plan", "subscription_status"
+        ).eq("id", user_id).single().execute()
+        
+        provisioned = False
+        if profile.data:
+            db_subscription_id = profile.data.get("stripe_subscription_id")
+            db_billing_plan = profile.data.get("billing_plan")
             
-            if not price_id:
-                raise HTTPException(
-                    status_code=500,
-                    detail="Price ID missing in subscription"
+            # Check if webhook has already provisioned this subscription
+            if db_subscription_id == subscription_id and db_billing_plan == "pro":
+                provisioned = True
+                logger.info(
+                    f"Session {_short_stripe_id(session_id)} already provisioned by webhook"
                 )
-            
-            # Extract billing period dates from subscription items
-            # Per Stripe API docs, current_period_start/end are on items.data[].current_period_start/end
-            # NOT on the subscription object itself
-            current_period_start, current_period_end = billing_service._extract_period_dates_from_subscription(
-                subscription,
-                context=f"session {session_id} for user {user_id[:8]}"
-            )
-            
-            await billing_service.provision_subscription(
-                user_id=user_id,
-                customer_id=session.customer,
-                subscription_id=subscription.id,
-                subscription_status=subscription.status,
-                price_id=price_id,
-                current_period_start=current_period_start,
-                current_period_end=current_period_end
-            )
-            logger.info(f"Synchronously provisioned subscription for user {user_id[:8]}")
-            
-        except Exception as e:
-            # Log as CRITICAL because until Epic 3 (Webhooks) is implemented, this failure means
-            # the user paid but didn't get the upgrade.
-            logger.critical(f"Failed to synchronously provision subscription for user {user_id}: {e}")
-            # Raise 500 to inform frontend and trigger retry/support contact
-            raise HTTPException(
-                status_code=500,
-                detail="Payment succeeded but failed to provision subscription. Please contact support."
-            )
+        
+        # Extract period end from subscription items using centralized helper
+        # This avoids duplicating the dict vs object accessor logic across the codebase
+        _, current_period_end = billing_service._extract_period_dates_from_subscription(
+            subscription,
+            context=f"session {_short_stripe_id(session_id)} for user {user_id[:8]}"
+        )
         
         return {
             "session_id": session.id,
             "customer_id": session.customer,
-            "subscription_id": subscription.id,
+            "subscription_id": subscription_id,
             "tier": tier,
             "status": subscription.status,
             "current_period_end": current_period_end,
-            "payment_status": session.payment_status
+            "payment_status": session.payment_status,
+            # New field: indicates if frontend should poll for subscription status
+            "provisioned": provisioned,
+            "message": (
+                "Subscription active" if provisioned 
+                else "Payment successful. Your subscription is being activated..."
+            )
         }
         
     except stripe.InvalidRequestError as e:
@@ -152,7 +142,6 @@ async def verify_checkout_session(
             detail="Failed to verify checkout session with Stripe"
         )
     except HTTPException:
-        # Re-raise HTTPExceptions
         raise
     except Exception as e:
         logger.error(

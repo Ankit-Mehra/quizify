@@ -19,15 +19,16 @@ This document provides everything needed to integrate the quiz export functional
 
 ## Overview
 
-The export feature allows users to download quizzes in various formats. Access is controlled by subscription tier:
+The export feature allows users to download quizzes in various formats. 
+
+> **Updated December 2025**: Export is now **free for all tiers** who own a quiz. The only gating is on quiz generation (credits). If a user generated a quiz with their credits, they can export it in any format.
 
 | Tier | Price | Available Formats |
 |------|-------|-------------------|
-| **Free** | $0 | ❌ No export access |
-| **Premium** | $7/mo | PDF, DOCX, CSV (Quizify), CSV (Anki), Share Link (5 formats) |
-| **Pro** | TBD | All Premium formats + QTI 2.1, Moodle XML, Google Forms (8 formats) |
+| **Free** | $0 | ✅ All 8 formats (PDF, DOCX, CSV, Share Link, QTI, Moodle XML, Google Forms) |
+| **Pro** | $20/mo | ✅ All 8 formats (same as Free) |
 
-> **Note:** Pro tier includes LMS integrations (QTI, Moodle XML) and Google Forms export.
+> **Note:** All users can export their quizzes in any format. The differentiation is in quiz generation credits, not export capabilities.
 
 ---
 
@@ -63,9 +64,11 @@ Content-Type: application/json
 - `csv_quizify` - CSV native format
 - `csv_anki` - CSV for Anki flashcards
 - `share_link` - Generate public share URL
-- `google_forms` - Export to Google Forms - **Pro only**
-- `qti` - QTI 2.1 XML (LMS) - **Pro only**
-- `moodle_xml` - Moodle XML (LMS) - **Pro only**
+- `google_forms` - Export to Google Forms
+- `qti` - QTI 2.1 XML (LMS)
+- `moodle_xml` - Moodle XML (LMS)
+
+> **Note:** All formats are available to all tiers. No tier restrictions on export.
 
 **Response:**
 - **File formats** (pdf, docx, csv_*, qti, moodle_xml): Returns binary file with appropriate `Content-Type` and `Content-Disposition` headers
@@ -136,22 +139,22 @@ Authorization: Bearer <jwt_token>
     "name": "Shareable Link"
   },
   "google_forms": {
-    "available": false,
-    "requires_pro": true,
-    "requires_paid": false,  // Note: requires_paid=false because Pro-only is checked via requires_pro=true
+    "available": true,
+    "requires_pro": false,
+    "requires_paid": false,
     "coming_soon": false,
     "name": "Google Forms"
   },
   "qti": {
-    "available": false,
-    "requires_pro": true,
+    "available": true,
+    "requires_pro": false,
     "requires_paid": false,
     "coming_soon": false,
     "name": "QTI 2.1 (LMS)"
   },
   "moodle_xml": {
-    "available": false,
-    "requires_pro": true,
+    "available": true,
+    "requires_pro": false,
     "requires_paid": false,
     "coming_soon": false,
     "name": "Moodle XML (LMS)"
@@ -160,7 +163,7 @@ Authorization: Bearer <jwt_token>
 ```
 
 > **Note:** Response is a flat object (not nested under `formats`), and does not include `user_tier` or `description` fields.
-> **Note:** Formats with `requires_pro: true` require Pro tier subscription (QTI, Moodle XML, Google Forms).
+> **Updated December 2025:** All formats are now available to all tiers. `requires_pro` and `requires_paid` are always `false`.
 
 ---
 
@@ -1071,10 +1074,15 @@ export function ShareLinkCard({ quizId, quizTitle }: ShareLinkCardProps) {
 
 ## Tier-Based Access Control
 
-### Tier Gate Component
+> **Updated December 2025**: Export is now free for all tiers. The TierGate component below is preserved for historical reference and potential future use, but is no longer enforced for export features.
+
+### Tier Gate Component (Historical - No Longer Enforced for Exports)
 
 ```tsx
 // components/TierGate.tsx
+// NOTE: This component is no longer needed for export features.
+// All tiers can export in all formats as of December 2025.
+// Keeping for potential future premium features beyond exports.
 
 import { Crown, Clock } from 'lucide-react';
 import { Button } from '@/components/ui/button';

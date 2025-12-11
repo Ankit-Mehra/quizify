@@ -77,8 +77,8 @@ Go to **Stripe Dashboard → Products → Add Product**
 
 | Product Name | Price | Billing | Credits/Month | Units/Month |
 |--------------|-------|---------|---------------|-------------|
-| Pro Monthly | $X/month | Recurring | 30 | 60 |
-| Pro Yearly | $Y/year | Recurring | 30/month | 60/month |
+| Pro Monthly | $20/month | Recurring | 40 | 80 |
+| Pro Yearly | $200/year | Recurring | 40/month | 80/month |
 
 ### C. Copy Price IDs
 
@@ -208,14 +208,14 @@ Credits are consumed in this priority order:
 
 1. **Purchased Credits** (credit packs) - Never expire, used first
 2. **Free Credits** (monthly allowance) - 3 credits/month for all users
-3. **Subscription Credits** (Pro only) - 30 credits/month
+3. **Subscription Credits** (Pro only) - 40 credits/month
 
 ### User Tiers
 
 | Tier | Monthly Free | Monthly Subscription | Total |
 |------|--------------|---------------------|-------|
 | Free | 3 credits | 0 | 3 credits/month |
-| Pro | 3 credits | 30 credits | 33 credits/month |
+| Pro | 3 credits | 40 credits | 43 credits/month |
 
 ---
 

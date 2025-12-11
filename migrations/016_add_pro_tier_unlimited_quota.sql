@@ -1,16 +1,16 @@
 -- ============================================================================
 -- Migration 016: Add Pro Tier with Unlimited Quota
 -- ============================================================================
--- Purpose: Introduce "pro" tier with unlimited quota, aligned with pricing analysis
+-- Purpose: Introduce "pro" tier with credit-based quota, aligned with pricing analysis
 -- Created: 2025-11-19 (Epic 1: Infrastructure Setup - Pricing Alignment)
 -- 
 -- This migration adds the "pro" tier to replace the planned "educator" tier
--- with better pricing ($15/mo for unlimited quizzes vs $19.99/mo for 500).
+-- with better pricing ($20/mo for 40 credits vs $19.99/mo for 500 quizzes).
 -- 
 -- Pricing Structure (from COST_BREAKDOWN.md analysis):
--- - Free: $0/mo - 5 quizzes
+-- - Free: $0/mo - 3 credits (6 units)
 -- - Basic: $5/mo - 100 quizzes (97% profit margin)
--- - Pro: $15/mo - Unlimited quizzes (97% profit margin)
+-- - Pro: $20/mo - 40 credits (80 units) (97.5% profit margin)
 -- 
 -- Note: Existing "educator" tier (500 quizzes) remains for backward compatibility
 -- but new subscriptions will use "pro" tier.

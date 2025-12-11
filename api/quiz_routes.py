@@ -2,7 +2,6 @@ from fastapi import APIRouter, HTTPException, Response
 from schemas.quiz import (
     QuizMetadata, 
     QuizzesResponse,
-    MyQuizzesResponse,
     PaginatedQuizzesResponse,
     DeleteQuizResponse,
     EnhancedQuizGenerationResponse

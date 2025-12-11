@@ -161,7 +161,16 @@ class PortalSessionResponse(BaseModel):
 
 
 class CheckoutSessionVerification(BaseModel):
-    """Response from checkout session verification"""
+    """
+    Response from checkout session verification.
+    
+    Called by frontend after user returns from Stripe Checkout to confirm
+    payment was successful and check subscription provisioning status.
+    
+    The 'provisioned' field indicates if the webhook has already processed
+    the subscription. If False, frontend should poll /subscription-status
+    until the tier is updated.
+    """
     session_id: str = Field(..., description="Checkout session ID")
     customer_id: str = Field(..., description="Stripe customer ID")
     subscription_id: str = Field(..., description="Stripe subscription ID")
@@ -169,6 +178,15 @@ class CheckoutSessionVerification(BaseModel):
     status: str = Field(..., description="Subscription status")
     current_period_end: Optional[int] = Field(None, description="Unix timestamp of period end")
     payment_status: str = Field(..., description="Payment status (paid/unpaid)")
+    provisioned: bool = Field(
+        default=False, 
+        description="True if subscription is already active in database. "
+                    "If False, webhook is still processing - poll /subscription-status."
+    )
+    message: Optional[str] = Field(
+        None,
+        description="Human-readable status message for UI display"
+    )
     
     class Config:
         json_schema_extra = {
@@ -176,10 +194,12 @@ class CheckoutSessionVerification(BaseModel):
                 "session_id": "cs_test_a1b2c3d4e5f6g7h8i9j0",
                 "customer_id": "cus_ABC123xyz",
                 "subscription_id": "sub_DEF456uvw",
-                "tier": "premium",
+                "tier": "pro",
                 "status": "active",
                 "current_period_end": 1734566400,
-                "payment_status": "paid"
+                "payment_status": "paid",
+                "provisioned": True,
+                "message": "Subscription active"
             }
         }
 
@@ -439,6 +459,124 @@ class UpgradePreviewResponse(BaseModel):
                 "card_last4": "4242",
                 "card_brand": "visa",
                 "message": "You'll be charged $2.50 today. Then $15.00/month starting Dec 15."
+            }
+        }
+
+
+# ============================================================================
+# Storage Quota Schemas
+# ============================================================================
+
+class StorageQuotaResponse(BaseModel):
+    """
+    Response containing user's storage quota information.
+    
+    Storage Quotas:
+    - Free plan: 250 MB
+    - Pay-as-you-go (purchased credits, no subscription): 2 GB
+    - Pro subscription: 5 GB
+    """
+    user_id: str = Field(..., description="User ID")
+    plan_type: Literal["free", "payg", "pro"] = Field(
+        ...,
+        description="Plan type for storage quota purposes"
+    )
+    storage_used_bytes: int = Field(
+        ...,
+        description="Current storage usage in bytes"
+    )
+    storage_quota_bytes: int = Field(
+        ...,
+        description="Maximum allowed storage in bytes"
+    )
+    storage_remaining_bytes: int = Field(
+        ...,
+        description="Remaining available storage in bytes"
+    )
+    storage_used_formatted: str = Field(
+        ...,
+        description="Human-readable storage usage (e.g., '125.5 MB')"
+    )
+    storage_quota_formatted: str = Field(
+        ...,
+        description="Human-readable storage quota (e.g., '250 MB')"
+    )
+    storage_remaining_formatted: str = Field(
+        ...,
+        description="Human-readable remaining storage (e.g., '124.5 MB')"
+    )
+    usage_percentage: float = Field(
+        ...,
+        description="Storage usage as percentage (0-100)"
+    )
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "user_id": "550e8400-e29b-41d4-a716-446655440000",
+                "plan_type": "free",
+                "storage_used_bytes": 52428800,
+                "storage_quota_bytes": 262144000,
+                "storage_remaining_bytes": 209715200,
+                "storage_used_formatted": "50.0 MB",
+                "storage_quota_formatted": "250 MB",
+                "storage_remaining_formatted": "200.0 MB",
+                "usage_percentage": 20.0
+            }
+        }
+
+
+class StorageQuotaExceededError(BaseModel):
+    """
+    Error detail when storage quota is exceeded.
+    Returned with HTTP 402 status code.
+    """
+    error: Literal["storage_quota_exceeded"] = "storage_quota_exceeded"
+    message: str = Field(
+        ...,
+        description="Human-readable error message with upgrade suggestions"
+    )
+    storage_used_bytes: int = Field(
+        ...,
+        description="Current storage usage in bytes"
+    )
+    storage_quota_bytes: int = Field(
+        ...,
+        description="Maximum allowed storage in bytes"
+    )
+    storage_remaining_bytes: int = Field(
+        ...,
+        description="Remaining available storage in bytes"
+    )
+    file_size_bytes: int = Field(
+        ...,
+        description="Size of the file that was rejected"
+    )
+    plan: Literal["free", "payg", "pro"] = Field(
+        ...,
+        description="User's current plan type"
+    )
+    storage_used_formatted: str = Field(
+        ...,
+        description="Human-readable storage usage"
+    )
+    storage_quota_formatted: str = Field(
+        ...,
+        description="Human-readable storage quota"
+    )
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "error": "storage_quota_exceeded",
+                "message": "Storage quota exceeded. You have used 245 MB of your 250 MB limit. Purchase credits to unlock 2 GB storage, or upgrade to Pro for 5 GB storage.",
+                "storage_used_bytes": 256901120,
+                "storage_quota_bytes": 262144000,
+                "storage_remaining_bytes": 5242880,
+                "file_size_bytes": 10485760,
+                "plan": "free",
+                "storage_used_formatted": "245 MB",
+                "storage_quota_formatted": "250 MB"
             }
         }
 

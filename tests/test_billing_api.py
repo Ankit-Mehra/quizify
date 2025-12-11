@@ -165,12 +165,12 @@ class TestPreviewUpgrade:
             "credit_amount_formatted": "$5.00",
             "debit_amount": 750,
             "debit_amount_formatted": "$7.50",
-            "next_billing_amount": 1500,
-            "next_billing_amount_formatted": "$15.00/month",
+            "next_billing_amount": 2000,
+            "next_billing_amount_formatted": "$20.00/month",
             "next_billing_date": "2025-12-15T00:00:00Z",
             "card_last4": "4242",
             "card_brand": "visa",
-            "message": "You'll be charged $2.50 today (prorated). Then $15.00/month starting Dec 15."
+            "message": "You'll be charged $2.50 today (prorated). Then $20.00/month starting Dec 15."
         })
         
         response = client.post(

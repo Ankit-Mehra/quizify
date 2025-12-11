@@ -33,6 +33,7 @@ from services.posthog_service import capture_exception
 from config import Config
 from handlers.billing_handler import verify_checkout_session
 from services.logger import app_logger as logger
+from services.storage_service import get_storage_quota_info
 
 
 router = APIRouter(prefix="/api/billing", tags=["billing"])
@@ -40,8 +41,9 @@ router = APIRouter(prefix="/api/billing", tags=["billing"])
 
 @router.get("/balance")
 async def get_credit_balance(user_id: str = Depends(get_current_user_id)):
-    """Get user's current credit balance."""
+    """Get user's current credit balance and storage usage."""
     state = await get_billing_state(user_id)
+    storage = await get_storage_quota_info(user_id)
     return {
         "plan": state.plan,
         "credits_remaining": state.available_credits,
@@ -49,8 +51,39 @@ async def get_credit_balance(user_id: str = Depends(get_current_user_id)):
         "free_credits_remaining": state.free_credit_units_remaining / 2.0,
         "subscription_credits_remaining": state.credit_units_remaining / 2.0,
         "purchased_credits": state.credit_units_purchased / 2.0,
-        "period_end": state.period_end.isoformat() if state.period_end else None
+        "period_end": state.period_end.isoformat() if state.period_end else None,
+        # Storage quota info
+        "storage_used_bytes": storage["storage_used_bytes"],
+        "storage_quota_bytes": storage["storage_quota_bytes"],
+        "storage_remaining_bytes": storage["storage_remaining_bytes"],
+        "storage_used_formatted": storage["storage_used_formatted"],
+        "storage_quota_formatted": storage["storage_quota_formatted"],
+        "storage_usage_percentage": storage["usage_percentage"],
     }
+
+
+@router.get("/storage")
+async def get_storage_usage(user_id: str = Depends(get_current_user_id)):
+    """
+    Get user's current storage usage and quota.
+    
+    Storage Quotas:
+    - Free plan: 250 MB
+    - Pay-as-you-go (purchased credits): 2 GB
+    - Pro subscription: 5 GB
+    
+    Returns:
+        - plan_type: "free", "payg", or "pro"
+        - storage_used_bytes: Current storage usage in bytes
+        - storage_quota_bytes: Maximum allowed storage in bytes
+        - storage_remaining_bytes: Remaining available storage
+        - storage_used_formatted: Human-readable usage (e.g., "125.5 MB")
+        - storage_quota_formatted: Human-readable quota (e.g., "250 MB")
+        - storage_remaining_formatted: Human-readable remaining (e.g., "124.5 MB")
+        - usage_percentage: Usage as percentage (0-100)
+    """
+    storage = await get_storage_quota_info(user_id)
+    return storage
 
 
 from pydantic import BaseModel, Field
@@ -521,7 +554,7 @@ async def create_checkout_session(
     Create a Stripe Checkout session for subscription purchase.
     
     **Flow:**
-    1. User clicks "Upgrade to Basic ($5/mo)" or "Upgrade to Pro ($15/mo)" on frontend
+    1. User clicks "Upgrade to Basic ($5/mo)" or "Upgrade to Pro ($20/mo)" on frontend
     2. Frontend calls this endpoint with tier selection
     3. Backend creates Stripe Checkout session
     4. Frontend redirects user to checkout URL

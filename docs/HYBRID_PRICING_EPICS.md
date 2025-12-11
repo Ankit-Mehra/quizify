@@ -68,7 +68,7 @@ This document contains backend-only implementation epics for migrating Quizify f
 ### Target State (To-Be)
 - **Plans**: Only `free` and `pro` (remove `premium`/`basic`)
 - **Credit System**: Unit-based consumption (`standard` = 1 unit, `enhanced` = 2 units)
-- **Monthly Allowance**: Free = 6 units (3 credits), Pro = 60 units (30 credits)
+- **Monthly Allowance**: Free = 6 units (3 credits), Pro = 80 units (40 credits)
 - **Credit Packs**: One-time purchases that add to `credit_units_purchased`
 - **Consumption Order**: Use `credit_units_purchased` first, then `credit_units_remaining`
 - **Storage**: All credit data stored in existing `profiles` table (no new table needed!)
@@ -890,7 +890,7 @@ WHERE account_tier = 'free' OR account_tier IS NULL;
 
 ### E2E Tests
 - [x] Free user generates quiz until credits exhausted
-- [x] Pro user has 60 units/month
+- [x] Pro user has 80 units/month
 - [x] Credit pack purchase adds units
 - [x] 402 response when out of credits
 

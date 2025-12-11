@@ -167,6 +167,11 @@ class MockSupabaseTable:
         self._query["filter"] = {column: value}  # type: ignore
         return self
     
+    def single(self):
+        """Mock single query."""
+        self._query["single"] = True
+        return self
+    
     def execute(self):
         """Mock execute query."""
         # Special handling for questions table - fetch from quiz storage
@@ -191,6 +196,15 @@ class MockSupabaseTable:
         if not result_data and self.table_name not in ["user_tier_info", "questions"]:
             result_data = [{"id": "mock_123"}]
 
+        # Handle single()
+        if self._query.get("single"):
+            data = result_data[0] if result_data else None
+            return Mock(
+                data=data,
+                error=None,
+                count=1 if data else 0
+            )
+
         return Mock(
             data=result_data,
             error=None,
@@ -212,6 +226,10 @@ class MockSupabaseClient:
         if table_name not in self._tables:
             self._tables[table_name] = MockSupabaseTable(table_name, self._quiz_storage)
         return self._tables[table_name]
+    
+    def rpc(self, function, params=None):
+        """Mock RPC call."""
+        return Mock(execute=lambda: Mock(data=True, error=None))
     
     def add_user_tier_info(self, user_id, email):
         """Add user tier info when user signs up."""
@@ -710,6 +728,7 @@ def setup_integration_mocks():
         # Patch the lazy loading functions for all modules that use Supabase
         stack.enter_context(patch("handlers.auth_handlers.get_supabase", return_value=mock_supabase))
         stack.enter_context(patch("services.db_services.supabase_quiz.get_supabase", return_value=mock_supabase))
+        stack.enter_context(patch("services.storage_service.get_supabase", return_value=mock_supabase))
         stack.enter_context(patch("services.db_services.supabase_quiz.get_authed_supabase_client", return_value=mock_supabase))
         stack.enter_context(patch("services.db_services.supabase_file.get_supabase", return_value=mock_supabase))
         stack.enter_context(patch("services.db_services.supabase_submission.get_supabase", return_value=mock_supabase))

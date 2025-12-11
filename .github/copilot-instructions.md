@@ -190,7 +190,7 @@ finally:
    ```
    Types: `feat`, `fix`, `refactor`, `docs`, `style`, `test`, `chore`, `perf`, `ci`
 
-9. **Push to Remote**: `git push origin <branch-name>`
+9. **Push to Remote**: `git push origin deploy/staging` (replace with your branch name)
 
 ### Phase 4: Pull Request & Review Cycle
 10. **Check for Existing PR** (use GitHub MCP): 

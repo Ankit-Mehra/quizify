@@ -29,12 +29,42 @@ from services.posthog_service import shutdown_posthog, is_posthog_enabled, captu
 from services.posthog_logging import setup_posthog_logging, shutdown_posthog_logging  # noqa: E402
 
 # Get the CORS origins from environment variable or use default
-try:
-    BACKEND_CORS_ORIGINS = json.loads(os.getenv("BACKEND_CORS_ORIGINS", '["http://localhost:3000", "http://localhost:3001"]'))
-    logger.info(f"CORS origins loaded: {BACKEND_CORS_ORIGINS}")
-except json.JSONDecodeError:
+# SECURITY: In production, BACKEND_CORS_ORIGINS must be explicitly set
+# to prevent requests from unauthorized origins.
+_cors_origins_env = os.getenv("BACKEND_CORS_ORIGINS")
+_is_production = os.getenv("RAILWAY_ENVIRONMENT") == "production" or os.getenv("ENV", "").lower() == "production"
+
+if _cors_origins_env:
+    try:
+        BACKEND_CORS_ORIGINS = json.loads(_cors_origins_env)
+        logger.info(f"CORS origins loaded: {BACKEND_CORS_ORIGINS}")
+    except json.JSONDecodeError as e:
+        if _is_production:
+            logger.error(f"CRITICAL: Failed to parse BACKEND_CORS_ORIGINS in production: {e}")
+            raise RuntimeError(f"BACKEND_CORS_ORIGINS must be valid JSON in production: {e}")
+        BACKEND_CORS_ORIGINS = ["http://localhost:3000", "http://localhost:3001"]
+        logger.warning(f"Failed to parse CORS origins from env ({e}), using development defaults")
+elif _is_production:
+    # SECURITY: Fail fast in production if CORS is not configured
+    # 
+    # DESIGN RATIONALE (addressing Copilot review feedback):
+    # We intentionally fail fast rather than defaulting to empty/restrictive CORS because:
+    # 1. Empty CORS = app starts but rejects ALL cross-origin requests = silent failures
+    # 2. Users would see the app as "healthy" (health checks pass) but API calls fail
+    # 3. Fail-fast ensures configuration errors are caught during deployment, not after
+    # 4. Railway health checks use same-origin requests, so /health still works pre-startup
+    # 
+    # The /health endpoint is CORS-agnostic (same-origin from Railway's perspective),
+    # so deployment automation health checks will succeed even if this check fails.
+    logger.error("CRITICAL: BACKEND_CORS_ORIGINS not set in production environment")
+    raise RuntimeError(
+        "BACKEND_CORS_ORIGINS environment variable must be set in production. "
+        "Example: '[\"https://quizify.com\", \"https://www.quizify.com\"]'"
+    )
+else:
+    # Development fallback
     BACKEND_CORS_ORIGINS = ["http://localhost:3000", "http://localhost:3001"]
-    logger.warning("Failed to parse CORS origins from env, using defaults")
+    logger.info("Using development CORS origins: localhost:3000, localhost:3001")
 
 # Get CORS origin regex for wildcard support (e.g., Vercel previews)
 

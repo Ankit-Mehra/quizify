@@ -1,12 +1,17 @@
 """
 Tier Validator - Export format access control based on user subscription tier.
 
-This module enforces tier-based access to export formats:
-- Free tier: No export access
-- Premium tier: PDF, DOCX, CSV (Quizify), CSV (Anki), Share Link
-- Pro tier: All Premium formats + Google Forms, QTI 2.1, Moodle XML
+UPDATED (December 2025): Export is now available to ALL tiers.
 
-Access is validated at the API layer before any export processing begins.
+The only gating for exports is quiz ownership - if a user generated a quiz 
+(using their credits), they can export it in any format. This simplifies the 
+business model:
+
+- Quiz generation: Credit-gated (Free = 3 credits/mo, Pro = 43 credits/mo)
+- Export: FREE for all users who own the quiz
+
+This module is kept for backward compatibility and logging purposes.
+All validation functions now allow all tiers to export all formats.
 """
 
 import logging
@@ -19,29 +24,23 @@ from schemas.export import ExportFormat
 logger = logging.getLogger(__name__)
 
 
-# Pro-only formats - require Pro subscription
-# Business rationale:
-# - QTI 2.1 / Moodle XML: LMS integration features for enterprise/educational institutions
-# - Google Forms: Requires Google API access with associated costs and support overhead
-# These advanced integrations justify the Pro tier requirement for sustainability.
-PRO_ONLY_FORMATS: Set[ExportFormat] = {
-    ExportFormat.QTI,
-    ExportFormat.MOODLE_XML,
-    ExportFormat.GOOGLE_FORMS,
-}
+# DEPRECATED: These constants are kept for backward compatibility but no longer enforced
+# All formats are now available to all tiers
+PRO_ONLY_FORMATS: Set[ExportFormat] = set()  # Empty - no tier restrictions
 
-# Export formats available to Premium and Pro tiers (paid tiers)
-# These are the base paid formats (non-Pro)
 PAID_TIER_FORMATS: Set[ExportFormat] = {
     ExportFormat.PDF,
     ExportFormat.DOCX,
     ExportFormat.CSV_QUIZIFY,
     ExportFormat.CSV_ANKI,
     ExportFormat.SHARE_LINK,
+    ExportFormat.QTI,
+    ExportFormat.MOODLE_XML,
+    ExportFormat.GOOGLE_FORMS,
 }
 
-# Tiers that have export access (free tier excluded)
-EXPORT_ALLOWED_TIERS = {"premium", "pro"}
+# All tiers have export access (exports are free for quiz owners)
+EXPORT_ALLOWED_TIERS = {"free", "premium", "pro"}
 
 # Valid tier values
 VALID_TIERS = {"free", "premium", "pro"}
@@ -49,9 +48,10 @@ VALID_TIERS = {"free", "premium", "pro"}
 
 class TierInsufficientError(HTTPException):
     """
-    Exception raised when user's tier doesn't allow the requested export format.
+    DEPRECATED: This exception is no longer raised for export operations.
     
-    This is an HTTPException subclass for easy integration with FastAPI.
+    Kept for backward compatibility with any code that imports it.
+    Export is now free for all tiers who own the quiz.
     """
     
     def __init__(self, current_tier: str, requested_format: ExportFormat, reason: str = "pro_required"):
@@ -83,18 +83,20 @@ def validate_export_tier_access(
     """
     Validate that user's subscription tier allows the requested export format.
     
+    UPDATED: All tiers can now export all formats. Quiz generation is the only
+    credit-gated operation. If a user owns a quiz (generated with their credits),
+    they can export it in any format for free.
+    
     Args:
         user_tier: User's current subscription tier ('free', 'premium', 'pro')
         export_format: The export format being requested
         
     Raises:
-        TierInsufficientError: If user's tier doesn't allow the format (403)
-        ValueError: If user_tier is not a valid tier value
+        ValueError: If user_tier is not a valid tier value (after normalization)
         
     Example:
-        >>> validate_export_tier_access("free", ExportFormat.PDF)      # Raises 403
-        >>> validate_export_tier_access("premium", ExportFormat.PDF)   # OK
-        >>> validate_export_tier_access("premium", ExportFormat.QTI)   # Raises 403 (Pro required)
+        >>> validate_export_tier_access("free", ExportFormat.PDF)      # OK - no restrictions
+        >>> validate_export_tier_access("free", ExportFormat.QTI)      # OK - no restrictions
         >>> validate_export_tier_access("pro", ExportFormat.QTI)       # OK
     """
     # Normalize tier to lowercase and map legacy "basic" to "premium"
@@ -107,51 +109,37 @@ def validate_export_tier_access(
         logger.error(f"Invalid tier value: {user_tier}")
         raise ValueError(f"Invalid tier '{user_tier}'. Must be one of: {VALID_TIERS}")
     
-    # Free tier has no export access at all
-    if user_tier == "free":
-        logger.info(f"Export denied: free tier user attempted {export_format.value} export")
-        raise TierInsufficientError(
-            current_tier=user_tier,
-            requested_format=export_format,
-            reason="free_tier"
-        )
+    # Log the export access (all tiers allowed)
+    logger.debug(f"Export access granted: tier={user_tier}, format={export_format.value}")
     
-    # Pro-only formats require Pro tier
-    if export_format in PRO_ONLY_FORMATS and user_tier != "pro":
-        logger.info(f"Export denied: {user_tier} tier user attempted pro-only {export_format.value} export")
-        raise TierInsufficientError(
-            current_tier=user_tier,
-            requested_format=export_format,
-            reason="pro_required"
-        )
+    # No tier restrictions - all formats available to all tiers
+    # Quiz ownership is validated separately in the export handler
+    return
 
 
 def is_format_available_for_tier(user_tier: str, export_format: ExportFormat) -> bool:
     """
     Check if an export format is available for a given tier (non-throwing).
     
-    This is useful for frontend feature flags and UI rendering.
+    UPDATED: Always returns True for all tiers and formats.
+    Export is free for all quiz owners.
     
     Args:
         user_tier: User's current subscription tier
         export_format: The export format to check
         
     Returns:
-        True if format is available, False otherwise
+        True - all formats available to all tiers
     """
     user_tier = user_tier.lower() if user_tier else "free"
     if user_tier == "basic":
         user_tier = "premium"  # Legacy mapping
     
-    # Free tier has no export access
-    if user_tier == "free":
+    # Validate tier exists
+    if user_tier not in VALID_TIERS:
         return False
     
-    # Pro-only formats require Pro tier
-    if export_format in PRO_ONLY_FORMATS:
-        return user_tier == "pro"
-    
-    # Premium and Pro have access to non-Pro formats
+    # All formats available to all valid tiers
     return True
 
 
@@ -159,23 +147,22 @@ def get_available_formats_for_tier(user_tier: str) -> list[ExportFormat]:
     """
     Get list of all export formats available for a given tier.
     
+    UPDATED: Returns all formats for all valid tiers.
+    Export is free for all quiz owners.
+    
     Args:
         user_tier: User's current subscription tier
         
     Returns:
-        List of available ExportFormat values
+        List of all ExportFormat values for valid tiers, empty list for invalid tiers
     """
     user_tier = user_tier.lower() if user_tier else "free"
     if user_tier == "basic":
         user_tier = "premium"  # Legacy mapping
     
-    # Free tier gets nothing
-    if user_tier == "free":
+    # Invalid tier gets nothing
+    if user_tier not in VALID_TIERS:
         return []
     
-    available = []
-    for fmt in list(ExportFormat):
-        if is_format_available_for_tier(user_tier, fmt):
-            available.append(fmt)
-    
-    return available
+    # All tiers get all formats
+    return list(ExportFormat)

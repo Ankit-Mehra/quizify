@@ -10,13 +10,13 @@ Updated Stripe integration pricing to align with the **October 2025 cost breakdo
 | Change | Previous Plan | Updated Plan | Rationale |
 |--------|--------------|--------------|-----------|
 | **Basic Tier** | $9.99/mo - 100 quizzes | **$5/mo - 100 quizzes** | Cost analysis showed 97% profit margin at $5/mo |
-| **Top Tier** | Educator: $19.99/mo - 500 quizzes | **Pro: $15/mo - Unlimited** | Better value proposition, same 97% profit margin |
+| **Top Tier** | Educator: $19.99/mo - 500 quizzes | **Pro: $20/mo - 40 credits** | Better value proposition, same profit margin |
 | **Tier Name** | Educator | **Pro** | More universal appeal, not just for educators |
 
 ### Files Updated
 
 1. **`docs/stripe/README.md`**
-   - Updated pricing table: Basic $5/mo, Pro $15/mo
+   - Updated pricing table: Basic $5/mo, Pro $20/mo
    - Changed tier references from "educator" to "pro"
    - Added note about `educator` → `pro` migration
 
@@ -29,7 +29,7 @@ Updated Stripe integration pricing to align with the **October 2025 cost breakdo
 3. **`.env.example`**
    - Updated Stripe price ID documentation
    - Changed from `STRIPE_PRICE_ID_EDUCATOR` to `STRIPE_PRICE_ID_PRO`
-   - Updated pricing examples ($5/mo Basic, $15/mo Pro)
+   - Updated pricing examples ($5/mo Basic, $20/mo Pro)
 
 4. **`schemas/billing.py`**
    - Updated `CheckoutSessionRequest` to accept `"basic"` or `"pro"` (was `"educator"`)
@@ -41,7 +41,7 @@ Updated Stripe integration pricing to align with the **October 2025 cost breakdo
 
 6. **`api/billing_routes.py`**
    - Updated endpoint descriptions with new pricing
-   - Changed "Upgrade to Educator" to "Upgrade to Pro ($15/mo)"
+   - Changed "Upgrade to Educator" to "Upgrade to Pro ($20/mo)"
 
 7. **`migrations/016_add_pro_tier_unlimited_quota.sql`** (NEW)
    - Added "pro" tier with quota_limit = 999999 (unlimited)
@@ -66,7 +66,7 @@ Updated Stripe integration pricing to align with the **October 2025 cost breakdo
 
 ### Profit Margins
 - Basic ($5/mo): **97% profit margin** ($5 - $0.15 = $4.85 profit)
-- Pro ($15/mo): **97% profit margin** ($15 - $0.50 = $14.50 profit)
+- Pro ($20/mo): **97.5% profit margin** ($20 - $0.50 = $19.50 profit)
 
 ### Why These Prices?
 1. **Competitive Advantage**: $5/mo is psychologically easier to justify than $9.99
@@ -95,7 +95,7 @@ WHERE account_tier = 'educator';
 
 Before deploying to production:
 - [ ] Verify `STRIPE_PRICE_ID_PRO` environment variable is set
-- [ ] Create Stripe product/price in Dashboard for Pro tier ($15/mo)
+- [ ] Create Stripe product/price in Dashboard for Pro tier ($20/mo)
 - [ ] Test checkout flow with `tier: "pro"`
 - [ ] Verify quota_limit returns 999999 for pro users
 - [ ] Verify quota_exceeded is always FALSE for pro users
@@ -106,7 +106,7 @@ Before deploying to production:
 1. **Apply Migration 016**: Run `016_add_pro_tier_unlimited_quota.sql` on Supabase
 2. **Create Stripe Products**: 
    - Basic: $5/mo recurring (100 quizzes)
-   - Pro: $15/mo recurring (unlimited quizzes)
+   - Pro: $20/mo recurring (40 credits)
 3. **Update Frontend**: Change "Upgrade to Educator" buttons to "Upgrade to Pro - Unlimited Quizzes"
 4. **Continue Epic 2**: Implement checkout flow with new pricing
 

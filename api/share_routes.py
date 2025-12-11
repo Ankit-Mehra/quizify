@@ -7,7 +7,9 @@ These endpoints handle:
 - Getting share status
 - Accessing public quizzes (anonymous access)
 
-SECURITY: Share link creation/management requires Basic+ tier (free tier excluded).
+UPDATED (December 2025): Share link creation is now available to ALL tiers.
+Quiz ownership is the only requirement - if you generated the quiz with your credits,
+you can share it in any format.
 """
 
 from fastapi import APIRouter, HTTPException, Depends
@@ -26,7 +28,7 @@ from services.share_service import (
     get_share_status,
     get_public_quiz_by_slug,
 )
-from services.exporters.tier_validator import validate_export_tier_access, TierInsufficientError
+from services.exporters.tier_validator import validate_export_tier_access
 from services.db_services.supabase_quiz import get_user_tier_info_cached
 from dependencies.auth_dependencies import get_current_user_id, get_current_user_token
 from services.logger import app_logger as logger
@@ -41,36 +43,23 @@ router = APIRouter(prefix="/share", tags=["Share"])
 
 async def _validate_share_tier_access(user_id: str) -> str:
     """
-    Validate that user's tier allows share link operations.
+    Get user's tier for share link operations.
     
-    Share links require Basic or Pro tier (same as SHARE_LINK export format).
+    UPDATED: All tiers can now create share links. This function is kept for
+    backward compatibility and logging, but no longer blocks any tier.
     
     Args:
         user_id: User ID to check tier for
         
     Returns:
         str: User's account tier
-        
-    Raises:
-        HTTPException 403: If user is on free tier
     """
     tier_info = await get_user_tier_info_cached(user_id)
     user_tier = tier_info.get("account_tier", "free")
     
     # Use the same validation as export handler for consistency
-    try:
-        validate_export_tier_access(user_tier, ExportFormat.SHARE_LINK)
-    except TierInsufficientError:
-        raise HTTPException(
-            status_code=403,
-            detail={
-                "error": "tier_insufficient",
-                "message": "Share link feature requires a Premium or Pro subscription",
-                "required_tier": "premium",
-                "current_tier": user_tier,
-                "upgrade_url": "/billing/upgrade"
-            }
-        )
+    # This no longer raises - all tiers allowed
+    validate_export_tier_access(user_tier, ExportFormat.SHARE_LINK)
     
     return user_tier
 
@@ -92,7 +81,7 @@ async def create_quiz_share_link(
     Makes the quiz public and generates a unique shareable URL.
     If the quiz is already public, returns the existing share link.
     
-    SECURITY: Requires Basic or Pro tier subscription.
+    Available to all tiers - if you own the quiz, you can share it.
     
     Args:
         request: ShareLinkCreate with quiz_id
@@ -104,7 +93,7 @@ async def create_quiz_share_link(
         
     Raises:
         401: Not authenticated
-        403: User doesn't own the quiz OR insufficient tier
+        403: User doesn't own the quiz
         404: Quiz not found
         500: Failed to create share link
     """

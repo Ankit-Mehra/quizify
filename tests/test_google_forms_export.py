@@ -34,41 +34,31 @@ class TestGoogleFormsExportFormat:
         assert ExportFormat.GOOGLE_FORMS.value == "google_forms"
     
     def test_google_forms_in_pro_only_formats(self):
-        """GOOGLE_FORMS should be in PRO_ONLY_FORMATS (Pro tier only)."""
-        assert ExportFormat.GOOGLE_FORMS in PRO_ONLY_FORMATS
-        assert ExportFormat.GOOGLE_FORMS not in PAID_TIER_FORMATS
+        """GOOGLE_FORMS should NOT be in PRO_ONLY_FORMATS (Available to all)."""
+        assert ExportFormat.GOOGLE_FORMS not in PRO_ONLY_FORMATS
     
     def test_pro_only_formats_contains_all_pro_features(self):
-        """PRO_ONLY_FORMATS should contain Google Forms and LMS formats."""
-        assert ExportFormat.QTI in PRO_ONLY_FORMATS
-        assert ExportFormat.MOODLE_XML in PRO_ONLY_FORMATS
-        assert ExportFormat.GOOGLE_FORMS in PRO_ONLY_FORMATS
-        assert len(PRO_ONLY_FORMATS) == 3
+        """PRO_ONLY_FORMATS should be empty as all formats are available to all tiers."""
+        assert len(PRO_ONLY_FORMATS) == 0
 
 
 class TestTierValidationForGoogleForms:
     """Test tier-based access control for Google Forms export."""
     
-    def test_free_tier_cannot_access_google_forms(self):
-        """Free tier users should not access Google Forms export."""
-        with pytest.raises(TierInsufficientError) as exc_info:
-            validate_export_tier_access("free", ExportFormat.GOOGLE_FORMS)
-        
-        assert exc_info.value.status_code == 403
-        assert "tier_insufficient" in str(exc_info.value.detail)
+    def test_free_tier_can_access_google_forms(self):
+        """Free tier users should access Google Forms export."""
+        # Should not raise
+        validate_export_tier_access("free", ExportFormat.GOOGLE_FORMS)
     
-    def test_premium_tier_cannot_access_google_forms(self):
-        """Premium tier users should NOT access Google Forms export (Pro only)."""
-        with pytest.raises(TierInsufficientError) as exc_info:
-            validate_export_tier_access("premium", ExportFormat.GOOGLE_FORMS)
-        
-        assert exc_info.value.status_code == 403
-        assert exc_info.value.detail["required_tier"] == "pro"
+    def test_premium_tier_can_access_google_forms(self):
+        """Premium tier users should access Google Forms export."""
+        # Should not raise
+        validate_export_tier_access("premium", ExportFormat.GOOGLE_FORMS)
     
-    def test_basic_tier_cannot_access_google_forms(self):
-        """Legacy 'basic' tier (maps to premium) should NOT access Google Forms."""
-        with pytest.raises(TierInsufficientError):
-            validate_export_tier_access("basic", ExportFormat.GOOGLE_FORMS)
+    def test_basic_tier_can_access_google_forms(self):
+        """Legacy 'basic' tier (maps to premium) should access Google Forms."""
+        # Should not raise
+        validate_export_tier_access("basic", ExportFormat.GOOGLE_FORMS)
     
     def test_pro_tier_can_access_google_forms(self):
         """Pro tier users should access Google Forms export."""
@@ -77,19 +67,19 @@ class TestTierValidationForGoogleForms:
     
     def test_is_format_available_for_tier(self):
         """Test is_format_available_for_tier helper."""
-        assert is_format_available_for_tier("free", ExportFormat.GOOGLE_FORMS) is False
-        assert is_format_available_for_tier("premium", ExportFormat.GOOGLE_FORMS) is False
-        assert is_format_available_for_tier("basic", ExportFormat.GOOGLE_FORMS) is False  # Legacy mapping to premium
+        assert is_format_available_for_tier("free", ExportFormat.GOOGLE_FORMS) is True
+        assert is_format_available_for_tier("premium", ExportFormat.GOOGLE_FORMS) is True
+        assert is_format_available_for_tier("basic", ExportFormat.GOOGLE_FORMS) is True
         assert is_format_available_for_tier("pro", ExportFormat.GOOGLE_FORMS) is True
     
     def test_get_available_formats_for_tier(self):
-        """Test get_available_formats_for_tier includes/excludes Google Forms."""
+        """Test get_available_formats_for_tier includes Google Forms for all tiers."""
         free_formats = get_available_formats_for_tier("free")
         premium_formats = get_available_formats_for_tier("premium")
         pro_formats = get_available_formats_for_tier("pro")
         
-        assert ExportFormat.GOOGLE_FORMS not in free_formats
-        assert ExportFormat.GOOGLE_FORMS not in premium_formats  # Pro only
+        assert ExportFormat.GOOGLE_FORMS in free_formats
+        assert ExportFormat.GOOGLE_FORMS in premium_formats
         assert ExportFormat.GOOGLE_FORMS in pro_formats
 
 

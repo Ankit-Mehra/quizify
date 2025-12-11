@@ -133,13 +133,13 @@ def _register_implemented_exporters():
     from services.exporters.share_link_exporter import ShareLinkExporter
     _EXPORTER_REGISTRY[ExportFormat.SHARE_LINK] = ShareLinkExporter
     
-    # LMS Formats (Epic 6 & 7) - Pro only
+    # LMS Formats (Epic 6 & 7) - Available to all tiers
     from services.exporters.qti_exporter import QtiExporter
     from services.exporters.moodle_xml_exporter import MoodleXmlExporter
     _EXPORTER_REGISTRY[ExportFormat.QTI] = QtiExporter
     _EXPORTER_REGISTRY[ExportFormat.MOODLE_XML] = MoodleXmlExporter
     
-    # Google Forms (Epic QUIZ-002) - Pro only
+    # Google Forms (Epic QUIZ-002) - Available to all tiers
     from services.exporters.google_forms_exporter import GoogleFormsExporter
     _EXPORTER_REGISTRY[ExportFormat.GOOGLE_FORMS] = GoogleFormsExporter
 

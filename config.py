@@ -112,7 +112,7 @@ class Config:
     # Stripe Price IDs for subscription plans
     # These are created in Stripe Dashboard and map to our tier system
     STRIPE_PRICE_ID_PREMIUM: str = os.getenv("STRIPE_PRICE_ID_PREMIUM", "")  # Legacy - kept for backward compatibility
-    STRIPE_PRICE_ID_PRO: str = os.getenv("STRIPE_PRICE_ID_PRO", "")  # $15/mo - 30 credits (60 units)
+    STRIPE_PRICE_ID_PRO: str = os.getenv("STRIPE_PRICE_ID_PRO", "")  # $20/mo - 40 credits (80 units)
     
     # Credit Pack Price IDs (one-time purchases)
     # These are created in Stripe Dashboard as one-time payment products
