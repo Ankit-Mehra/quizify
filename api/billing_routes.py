@@ -146,7 +146,24 @@ async def create_credit_pack_checkout(
             detail="Invalid credit pack size. Please choose 5, 10, or 15 credits."
         )
     
+    # Validate price ID format (Stripe price IDs start with "price_")
+    if not price_id.startswith("price_"):
+        logger.error(
+            f"Invalid Stripe price ID format for {pack_size} credits: '{price_id[:20]}...' "
+            f"(expected 'price_*'). Check STRIPE_PRICE_ID_CREDITS_{pack_size} env var."
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="Credit pack checkout configuration error. Please contact support."
+        )
+    
     units = CREDIT_PACK_UNITS.get(pack_size, 0)
+    
+    # Debug logging for troubleshooting (can be removed once stable)
+    logger.info(
+        f"Credit pack checkout: pack_size={pack_size}, price_id={price_id}, "
+        f"units={units}, user={user_id[:8]}"
+    )
     
     try:
         # Get or create Stripe customer
@@ -157,6 +174,7 @@ async def create_credit_pack_checkout(
         
         if not customer_id:
             # Create new Stripe customer
+            logger.info(f"Creating new Stripe customer for user {user_id[:8]}")
             customer = stripe.Customer.create(
                 email=email,
                 metadata={"user_id": user_id}
@@ -194,7 +212,17 @@ async def create_credit_pack_checkout(
             "session_id": session.id
         }
         
-    except stripe.error.StripeError as e:
+    except stripe.InvalidRequestError as e:
+        # Invalid request usually means bad price ID or invalid parameters - config issue
+        logger.error(
+            f"Stripe InvalidRequestError for credit pack checkout: {e}. "
+            f"price_id={price_id}, pack_size={pack_size}, user={user_id[:8]}"
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="Credit pack checkout configuration error. Please contact support."
+        )
+    except stripe.StripeError as e:
         logger.error(f"Stripe error creating credit pack checkout: {e}")
         raise HTTPException(
             status_code=502,
