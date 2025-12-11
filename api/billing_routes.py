@@ -153,8 +153,8 @@ async def create_credit_pack_checkout(
             f"(expected 'price_*'). Check STRIPE_PRICE_ID_CREDITS_{pack_size} env var."
         )
         raise HTTPException(
-            status_code=503,
-            detail="Credit pack checkout is temporarily unavailable. Please try again later."
+            status_code=500,
+            detail="Credit pack checkout configuration error. Please contact support."
         )
     
     units = CREDIT_PACK_UNITS.get(pack_size, 0)
@@ -213,14 +213,14 @@ async def create_credit_pack_checkout(
         }
         
     except stripe.InvalidRequestError as e:
-        # Invalid request usually means bad price ID or invalid parameters
+        # Invalid request usually means bad price ID or invalid parameters - config issue
         logger.error(
             f"Stripe InvalidRequestError for credit pack checkout: {e}. "
             f"price_id={price_id}, pack_size={pack_size}, user={user_id[:8]}"
         )
         raise HTTPException(
-            status_code=503,
-            detail="Credit pack checkout is temporarily unavailable. Please try again later."
+            status_code=500,
+            detail="Credit pack checkout configuration error. Please contact support."
         )
     except stripe.StripeError as e:
         logger.error(f"Stripe error creating credit pack checkout: {e}")
