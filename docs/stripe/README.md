@@ -141,10 +141,10 @@ STRIPE_WEBHOOK_SECRET=whsec_...        # Webhook signature verification
 
 # Stripe Product IDs (created in Dashboard)
 STRIPE_PRICE_ID_BASIC=price_...   # Basic tier monthly price ($5/mo)
-STRIPE_PRICE_ID_PRO=price_...     # Pro tier monthly price ($15/mo - unlimited quizzes)
+STRIPE_PRICE_ID_PRO=price_...     # Pro tier monthly price ($20/mo - 40 credits)
 # Optional: Annual pricing (17% discount)
 # STRIPE_PRICE_ID_BASIC_ANNUAL=price_...    # $50/year
-# STRIPE_PRICE_ID_PRO_ANNUAL=price_...      # $150/year
+# STRIPE_PRICE_ID_PRO_ANNUAL=price_...      # $200/year
 ```
 
 ## Pricing Structure
@@ -153,7 +153,7 @@ STRIPE_PRICE_ID_PRO=price_...     # Pro tier monthly price ($15/mo - unlimited q
 |------|---------|--------|----------|
 | Free | $0 | $0 | 5 quizzes/month |
 | Basic | $5.00 | $50/year (17% off) | 100 quizzes/month |
-| Pro | $15.00 | $150/year (17% off) | Unlimited quizzes/month |
+| Pro | $20.00 | $200/year (17% off) | 40 credits/month |
 
 ## Security Considerations
 

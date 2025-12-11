@@ -147,7 +147,7 @@ async def inspect_redis_keys():
     
     try:
         import redis.asyncio as redis
-        from config import app_config
+        from config import config as app_config
         
         # Connect to Redis
         redis_client = redis.from_url(
@@ -245,7 +245,7 @@ async def main():
     print("🚀"*40)
     
     print("\n⚙️  Configuration:")
-    from config import app_config
+    from config import config as app_config
     print(f"   • Redis Enabled:  {app_config.REDIS_ENABLED}")
     print(f"   • Redis URL:      {app_config.REDIS_URL}")
     print(f"   • User Tier TTL:  {app_config.REDIS_CACHE_TTL_USER_TIER}s (5 minutes)")

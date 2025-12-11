@@ -15,14 +15,19 @@ change without restarting the application. This is intentional for performance
 and to maintain consistent behavior throughout the application lifecycle.
 """
 
-import threading
-from typing import List, Optional, Dict, Any
-from openai import AsyncOpenAI as BaseAsyncOpenAI
-from pydantic import ValidationError
 import os
 import re
+import threading
+import time
+import asyncio
+from collections import OrderedDict
+from typing import List, Optional, Dict, Any
 from uuid import uuid4
+
 from dotenv import load_dotenv
+from httpx import Timeout
+from openai import AsyncOpenAI as BaseAsyncOpenAI, RateLimitError, APIConnectionError, APITimeoutError
+from pydantic import ValidationError
 
 from schemas.quiz import Quizzes, Question
 from schemas.quizzes_parsed import QuizzesParsed
@@ -55,6 +60,72 @@ class QuizParseError(Exception):
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
+# LLM request timeout configuration
+# - connect: Time to establish connection (5s is generous for cloud APIs)
+# - read: Time to wait for response chunks (90s allows for complex quiz generation)
+# - write: Time to send request body (30s for large prompts)
+# - pool: Time to acquire connection from pool (10s)
+# Total timeout ensures requests don't hang indefinitely, preventing worker exhaustion
+LLM_TIMEOUT = Timeout(
+    connect=5.0,
+    read=90.0,
+    write=30.0,
+    pool=10.0
+)
+
+# Retry configuration for transient LLM errors
+# Handles rate limits, connection issues, and timeouts with exponential backoff
+LLM_MAX_RETRIES = 3
+LLM_INITIAL_DELAY = 1.0  # seconds
+LLM_MAX_DELAY = 30.0  # seconds
+LLM_BACKOFF_FACTOR = 2.0
+
+
+async def _retry_with_backoff(coro_factory, max_retries: int = LLM_MAX_RETRIES):
+    """
+    Execute an async operation with exponential backoff retry on transient errors.
+    
+    Retries on:
+    - RateLimitError: OpenAI rate limits (429)
+    - APIConnectionError: Network issues
+    - APITimeoutError: Request timeout
+    
+    Args:
+        coro_factory: Callable that returns the coroutine to execute
+        max_retries: Maximum number of retry attempts
+        
+    Returns:
+        The result of the successful coroutine execution
+        
+    Raises:
+        The last exception if all retries fail
+    """
+    delay = LLM_INITIAL_DELAY
+    last_exception = None
+    
+    for attempt in range(max_retries + 1):
+        try:
+            return await coro_factory()
+        except (RateLimitError, APIConnectionError, APITimeoutError) as e:
+            last_exception = e
+            if attempt == max_retries:
+                logger.error(f"LLM request failed after {max_retries + 1} attempts: {e}")
+                raise
+            
+            # Calculate delay with exponential backoff and jitter
+            jitter = delay * 0.2 * (0.5 - asyncio.get_event_loop().time() % 1)
+            actual_delay = min(delay + jitter, LLM_MAX_DELAY)
+            
+            logger.warning(
+                f"LLM request failed (attempt {attempt + 1}/{max_retries + 1}): {type(e).__name__}. "
+                f"Retrying in {actual_delay:.1f}s..."
+            )
+            await asyncio.sleep(actual_delay)
+            delay = min(delay * LLM_BACKOFF_FACTOR, LLM_MAX_DELAY)
+    
+    raise last_exception  # Should never reach here, but for type safety
+
+
 # Global client instance with thread-safe initialization
 # Note: Client type is determined at first initialization and persists until restart
 _client: Optional[BaseAsyncOpenAI] = None
@@ -67,20 +138,23 @@ def _create_openai_client() -> BaseAsyncOpenAI:
     
     Returns PostHog-wrapped client if analytics is enabled, otherwise
     returns the standard AsyncOpenAI client.
+    
+    Both clients are configured with LLM_TIMEOUT to prevent hung requests.
     """
     if is_posthog_enabled():
         posthog_client = get_posthog_client()
         if posthog_client:
             # Import PostHog wrapper only when needed
             from posthog.ai.openai import AsyncOpenAI as PostHogAsyncOpenAI
-            logger.info("Using PostHog-wrapped AsyncOpenAI client for LLM analytics")
+            logger.info("Using PostHog-wrapped AsyncOpenAI client for LLM analytics (timeout: 90s read)")
             return PostHogAsyncOpenAI(
                 api_key=OPENAI_API_KEY,
-                posthog_client=posthog_client
+                posthog_client=posthog_client,
+                timeout=LLM_TIMEOUT
             )
     
-    logger.info("Using standard AsyncOpenAI client (PostHog analytics disabled)")
-    return BaseAsyncOpenAI(api_key=OPENAI_API_KEY)
+    logger.info("Using standard AsyncOpenAI client (PostHog analytics disabled, timeout: 90s read)")
+    return BaseAsyncOpenAI(api_key=OPENAI_API_KEY, timeout=LLM_TIMEOUT)
 
 
 def get_openai_client() -> BaseAsyncOpenAI:
@@ -113,9 +187,6 @@ QUESTION_TYPE_PROMPTS = {
 
 # TTL-based cache for user_id → email mapping (avoids DB call on every LLM request)
 # Uses time-based expiration to handle email changes
-import time
-from collections import OrderedDict
-
 # Cache configuration
 _EMAIL_CACHE_TTL_SECONDS = 300  # 5 minutes (same as user_tier cache)
 _EMAIL_CACHE_MAX_SIZE = 1000
@@ -303,11 +374,14 @@ async def generate_quiz_for_type(
         properties=properties
     )
 
-    response = await client.chat.completions.create(
-        model="gpt-4o",
-        messages=[{"role": "user", "content": prompt}],
-        response_format={"type": "json_object"},
-        **posthog_kwargs
+    # Use retry wrapper for transient errors (rate limits, connection issues)
+    response = await _retry_with_backoff(
+        lambda: client.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"},
+            **posthog_kwargs
+        )
     )
 
     raw_json = response.choices[0].message.content.strip()
@@ -385,11 +459,14 @@ async def generate_quiz_async(
     # This is problematic because our QuizzesParsed model uses a discriminated Union for question types.
     # OpenAI's output may not match the expected schema, causing parsing failures with Pydantic.
     # Therefore, we parse the JSON manually and validate with Pydantic after.
-    response = await client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "user", "content": prompt}],
-        response_format={"type": "json_object"},
-        **posthog_kwargs
+    # Use retry wrapper for transient errors (rate limits, connection issues)
+    response = await _retry_with_backoff(
+        lambda: client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"},
+            **posthog_kwargs
+        )
     )
     
     raw_json = (response.choices[0].message.content or "").strip()

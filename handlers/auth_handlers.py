@@ -1063,9 +1063,8 @@ async def google_connect(
     Returns an authorization URL that the frontend should redirect to.
     After user authorizes, they will be redirected to /auth/google/callback.
     
-    Requires Pro tier for access.
+    Available to all tiers (December 2025).
     """
-    from services.db_services.supabase_quiz import get_user_tier_info_cached
     from services.google_auth_service import (
         GoogleAuthError,
         generate_auth_url,
@@ -1075,20 +1074,8 @@ async def google_connect(
     
     logger.info(f"Google connect initiated for user {_short_user_id(user_id)}")
     
-    # Check user tier - Google Forms is Pro-only
-    tier_info = await get_user_tier_info_cached(user_id)
-    user_tier = tier_info.get("account_tier", "free").lower()
-    if user_tier != "pro":
-        logger.warning(f"User {_short_user_id(user_id)} with tier '{user_tier}' attempted to connect Google (Pro only)")
-        raise HTTPException(
-            status_code=403,
-            detail={
-                "error": "tier_insufficient",
-                "message": "Google Forms export requires a Pro subscription",
-                "required_tier": "pro",
-                "current_tier": user_tier
-            }
-        )
+    # NOTE (December 2025): Google Forms export is now available to all tiers.
+    # Tier check removed - all users can connect their Google account for exports.
     
     # Check if Google OAuth is configured
     if not is_google_auth_configured():
@@ -1136,9 +1123,9 @@ async def google_callback(
     SECURITY: 
     - Validates HMAC-signed state token to prevent CSRF and tampering
     - State format: "timestamp:user_id:signature"
-    - Validates Pro tier before storing tokens to prevent bypass of google_connect check.
+    
+    Available to all tiers (December 2025).
     """
-    from services.db_services.supabase_quiz import get_user_tier_info_cached
     from services.google_auth_service import (
         GoogleAuthError,
         exchange_code_for_tokens,
@@ -1174,7 +1161,7 @@ async def google_callback(
         # Check for control characters that could enable CRLF header injection
         control_chars = "\r\n\x00"
         if any(c in redirect_url for c in control_chars):
-            logger.warning(f"Rejecting redirect_url with control characters (CRLF injection attempt)")
+            logger.warning("Rejecting redirect_url with control characters (CRLF injection attempt)")
         # Only allow relative paths starting with /
         elif redirect_url.startswith("/") and not redirect_url.startswith("//"):
             # Strip any protocol:// that might be embedded
@@ -1193,26 +1180,8 @@ async def google_callback(
             return f"{app_config.FRONTEND_URL}{safe_redirect_path}{separator}{query_params}"
         return f"{app_config.FRONTEND_URL}/settings?{query_params}"
     
-    # SECURITY: Re-validate Pro tier to prevent bypass via direct callback URL
-    # A user could theoretically get a valid code and bypass google_connect tier check
-    try:
-        tier_info = await get_user_tier_info_cached(user_id)
-        user_tier = tier_info.get("account_tier", "free").lower()
-        if user_tier != "pro":
-            logger.warning(
-                f"User {_short_user_id(user_id)} with tier '{user_tier}' attempted "
-                f"OAuth callback (Pro only) - rejecting"
-            )
-            return RedirectResponse(
-                url=build_redirect_url("google_error=tier_insufficient"),
-                status_code=302
-            )
-    except Exception as tier_error:
-        logger.error(f"Failed to verify user tier in callback: {tier_error}")
-        return RedirectResponse(
-            url=build_redirect_url("google_error=tier_check_failed"),
-            status_code=302
-        )
+    # NOTE (December 2025): Google Forms export is now available to all tiers.
+    # Tier check removed - all users can connect their Google account for exports.
     
     try:
         # Exchange authorization code for tokens

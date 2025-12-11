@@ -213,6 +213,7 @@ class TestPostHogLoggingShutdown:
     def test_shutdown_removes_handler_and_provider(self):
         """Shutdown should remove handler and provider."""
         mock_handler = MagicMock()
+        mock_handler.level = logging.INFO  # Set level to avoid TypeError in logging
         mock_provider = MagicMock()
         
         posthog_module._posthog_logging_initialized = True

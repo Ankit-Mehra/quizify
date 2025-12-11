@@ -339,12 +339,12 @@ Database Size: 10GB
 - Cost to you: ~$0.15/user/month
 - **Profit margin: 97%** ✅✅✅
 
-**Pro Tier ($15/month):**
-- Unlimited quizzes (GPT-3.5)
+**Pro Tier ($20/month):**
+- 40 credits/month (80 units)
 - Option for GPT-4 (pay per quiz)
 - Priority support
 - Cost to you: ~$0.50/user/month
-- **Profit margin: 97%** ✅✅✅
+- **Profit margin: 97.5%** ✅✅✅
 
 **Your infrastructure costs are LOW compared to subscription value!**
 

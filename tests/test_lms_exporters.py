@@ -492,13 +492,13 @@ class TestLmsExportersInHandler:
         assert ExportFormat.MOODLE_XML in _EXPORTER_REGISTRY
         assert _EXPORTER_REGISTRY[ExportFormat.MOODLE_XML] == MoodleXmlExporter
     
-    def test_lms_formats_require_pro_tier(self):
-        """Test LMS formats are Pro-only."""
+    def test_lms_formats_available_to_all(self):
+        """Test LMS formats are available to all tiers."""
         from services.exporters.tier_validator import PRO_ONLY_FORMATS
         from schemas.export import ExportFormat
         
-        assert ExportFormat.QTI in PRO_ONLY_FORMATS
-        assert ExportFormat.MOODLE_XML in PRO_ONLY_FORMATS
+        assert ExportFormat.QTI not in PRO_ONLY_FORMATS
+        assert ExportFormat.MOODLE_XML not in PRO_ONLY_FORMATS
 
 
 # ============================================================================

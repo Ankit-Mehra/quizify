@@ -18,12 +18,11 @@ class ExportFormat(str, Enum):
     """
     Supported export formats.
     
-    Tier Access:
-    - Free: No export access
-    - Pro ($15/mo): All formats - PDF, DOCX, CSV (Quizify), CSV (Anki), Share Link,
-                    QTI 2.1, Moodle XML, Google Forms (8 formats)
+    Tier Access (UPDATED December 2025):
+    - All tiers: All formats available (PDF, DOCX, CSV, QTI, Moodle XML, Google Forms, Share Link)
     
-    Note: Authoritative tier access control is defined in services.exporters.tier_validator
+    Export is free for quiz owners. The only gating is on quiz generation (credits).
+    If a user generated a quiz with their credits, they can export it in any format.
     """
     PDF = "pdf"
     DOCX = "docx"

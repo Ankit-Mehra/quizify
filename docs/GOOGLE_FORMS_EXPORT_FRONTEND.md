@@ -2,6 +2,8 @@
 
 ## Overview
 
+> **Updated December 2025**: Google Forms export is now available to **all tiers** (Free, Basic, Pro). The OAuth flow remains the same - users still need to connect their Google account to export.
+
 Google Forms export requires OAuth2 authentication. When a user clicks "Export to Google Forms", the backend will either:
 1. Complete the export (if already connected)
 2. Return an auth URL for OAuth (if not connected)
@@ -99,12 +101,12 @@ const googleError = params.get('google_error');
 if (googleError) {
   sessionStorage.removeItem('pendingGoogleExport');
   
+  // NOTE (December 2025): tier_insufficient error is no longer used.
+  // Google Forms export is available to all tiers.
   const errorMessages = {
     'access_denied': 'Google authorization was cancelled',
-    'tier_insufficient': 'Google Forms export requires a Pro subscription',
     'invalid_state': 'Authorization failed. Please try again.',
-    'state_expired': 'Authorization link expired. Please try again.',
-    'tier_check_failed': 'Could not verify subscription. Please try again.'
+    'state_expired': 'Authorization link expired. Please try again.'
   };
   
   showToast(errorMessages[googleError] || 'Google connection failed', 'error');
@@ -142,9 +144,11 @@ showModal({
 
 ---
 
-### 4. Tier Insufficient (403)
+### 4. Tier Insufficient (DEPRECATED - December 2025)
 
-```json
+> **Note**: This error is no longer returned. Google Forms export is now available to all tiers. This section is kept for historical reference only.
+
+~~```json
 {
   "detail": {
     "error": "tier_insufficient",
@@ -153,17 +157,7 @@ showModal({
     "current_tier": "premium"
   }
 }
-```
-
-**Frontend Action:**
-
-```javascript
-showUpgradeModal({
-  feature: 'Google Forms Export',
-  requiredTier: 'Pro',
-  message: 'Upgrade to Pro to export quizzes directly to Google Forms with auto-grading.'
-});
-```
+```~~
 
 ---
 

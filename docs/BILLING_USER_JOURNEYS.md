@@ -58,7 +58,7 @@ flowchart TB
 |--------|-----------|----------|-----------------|
 | **Purchased** (`credit_units_purchased`) | ✅ Can buy | ✅ Can buy | Never resets |
 | **Free** (`free_credit_units_remaining`) | 6 units/month | 6 units/month | Cron job (free users) / `invoice.paid` (Pro users) |
-| **Subscription** (`credit_units_remaining`) | ❌ N/A | 60 units/month | `invoice.paid` webhook |
+| **Subscription** (`credit_units_remaining`) | ❌ N/A | 80 units/month | `invoice.paid` webhook |
 
 ### Consumption Priority (Updated)
 
@@ -187,9 +187,9 @@ sequenceDiagram
     Stripe->>API: POST /api/billing/webhook<br/>checkout.session.completed
     API->>Billing: handle_checkout_completed()
     
-    Billing->>Supabase: UPDATE profiles SET<br/>billing_plan = 'pro',<br/>credit_units_remaining = 60,<br/>free_credit_units_remaining = 6,<br/>current_period_end = subscription_end
+    Billing->>Supabase: UPDATE profiles SET<br/>billing_plan = 'pro',<br/>credit_units_remaining = 80,<br/>free_credit_units_remaining = 6,<br/>current_period_end = subscription_end
     
-    Note over Supabase: Pro user now has:<br/>• subscription: 60 units<br/>• free: 6 units (also reset!)<br/>• purchased: preserved
+    Note over Supabase: Pro user now has:<br/>• subscription: 80 units<br/>• free: 6 units (also reset!)<br/>• purchased: preserved
     
     Billing-->>API: ✅ Upgrade complete
     API-->>Stripe: 200 OK
@@ -349,7 +349,7 @@ flowchart LR
     
     subgraph Pro["⭐ Pro Tier"]
         P1["🎁 Free: 6 units/month"]
-        P2["📅 Subscription: 60 units/month"]
+        P2["📅 Subscription: 80 units/month"]
         P3["💰 Purchased: Can buy"]
         P4["⏰ Reset: invoice.paid<br/>(both free + subscription)"]
     end
@@ -627,7 +627,7 @@ erDiagram
 
 | Column | Purpose | Reset By |
 |--------|---------|----------|
-| `credit_units_remaining` | Pro subscription credits (60/month) | `invoice.paid` webhook |
+| `credit_units_remaining` | Pro subscription credits (80/month) | `invoice.paid` webhook |
 | `credit_units_purchased` | One-time purchased credits | Never resets |
 | `free_credit_units_remaining` | Free monthly allowance | Cron job |
 | `free_credit_units_monthly` | Monthly free allowance amount (default 6) | Manual only |
@@ -711,7 +711,7 @@ erDiagram
 
 5. **View refreshed**:
    - `user_tier_info.monthly_credits` now correctly reports:
-     - Pro: (60 + 6) / 2 = **33 credits/month**
+     - Pro: (80 + 6) / 2 = **43 credits/month**
      - Free: 6 / 2 = **3 credits/month**
 
 ### Migration 032 - Atomic Credit Operations

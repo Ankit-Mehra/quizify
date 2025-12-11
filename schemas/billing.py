@@ -161,7 +161,16 @@ class PortalSessionResponse(BaseModel):
 
 
 class CheckoutSessionVerification(BaseModel):
-    """Response from checkout session verification"""
+    """
+    Response from checkout session verification.
+    
+    Called by frontend after user returns from Stripe Checkout to confirm
+    payment was successful and check subscription provisioning status.
+    
+    The 'provisioned' field indicates if the webhook has already processed
+    the subscription. If False, frontend should poll /subscription-status
+    until the tier is updated.
+    """
     session_id: str = Field(..., description="Checkout session ID")
     customer_id: str = Field(..., description="Stripe customer ID")
     subscription_id: str = Field(..., description="Stripe subscription ID")
@@ -169,6 +178,15 @@ class CheckoutSessionVerification(BaseModel):
     status: str = Field(..., description="Subscription status")
     current_period_end: Optional[int] = Field(None, description="Unix timestamp of period end")
     payment_status: str = Field(..., description="Payment status (paid/unpaid)")
+    provisioned: bool = Field(
+        default=False, 
+        description="True if subscription is already active in database. "
+                    "If False, webhook is still processing - poll /subscription-status."
+    )
+    message: Optional[str] = Field(
+        None,
+        description="Human-readable status message for UI display"
+    )
     
     class Config:
         json_schema_extra = {
@@ -176,10 +194,12 @@ class CheckoutSessionVerification(BaseModel):
                 "session_id": "cs_test_a1b2c3d4e5f6g7h8i9j0",
                 "customer_id": "cus_ABC123xyz",
                 "subscription_id": "sub_DEF456uvw",
-                "tier": "premium",
+                "tier": "pro",
                 "status": "active",
                 "current_period_end": 1734566400,
-                "payment_status": "paid"
+                "payment_status": "paid",
+                "provisioned": True,
+                "message": "Subscription active"
             }
         }
 
