@@ -38,6 +38,13 @@ from services.storage_service import get_storage_quota_info
 
 router = APIRouter(prefix="/api/billing", tags=["billing"])
 
+# Initialize Stripe API key at module load
+# This ensures all direct stripe.* calls in this module work
+if Config.STRIPE_SECRET_KEY:
+    stripe.api_key = Config.STRIPE_SECRET_KEY
+else:
+    logger.warning("STRIPE_SECRET_KEY not configured - Stripe API calls will fail")
+
 
 @router.get("/balance")
 async def get_credit_balance(user_id: str = Depends(get_current_user_id)):
