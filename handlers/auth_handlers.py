@@ -1398,11 +1398,22 @@ def _get_csrf_signing_key() -> bytes:
     
     Uses SUPABASE_JWT_SECRET as the signing key to ensure it's consistent
     across server restarts and secure enough for HMAC signing.
+    
+    In development/testing mode, falls back to SUPABASE_KEY if JWT secret not set.
+    In production, requires SUPABASE_JWT_SECRET to be set for security.
     """
     secret = os.getenv("SUPABASE_JWT_SECRET", "")
     if not secret:
-        # Fall back to SUPABASE_KEY if JWT secret not set
-        secret = os.getenv("SUPABASE_KEY", "fallback-key-for-dev")
+        # In development/testing, allow fallback to prevent blocking local dev
+        if app_config.is_development() or app_config.is_testing():
+            secret = os.getenv("SUPABASE_KEY", "dev-fallback-key")
+            logger.warning("Using SUPABASE_KEY as CSRF signing fallback (dev mode only)")
+        else:
+            # In production, CSRF signing key MUST be secure
+            raise RuntimeError(
+                "SUPABASE_JWT_SECRET must be set in production for CSRF token signing. "
+                "This is required for secure OAuth state validation."
+            )
     return secret.encode()
 
 
@@ -1761,11 +1772,12 @@ async def google_signin_callback(
             return clear_csrf_cookie(redirect_resp)
         
         # Build safe redirect URL (redirect_path already validated in _verify_oauth_state)
-        base_redirect_url = f"{app_config.FRONTEND_URL}{redirect_path}" if redirect_path else app_config.FRONTEND_URL
+        # Strip any query params from redirect_path since we'll add our own
+        clean_redirect_path = redirect_path.split('?')[0] if redirect_path and '?' in redirect_path else redirect_path
+        base_redirect_url = f"{app_config.FRONTEND_URL}{clean_redirect_path}" if clean_redirect_path else app_config.FRONTEND_URL
         
-        # Add success parameters
-        separator = "&" if "?" in base_redirect_url else "?"
-        redirect_params = f"{separator}login=success&provider=google"
+        # Add success parameters (always use ? since we stripped any existing query)
+        redirect_params = "?login=success&provider=google"
         if is_new_user:
             redirect_params += "&new_user=true"
         

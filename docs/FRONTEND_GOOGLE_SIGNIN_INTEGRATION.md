@@ -64,9 +64,21 @@ This endpoint is called by Google after user authorizes. The backend:
 **Redirect URL**: 
 - Success: `{redirect_url}?login=success&provider=google`
 - New user: `{redirect_url}?login=success&provider=google&new_user=true`
-- Error: `{redirect_url}?error=oauth_error&message=...`
+- Error: `{redirect_url}?error={error_code}&message={url_encoded_message}`
 
-> The `redirect_url` is either the one passed to `/google/signin` or defaults to `FRONTEND_URL`.
+**Error Codes**:
+| Code | Description |
+|------|-------------|
+| `oauth_error` | Google OAuth returned an error |
+| `no_code` | No authorization code received from Google |
+| `csrf_failed` | CSRF state validation failed (security check) |
+| `exchange_failed` | Failed to exchange code for session |
+| `too_many_sessions` | User has too many active sessions |
+| `service_unavailable` | Redis session service unavailable |
+| `session_failed` | Failed to create session |
+| `signin_failed` | General sign-in failure |
+
+> The `redirect_url` is either the one passed to `/google/signin` or defaults to `FRONTEND_URL`. CSRF state validation happens server-side via HttpOnly cookies - no state is returned to frontend.
 
 ### 3. Token-based Sign-In (alternative for Google Sign-In button)
 
@@ -105,15 +117,29 @@ This is the simplest approach - redirect user to backend, which handles everythi
 
 ```tsx
 // hooks/useGoogleSignIn.ts
-import { useState } from 'react';
+'use client';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+import { useState, useCallback } from 'react';
+import { API_URL } from '@/lib/config';
 
+/**
+ * Hook to handle Google Sign-In OAuth flow
+ * 
+ * Initiates the OAuth redirect flow by:
+ * 1. Fetching the OAuth URL from the backend
+ * 2. Redirecting user to Google consent screen
+ * 
+ * SECURITY: CSRF protection is handled entirely by the backend using:
+ * - HMAC-signed state parameter in the OAuth URL
+ * - HttpOnly cookie for state validation on callback
+ * 
+ * The frontend does NOT need to manage state - the backend handles it securely.
+ */
 export function useGoogleSignIn() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const signInWithGoogle = async (redirectUrl?: string) => {
+  const signInWithGoogle = useCallback(async (redirectUrl?: string) => {
     setIsLoading(true);
     setError(null);
 
@@ -124,30 +150,41 @@ export function useGoogleSignIn() {
         params.set('redirect_url', redirectUrl);
       }
 
-      const url = `${API_BASE_URL}/api/auth/google/signin${params.toString() ? '?' + params.toString() : ''}`;
-      
+      const url = `${API_URL}/api/auth/google/signin${params.toString() ? '?' + params.toString() : ''}`;
+
       // Fetch the OAuth URL from backend
       const response = await fetch(url, {
         credentials: 'include', // Include cookies
       });
 
       if (!response.ok) {
-        throw new Error('Failed to initiate Google Sign-In');
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || errorData.detail || 'Failed to initiate Google Sign-In');
       }
 
       const data = await response.json();
 
       // Redirect to Google OAuth
-      // Note: CSRF state is managed internally by the backend
+      // CSRF protection is handled by backend via HttpOnly cookie
       window.location.href = data.auth_url;
 
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Sign-in failed');
+      const errorMessage = err instanceof Error ? err.message : 'Sign-in failed';
+      setError(errorMessage);
       setIsLoading(false);
     }
-  };
+  }, []);
 
-  return { signInWithGoogle, isLoading, error };
+  const clearError = useCallback(() => {
+    setError(null);
+  }, []);
+
+  return { 
+    signInWithGoogle, 
+    isLoading, 
+    error,
+    clearError,
+  };
 }
 ```
 
@@ -349,61 +386,88 @@ export function GoogleOneTapSignIn() {
 Create a callback page to handle the OAuth redirect:
 
 ```tsx
-// pages/AuthCallback.tsx
-import { useEffect, useState } from 'react';
-import { useSearchParams, useNavigate } from 'react-router-dom';
-import { Loader2, CheckCircle, XCircle } from 'lucide-react';
+// app/auth/google/callback/page.tsx
+'use client';
 
-export function AuthCallbackPage() {
-  const [searchParams] = useSearchParams();
-  const navigate = useNavigate();
-  const [status, setStatus] = useState<'loading' | 'success' | 'error'>('loading');
+import { Suspense, useEffect, useState, useRef } from 'react';
+import { useSearchParams, useRouter } from 'next/navigation';
+import { Loader2, CheckCircle, XCircle } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { authService, resetAuthFailureState } from '@/lib/auth';
+
+type CallbackStatus = 'loading' | 'success' | 'error';
+
+function GoogleAuthCallbackContent() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const [status, setStatus] = useState<CallbackStatus>('loading');
   const [message, setMessage] = useState('');
+  const hasProcessedRef = useRef(false);
 
   useEffect(() => {
+    // Prevent double processing in StrictMode
+    if (hasProcessedRef.current) return;
+    if (!searchParams) return;
+
     const loginStatus = searchParams.get('login');
     const provider = searchParams.get('provider');
+    const errorCode = searchParams.get('error');
     const errorMessage = searchParams.get('message');
+    const isNewUser = searchParams.get('new_user') === 'true';
 
-    // Handle Google OAuth callback
-    if (provider === 'google') {
-      if (loginStatus === 'success') {
-        setStatus('success');
-        setMessage('Successfully signed in with Google!');
-        
-        // Redirect to dashboard after a brief delay
-        setTimeout(() => {
-          navigate('/dashboard', { replace: true });
-        }, 1500);
-
-      } else if (loginStatus === 'error') {
-        setStatus('error');
-        setMessage(errorMessage || 'Sign-in failed. Please try again.');
-      }
-    } else {
-      // No recognized params - might be a direct visit
-      navigate('/', { replace: true });
+    // Handle Google OAuth callback (provider=google)
+    if (provider !== 'google' && !errorCode) {
+      // Not a Google OAuth callback, redirect away
+      router.replace('/dashboard');
+      return;
     }
-  }, [searchParams, navigate]);
+
+    hasProcessedRef.current = true;
+
+    // CSRF validation is handled server-side via HttpOnly cookies
+    // If we reach this page with login=success, the backend already validated CSRF
+    
+    if (loginStatus === 'success' && provider === 'google') {
+      setStatus('success');
+      setMessage(isNewUser ? 'Welcome! Account created successfully.' : 'Successfully signed in with Google!');
+      
+      // Reset auth failure state since we just logged in
+      resetAuthFailureState();
+
+      // Refresh user data from backend
+      authService.fetchCurrentUser().then((user) => {
+        if (user) {
+          authService.setUser(user);
+        }
+      });
+
+      // Redirect to dashboard after brief success message
+      setTimeout(() => {
+        router.replace('/dashboard');
+      }, 1500);
+
+    } else if (errorCode) {
+      setStatus('error');
+      setMessage(errorMessage || 'Sign-in failed. Please try again.');
+    } else {
+      router.replace('/login');
+    }
+  }, [searchParams, router]);
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50">
-      <div className="text-center p-8 bg-white rounded-lg shadow-md max-w-md">
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-indigo-50 to-blue-50 dark:from-gray-900 dark:to-indigo-950 p-4">
+      <div className="text-center p-8 bg-white dark:bg-indigo-950/20 rounded-lg shadow-lg border max-w-md w-full">
         {status === 'loading' && (
           <>
-            <Loader2 className="w-12 h-12 mx-auto text-blue-500 animate-spin" />
-            <h2 className="mt-4 text-xl font-semibold text-gray-700">
-              Completing sign-in...
-            </h2>
+            <Loader2 className="w-12 h-12 mx-auto text-indigo-500 animate-spin" />
+            <h2 className="mt-4 text-xl font-semibold">Completing sign-in...</h2>
           </>
         )}
 
         {status === 'success' && (
           <>
-            <CheckCircle className="w-12 h-12 mx-auto text-green-500" />
-            <h2 className="mt-4 text-xl font-semibold text-gray-700">
-              {message}
-            </h2>
+            <CheckCircle className="w-12 h-12 mx-auto text-emerald-500" />
+            <h2 className="mt-4 text-xl font-semibold">{message}</h2>
             <p className="mt-2 text-gray-500">Redirecting to dashboard...</p>
           </>
         )}
@@ -411,20 +475,24 @@ export function AuthCallbackPage() {
         {status === 'error' && (
           <>
             <XCircle className="w-12 h-12 mx-auto text-red-500" />
-            <h2 className="mt-4 text-xl font-semibold text-gray-700">
-              Sign-in Failed
-            </h2>
-            <p className="mt-2 text-gray-500">{message}</p>
-            <button
-              onClick={() => navigate('/login')}
-              className="mt-4 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
-            >
+            <h2 className="mt-4 text-xl font-semibold">Sign-in Failed</h2>
+            <p className="mt-2 text-red-500">{message}</p>
+            <Button onClick={() => router.push('/login')} className="mt-4 w-full">
               Try Again
-            </button>
+            </Button>
           </>
         )}
+
       </div>
     </div>
+  );
+}
+
+export default function GoogleAuthCallbackPage() {
+  return (
+    <Suspense fallback={<div>Loading...</div>}>
+      <GoogleAuthCallbackContent />
+    </Suspense>
   );
 }
 ```
@@ -525,31 +593,56 @@ export function LoginPage() {
 
 ---
 
-## Router Setup
+## Next.js App Router Setup
 
-```tsx
-// App.tsx or routes.tsx
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
-import { LoginPage } from '@/pages/Login';
-import { AuthCallbackPage } from '@/pages/AuthCallback';
-import { DashboardPage } from '@/pages/Dashboard';
-import { ProtectedRoute } from '@/components/ProtectedRoute';
+The callback page is located at `src/app/auth/google/callback/page.tsx` and is automatically routed by Next.js.
 
-export function App() {
-  return (
-    <BrowserRouter>
-      <Routes>
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/auth/callback" element={<AuthCallbackPage />} />
-        
-        {/* Protected routes */}
-        <Route element={<ProtectedRoute />}>
-          <Route path="/dashboard" element={<DashboardPage />} />
-        </Route>
-      </Routes>
-    </BrowserRouter>
-  );
+```
+src/app/
+├── auth/
+│   ├── google/
+│   │   └── callback/
+│   │       └── page.tsx    # Google OAuth callback handler
+│   └── callback/
+│       └── route.ts        # General auth callback route handler
+├── login/
+│   └── page.tsx            # Login page with Google Sign-In button
+└── dashboard/
+    └── page.tsx            # Protected dashboard
+```
+
+### Middleware Protection (optional)
+
+```typescript
+// middleware.ts
+import { NextResponse } from 'next/server';
+import type { NextRequest } from 'next/server';
+
+const protectedRoutes = ['/dashboard', '/quizzes', '/profile'];
+const authRoutes = ['/login', '/signup'];
+
+export function middleware(request: NextRequest) {
+  const { pathname } = request.nextUrl;
+  
+  // Check for auth cookie
+  const hasAuthCookie = request.cookies.has('access_token');
+  
+  // Redirect authenticated users away from auth pages
+  if (authRoutes.some(route => pathname.startsWith(route)) && hasAuthCookie) {
+    return NextResponse.redirect(new URL('/dashboard', request.url));
+  }
+  
+  // Redirect unauthenticated users to login
+  if (protectedRoutes.some(route => pathname.startsWith(route)) && !hasAuthCookie) {
+    return NextResponse.redirect(new URL('/login', request.url));
+  }
+  
+  return NextResponse.next();
 }
+
+export const config = {
+  matcher: ['/dashboard/:path*', '/quizzes/:path*', '/profile/:path*', '/login', '/signup'],
+};
 ```
 
 ---
@@ -713,10 +806,55 @@ VITE_GOOGLE_CLIENT_ID=your-google-client-id.apps.googleusercontent.com
 
 ## Security Considerations
 
-1. **CSRF Protection**: The OAuth flow uses a `state` parameter that should be validated on callback
-2. **Token Storage**: Access tokens are stored in HTTP-only cookies by the backend (most secure)
-3. **Redirect Validation**: Backend validates redirect URLs against allowed domains
-4. **ID Token Validation**: Backend verifies Google ID tokens before creating sessions
+### 1. CSRF Protection (Backend-Managed)
+
+CSRF protection is handled **entirely by the backend**:
+
+```
+1. Backend generates HMAC-signed state parameter with embedded redirect URL
+2. State CSRF token is stored in HttpOnly cookie (oauth_state)
+3. On callback, backend validates state signature against cookie
+4. Invalid/mismatched state redirects to /login?error=csrf_failed
+5. Cookie is cleared after validation (success or failure)
+```
+
+**Why backend-only?** HttpOnly cookies cannot be accessed by JavaScript, making them immune to XSS attacks. Client-side state in sessionStorage is vulnerable to XSS.
+
+### 2. Open Redirect Prevention
+
+Open redirect validation is handled **by the backend** in `_verify_oauth_state()`:
+
+- The `redirect_url` passed to `/google/signin` is embedded in the signed state parameter
+- On callback, the backend extracts and validates the redirect before use
+- Invalid/missing redirect falls back to `FRONTEND_URL`
+- Frontend always redirects to `/dashboard` after successful auth (hardcoded, safe)
+
+### 3. Token Storage
+
+Access tokens are stored in **HTTP-only cookies** by the backend (most secure against XSS).
+
+> ⚠️ **Never store tokens in localStorage** - they are vulnerable to XSS attacks.
+
+### 4. Google URL Validation (for Google Forms export)
+
+When opening Google Forms URLs, validate they are legitimate Google domains:
+
+```typescript
+function isValidGoogleUrl(url: string): boolean {
+  const parsed = new URL(url);
+  return parsed.hostname.endsWith('.google.com') || 
+         parsed.hostname === 'google.com' ||
+         parsed.hostname.endsWith('.googleapis.com');
+}
+```
+
+### 5. Storage Security
+
+| Data | Storage | Reason |
+|------|---------|--------|
+| CSRF state tokens | HttpOnly cookies | Set by backend, immune to XSS |
+| User profile data | In-memory (React state) | Fetched fresh on page load |
+| Auth tokens | HttpOnly cookies | XSS protection (backend sets these) |
 
 ---
 
@@ -787,11 +925,19 @@ If a user signed up via email/password (no OAuth), `avatar_url` will be `null`. 
 
 ## Testing Checklist
 
+### Happy Path
 - [ ] Click "Continue with Google" initiates OAuth flow
 - [ ] User is redirected to Google consent screen
-- [ ] After consent, user is redirected back to `/auth/callback`
+- [ ] After consent, user is redirected back to `/auth/google/callback`
 - [ ] Success callback shows success message and redirects to dashboard
 - [ ] Error callback shows error message with retry option
 - [ ] User avatar displays correctly after sign-in
 - [ ] Auth state persists across page refreshes
 - [ ] Sign out clears session and redirects to login
+
+### Security Tests
+- [ ] CSRF: Modify `state` parameter in callback URL → should redirect to `/login?error=csrf_failed`
+- [ ] CSRF: Clear cookies before callback → should redirect to `/login?error=csrf_failed`
+- [ ] Open Redirect: Backend validates redirect_url against allowed patterns
+- [ ] Session limit: Exceed max sessions → should redirect to `/login?error=too_many_sessions`
+- [ ] Redis unavailable: Should redirect to `/login?error=service_unavailable`

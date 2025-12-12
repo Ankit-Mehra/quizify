@@ -208,9 +208,13 @@ class Config:
         Get a cached Supabase client instance (singleton pattern).
         
         The client is cached to:
-        1. Preserve PKCE code verifier state across OAuth init and callback
-        2. Improve performance by reusing connection pools
-        3. Maintain consistent auth state
+        1. Improve performance by reusing connection pools
+        2. Reduce initialization overhead
+        
+        NOTE: Supabase's OAuth flows (PKCE) are stateless on the backend.
+        The authorization code exchange happens server-side via Supabase's API,
+        and CSRF protection is handled by our own state parameter + cookie mechanism,
+        not by the Supabase client instance.
         
         In testing mode, returns None (tests will mock this).
         In production, fails fast if credentials are missing.
