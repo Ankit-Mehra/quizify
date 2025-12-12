@@ -1,3 +1,4 @@
+import os
 from typing import Any, Dict, List, Optional
 
 from fastapi import Depends, HTTPException, Query, Request, Response
@@ -33,6 +34,31 @@ else:
 
 ACCESS_TOKEN_EXPIRE = 3600  # 1 hour
 REFRESH_TOKEN_EXPIRE = 60 * 60 * 24 * 30  # 30 days
+
+
+def _get_cookie_settings() -> dict:
+    """
+    Get cookie settings based on environment.
+    
+    Returns secure cookie settings for production, relaxed settings for development.
+    """
+    if app_config.is_testing():
+        return {
+            "httponly": True,
+            "secure": False,
+            "samesite": "lax",
+            "max_age": ACCESS_TOKEN_EXPIRE,
+            "path": "/"
+        }
+    
+    return {
+        "httponly": True,
+        "secure": True,
+        "samesite": "lax",
+        "domain": app_config.COOKIE_DOMAIN,
+        "max_age": ACCESS_TOKEN_EXPIRE,
+        "path": "/"
+    }
 
 
 def _short_user_id(user_id: Optional[str]) -> str:
@@ -1305,8 +1331,6 @@ async def google_signin_initiate(
     
     This uses Supabase's built-in Google OAuth provider.
     """
-    from config import Config
-    
     logger.info("Initiating Google Sign-In OAuth flow")
     
     try:
@@ -1419,7 +1443,6 @@ async def google_signin_callback(
         user = auth_response.user
         
         user_id = user.id if user else None
-        email = user.email if user else "unknown"
         
         logger.info(f"Google Sign-In successful for user {_short_user_id(user_id)}")
         
@@ -1446,12 +1469,10 @@ async def google_signin_callback(
                 device_type = detect_device_type(user_agent)
                 await session_service.create_session(
                     user_id=user_id,
-                    access_token=session.access_token,
-                    refresh_token=session.refresh_token,
                     device_type=device_type,
-                    user_agent=user_agent,
                     ip_address=request.client.host if request and request.client else None,
-                    expires_in=session.expires_in if hasattr(session, 'expires_in') else 3600
+                    user_agent=user_agent,
+                    refresh_token=session.refresh_token
                 )
                 logger.debug(f"Redis session created for Google Sign-In user {_short_user_id(user_id)}")
             except Exception as redis_error:
@@ -1486,7 +1507,7 @@ async def google_signin_callback(
                 pass
         
         # Add success parameters
-        redirect_params = f"?login=success&provider=google"
+        redirect_params = "?login=success&provider=google"
         if is_new_user:
             redirect_params += "&new_user=true"
         
@@ -1591,12 +1612,10 @@ async def google_signin_token(
                 device_type = detect_device_type(user_agent)
                 await session_service.create_session(
                     user_id=user_id,
-                    access_token=session.access_token,
-                    refresh_token=session.refresh_token,
                     device_type=device_type,
-                    user_agent=user_agent,
                     ip_address=request.client.host if request.client else None,
-                    expires_in=session.expires_in if hasattr(session, 'expires_in') else 3600
+                    user_agent=user_agent,
+                    refresh_token=session.refresh_token
                 )
             except Exception as redis_error:
                 logger.warning(f"Failed to create Redis session: {redis_error}")
