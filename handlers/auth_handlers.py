@@ -1661,17 +1661,19 @@ async def google_signin_callback(
             is_valid, redirect_path = _verify_oauth_state(state, csrf_cookie)
             # Don't fail on invalid state for error redirects - just use default
         
-        base_url = f"{Config.FRONTEND_URL}{redirect_path}" if redirect_path else Config.FRONTEND_URL
+        from urllib.parse import quote
+        base_url = f"{app_config.FRONTEND_URL}{redirect_path}" if redirect_path else app_config.FRONTEND_URL
         separator = "&" if "?" in base_url else "?"
+        error_msg = quote(error_description or error, safe='')
         redirect_resp = RedirectResponse(
-            url=f"{base_url}{separator}error=oauth_error&message={error_description or error}"
+            url=f"{base_url}{separator}error=oauth_error&message={error_msg}"
         )
         return clear_csrf_cookie(redirect_resp)
     
     if not code:
         logger.error("No authorization code in Google Sign-In callback")
         redirect_resp = RedirectResponse(
-            url=f"{Config.FRONTEND_URL}/login?error=no_code&message=No+authorization+code+received"
+            url=f"{app_config.FRONTEND_URL}/login?error=no_code&message=No%20authorization%20code%20received"
         )
         return clear_csrf_cookie(redirect_resp)
     
@@ -1682,7 +1684,7 @@ async def google_signin_callback(
     if not is_valid:
         logger.warning("OAuth state validation failed - possible CSRF attack")
         redirect_resp = RedirectResponse(
-            url=f"{Config.FRONTEND_URL}/login?error=csrf_failed&message=Security+validation+failed.+Please+try+again."
+            url=f"{app_config.FRONTEND_URL}/login?error=csrf_failed&message=Security%20validation%20failed.%20Please%20try%20again."
         )
         return clear_csrf_cookie(redirect_resp)
     
@@ -1698,7 +1700,7 @@ async def google_signin_callback(
         if not auth_response or not auth_response.session:
             logger.error("Failed to exchange code for session")
             redirect_resp = RedirectResponse(
-                url=f"{Config.FRONTEND_URL}/login?error=exchange_failed&message=Failed+to+complete+sign-in"
+                url=f"{app_config.FRONTEND_URL}/login?error=exchange_failed&message=Failed%20to%20complete%20sign-in"
             )
             return clear_csrf_cookie(redirect_resp)
         
@@ -1723,25 +1725,43 @@ async def google_signin_callback(
                 logger.warning(f"Failed to parse user.created_at ({getattr(user, 'created_at', None)}): {parse_error}")
         
         # Create Redis session for multi-device tracking
+        # SECURITY: Redis is REQUIRED for session management to match login() behavior
         redis_client = get_redis_client(request)
-        if redis_client:
-            try:
-                session_service = SessionService(redis_client)
-                user_agent = request.headers.get("user-agent") if request else None
-                device_type = detect_device_type(user_agent)
-                await session_service.create_session(
-                    user_id=user_id,
-                    device_type=device_type,
-                    ip_address=request.client.host if request and request.client else None,
-                    user_agent=user_agent,
-                    refresh_token=session.refresh_token
-                )
-                logger.debug(f"Redis session created for Google Sign-In user {_short_user_id(user_id)}")
-            except Exception as redis_error:
-                logger.warning(f"Failed to create Redis session: {redis_error}")
+        if not redis_client:
+            logger.error(f"Redis unavailable during Google Sign-In for user {_short_user_id(user_id)} - failing request")
+            redirect_resp = RedirectResponse(
+                url=f"{app_config.FRONTEND_URL}/login?error=service_unavailable&message=Session%20service%20temporarily%20unavailable"
+            )
+            return clear_csrf_cookie(redirect_resp)
+        
+        try:
+            session_service = SessionService(redis_client)
+            user_agent = request.headers.get("user-agent") if request else None
+            device_type = detect_device_type(user_agent)
+            await session_service.create_session(
+                user_id=user_id,
+                device_type=device_type,
+                ip_address=request.client.host if request and request.client else None,
+                user_agent=user_agent,
+                refresh_token=session.refresh_token
+            )
+            logger.debug(f"Redis session created for Google Sign-In user {_short_user_id(user_id)}")
+        except TooManySessionsError as e:
+            # Hard fail for session limits - matches login() behavior
+            logger.warning(f"Too many sessions for Google Sign-In user {_short_user_id(user_id)}: {e}")
+            redirect_resp = RedirectResponse(
+                url=f"{app_config.FRONTEND_URL}/login?error=too_many_sessions&message=Too%20many%20active%20sessions.%20Please%20logout%20from%20other%20devices."
+            )
+            return clear_csrf_cookie(redirect_resp)
+        except Exception as redis_error:
+            logger.error(f"Redis error during Google Sign-In session creation: {redis_error}")
+            redirect_resp = RedirectResponse(
+                url=f"{app_config.FRONTEND_URL}/login?error=session_failed&message=Failed%20to%20create%20session"
+            )
+            return clear_csrf_cookie(redirect_resp)
         
         # Build safe redirect URL (redirect_path already validated in _verify_oauth_state)
-        base_redirect_url = f"{Config.FRONTEND_URL}{redirect_path}" if redirect_path else Config.FRONTEND_URL
+        base_redirect_url = f"{app_config.FRONTEND_URL}{redirect_path}" if redirect_path else app_config.FRONTEND_URL
         
         # Add success parameters
         separator = "&" if "?" in base_redirect_url else "?"
@@ -1766,7 +1786,7 @@ async def google_signin_callback(
     except Exception as e:
         logger.error(f"Error in Google Sign-In callback: {str(e)}", exc_info=True)
         redirect_resp = RedirectResponse(
-            url=f"{Config.FRONTEND_URL}/login?error=signin_failed&message=Failed+to+complete+sign-in"
+            url=f"{app_config.FRONTEND_URL}/login?error=signin_failed&message=Failed%20to%20complete%20sign-in"
         )
         return clear_csrf_cookie(redirect_resp)
 
@@ -1840,22 +1860,40 @@ async def google_signin_token(
             except Exception as parse_error:
                 logger.warning(f"Failed to parse user.created_at in token handler: {parse_error}")
         
-        # Create Redis session
+        # Create Redis session for multi-device tracking
+        # SECURITY: Redis is REQUIRED for session management to match login() behavior
         redis_client = get_redis_client(request)
-        if redis_client:
-            try:
-                session_service = SessionService(redis_client)
-                user_agent = request.headers.get("user-agent")
-                device_type = detect_device_type(user_agent)
-                await session_service.create_session(
-                    user_id=user_id,
-                    device_type=device_type,
-                    ip_address=request.client.host if request.client else None,
-                    user_agent=user_agent,
-                    refresh_token=session.refresh_token
-                )
-            except Exception as redis_error:
-                logger.warning(f"Failed to create Redis session: {redis_error}")
+        if not redis_client:
+            logger.error(f"Redis unavailable during Google ID token Sign-In for user {_short_user_id(user_id)} - failing request")
+            raise HTTPException(
+                status_code=503,
+                detail="Session management service temporarily unavailable. Please try again."
+            )
+        
+        try:
+            session_service = SessionService(redis_client)
+            user_agent = request.headers.get("user-agent")
+            device_type = detect_device_type(user_agent)
+            await session_service.create_session(
+                user_id=user_id,
+                device_type=device_type,
+                ip_address=request.client.host if request.client else None,
+                user_agent=user_agent,
+                refresh_token=session.refresh_token
+            )
+        except TooManySessionsError as e:
+            # Hard fail for session limits - matches login() behavior
+            logger.warning(f"Too many sessions for Google ID token user {_short_user_id(user_id)}: {e}")
+            raise HTTPException(
+                status_code=429,
+                detail="Too many active sessions. Please logout from other devices or revoke old sessions."
+            )
+        except Exception as redis_error:
+            logger.error(f"Redis error during Google ID token session creation: {redis_error}")
+            raise HTTPException(
+                status_code=503,
+                detail="Failed to create session. Please try again."
+            )
         
         # Set auth cookies using helper for consistency
         _set_auth_cookies(response, session.access_token, session.refresh_token)

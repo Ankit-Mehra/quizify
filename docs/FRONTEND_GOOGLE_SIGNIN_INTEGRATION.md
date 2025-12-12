@@ -63,7 +63,8 @@ This endpoint is called by Google after user authorizes. The backend:
 
 **Redirect URL**: 
 - Success: `{redirect_url}?login=success&provider=google`
-- Error: `{redirect_url}?login=error&provider=google&message=...`
+- New user: `{redirect_url}?login=success&provider=google&new_user=true`
+- Error: `{redirect_url}?error=oauth_error&message=...`
 
 > The `redirect_url` is either the one passed to `/google/signin` or defaults to `FRONTEND_URL`.
 
@@ -83,17 +84,16 @@ This endpoint is called by Google after user authorizes. The backend:
 **Response**:
 ```json
 {
-  "access_token": "eyJ...",
-  "refresh_token": "...",
-  "expires_in": 3600,
-  "user": {
-    "id": "uuid",
-    "email": "user@gmail.com",
-    "display_name": "John Doe",
-    "avatar_url": "https://lh3.googleusercontent.com/..."
-  }
+  "message": "Google Sign-In successful",
+  "user_id": "uuid",
+  "email": "user@gmail.com",
+  "is_new_user": false,
+  "access_token": "eyJ...",   // Only in dev/test mode
+  "refresh_token": "..."      // Only in dev/test mode
 }
 ```
+
+> **Note**: `access_token` and `refresh_token` are only included in development/test mode. In production, tokens are only available via HttpOnly cookies.
 
 ---
 
@@ -247,11 +247,12 @@ export function useGoogleOneTap(onSuccess?: (user: any) => void) {
 
       const data = await result.json();
       
-      // Store tokens if needed (or rely on HTTP-only cookies)
-      localStorage.setItem('access_token', data.access_token);
+      // SECURITY: Do NOT store tokens in localStorage (XSS risk)
+      // The backend sets HttpOnly cookies automatically - just use credentials: 'include'
+      // for subsequent requests to send the auth cookies
       
       if (onSuccess) {
-        onSuccess(data.user);
+        onSuccess(data);
       }
 
     } catch (error) {
