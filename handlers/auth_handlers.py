@@ -1567,13 +1567,19 @@ async def google_signin_initiate(
         callback_url = f"{backend_url}/api/auth/google/signin/callback"
         
         # Generate CSRF-protected state with optional redirect URL
+        # NOTE: Our state is passed as a query param in redirect_to, NOT as OAuth's state parameter.
+        # This works because:
+        # 1. Supabase uses its OWN state parameter for PKCE with Google
+        # 2. Our redirect_to URL (with ?state=...) is where Supabase redirects AFTER OAuth completes
+        # 3. Supabase preserves existing query params when redirecting (see prepPKCERedirectURL in gotrue)
+        # 4. The 'code' we receive is from Supabase (not Google) - Supabase already exchanged with Google
         state_string, csrf_token = _generate_oauth_state(redirect_url)
         callback_url = f"{callback_url}?state={state_string}"
         
         # Use Supabase's signInWithOAuth to get the OAuth URL
-        # SECURITY NOTE: Supabase handles PKCE internally when configured. The authorization
-        # code returned by Google is exchanged server-side by Supabase, not by our backend.
-        # Our CSRF protection (state + cookie) provides protection against login CSRF attacks.
+        # SECURITY: Supabase handles PKCE internally. Our CSRF protection (state + cookie) is
+        # separate and provides protection against login CSRF attacks where an attacker tricks
+        # a user into logging into the attacker's account.
         # See: https://supabase.com/docs/guides/auth/social-login/auth-google
         oauth_response = supabase.auth.sign_in_with_oauth({
             "provider": "google",
