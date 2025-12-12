@@ -18,6 +18,9 @@ class Config:
     utility methods for common configuration needs.
     """
     
+    # Singleton Supabase client instance (cached to preserve PKCE state)
+    _supabase_client: Optional[Client] = None
+    
     # Supabase configuration
     SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
     SUPABASE_KEY: str = os.getenv("SUPABASE_KEY", "")
@@ -202,13 +205,18 @@ class Config:
     @classmethod
     def get_supabase_client(cls) -> Client:
         """
-        Get a Supabase client instance.
+        Get a cached Supabase client instance (singleton pattern).
+        
+        The client is cached to:
+        1. Preserve PKCE code verifier state across OAuth init and callback
+        2. Improve performance by reusing connection pools
+        3. Maintain consistent auth state
         
         In testing mode, returns None (tests will mock this).
         In production, fails fast if credentials are missing.
         
         Returns:
-            Client: Supabase client instance
+            Client: Supabase client instance (cached)
             
         Raises:
             RuntimeError: If Supabase credentials are not configured (non-testing mode)
@@ -222,10 +230,17 @@ class Config:
                 "Application cannot start without database configuration."
             )
         
-        return create_client(
+        # Return cached client if available
+        if cls._supabase_client is not None:
+            return cls._supabase_client
+        
+        # Create and cache the client
+        cls._supabase_client = create_client(
             supabase_url=cls.SUPABASE_URL,
             supabase_key=cls.SUPABASE_KEY
         )
+        
+        return cls._supabase_client
     
     @classmethod
     def get_authenticated_supabase_client(cls, user_token: str) -> Client:
