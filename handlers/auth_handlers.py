@@ -1493,12 +1493,16 @@ async def google_signin_callback(
             redirect_params += "&new_user=true"
         
         # Return redirect with cookies set
+        # NOTE: Unlike google_signin_token, this is a redirect flow so tokens cannot be
+        # returned in response body - they are only available via HttpOnly cookies.
+        # For development/testing, use google_signin_token endpoint instead.
         final_redirect = RedirectResponse(
             url=f"{redirect_url}{redirect_params}",
             status_code=302
         )
         
         # Set cookies directly on the redirect response
+        # Using same cookie settings as login function for consistency
         final_redirect.set_cookie(
             key="access_token",
             value=session.access_token,
@@ -1507,7 +1511,7 @@ async def google_signin_callback(
         final_redirect.set_cookie(
             key="refresh_token",
             value=session.refresh_token,
-            max_age=60 * 60 * 24 * 30,  # 30 days for refresh token
+            max_age=REFRESH_TOKEN_EXPIRE,  # Use constant for consistency with login
             httponly=True,
             secure=cookie_settings["secure"],
             samesite=cookie_settings["samesite"],
@@ -1610,7 +1614,7 @@ async def google_signin_token(
             except Exception as redis_error:
                 logger.warning(f"Failed to create Redis session: {redis_error}")
         
-        # Set HttpOnly cookies
+        # Set HttpOnly cookies (same pattern as login function)
         cookie_settings = _get_cookie_settings()
         
         response.set_cookie(
@@ -1621,7 +1625,7 @@ async def google_signin_token(
         response.set_cookie(
             key="refresh_token",
             value=session.refresh_token,
-            max_age=60 * 60 * 24 * 30,  # 30 days
+            max_age=REFRESH_TOKEN_EXPIRE,  # Use constant for consistency
             httponly=True,
             secure=cookie_settings["secure"],
             samesite=cookie_settings["samesite"],
@@ -1637,8 +1641,10 @@ async def google_signin_token(
             "is_new_user": is_new_user
         }
         
-        # Include tokens in response for dev mode
-        if Config.DEVELOPMENT_MODE:
+        # SECURITY: Only expose tokens in response body during testing or development
+        # In production, tokens are only available via HttpOnly cookies
+        # This matches the login function behavior for consistency
+        if app_config.is_testing() or app_config.is_development():
             result["access_token"] = session.access_token
             result["refresh_token"] = session.refresh_token
         
