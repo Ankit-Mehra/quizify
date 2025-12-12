@@ -12,7 +12,7 @@ This guide covers the frontend implementation for Google Sign-In authentication.
        │  GET /google/signin  │                      │
        │─────────────────────>│                      │
        │                      │                      │
-       │  { oauth_url }       │                      │
+       │  { auth_url }        │                      │
        │<─────────────────────│                      │
        │                      │                      │
        │  Redirect to Google  │                      │
@@ -45,10 +45,11 @@ This guide covers the frontend implementation for Google Sign-In authentication.
 **Response**:
 ```json
 {
-  "oauth_url": "https://accounts.google.com/o/oauth2/v2/auth?...",
-  "state": "random-state-string"
+  "auth_url": "https://accounts.google.com/o/oauth2/v2/auth?..."
 }
 ```
+
+> **Note**: The `state` parameter is encoded in the auth_url and managed internally by the backend. Frontend doesn't need to handle it separately.
 
 ### 2. OAuth Callback (handled automatically)
 
@@ -60,7 +61,11 @@ This endpoint is called by Google after user authorizes. The backend:
 3. Sets HTTP-only cookies (`access_token`, `refresh_token`)
 4. Redirects to the frontend with status
 
-**Redirect URL**: `{FRONTEND_URL}/auth/callback?google_signin=success` or `?google_signin=error&message=...`
+**Redirect URL**: 
+- Success: `{redirect_url}?login=success&provider=google`
+- Error: `{redirect_url}?login=error&provider=google&message=...`
+
+> The `redirect_url` is either the one passed to `/google/signin` or defaults to `FRONTEND_URL`.
 
 ### 3. Token-based Sign-In (alternative for Google Sign-In button)
 
@@ -69,10 +74,11 @@ This endpoint is called by Google after user authorizes. The backend:
 **Request Body**:
 ```json
 {
-  "id_token": "google-id-token-from-gsi-button",
-  "redirect_url": "https://your-frontend.com/dashboard"
+  "id_token": "google-id-token-from-gsi-button"
 }
 ```
+
+> **Note**: This endpoint does not redirect. It returns tokens directly in the response body.
 
 **Response**:
 ```json
@@ -131,11 +137,9 @@ export function useGoogleSignIn() {
 
       const data = await response.json();
 
-      // Store state for CSRF validation
-      sessionStorage.setItem('google_oauth_state', data.state);
-
-      // Redirect to Google
-      window.location.href = data.oauth_url;
+      // Redirect to Google OAuth
+      // Note: CSRF state is managed internally by the backend
+      window.location.href = data.auth_url;
 
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Sign-in failed');
@@ -356,23 +360,27 @@ export function AuthCallbackPage() {
   const [message, setMessage] = useState('');
 
   useEffect(() => {
-    const googleSignIn = searchParams.get('google_signin');
+    const loginStatus = searchParams.get('login');
+    const provider = searchParams.get('provider');
     const errorMessage = searchParams.get('message');
 
-    if (googleSignIn === 'success') {
-      setStatus('success');
-      setMessage('Successfully signed in with Google!');
-      
-      // Redirect to dashboard after a brief delay
-      setTimeout(() => {
-        navigate('/dashboard', { replace: true });
-      }, 1500);
+    // Handle Google OAuth callback
+    if (provider === 'google') {
+      if (loginStatus === 'success') {
+        setStatus('success');
+        setMessage('Successfully signed in with Google!');
+        
+        // Redirect to dashboard after a brief delay
+        setTimeout(() => {
+          navigate('/dashboard', { replace: true });
+        }, 1500);
 
-    } else if (googleSignIn === 'error') {
-      setStatus('error');
-      setMessage(errorMessage || 'Sign-in failed. Please try again.');
+      } else if (loginStatus === 'error') {
+        setStatus('error');
+        setMessage(errorMessage || 'Sign-in failed. Please try again.');
+      }
     } else {
-      // No google_signin param - might be a direct visit
+      // No recognized params - might be a direct visit
       navigate('/', { replace: true });
     }
   }, [searchParams, navigate]);
@@ -708,6 +716,71 @@ VITE_GOOGLE_CLIENT_ID=your-google-client-id.apps.googleusercontent.com
 2. **Token Storage**: Access tokens are stored in HTTP-only cookies by the backend (most secure)
 3. **Redirect Validation**: Backend validates redirect URLs against allowed domains
 4. **ID Token Validation**: Backend verifies Google ID tokens before creating sessions
+
+---
+
+## Avatar Sync
+
+The backend **automatically syncs the user's Google profile picture** during sign-in. No frontend action is required.
+
+### How It Works
+
+1. When a user signs in with Google, Supabase receives their profile metadata including:
+   - `avatar_url` or `picture` (Google profile photo URL)
+   - `full_name` or `name` (display name)
+
+2. A database trigger (`handle_new_user`) automatically extracts this data and stores it in the `profiles` table:
+   ```sql
+   -- Automatically executed on new user signup
+   INSERT INTO profiles (id, avatar_url, display_name, ...)
+   VALUES (user_id, google_avatar_url, google_name, ...)
+   ```
+
+3. The avatar URL is then available via the `/api/auth/me` endpoint in the `avatar_url` field.
+
+### Accessing the Avatar
+
+The avatar is returned in the user object from `/api/auth/me`:
+
+```json
+{
+  "user_id": "uuid",
+  "email": "user@gmail.com",
+  "display_name": "John Doe",
+  "avatar_url": "https://lh3.googleusercontent.com/a/...",
+  "account_tier": "free",
+  ...
+}
+```
+
+### Avatar URL Characteristics
+
+- **Domain**: Google avatars come from `lh3.googleusercontent.com`
+- **HTTPS**: Always served over HTTPS
+- **Referrer Policy**: Use `referrerPolicy="no-referrer"` on `<img>` tags to avoid 403 errors
+- **Persistence**: Stored in your database, so it persists even if user changes Google photo (until next sign-in)
+
+### Updating Avatar on Subsequent Sign-ins
+
+When an existing user signs in again with Google:
+- If their Google avatar has changed, the trigger updates `profiles.avatar_url`
+- The `ON CONFLICT ... DO UPDATE` clause handles this automatically:
+  ```sql
+  ON CONFLICT (id) DO UPDATE SET
+    avatar_url = COALESCE(EXCLUDED.avatar_url, profiles.avatar_url)
+  ```
+
+### Fallback for No Avatar
+
+If a user signed up via email/password (no OAuth), `avatar_url` will be `null`. The `UserAvatar` component handles this by showing initials:
+
+```tsx
+{user.avatar_url ? (
+  <img src={user.avatar_url} ... />
+) : (
+  <div className="initials-avatar">{initials}</div>
+)}
+```
 
 ---
 

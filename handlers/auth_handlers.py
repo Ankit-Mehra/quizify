@@ -103,6 +103,37 @@ def _mask_email(email: Optional[str]) -> str:
     return f"{masked_local}@{masked_domain}"
 
 
+def _set_auth_cookies(response: Response, access_token: str, refresh_token: str) -> None:
+    """
+    Set authentication cookies on a response object.
+    
+    This helper ensures consistent cookie settings across all auth endpoints:
+    - login, google_signin_callback, google_signin_token
+    
+    Args:
+        response: FastAPI Response or RedirectResponse object
+        access_token: JWT access token from Supabase
+        refresh_token: Refresh token from Supabase
+    """
+    cookie_settings = _get_cookie_settings()
+    
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        **cookie_settings
+    )
+    response.set_cookie(
+        key="refresh_token",
+        value=refresh_token,
+        max_age=REFRESH_TOKEN_EXPIRE,
+        httponly=True,
+        secure=cookie_settings["secure"],
+        samesite=cookie_settings["samesite"],
+        domain=cookie_settings.get("domain"),
+        path="/"
+    )
+
+
 def get_redis_client(request: Request) -> Optional[Any]:
     """
     Get Redis client from request app state.
@@ -1320,6 +1351,39 @@ async def google_status(
 # These endpoints handle user authentication via Google Sign-In.
 # ============================================================================
 
+def _validate_redirect_url(redirect_url: Optional[str]) -> Optional[str]:
+    """
+    Validate and sanitize redirect_url to prevent open redirects and CRLF injection.
+    
+    Only allows:
+    - Relative paths starting with / (but not //)
+    - No protocol:// embedded
+    - No control characters
+    
+    Returns sanitized URL or None if invalid.
+    """
+    if not redirect_url:
+        return None
+    
+    # Check for control characters that could enable CRLF header injection
+    control_chars = "\r\n\x00"
+    if any(c in redirect_url for c in control_chars):
+        logger.warning("Rejecting redirect_url with control characters (CRLF injection attempt)")
+        return None
+    
+    # Only allow relative paths starting with / (but not // which could be protocol-relative)
+    if redirect_url.startswith("/") and not redirect_url.startswith("//"):
+        # Reject if protocol:// is embedded anywhere
+        if "://" in redirect_url:
+            logger.warning(f"Rejecting redirect_url with embedded protocol: {redirect_url[:50]}...")
+            return None
+        logger.debug(f"Validated redirect_url: {redirect_url}")
+        return redirect_url
+    
+    logger.warning(f"Rejecting non-relative redirect_url: {redirect_url[:50]}...")
+    return None
+
+
 async def google_signin_initiate(
     redirect_url: Optional[str] = Query(None, description="URL to redirect after successful sign-in"),
     request: Request = None
@@ -1342,10 +1406,12 @@ async def google_signin_initiate(
         backend_url = os.getenv("BACKEND_URL", "http://localhost:8000")
         callback_url = f"{backend_url}/api/auth/google/signin/callback"
         
-        # Add redirect_url as state parameter if provided
-        if redirect_url:
-            # Encode the redirect URL in state parameter
-            state = base64.urlsafe_b64encode(redirect_url.encode()).decode()
+        # Validate and sanitize redirect_url before encoding in state
+        # This prevents open redirect vulnerabilities
+        safe_redirect_url = _validate_redirect_url(redirect_url)
+        if safe_redirect_url:
+            # Encode the validated redirect URL in state parameter
+            state = base64.urlsafe_b64encode(safe_redirect_url.encode()).decode()
             callback_url = f"{callback_url}?state={state}"
         
         # Use Supabase's signInWithOAuth to get the OAuth URL
@@ -1406,14 +1472,20 @@ async def google_signin_callback(
     # Check for OAuth errors
     if error:
         logger.error(f"Google Sign-In error: {error} - {error_description}")
-        redirect_url = Config.FRONTEND_URL
+        # Decode and validate redirect URL from state to prevent open redirects
+        redirect_path = None
         if state:
             try:
-                redirect_url = base64.urlsafe_b64decode(state.encode()).decode()
+                decoded_url = base64.urlsafe_b64decode(state.encode()).decode()
+                redirect_path = _validate_redirect_url(decoded_url)
             except Exception as e:
                 logger.warning(f"Failed to decode Google Sign-In state parameter: {state!r} ({e})")
+        
+        # Build safe redirect URL (always use FRONTEND_URL as base)
+        base_url = f"{Config.FRONTEND_URL}{redirect_path}" if redirect_path else Config.FRONTEND_URL
+        separator = "&" if "?" in base_url else "?"
         return RedirectResponse(
-            url=f"{redirect_url}?error=oauth_error&message={error_description or error}"
+            url=f"{base_url}{separator}error=oauth_error&message={error_description or error}"
         )
     
     if not code:
@@ -1475,20 +1547,22 @@ async def google_signin_callback(
             except Exception as redis_error:
                 logger.warning(f"Failed to create Redis session: {redis_error}")
         
-        # Get cookie settings for later use
-        cookie_settings = _get_cookie_settings()
-        
-        # Determine redirect URL
-        redirect_url = Config.FRONTEND_URL
+        # Decode and validate redirect URL from state to prevent open redirects
+        redirect_path = None
         if state:
             try:
-                redirect_url = base64.urlsafe_b64decode(state.encode()).decode()
+                decoded_url = base64.urlsafe_b64decode(state.encode()).decode()
+                redirect_path = _validate_redirect_url(decoded_url)
             except Exception as decode_error:
                 # If state cannot be decoded, fall back to default redirect URL
                 logger.warning(f"Failed to decode state parameter for redirect: {decode_error}")
         
+        # Build safe redirect URL (always use FRONTEND_URL as base)
+        base_redirect_url = f"{Config.FRONTEND_URL}{redirect_path}" if redirect_path else Config.FRONTEND_URL
+        
         # Add success parameters
-        redirect_params = "?login=success&provider=google"
+        separator = "&" if "?" in base_redirect_url else "?"
+        redirect_params = f"{separator}login=success&provider=google"
         if is_new_user:
             redirect_params += "&new_user=true"
         
@@ -1497,27 +1571,12 @@ async def google_signin_callback(
         # returned in response body - they are only available via HttpOnly cookies.
         # For development/testing, use google_signin_token endpoint instead.
         final_redirect = RedirectResponse(
-            url=f"{redirect_url}{redirect_params}",
+            url=f"{base_redirect_url}{redirect_params}",
             status_code=302
         )
         
-        # Set cookies directly on the redirect response
-        # Using same cookie settings as login function for consistency
-        final_redirect.set_cookie(
-            key="access_token",
-            value=session.access_token,
-            **cookie_settings
-        )
-        final_redirect.set_cookie(
-            key="refresh_token",
-            value=session.refresh_token,
-            max_age=REFRESH_TOKEN_EXPIRE,  # Use constant for consistency with login
-            httponly=True,
-            secure=cookie_settings["secure"],
-            samesite=cookie_settings["samesite"],
-            domain=cookie_settings.get("domain"),
-            path="/"
-        )
+        # Set auth cookies using helper for consistency
+        _set_auth_cookies(final_redirect, session.access_token, session.refresh_token)
         
         return final_redirect
         
@@ -1614,24 +1673,8 @@ async def google_signin_token(
             except Exception as redis_error:
                 logger.warning(f"Failed to create Redis session: {redis_error}")
         
-        # Set HttpOnly cookies (same pattern as login function)
-        cookie_settings = _get_cookie_settings()
-        
-        response.set_cookie(
-            key="access_token",
-            value=session.access_token,
-            **cookie_settings
-        )
-        response.set_cookie(
-            key="refresh_token",
-            value=session.refresh_token,
-            max_age=REFRESH_TOKEN_EXPIRE,  # Use constant for consistency
-            httponly=True,
-            secure=cookie_settings["secure"],
-            samesite=cookie_settings["samesite"],
-            domain=cookie_settings.get("domain"),
-            path="/"
-        )
+        # Set auth cookies using helper for consistency
+        _set_auth_cookies(response, session.access_token, session.refresh_token)
         
         # Build response
         result = {

@@ -45,22 +45,42 @@ BEGIN
         NULL
     );
 
-    -- Insert new profile with defaults matching table schema
+    -- Insert new profile with ALL required fields (preserves migration 032 credit columns)
     INSERT INTO public.profiles (
         id, 
         account_tier,
         billing_plan,
         display_name, 
-        avatar_url, 
+        avatar_url,
+        -- Credit system columns (from migration 032)
+        credit_units_monthly,
+        credit_units_remaining,
+        credit_units_purchased,
+        free_credit_units_monthly,
+        free_credit_units_remaining,
+        storage_quota_bytes,
+        current_period_start,
+        current_period_end,
+        -- Timestamps
         created_at, 
         updated_at
     )
     VALUES (
         NEW.id, 
-        'free',      -- default account_tier
-        'free',      -- default billing_plan
+        'free',                                          -- default account_tier
+        'free',                                          -- default billing_plan
         _display_name,
         _avatar_url,
+        -- Credit system defaults (matching migration 032)
+        6,                                               -- credit_units_monthly (legacy)
+        0,                                               -- credit_units_remaining (subscription bucket, empty for free)
+        0,                                               -- credit_units_purchased
+        6,                                               -- free_credit_units_monthly
+        6,                                               -- free_credit_units_remaining
+        262144000,                                       -- storage_quota_bytes: 250 MB for free users
+        date_trunc('month', NOW()),                      -- current_period_start
+        date_trunc('month', NOW()) + interval '1 month', -- current_period_end
+        -- Timestamps
         COALESCE(NEW.created_at, NOW()),
         NOW()
     )
@@ -80,7 +100,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION public.handle_new_user() IS 
-'Trigger function that auto-creates profile with free tier, extracts display name and avatar URL from OAuth user metadata on signup';
+'Trigger function that auto-creates profile with free tier, 3-bucket credit system, storage quota, and extracts display name and avatar URL from OAuth user metadata on signup';
 
 -- ============================================================================
 -- Step 3: Backfill existing users' avatars from auth.users metadata
