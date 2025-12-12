@@ -1361,6 +1361,37 @@ async def google_status(
 # These endpoints handle user authentication via Google Sign-In.
 # ============================================================================
 
+# Configurable threshold for detecting new users (seconds since account creation)
+NEW_USER_THRESHOLD_SECONDS = 10
+
+
+def _is_new_user(user) -> bool:
+    """
+    Check if a user was recently created (new user detection).
+    
+    This is used to determine if the user just signed up vs returning user,
+    allowing the frontend to show appropriate welcome messages or onboarding.
+    
+    Args:
+        user: Supabase user object with created_at attribute
+        
+    Returns:
+        bool: True if user was created within NEW_USER_THRESHOLD_SECONDS, False otherwise
+    """
+    if not user or not getattr(user, 'created_at', None):
+        return False
+    
+    try:
+        created_at = user.created_at
+        if isinstance(created_at, str):
+            created_at = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+        now = datetime.now(timezone.utc)
+        return (now - created_at) < timedelta(seconds=NEW_USER_THRESHOLD_SECONDS)
+    except Exception as parse_error:
+        logger.warning(f"Failed to parse user.created_at ({getattr(user, 'created_at', None)}): {parse_error}")
+        return False
+
+
 def _validate_redirect_url(redirect_url: Optional[str]) -> Optional[str]:
     """
     Validate and sanitize redirect_url to prevent open redirects and CRLF injection.
@@ -1730,18 +1761,8 @@ async def google_signin_callback(
         
         logger.info(f"Google Sign-In successful for user {_short_user_id(user_id)}")
         
-        # Check if this is a new user (created within last 10 seconds)
-        is_new_user = False
-        if user and user.created_at:
-            try:
-                # Handle different datetime formats
-                created_at = user.created_at
-                if isinstance(created_at, str):
-                    created_at = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
-                now = datetime.now(timezone.utc)
-                is_new_user = (now - created_at) < timedelta(seconds=10)
-            except Exception as parse_error:
-                logger.warning(f"Failed to parse user.created_at ({getattr(user, 'created_at', None)}): {parse_error}")
+        # Check if this is a new user (created within threshold)
+        is_new_user = _is_new_user(user)
         
         # Create Redis session for multi-device tracking
         # SECURITY: Redis is REQUIRED for session management to match login() behavior
@@ -1868,17 +1889,8 @@ async def google_signin_token(
         
         logger.info(f"Google ID token Sign-In successful for user {_short_user_id(user_id)}")
         
-        # Check if this is a new user (created within last 10 seconds)
-        is_new_user = False
-        if user and user.created_at:
-            try:
-                created_at = user.created_at
-                if isinstance(created_at, str):
-                    created_at = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
-                now = datetime.now(timezone.utc)
-                is_new_user = (now - created_at) < timedelta(seconds=10)
-            except Exception as parse_error:
-                logger.warning(f"Failed to parse user.created_at in token handler: {parse_error}")
+        # Check if this is a new user (created within threshold)
+        is_new_user = _is_new_user(user)
         
         # Create Redis session for multi-device tracking
         # SECURITY: Redis is REQUIRED for session management to match login() behavior
