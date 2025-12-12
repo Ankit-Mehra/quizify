@@ -1,11 +1,13 @@
+import base64
 import os
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import Depends, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from config import config as app_config
+from config import Config, config as app_config
 from dependencies.auth_dependencies import get_current_user_id, get_current_user_token
 from schemas.auth import (
     ChangePasswordRequest,
@@ -1343,7 +1345,6 @@ async def google_signin_initiate(
         # Add redirect_url as state parameter if provided
         if redirect_url:
             # Encode the redirect URL in state parameter
-            import base64
             state = base64.urlsafe_b64encode(redirect_url.encode()).decode()
             callback_url = f"{callback_url}?state={state}"
         
@@ -1400,9 +1401,6 @@ async def google_signin_callback(
     For server-side auth, we set HttpOnly cookies with the tokens.
     In development mode, tokens are also returned in the response body.
     """
-    from config import Config
-    import base64
-    
     logger.info("Processing Google Sign-In callback")
     
     # Check for OAuth errors
@@ -1412,8 +1410,8 @@ async def google_signin_callback(
         if state:
             try:
                 redirect_url = base64.urlsafe_b64decode(state.encode()).decode()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Failed to decode Google Sign-In state parameter: {state!r} ({e})")
         return RedirectResponse(
             url=f"{redirect_url}?error=oauth_error&message={error_description or error}"
         )
@@ -1446,10 +1444,9 @@ async def google_signin_callback(
         
         logger.info(f"Google Sign-In successful for user {_short_user_id(user_id)}")
         
-        # Check if this is a new user (created within last 5 seconds)
+        # Check if this is a new user (created within last 10 seconds)
         is_new_user = False
         if user and user.created_at:
-            from datetime import datetime, timezone, timedelta
             try:
                 # Handle different datetime formats
                 created_at = user.created_at
@@ -1457,8 +1454,8 @@ async def google_signin_callback(
                     created_at = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
                 now = datetime.now(timezone.utc)
                 is_new_user = (now - created_at) < timedelta(seconds=10)
-            except Exception:
-                pass
+            except Exception as parse_error:
+                logger.warning(f"Failed to parse user.created_at ({getattr(user, 'created_at', None)}): {parse_error}")
         
         # Create Redis session for multi-device tracking
         redis_client = get_redis_client(request)
@@ -1478,33 +1475,17 @@ async def google_signin_callback(
             except Exception as redis_error:
                 logger.warning(f"Failed to create Redis session: {redis_error}")
         
-        # Set HttpOnly cookies with tokens (secure, production-ready)
+        # Get cookie settings for later use
         cookie_settings = _get_cookie_settings()
-        
-        response_obj = Response()
-        response_obj.set_cookie(
-            key="access_token",
-            value=session.access_token,
-            **cookie_settings
-        )
-        response_obj.set_cookie(
-            key="refresh_token",
-            value=session.refresh_token,
-            max_age=60 * 60 * 24 * 30,  # 30 days for refresh token
-            httponly=True,
-            secure=cookie_settings["secure"],
-            samesite=cookie_settings["samesite"],
-            domain=cookie_settings.get("domain"),
-            path="/"
-        )
         
         # Determine redirect URL
         redirect_url = Config.FRONTEND_URL
         if state:
             try:
                 redirect_url = base64.urlsafe_b64decode(state.encode()).decode()
-            except Exception:
-                pass
+            except Exception as decode_error:
+                # If state cannot be decoded, fall back to default redirect URL
+                logger.warning(f"Failed to decode state parameter for redirect: {decode_error}")
         
         # Add success parameters
         redirect_params = "?login=success&provider=google"
@@ -1517,11 +1498,22 @@ async def google_signin_callback(
             status_code=302
         )
         
-        # Copy cookies to redirect response
-        for cookie_name in ["access_token", "refresh_token"]:
-            cookie = response_obj.headers.get("set-cookie")
-            if cookie:
-                final_redirect.headers.append("set-cookie", cookie)
+        # Set cookies directly on the redirect response
+        final_redirect.set_cookie(
+            key="access_token",
+            value=session.access_token,
+            **cookie_settings
+        )
+        final_redirect.set_cookie(
+            key="refresh_token",
+            value=session.refresh_token,
+            max_age=60 * 60 * 24 * 30,  # 30 days for refresh token
+            httponly=True,
+            secure=cookie_settings["secure"],
+            samesite=cookie_settings["samesite"],
+            domain=cookie_settings.get("domain"),
+            path="/"
+        )
         
         return final_redirect
         
@@ -1586,22 +1578,20 @@ async def google_signin_token(
         user = auth_response.user
         
         user_id = user.id if user else None
-        email = user.email if user else "unknown"
         
         logger.info(f"Google ID token Sign-In successful for user {_short_user_id(user_id)}")
         
-        # Check if this is a new user
+        # Check if this is a new user (created within last 10 seconds)
         is_new_user = False
         if user and user.created_at:
-            from datetime import datetime, timezone, timedelta
             try:
                 created_at = user.created_at
                 if isinstance(created_at, str):
                     created_at = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
                 now = datetime.now(timezone.utc)
                 is_new_user = (now - created_at) < timedelta(seconds=10)
-            except Exception:
-                pass
+            except Exception as parse_error:
+                logger.warning(f"Failed to parse user.created_at in token handler: {parse_error}")
         
         # Create Redis session
         redis_client = get_redis_client(request)
@@ -1643,12 +1633,11 @@ async def google_signin_token(
         result = {
             "message": "Google Sign-In successful",
             "user_id": user_id,
-            "email": email,
+            "email": user.email if user else "unknown",
             "is_new_user": is_new_user
         }
         
         # Include tokens in response for dev mode
-        from config import Config
         if Config.DEVELOPMENT_MODE:
             result["access_token"] = session.access_token
             result["refresh_token"] = session.refresh_token
