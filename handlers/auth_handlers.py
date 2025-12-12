@@ -1404,7 +1404,7 @@ def _get_csrf_signing_key() -> bytes:
     In development/testing mode, falls back to SUPABASE_KEY if JWT secret not set.
     In production, requires SUPABASE_JWT_SECRET to be set for security.
     """
-    secret = os.getenv("SUPABASE_JWT_SECRET", "")
+    secret = app_config.SUPABASE_JWT_SECRET
     if not secret:
         # In development/testing, allow fallback to prevent blocking local dev
         if app_config.is_development() or app_config.is_testing():
@@ -1565,7 +1565,7 @@ async def google_signin_initiate(
         supabase = get_supabase()
         
         # Build the callback URL
-        backend_url = os.getenv("BACKEND_URL", "http://localhost:8000")
+        backend_url = app_config.BACKEND_URL
         callback_url = f"{backend_url}/api/auth/google/signin/callback"
         
         # Generate CSRF-protected state with optional redirect URL
@@ -1680,12 +1680,12 @@ async def google_signin_callback(
             is_valid, redirect_path = _verify_oauth_state(state, csrf_cookie)
             # Don't fail on invalid state for error redirects - just use default
         
-        from urllib.parse import quote
+        # Use generic error message to avoid information disclosure from OAuth provider
+        # Log the actual error for debugging, but show generic message to user
         base_url = f"{app_config.FRONTEND_URL}{redirect_path}" if redirect_path else app_config.FRONTEND_URL
         separator = "&" if "?" in base_url else "?"
-        error_msg = quote(error_description or error, safe='')
         redirect_resp = RedirectResponse(
-            url=f"{base_url}{separator}error=oauth_error&message={error_msg}"
+            url=f"{base_url}{separator}error=oauth_error&message=Authentication%20failed.%20Please%20try%20again."
         )
         return clear_csrf_cookie(redirect_resp)
     
