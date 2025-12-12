@@ -11,7 +11,7 @@ from fastapi import Depends, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from config import Config, config as app_config
+from config import config as app_config
 from dependencies.auth_dependencies import get_current_user_id, get_current_user_token
 from schemas.auth import (
     ChangePasswordRequest,
@@ -50,12 +50,14 @@ def _get_cookie_settings() -> dict:
     """
     Get cookie settings based on environment.
     
-    Returns secure cookie settings for production, relaxed settings for development.
+    Returns secure cookie settings for production, consistent settings for testing.
+    Note: secure=True always (matches existing login() behavior) - tests run with HTTPS mocking.
     """
     if app_config.is_testing():
+        # Match existing login() behavior: secure=True, no domain for testing
         return {
             "httponly": True,
-            "secure": False,
+            "secure": True,  # Consistent with login() function
             "samesite": "lax",
             "max_age": ACCESS_TOKEN_EXPIRE,
             "path": "/"
@@ -1406,7 +1408,7 @@ def _get_csrf_signing_key() -> bytes:
     if not secret:
         # In development/testing, allow fallback to prevent blocking local dev
         if app_config.is_development() or app_config.is_testing():
-            secret = os.getenv("SUPABASE_KEY", "dev-fallback-key")
+            secret = app_config.SUPABASE_KEY or "dev-fallback-key"
             logger.warning("Using SUPABASE_KEY as CSRF signing fallback (dev mode only)")
         else:
             # In production, CSRF signing key MUST be secure
