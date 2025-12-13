@@ -564,6 +564,16 @@ def get_user_tier_info(user_id: str):
         # Use the explicit service role client for this privileged operation
         supabase = app_config.get_service_role_client()
         
+        # Debug: Verify we got a client and check the key being used
+        if supabase is None:
+            logger.error("get_service_role_client() returned None!")
+            raise HTTPException(status_code=500, detail="Service role client not available")
+        
+        # Log the key prefix to verify correct key is being used
+        # Service role keys start with 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9' (JWT header)
+        # and have role: "service_role" in payload
+        logger.info(f"Using service role client for user_tier_info query (user: {user_id[:8]}...)")
+        
         logger.debug(f"Fetching tier info for user: {user_id}")
         
         # Query the user_tier_info view with explicit refresh
