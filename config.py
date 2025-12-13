@@ -24,6 +24,7 @@ class Config:
     # Supabase configuration
     SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
     SUPABASE_KEY: str = os.getenv("SUPABASE_KEY", "")
+    SUPABASE_SERVICE_ROLE_KEY: str = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
     STORAGE_NAME: str = os.getenv("SUPABASE_STORAGE_NAME", "")
     
     # Testing environment detection
@@ -235,9 +236,14 @@ class Config:
         if cls.is_testing():
             return None  # type: ignore - Tests will mock database functions
         
-        if not cls.SUPABASE_URL or not cls.SUPABASE_KEY:
+        # Use Service Role Key if available, otherwise fall back to SUPABASE_KEY
+        # This ensures we have admin privileges for backend operations which is required
+        # for accessing protected views like user_tier_info
+        key = cls.SUPABASE_SERVICE_ROLE_KEY or cls.SUPABASE_KEY
+        
+        if not cls.SUPABASE_URL or not key:
             raise RuntimeError(
-                "SUPABASE_URL and SUPABASE_KEY must be set. "
+                "SUPABASE_URL and SUPABASE_KEY (or SUPABASE_SERVICE_ROLE_KEY) must be set. "
                 "Application cannot start without database configuration."
             )
         
@@ -248,7 +254,7 @@ class Config:
         # Create and cache the client
         cls._supabase_client = create_client(
             supabase_url=cls.SUPABASE_URL,
-            supabase_key=cls.SUPABASE_KEY
+            supabase_key=key
         )
         
         return cls._supabase_client
