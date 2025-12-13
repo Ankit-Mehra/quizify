@@ -237,6 +237,11 @@ class Config:
                 "SUPABASE_SERVICE_ROLE_KEY is required for admin operations. "
                 "Set it in your environment variables."
             )
+        
+        # Debug: Log which key type is being used (safe - only shows prefix)
+        key_prefix = cls.SUPABASE_SERVICE_ROLE_KEY[:20] if cls.SUPABASE_SERVICE_ROLE_KEY else "EMPTY"
+        import logging
+        logging.getLogger("app").debug(f"Creating service role client with key prefix: {key_prefix}...")
             
         return create_client(cls.SUPABASE_URL, cls.SUPABASE_SERVICE_ROLE_KEY)
 
