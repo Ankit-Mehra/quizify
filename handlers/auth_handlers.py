@@ -1618,7 +1618,7 @@ async def google_signin_callback(
         redirect_resp = RedirectResponse(
             url=f"{app_config.FRONTEND_URL}/login?error=signin_failed&message=Failed%20to%20complete%20sign-in"
         )
-        return clear_csrf_cookie(redirect_resp)
+        return clear_oauth_state_cookie(redirect_resp)
 
 
 async def google_signin_token(
