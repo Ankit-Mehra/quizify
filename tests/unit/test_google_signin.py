@@ -12,6 +12,8 @@ These tests cover:
 import base64
 import json
 import os
+import hmac
+import hashlib
 from datetime import datetime, timezone, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -29,6 +31,7 @@ from services.oauth_utils import (
     validate_redirect_url,
     generate_oauth_state,
     verify_oauth_state,
+    verify_oauth_state_from_cookie,
 )
 
 
@@ -220,6 +223,77 @@ class TestOAuthStateGeneration:
         # Should be decodable
         decoded = base64.urlsafe_b64decode(state.encode())
         assert len(decoded) > 0
+
+
+class TestVerifyOAuthStateFromCookie:
+    """Test cookie-based OAuth state verification."""
+    
+    def test_verify_valid_cookie(self):
+        """Valid state cookie should verify successfully."""
+        state, _ = generate_oauth_state("/dashboard")
+        is_valid, redirect = verify_oauth_state_from_cookie(state)
+        
+        assert is_valid is True
+        assert redirect == "/dashboard"
+        
+    def test_verify_missing_cookie(self):
+        """Missing cookie should fail verification."""
+        is_valid, redirect = verify_oauth_state_from_cookie(None)
+        assert is_valid is False
+        assert redirect is None
+        
+    def test_verify_tampered_signature(self):
+        """Tampered signature should fail verification."""
+        state, _ = generate_oauth_state("/dashboard")
+        
+        # Decode, tamper, re-encode
+        decoded = base64.urlsafe_b64decode(state.encode()).decode()
+        payload_json, signature = decoded.rsplit('.', 1)
+        
+        # Change payload but keep signature
+        tampered_payload = payload_json.replace("/dashboard", "/evil")
+        tampered_state_str = f"{tampered_payload}.{signature}"
+        tampered_cookie = base64.urlsafe_b64encode(tampered_state_str.encode()).decode()
+        
+        is_valid, redirect = verify_oauth_state_from_cookie(tampered_cookie)
+        assert is_valid is False
+        assert redirect is None
+        
+    def test_verify_expired_state(self):
+        """Expired state should fail verification."""
+        # Create a state with old timestamp manually
+        payload = {
+            "csrf": "dummy",
+            "redirect": "/dashboard",
+            "ts": int((datetime.now(timezone.utc) - timedelta(seconds=OAUTH_STATE_MAX_AGE + 10)).timestamp())
+        }
+        payload_json = json.dumps(payload)
+        
+        # Sign it
+        from services.oauth_utils import get_csrf_signing_key
+        
+        signature = hmac.new(
+            get_csrf_signing_key(),
+            payload_json.encode(),
+            hashlib.sha256
+        ).hexdigest()[:16]
+        
+        state_str = f"{payload_json}.{signature}"
+        state_cookie = base64.urlsafe_b64encode(state_str.encode()).decode()
+        
+        is_valid, redirect = verify_oauth_state_from_cookie(state_cookie)
+        assert is_valid is False
+        assert redirect is None
+
+    def test_verify_invalid_format(self):
+        """Invalid format should fail verification."""
+        is_valid, redirect = verify_oauth_state_from_cookie("not-base64-encoded")
+        assert is_valid is False
+        
+        # Base64 but not dot separated
+        b64_no_dot = base64.urlsafe_b64encode(b"invalid-format").decode()
+        is_valid, redirect = verify_oauth_state_from_cookie(b64_no_dot)
+        assert is_valid is False
 
 
 # ============================================================================

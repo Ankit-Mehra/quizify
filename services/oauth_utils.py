@@ -327,6 +327,12 @@ def verify_oauth_state_from_cookie(state_cookie: Optional[str]) -> Tuple[bool, O
         # Parse payload
         payload = json.loads(payload_json)
         
+        # Note: 'csrf' field in payload is not explicitly validated here because
+        # the security model relies on the HttpOnly + SameSite cookie attributes
+        # and the HMAC signature of the cookie content. The presence of this
+        # valid, signed cookie proves the request originated from a browser
+        # that received the cookie during the initiation phase.
+        
         # Verify timestamp is not too old
         state_ts = payload.get("ts", 0)
         now_ts = int(datetime.now(timezone.utc).timestamp())
