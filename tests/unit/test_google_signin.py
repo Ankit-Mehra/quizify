@@ -267,7 +267,7 @@ class TestVerifyOAuthStateFromCookie:
             "redirect": "/dashboard",
             "ts": int((datetime.now(timezone.utc) - timedelta(seconds=OAUTH_STATE_MAX_AGE + 10)).timestamp())
         }
-        payload_json = json.dumps(payload)
+        payload_json = json.dumps(payload, separators=(',', ':'))
         
         # Sign it
         from services.oauth_utils import get_csrf_signing_key
@@ -289,11 +289,13 @@ class TestVerifyOAuthStateFromCookie:
         """Invalid format should fail verification."""
         is_valid, redirect = verify_oauth_state_from_cookie("not-base64-encoded")
         assert is_valid is False
+        assert redirect is None
         
         # Base64 but not dot separated
         b64_no_dot = base64.urlsafe_b64encode(b"invalid-format").decode()
         is_valid, redirect = verify_oauth_state_from_cookie(b64_no_dot)
         assert is_valid is False
+        assert redirect is None
 
 
 # ============================================================================
