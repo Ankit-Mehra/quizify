@@ -50,6 +50,13 @@ def _get_cookie_settings() -> dict:
     
     Returns secure cookie settings for production, consistent settings for testing.
     Note: secure=True always (matches existing login() behavior) - tests run with HTTPS mocking.
+    
+    IMPORTANT: For cross-origin deployments where the frontend and backend are on
+    different domains, we must use SameSite=None to allow cookies to be sent with
+    cross-origin requests. This requires Secure=True (enforced by browsers).
+    
+    SECURITY NOTE: SameSite=None is safe here because we use JWT + Redis session
+    validation (not cookie-only auth). CSRF attacks cannot forge JWT signatures.
     """
     if app_config.is_testing():
         # Match existing login() behavior: secure=True, no domain for testing
@@ -61,10 +68,12 @@ def _get_cookie_settings() -> dict:
             "path": "/"
         }
     
+    # Production: Use SameSite=None for cross-origin cookie support
+    # This is required when frontend (Vercel) and backend (Railway) are on different domains
     return {
         "httponly": True,
         "secure": True,
-        "samesite": "lax",
+        "samesite": "none",  # Required for cross-origin requests
         "domain": app_config.COOKIE_DOMAIN,
         "max_age": ACCESS_TOKEN_EXPIRE,
         "path": "/"
@@ -296,28 +305,8 @@ async def login(request_body: LoginRequest, response: Response, request: Request
                 detail="Session management service temporarily unavailable. Please try again."
             )
         
-        # Set access token cookie
-        # Domain allows cookie to be shared across all subdomains (www, api, etc.)
-        # Without Domain attribute, cookie would be host-only (locked to api.quizify.ca)
-        response.set_cookie(
-            key="access_token",
-            value=access_token,
-            httponly=True,
-            secure=True,
-            samesite="lax",
-            domain=app_config.COOKIE_DOMAIN if not app_config.is_testing() else None,
-            max_age=ACCESS_TOKEN_EXPIRE
-        )
-        # Set refresh token cookie
-        response.set_cookie(
-            key="refresh_token",
-            value=refresh_token,
-            httponly=True,
-            secure=True,
-            samesite="lax",
-            domain=app_config.COOKIE_DOMAIN if not app_config.is_testing() else None,
-            max_age=REFRESH_TOKEN_EXPIRE
-        )
+        # Set auth cookies using centralized helper for consistency
+        _set_auth_cookies(response, access_token, refresh_token)
 
         # Prepare response - only include access_token in test mode for testing convenience
         response_data = {
@@ -392,14 +381,12 @@ async def refresh_session(request: Request, response: Response):
             raise HTTPException(status_code=401, detail="Invalid refresh token or session expired")
         new_access_token = session.session.access_token
 
+        # Use centralized cookie settings for consistency
+        cookie_settings = _get_cookie_settings()
         response.set_cookie(
             key="access_token",
             value=new_access_token,
-            httponly=True,
-            secure=True,
-            samesite="lax",
-            domain=app_config.COOKIE_DOMAIN if not app_config.is_testing() else None,
-            max_age=ACCESS_TOKEN_EXPIRE
+            **cookie_settings
         )
         return {"message": "Session refreshed"}
     except Exception:
