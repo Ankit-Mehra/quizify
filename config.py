@@ -34,7 +34,8 @@ class Config:
     
     # Cookie domain for cross-subdomain authentication
     # Set to ".quizify.ca" for production (works across www, api subdomains)
-    # Set to empty string "" or don't set for staging/development (uses current host)
+    # For staging/development, set to empty string "" or leave unset—both result in COOKIE_DOMAIN=None,
+    # which causes cookies to be set without a domain attribute (current host only).
     # Domain must start with '.' to work across subdomains
     _cookie_domain_raw: str = os.getenv("COOKIE_DOMAIN", "")
     COOKIE_DOMAIN: str = _cookie_domain_raw if _cookie_domain_raw else None  # type: ignore
