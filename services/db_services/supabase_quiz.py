@@ -560,7 +560,17 @@ def get_user_tier_info(user_id: str):
         # Security is maintained by:
         # 1. user_id comes from authenticated JWT (validated by FastAPI dependency)
         # 2. We only return data for the specific user_id (no risk of data leakage)
-        supabase = get_supabase()
+        
+        # Force use of service role client if available
+        # The standard get_supabase() might return an anon client if configured that way
+        # We need to ensure we're using the admin client for this specific operation
+        if hasattr(app_config, 'SUPABASE_SERVICE_ROLE_KEY') and app_config.SUPABASE_SERVICE_ROLE_KEY:
+            # Create a fresh client with service role key to be absolutely sure
+            from supabase import create_client
+            supabase = create_client(app_config.SUPABASE_URL, app_config.SUPABASE_SERVICE_ROLE_KEY)
+        else:
+            # Fallback to standard client (which should be configured with service role in prod)
+            supabase = get_supabase()
         
         logger.debug(f"Fetching tier info for user: {user_id}")
         
