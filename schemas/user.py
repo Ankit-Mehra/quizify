@@ -28,6 +28,7 @@ class UserProfile(BaseModel):
     id: UUID
     email: str
     display_name: Optional[str] = None  # User's display name from signup
+    avatar_url: Optional[str] = None  # User's avatar URL from OAuth providers
     account_tier: ACCOUNT_TIERS = "free"
     role: USER_ROLES = "user"
     created_at: Optional[datetime] = None
@@ -37,6 +38,7 @@ class UserTierInfo(BaseModel):
     id: UUID
     email: str
     display_name: Optional[str] = None  # User's display name
+    avatar_url: Optional[str] = None  # User's avatar URL from OAuth providers
     account_tier: ACCOUNT_TIERS
     role: USER_ROLES = "user"
     current_quiz_count: int
@@ -73,6 +75,7 @@ class UserWithTier(BaseModel):
     id: str
     email: str
     display_name: Optional[str] = None  # User's display name
+    avatar_url: Optional[str] = None  # User's avatar URL from OAuth providers
     account_tier: ACCOUNT_TIERS
     role: USER_ROLES = "user"
     current_quiz_count: int

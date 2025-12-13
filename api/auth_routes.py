@@ -17,7 +17,11 @@ from handlers.auth_handlers import (
     google_connect,
     google_callback,
     google_disconnect,
-    google_status
+    google_status,
+    # Google Sign-In (Authentication)
+    google_signin_initiate,
+    google_signin_callback,
+    google_signin_token
 )
 from schemas.auth import AuthMessageResponse, UserInfoResponse
 from typing import Dict, Any, List
@@ -195,4 +199,40 @@ router.add_api_route(
     summary="Google Connection Status",
     description="Check if user has connected their Google account and can export to Google Forms.",
     tags=["Auth", "Google OAuth"]
+)
+
+# ============================================================================
+# GOOGLE SIGN-IN AUTHENTICATION ENDPOINTS (OAuth Login via Supabase)
+# ============================================================================
+# These endpoints handle user authentication via Google Sign-In.
+# Different from Google Forms export OAuth above.
+# ============================================================================
+
+router.add_api_route(
+    "/google/signin",
+    google_signin_initiate,
+    methods=["GET"],
+    response_model=Dict[str, Any],
+    summary="Initiate Google Sign-In",
+    description="Get OAuth URL for Google Sign-In. Frontend should redirect user to this URL. After authentication, user is redirected back to /google/signin/callback.",
+    tags=["Auth", "Google Sign-In"]
+)
+
+router.add_api_route(
+    "/google/signin/callback",
+    google_signin_callback,
+    methods=["GET"],
+    summary="Google Sign-In Callback",
+    description="Handle OAuth callback from Google Sign-In. Exchanges authorization code for session tokens and sets HttpOnly cookies.",
+    tags=["Auth", "Google Sign-In"]
+)
+
+router.add_api_route(
+    "/google/signin/token",
+    google_signin_token,
+    methods=["POST"],
+    response_model=Dict[str, Any],
+    summary="Google Sign-In with ID Token",
+    description="Sign in using Google ID token (JWT credential) from Google Sign-In button. Use this if frontend handles Google Sign-In UI and receives ID token directly.",
+    tags=["Auth", "Google Sign-In"]
 )
