@@ -19,32 +19,43 @@ from schemas.export import (
     ExportQuestionMatching
 )
 from services.logger import app_logger as logger
-from services.db_services.supabase_quiz import get_supabase, get_authed_supabase_client
+from config import config as app_config
+
+
+def get_service_role_client():
+    """Get service role client for admin operations."""
+    return app_config.get_service_role_client()
+
+
+def get_authed_supabase_client(user_token: str):
+    """Get authenticated client for user operations with RLS."""
+    return app_config.get_authenticated_supabase_client(user_token)
 
 
 async def load_quiz_for_export(
     quiz_id: str,
     user_id: str,
-    user_token: Optional[str] = None
+    user_token: str
 ) -> QuizExportData:
     """
     Load complete quiz data for export processing.
     
     This function:
     1. Verifies the quiz exists
-    2. Verifies the user has access (owns the quiz)
+    2. Verifies the user has access (owns the quiz) via RLS
     3. Loads all questions with proper type handling
     4. Transforms data into QuizExportData format
     
     Args:
         quiz_id: UUID of the quiz to load
         user_id: UUID of the requesting user
-        user_token: Optional JWT token for authenticated queries
+        user_token: JWT token for authenticated queries (required for RLS enforcement)
         
     Returns:
         QuizExportData containing all quiz and question data
         
     Raises:
+        HTTPException 401: Missing authentication token
         HTTPException 404: Quiz not found
         HTTPException 403: User doesn't own the quiz
         HTTPException 500: Database error
@@ -52,11 +63,13 @@ async def load_quiz_for_export(
     import asyncio
     
     try:
-        # Use authenticated client if token provided (respects RLS)
-        if user_token:
-            supabase = get_authed_supabase_client(user_token)
-        else:
-            supabase = get_supabase()
+        # Require authenticated client for RLS enforcement on user export operations
+        if not user_token:
+            raise HTTPException(
+                status_code=401,
+                detail="Authentication token required for quiz export"
+            )
+        supabase = get_authed_supabase_client(user_token)
         
         # Fetch quiz metadata
         def fetch_quiz():
@@ -242,7 +255,7 @@ def _parse_bool(value) -> bool:
 async def verify_quiz_ownership(
     quiz_id: str,
     user_id: str,
-    user_token: Optional[str] = None
+    user_token: str
 ) -> bool:
     """
     Verify that a user owns a specific quiz.
@@ -250,21 +263,25 @@ async def verify_quiz_ownership(
     Args:
         quiz_id: UUID of the quiz
         user_id: UUID of the user
-        user_token: Optional JWT token
+        user_token: JWT token for RLS enforcement (required)
         
     Returns:
         True if user owns the quiz
         
     Raises:
+        HTTPException 401: Missing authentication token
         HTTPException 404: Quiz not found
         HTTPException 403: User doesn't own the quiz
     """
     import asyncio
     
-    if user_token:
-        supabase = get_authed_supabase_client(user_token)
-    else:
-        supabase = get_supabase()
+    # Require authenticated client for RLS enforcement on ownership verification
+    if not user_token:
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication token required for ownership verification"
+        )
+    supabase = get_authed_supabase_client(user_token)
     
     def check_ownership():
         response = supabase.table("quizzes").select("id, created_by").eq("id", quiz_id).execute()

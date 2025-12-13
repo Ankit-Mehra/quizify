@@ -28,12 +28,16 @@ from schemas.billing import (
     UpgradePreviewResponse,
 )
 from services.billing_service import BillingService, get_billing_state
-from services.db_services.supabase_quiz import get_supabase
-from services.posthog_service import capture_exception
 from config import Config
+from services.posthog_service import capture_exception
 from handlers.billing_handler import verify_checkout_session
 from services.logger import app_logger as logger
 from services.storage_service import get_storage_quota_info
+
+
+def get_service_role_client():
+    """Get service role client for billing admin operations."""
+    return Config.get_service_role_client()
 
 
 router = APIRouter(prefix="/api/billing", tags=["billing"])
@@ -174,7 +178,7 @@ async def create_credit_pack_checkout(
     
     try:
         # Get or create Stripe customer
-        supabase = get_supabase()
+        supabase = get_service_role_client()
         profile = supabase.table("profiles").select("stripe_customer_id").eq("id", user_id).single().execute()
         
         customer_id = profile.data.get("stripe_customer_id") if profile.data else None
@@ -561,7 +565,7 @@ def get_billing_service() -> BillingService:
     Initialized with service role Supabase client for webhook handling
     and admin operations (like querying profiles).
     """
-    return BillingService(get_supabase())
+    return BillingService(get_service_role_client())
 
 
 # ============================================================================

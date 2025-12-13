@@ -13,7 +13,16 @@ from typing import Optional, List
 from uuid import UUID
 
 from config import Config
-from services.db_services.supabase_quiz import get_supabase, get_authed_supabase_client
+
+
+def get_service_role_client():
+    """Get service role client for system operations."""
+    return Config.get_service_role_client()
+
+
+def get_authed_supabase_client(user_token: str):
+    """Get authenticated client for user operations with RLS."""
+    return Config.get_authenticated_supabase_client(user_token)
 
 # Module logger for share operations
 logger = logging.getLogger(__name__)
@@ -66,7 +75,9 @@ async def generate_unique_slug(max_attempts: int = 10) -> str:
     if Config.is_testing():
         return generate_slug()
     
-    supabase = get_supabase()
+    # Use service role client for system-level slug uniqueness check.
+    # This operation is not user-specific and does not require RLS.
+    supabase = get_service_role_client()
     
     for _ in range(max_attempts):
         slug = generate_slug()
@@ -104,7 +115,7 @@ def build_share_url(slug: str) -> str:
 async def create_share_link(
     quiz_id: UUID,
     user_id: UUID,
-    user_token: Optional[str] = None,
+    user_token: str,
 ) -> dict:
     """
     Create or retrieve a share link for a quiz.
@@ -115,13 +126,13 @@ async def create_share_link(
     Args:
         quiz_id: The quiz to share
         user_id: The user requesting the share (must be owner)
-        user_token: Optional JWT token for RLS enforcement
+        user_token: JWT token for RLS enforcement (required)
         
     Returns:
         Dict with quiz_id, public_slug, share_url, is_public, shared_at
         
     Raises:
-        ValueError: If quiz not found or user doesn't own it
+        ValueError: If quiz not found, user doesn't own it, or token missing
         RuntimeError: If unable to generate unique slug
     """
     logger.info(f"Creating share link for quiz {quiz_id} by user {str(user_id)[:8]}...")
@@ -139,11 +150,10 @@ async def create_share_link(
             "shared_at": now.isoformat(),
         }
     
-    # Use authenticated client for RLS
-    if user_token:
-        supabase = get_authed_supabase_client(user_token)
-    else:
-        supabase = get_supabase()
+    # Require authenticated client for RLS enforcement on user operations
+    if not user_token:
+        raise ValueError("Authentication token required for share link creation")
+    supabase = get_authed_supabase_client(user_token)
     
     # Verify quiz exists and user owns it
     quiz_result = (
@@ -211,7 +221,7 @@ async def create_share_link(
 async def revoke_share_link(
     quiz_id: UUID,
     user_id: UUID,
-    user_token: Optional[str] = None,
+    user_token: str,
 ) -> dict:
     """
     Revoke (unpublish) a quiz's share link.
@@ -221,13 +231,13 @@ async def revoke_share_link(
     Args:
         quiz_id: The quiz to unshare
         user_id: The user requesting revocation (must be owner)
-        user_token: Optional JWT token for RLS enforcement
+        user_token: JWT token for RLS enforcement (required)
         
     Returns:
         Dict with quiz_id, is_public (False), message
         
     Raises:
-        ValueError: If quiz not found or user doesn't own it
+        ValueError: If quiz not found, user doesn't own it, or token missing
     """
     logger.info(f"Revoking share link for quiz {quiz_id} by user {str(user_id)[:8]}...")
     
@@ -239,11 +249,10 @@ async def revoke_share_link(
             "message": "Share link revoked successfully",
         }
     
-    # Use authenticated client for RLS
-    if user_token:
-        supabase = get_authed_supabase_client(user_token)
-    else:
-        supabase = get_supabase()
+    # Require authenticated client for RLS enforcement on user operations
+    if not user_token:
+        raise ValueError("Authentication token required for share link revocation")
+    supabase = get_authed_supabase_client(user_token)
     
     # Verify quiz exists and user owns it
     quiz_result = (
@@ -287,7 +296,7 @@ async def revoke_share_link(
 async def get_share_status(
     quiz_id: UUID,
     user_id: UUID,
-    user_token: Optional[str] = None,
+    user_token: str,
 ) -> dict:
     """
     Get the current share status of a quiz.
@@ -295,13 +304,13 @@ async def get_share_status(
     Args:
         quiz_id: The quiz to check
         user_id: The user requesting status (must be owner)
-        user_token: Optional JWT token for RLS enforcement
+        user_token: JWT token for RLS enforcement (required)
         
     Returns:
         Dict with quiz_id, is_public, public_slug, share_url, shared_at
         
     Raises:
-        ValueError: If quiz not found or user doesn't own it
+        ValueError: If quiz not found, user doesn't own it, or token missing
     """
     if Config.is_testing():
         return {
@@ -312,11 +321,10 @@ async def get_share_status(
             "shared_at": None,
         }
     
-    # Use authenticated client for RLS
-    if user_token:
-        supabase = get_authed_supabase_client(user_token)
-    else:
-        supabase = get_supabase()
+    # Require authenticated client for RLS enforcement on user operations
+    if not user_token:
+        raise ValueError("Authentication token required for share status check")
+    supabase = get_authed_supabase_client(user_token)
     
     # Get quiz with share fields
     quiz_result = (
@@ -400,7 +408,10 @@ async def get_public_quiz_by_slug(slug: str) -> dict:
             "shared_at": datetime.now(timezone.utc).isoformat(),
         }
     
-    supabase = get_supabase()
+    # INTENTIONAL: Use service role client for public quiz retrieval since this endpoint serves
+    # anonymous users without authentication. Do NOT use this pattern for user-initiated operations;
+    # always use an authenticated client for RLS enforcement in those cases.
+    supabase = get_service_role_client()
     
     # SECURITY: Use sanitized view for defense-in-depth
     # The public_quizzes view excludes created_by and other sensitive fields

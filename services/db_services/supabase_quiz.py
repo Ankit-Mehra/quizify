@@ -560,7 +560,9 @@ def get_user_tier_info(user_id: str):
         # Security is maintained by:
         # 1. user_id comes from authenticated JWT (validated by FastAPI dependency)
         # 2. We only return data for the specific user_id (no risk of data leakage)
-        supabase = get_supabase()
+        
+        # Use the explicit service role client for this privileged operation
+        supabase = app_config.get_service_role_client()
         
         logger.debug(f"Fetching tier info for user: {user_id}")
         
