@@ -1,4 +1,5 @@
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlencode
 
 from fastapi import Depends, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -25,7 +26,6 @@ from services.oauth_utils import (
     generate_oauth_state as _generate_oauth_state,
     verify_oauth_state as _verify_oauth_state,
     verify_oauth_state_from_cookie as _verify_oauth_state_from_cookie,
-    generate_pkce_challenge as _generate_pkce_challenge,
 )
 
 security = HTTPBearer(auto_error=False)
@@ -1399,8 +1399,6 @@ async def google_signin_initiate(
         # - code_challenge goes in the OAuth URL (sent to Google/Supabase)
         # - code_verifier is stored in signed HttpOnly cookie (retrieved during callback)
         # - This maintains PKCE security benefits while supporting stateless backend
-        from urllib.parse import urlencode
-        
         supabase_url = app_config.SUPABASE_URL
         oauth_params = {
             "provider": "google",

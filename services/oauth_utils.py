@@ -410,9 +410,9 @@ def verify_oauth_state_from_cookie(state_cookie: Optional[str]) -> Tuple[bool, O
         # Extract PKCE code verifier (required for server-side OAuth)
         code_verifier = payload.get("pkce")
         if not code_verifier:
-            logger.warning("OAuth state missing PKCE code verifier")
-            # Don't fail - could be state from old version before PKCE was added
-            # The exchange will fail but with a clear error
+            logger.warning("OAuth state missing PKCE code verifier - state may be from old version")
+            # Fail early with clear error rather than letting exchange fail
+            return False, None, None
         
         logger.debug("OAuth state cookie verification successful")
         return True, redirect_url, code_verifier

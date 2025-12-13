@@ -32,10 +32,118 @@ from services.oauth_utils import (
     generate_oauth_state,
     verify_oauth_state,
     verify_oauth_state_from_cookie,
+    generate_pkce_verifier,
+    generate_pkce_challenge,
 )
 
 
 client = TestClient(app)
+
+
+# ============================================================================
+# PKCE Helper Function Tests (RFC 7636 Compliance)
+# ============================================================================
+
+class TestPKCEVerifierGeneration:
+    """Test PKCE code verifier generation per RFC 7636."""
+    
+    def test_default_length(self):
+        """Default verifier should be 64 characters."""
+        verifier = generate_pkce_verifier()
+        assert len(verifier) == 64
+    
+    def test_minimum_length(self):
+        """Verifier with minimum length (43) should be valid."""
+        verifier = generate_pkce_verifier(43)
+        assert len(verifier) == 43
+    
+    def test_maximum_length(self):
+        """Verifier with maximum length (128) should be valid."""
+        verifier = generate_pkce_verifier(128)
+        assert len(verifier) == 128
+    
+    def test_invalid_length_too_short(self):
+        """Length below 43 should raise ValueError."""
+        import pytest
+        with pytest.raises(ValueError, match="between 43 and 128"):
+            generate_pkce_verifier(42)
+        with pytest.raises(ValueError, match="between 43 and 128"):
+            generate_pkce_verifier(10)
+    
+    def test_invalid_length_too_long(self):
+        """Length above 128 should raise ValueError."""
+        import pytest
+        with pytest.raises(ValueError, match="between 43 and 128"):
+            generate_pkce_verifier(129)
+        with pytest.raises(ValueError, match="between 43 and 128"):
+            generate_pkce_verifier(200)
+    
+    def test_character_set_compliance(self):
+        """Verifier should only contain RFC 7636 unreserved characters."""
+        # RFC 7636 allowed: [A-Z] / [a-z] / [0-9] / "-" / "." / "_" / "~"
+        allowed_chars = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
+        
+        # Generate multiple verifiers to test randomness
+        for _ in range(100):
+            verifier = generate_pkce_verifier()
+            for char in verifier:
+                assert char in allowed_chars, f"Invalid character '{char}' in verifier"
+    
+    def test_uniqueness(self):
+        """Each verifier should be unique (cryptographically random)."""
+        verifiers = [generate_pkce_verifier() for _ in range(100)]
+        assert len(set(verifiers)) == 100, "Verifiers should be unique"
+
+
+class TestPKCEChallengeGeneration:
+    """Test PKCE code challenge generation per RFC 7636 S256 method."""
+    
+    def test_challenge_is_base64url_encoded(self):
+        """Challenge should be base64url encoded without padding."""
+        verifier = generate_pkce_verifier()
+        challenge = generate_pkce_challenge(verifier)
+        
+        # Base64url uses - and _ instead of + and /
+        assert '+' not in challenge
+        assert '/' not in challenge
+        # No padding
+        assert not challenge.endswith('=')
+    
+    def test_challenge_length(self):
+        """Challenge should be 43 characters (256 bits / 6 bits per char)."""
+        verifier = generate_pkce_verifier()
+        challenge = generate_pkce_challenge(verifier)
+        assert len(challenge) == 43
+    
+    def test_challenge_deterministic(self):
+        """Same verifier should produce same challenge."""
+        verifier = generate_pkce_verifier()
+        challenge1 = generate_pkce_challenge(verifier)
+        challenge2 = generate_pkce_challenge(verifier)
+        assert challenge1 == challenge2
+    
+    def test_challenge_rfc7636_example(self):
+        """Test against RFC 7636 Appendix B example (if available)."""
+        # Known test vector: verifier produces specific challenge
+        # Using our own consistent test vector
+        test_verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+        expected_challenge = generate_pkce_challenge(test_verifier)
+        
+        # Manually calculate expected value
+        import hashlib
+        import base64
+        sha256_hash = hashlib.sha256(test_verifier.encode("utf-8")).digest()
+        manual_challenge = base64.urlsafe_b64encode(sha256_hash).rstrip(b"=").decode("utf-8")
+        
+        assert expected_challenge == manual_challenge
+    
+    def test_different_verifiers_different_challenges(self):
+        """Different verifiers should produce different challenges."""
+        v1 = generate_pkce_verifier()
+        v2 = generate_pkce_verifier()
+        c1 = generate_pkce_challenge(v1)
+        c2 = generate_pkce_challenge(v2)
+        assert c1 != c2
 
 
 # ============================================================================
