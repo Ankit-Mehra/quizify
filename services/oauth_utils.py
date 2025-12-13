@@ -6,6 +6,7 @@ This module provides helper functions for:
 - OAuth state parameter handling
 - Redirect URL validation
 - New user detection
+- PKCE (Proof Key for Code Exchange) support for server-side OAuth
 
 These utilities are used by the Google Sign-In endpoints in auth_handlers.py
 to implement secure OAuth flows with CSRF protection.
@@ -16,6 +17,7 @@ import hashlib
 import hmac
 import json
 import secrets
+import string
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Tuple
 
@@ -33,6 +35,55 @@ OAUTH_STATE_MAX_AGE = 600  # 10 minutes - enough time to complete OAuth flow
 
 # Configurable threshold for detecting new users (seconds since account creation)
 NEW_USER_THRESHOLD_SECONDS = 10
+
+# PKCE settings for secure OAuth (RFC 7636)
+PKCE_VERIFIER_LENGTH = 64  # Standard PKCE verifier length
+
+
+# ============================================================================
+# PKCE (Proof Key for Code Exchange) Helpers
+# ============================================================================
+
+def generate_pkce_verifier(length: int = PKCE_VERIFIER_LENGTH) -> str:
+    """
+    Generate a cryptographically random PKCE code verifier.
+    
+    Per RFC 7636, the code verifier must be between 43-128 characters and
+    contain only unreserved URI characters: [A-Z] / [a-z] / [0-9] / "-" / "." / "_" / "~"
+    
+    Args:
+        length: Length of the verifier (43-128 characters, default 64)
+        
+    Returns:
+        str: Random PKCE code verifier
+        
+    Raises:
+        ValueError: If length is outside valid range
+    """
+    if length < 43 or length > 128:
+        raise ValueError("PKCE verifier length must be between 43 and 128 characters")
+    
+    # Characters allowed in PKCE verifier per RFC 7636
+    charset = string.ascii_letters + string.digits + "-._~"
+    return "".join(secrets.choice(charset) for _ in range(length))
+
+
+def generate_pkce_challenge(code_verifier: str) -> str:
+    """
+    Generate a PKCE code challenge from a code verifier using SHA-256.
+    
+    Per RFC 7636 Section 4.2, uses S256 method (SHA-256 hash, base64url encoded).
+    
+    Args:
+        code_verifier: The code verifier to create challenge from
+        
+    Returns:
+        str: Base64url-encoded SHA-256 hash of the verifier (without padding)
+    """
+    verifier_bytes = code_verifier.encode("utf-8")
+    sha256_hash = hashlib.sha256(verifier_bytes).digest()
+    # Base64url encode without padding (per RFC 7636)
+    return base64.urlsafe_b64encode(sha256_hash).rstrip(b"=").decode("utf-8")
 
 
 # ============================================================================
@@ -149,30 +200,39 @@ def get_csrf_signing_key() -> bytes:
     return secret.encode()
 
 
-def generate_oauth_state(redirect_url: Optional[str] = None) -> Tuple[str, str]:
+def generate_oauth_state(redirect_url: Optional[str] = None) -> Tuple[str, str, str, str]:
     """
-    Generate a secure OAuth state parameter with CSRF protection.
+    Generate a secure OAuth state parameter with CSRF protection and PKCE verifier.
     
     The state contains:
     - csrf_token: A cryptographically random token
     - redirect_url: Optional validated redirect URL
     - ts: Timestamp for expiration checking
+    - pkce: PKCE code verifier for server-side OAuth (required for stateless backends)
     
     Args:
         redirect_url: Optional URL to redirect to after OAuth completes
         
     Returns:
-        Tuple of (state_string, csrf_token):
-        - state_string: Base64-encoded JSON with HMAC signature (for URL)
-        - csrf_token: The raw CSRF token to store in cookie
+        Tuple of (state_string, csrf_token, code_verifier, code_challenge):
+        - state_string: Base64-encoded JSON with HMAC signature (stored in cookie)
+        - csrf_token: The raw CSRF token
+        - code_verifier: PKCE code verifier (stored in state, used during callback)
+        - code_challenge: PKCE code challenge (added to OAuth URL)
     """
     # Generate a cryptographically secure random token
     csrf_token = secrets.token_urlsafe(32)
     
+    # Generate PKCE code verifier and challenge
+    # This is required for server-side OAuth where we can't persist client state
+    code_verifier = generate_pkce_verifier()
+    code_challenge = generate_pkce_challenge(code_verifier)
+    
     # Build state payload
     state_payload = {
         "csrf": csrf_token,
-        "ts": int(datetime.now(timezone.utc).timestamp())
+        "ts": int(datetime.now(timezone.utc).timestamp()),
+        "pkce": code_verifier  # Store verifier in signed state for callback retrieval
     }
     
     # Add redirect URL if provided and validated
@@ -197,7 +257,7 @@ def generate_oauth_state(redirect_url: Optional[str] = None) -> Tuple[str, str]:
     # Base64 encode for URL safety
     state_string = base64.urlsafe_b64encode(signed_state.encode()).decode()
     
-    return state_string, csrf_token
+    return state_string, csrf_token, code_verifier, code_challenge
 
 
 def verify_oauth_state(state: str, expected_csrf: Optional[str]) -> Tuple[bool, Optional[str]]:
@@ -277,9 +337,9 @@ def verify_oauth_state(state: str, expected_csrf: Optional[str]) -> Tuple[bool, 
         return False, None
 
 
-def verify_oauth_state_from_cookie(state_cookie: Optional[str]) -> Tuple[bool, Optional[str]]:
+def verify_oauth_state_from_cookie(state_cookie: Optional[str]) -> Tuple[bool, Optional[str], Optional[str]]:
     """
-    Verify an OAuth state stored entirely in the cookie.
+    Verify an OAuth state stored entirely in the cookie and extract PKCE verifier.
     
     This is used when the state is stored in the HttpOnly cookie instead of
     being passed via URL query parameter. This approach is needed when the
@@ -294,13 +354,14 @@ def verify_oauth_state_from_cookie(state_cookie: Optional[str]) -> Tuple[bool, O
         state_cookie: The full state string from the cookie
         
     Returns:
-        Tuple of (is_valid, redirect_url):
+        Tuple of (is_valid, redirect_url, code_verifier):
         - is_valid: True if state is valid, False otherwise
         - redirect_url: The redirect URL from state, or None
+        - code_verifier: The PKCE code verifier from state, or None
     """
     if not state_cookie:
         logger.warning("OAuth state cookie is missing")
-        return False, None
+        return False, None, None
     
     try:
         # Decode base64
@@ -309,7 +370,7 @@ def verify_oauth_state_from_cookie(state_cookie: Optional[str]) -> Tuple[bool, O
         # Split payload and signature
         if '.' not in signed_state:
             logger.warning("OAuth state missing signature separator")
-            return False, None
+            return False, None, None
         
         payload_json, signature = signed_state.rsplit('.', 1)
         
@@ -322,7 +383,7 @@ def verify_oauth_state_from_cookie(state_cookie: Optional[str]) -> Tuple[bool, O
         
         if not hmac.compare_digest(signature, expected_signature):
             logger.warning("OAuth state signature verification failed - tampering detected")
-            return False, None
+            return False, None, None
         
         # Parse payload
         payload = json.loads(payload_json)
@@ -338,7 +399,7 @@ def verify_oauth_state_from_cookie(state_cookie: Optional[str]) -> Tuple[bool, O
         now_ts = int(datetime.now(timezone.utc).timestamp())
         if now_ts - state_ts > OAUTH_STATE_MAX_AGE:
             logger.warning(f"OAuth state expired (age: {now_ts - state_ts}s)")
-            return False, None
+            return False, None, None
         
         # Extract and validate redirect URL
         redirect_url = payload.get("redirect")
@@ -346,9 +407,16 @@ def verify_oauth_state_from_cookie(state_cookie: Optional[str]) -> Tuple[bool, O
             # Re-validate redirect URL to be safe
             redirect_url = validate_redirect_url(redirect_url)
         
+        # Extract PKCE code verifier (required for server-side OAuth)
+        code_verifier = payload.get("pkce")
+        if not code_verifier:
+            logger.warning("OAuth state missing PKCE code verifier")
+            # Don't fail - could be state from old version before PKCE was added
+            # The exchange will fail but with a clear error
+        
         logger.debug("OAuth state cookie verification successful")
-        return True, redirect_url
+        return True, redirect_url, code_verifier
         
     except Exception as e:
         logger.warning(f"OAuth state cookie verification failed: {e}")
-        return False, None
+        return False, None, None

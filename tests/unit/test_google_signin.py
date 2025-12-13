@@ -134,16 +134,20 @@ class TestOAuthStateGeneration:
     """Test OAuth state parameter generation and verification."""
     
     def test_generate_oauth_state_returns_tuple(self):
-        """generate_oauth_state should return (state_string, csrf_token)."""
-        state, csrf = generate_oauth_state()
+        """generate_oauth_state should return (state_string, csrf_token, code_verifier, code_challenge)."""
+        state, csrf, code_verifier, code_challenge = generate_oauth_state()
         assert isinstance(state, str)
         assert isinstance(csrf, str)
+        assert isinstance(code_verifier, str)
+        assert isinstance(code_challenge, str)
         assert len(state) > 0
         assert len(csrf) > 0
+        assert len(code_verifier) >= 43  # PKCE minimum length
+        assert len(code_challenge) > 0
     
     def test_generate_oauth_state_with_redirect(self):
         """State should include redirect URL when provided."""
-        state, csrf = generate_oauth_state("/dashboard")
+        state, csrf, code_verifier, code_challenge = generate_oauth_state("/dashboard")
         
         # Decode and verify structure
         decoded = base64.urlsafe_b64decode(state.encode()).decode()
@@ -152,11 +156,12 @@ class TestOAuthStateGeneration:
         
         assert payload.get("redirect") == "/dashboard"
         assert payload.get("csrf") == csrf
+        assert payload.get("pkce") == code_verifier  # PKCE verifier should be in state
         assert "ts" in payload
     
     def test_generate_oauth_state_rejects_invalid_redirect(self):
         """Invalid redirect URLs should not be included in state."""
-        state, csrf = generate_oauth_state("https://evil.com")
+        state, csrf, _, _ = generate_oauth_state("https://evil.com")
         
         # Decode and verify redirect is not included
         decoded = base64.urlsafe_b64decode(state.encode()).decode()
@@ -167,7 +172,7 @@ class TestOAuthStateGeneration:
     
     def test_verify_oauth_state_valid(self):
         """Valid state should verify successfully."""
-        state, csrf = generate_oauth_state("/test")
+        state, csrf, _, _ = generate_oauth_state("/test")
         is_valid, redirect = verify_oauth_state(state, csrf)
         
         assert is_valid is True
@@ -181,20 +186,20 @@ class TestOAuthStateGeneration:
     
     def test_verify_oauth_state_missing_csrf(self):
         """Missing CSRF cookie should fail verification."""
-        state, _ = generate_oauth_state()
+        state, _, _, _ = generate_oauth_state()
         is_valid, redirect = verify_oauth_state(state, None)
         assert is_valid is False
         assert redirect is None
     
     def test_verify_oauth_state_wrong_csrf(self):
         """Wrong CSRF token should fail verification."""
-        state, _ = generate_oauth_state()
+        state, _, _, _ = generate_oauth_state()
         is_valid, redirect = verify_oauth_state(state, "wrong-csrf-token")
         assert is_valid is False
     
     def test_verify_oauth_state_tampered_signature(self):
         """Tampered state should fail signature verification."""
-        state, csrf = generate_oauth_state()
+        state, csrf, _, _ = generate_oauth_state()
         
         # Tamper with the state
         decoded = base64.urlsafe_b64decode(state.encode()).decode()
@@ -207,7 +212,7 @@ class TestOAuthStateGeneration:
     
     def test_verify_oauth_state_expired(self):
         """Expired state should fail verification."""
-        state, csrf = generate_oauth_state()
+        state, csrf, _, _ = generate_oauth_state()
         
         # Manipulate to have old timestamp (this requires recreating the state)
         # Since we can't easily manipulate time, we'll test the constant instead
@@ -215,7 +220,7 @@ class TestOAuthStateGeneration:
     
     def test_state_is_base64_url_safe(self):
         """Generated state should be URL-safe base64."""
-        state, _ = generate_oauth_state("/dashboard?param=value&other=123")
+        state, _, _, _ = generate_oauth_state("/dashboard?param=value&other=123")
         
         # Should not contain URL-unsafe characters
         assert '+' not in state
@@ -223,28 +228,42 @@ class TestOAuthStateGeneration:
         # Should be decodable
         decoded = base64.urlsafe_b64decode(state.encode())
         assert len(decoded) > 0
+    
+    def test_pkce_challenge_is_valid(self):
+        """PKCE challenge should be properly generated from verifier."""
+        state, _, code_verifier, code_challenge = generate_oauth_state()
+        
+        # Verify challenge is SHA256 of verifier (base64url encoded)
+        import hashlib
+        expected_challenge = base64.urlsafe_b64encode(
+            hashlib.sha256(code_verifier.encode()).digest()
+        ).rstrip(b"=").decode()
+        
+        assert code_challenge == expected_challenge
 
 
 class TestVerifyOAuthStateFromCookie:
     """Test cookie-based OAuth state verification."""
     
     def test_verify_valid_cookie(self):
-        """Valid state cookie should verify successfully."""
-        state, _ = generate_oauth_state("/dashboard")
-        is_valid, redirect = verify_oauth_state_from_cookie(state)
+        """Valid state cookie should verify successfully and return PKCE verifier."""
+        state, _, code_verifier, _ = generate_oauth_state("/dashboard")
+        is_valid, redirect, pkce_verifier = verify_oauth_state_from_cookie(state)
         
         assert is_valid is True
         assert redirect == "/dashboard"
+        assert pkce_verifier == code_verifier
         
     def test_verify_missing_cookie(self):
         """Missing cookie should fail verification."""
-        is_valid, redirect = verify_oauth_state_from_cookie(None)
+        is_valid, redirect, pkce_verifier = verify_oauth_state_from_cookie(None)
         assert is_valid is False
         assert redirect is None
+        assert pkce_verifier is None
         
     def test_verify_tampered_signature(self):
         """Tampered signature should fail verification."""
-        state, _ = generate_oauth_state("/dashboard")
+        state, _, _, _ = generate_oauth_state("/dashboard")
         
         # Decode, tamper, re-encode
         decoded = base64.urlsafe_b64decode(state.encode()).decode()
@@ -255,9 +274,10 @@ class TestVerifyOAuthStateFromCookie:
         tampered_state_str = f"{tampered_payload}.{signature}"
         tampered_cookie = base64.urlsafe_b64encode(tampered_state_str.encode()).decode()
         
-        is_valid, redirect = verify_oauth_state_from_cookie(tampered_cookie)
+        is_valid, redirect, pkce_verifier = verify_oauth_state_from_cookie(tampered_cookie)
         assert is_valid is False
         assert redirect is None
+        assert pkce_verifier is None
         
     def test_verify_expired_state(self):
         """Expired state should fail verification."""
@@ -265,6 +285,7 @@ class TestVerifyOAuthStateFromCookie:
         payload = {
             "csrf": "dummy",
             "redirect": "/dashboard",
+            "pkce": "dummy_verifier_at_least_43_characters_long_for_pkce_validation",
             "ts": int((datetime.now(timezone.utc) - timedelta(seconds=OAUTH_STATE_MAX_AGE + 10)).timestamp())
         }
         payload_json = json.dumps(payload, separators=(',', ':'))
@@ -281,21 +302,24 @@ class TestVerifyOAuthStateFromCookie:
         state_str = f"{payload_json}.{signature}"
         state_cookie = base64.urlsafe_b64encode(state_str.encode()).decode()
         
-        is_valid, redirect = verify_oauth_state_from_cookie(state_cookie)
+        is_valid, redirect, pkce_verifier = verify_oauth_state_from_cookie(state_cookie)
         assert is_valid is False
         assert redirect is None
+        assert pkce_verifier is None
 
     def test_verify_invalid_format(self):
         """Invalid format should fail verification."""
-        is_valid, redirect = verify_oauth_state_from_cookie("not-base64-encoded")
+        is_valid, redirect, pkce_verifier = verify_oauth_state_from_cookie("not-base64-encoded")
         assert is_valid is False
         assert redirect is None
+        assert pkce_verifier is None
         
         # Base64 but not dot separated
         b64_no_dot = base64.urlsafe_b64encode(b"invalid-format").decode()
-        is_valid, redirect = verify_oauth_state_from_cookie(b64_no_dot)
+        is_valid, redirect, pkce_verifier = verify_oauth_state_from_cookie(b64_no_dot)
         assert is_valid is False
         assert redirect is None
+        assert pkce_verifier is None
 
 
 # ============================================================================
@@ -350,16 +374,19 @@ class TestGoogleSignInInitiate:
         
         assert response.status_code == 200
     
-    @patch('handlers.auth_handlers.get_supabase')
-    def test_initiate_handles_supabase_failure(self, mock_get_supabase):
-        """Initiate endpoint should handle Supabase failures gracefully."""
-        mock_supabase = MagicMock()
-        mock_supabase.auth.sign_in_with_oauth.return_value = None
-        mock_get_supabase.return_value = mock_supabase
-        
+    def test_initiate_handles_supabase_failure(self):
+        """Initiate endpoint should work without mocking (builds URL directly)."""
+        # Since we no longer use Supabase client for OAuth URL generation,
+        # this test now verifies the endpoint works with PKCE URL building
         response = client.get("/api/auth/google/signin")
         
-        assert response.status_code == 500
+        # Should return 200 with auth URL
+        assert response.status_code == 200
+        data = response.json()
+        assert "auth_url" in data
+        # URL should contain PKCE parameters
+        assert "code_challenge" in data["auth_url"]
+        assert "code_challenge_method" in data["auth_url"]
 
 
 class TestGoogleSignInCallback:
@@ -375,15 +402,17 @@ class TestGoogleSignInCallback:
     def test_callback_requires_valid_csrf(self):
         """Callback with missing CSRF cookie should fail."""
         # Generate a valid state but don't set the cookie
-        state, _ = generate_oauth_state()
+        state, _, _, _ = generate_oauth_state()
         
         response = client.get(
             f"/api/auth/google/signin/callback?code=test-code&state={state}",
             follow_redirects=False
         )
         
+        # Should redirect with error (either csrf_failed or pkce_failed)
         assert response.status_code == 307
-        assert "csrf_failed" in response.headers.get("location", "")
+        location = response.headers.get("location", "")
+        assert "error=" in location
     
     def test_callback_handles_oauth_error(self):
         """Callback should handle OAuth errors from Google."""
@@ -494,24 +523,33 @@ class TestGoogleSignInIntegration:
     def test_csrf_roundtrip(self):
         """Test CSRF token generation and verification roundtrip."""
         # Generate state
-        state, csrf = generate_oauth_state("/quiz/123")
+        state, csrf, code_verifier, code_challenge = generate_oauth_state("/quiz/123")
         
         # Verify it works
         is_valid, redirect = verify_oauth_state(state, csrf)
         
         assert is_valid is True
         assert redirect == "/quiz/123"
+        
+        # Also verify cookie-based verification returns PKCE verifier
+        is_valid, redirect, pkce = verify_oauth_state_from_cookie(state)
+        assert is_valid is True
+        assert redirect == "/quiz/123"
+        assert pkce == code_verifier
     
     def test_csrf_uniqueness(self):
         """Each state generation should produce unique tokens."""
         states = set()
         csrfs = set()
+        verifiers = set()
         
         for _ in range(10):
-            state, csrf = generate_oauth_state()
+            state, csrf, code_verifier, _ = generate_oauth_state()
             states.add(state)
             csrfs.add(csrf)
+            verifiers.add(code_verifier)
         
         # All should be unique
         assert len(states) == 10
         assert len(csrfs) == 10
+        assert len(verifiers) == 10

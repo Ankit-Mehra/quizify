@@ -25,6 +25,7 @@ from services.oauth_utils import (
     generate_oauth_state as _generate_oauth_state,
     verify_oauth_state as _verify_oauth_state,
     verify_oauth_state_from_cookie as _verify_oauth_state_from_cookie,
+    generate_pkce_challenge as _generate_pkce_challenge,
 )
 
 security = HTTPBearer(auto_error=False)
@@ -1381,71 +1382,67 @@ async def google_signin_initiate(
     logger.info("Initiating Google Sign-In OAuth flow")
     
     try:
-        supabase = get_supabase()
-        
         # Build the callback URL (clean URL without query params for Supabase allowlist matching)
         backend_url = app_config.BACKEND_URL
         callback_url = f"{backend_url}/api/auth/google/signin/callback"
         
-        # Generate CSRF-protected state with optional redirect URL
-        # The state is stored in the cookie and NOT in the redirect_to URL
-        # This ensures the redirect_to URL matches Supabase's allowlist exactly
-        state_string, csrf_token = _generate_oauth_state(redirect_url)
+        # Generate CSRF-protected state with optional redirect URL AND PKCE verifier/challenge
+        # The state is stored in the cookie (not URL) - this ensures the redirect_to URL matches Supabase's allowlist exactly
+        # PKCE verifier is stored in the signed state cookie, challenge is added to URL
+        state_string, csrf_token, code_verifier, code_challenge = _generate_oauth_state(redirect_url)
         
-        # Use Supabase's signInWithOAuth to get the OAuth URL
-        # SECURITY: Supabase handles PKCE internally. Our CSRF protection (state + cookie) is
-        # separate and provides protection against login CSRF attacks where an attacker tricks
-        # a user into logging into the attacker's account.
-        # See: https://supabase.com/docs/guides/auth/social-login/auth-google
-        oauth_response = supabase.auth.sign_in_with_oauth({
+        # Build OAuth URL manually to include our own PKCE challenge
+        # This is required because Supabase's sign_in_with_oauth() stores the verifier in client memory,
+        # but we're stateless (new client per request), so we store it in the signed state cookie instead
+        #
+        # SECURITY: We generate our own PKCE challenge/verifier pair:
+        # - code_challenge goes in the OAuth URL (sent to Google/Supabase)
+        # - code_verifier is stored in signed HttpOnly cookie (retrieved during callback)
+        # - This maintains PKCE security benefits while supporting stateless backend
+        from urllib.parse import urlencode
+        
+        supabase_url = app_config.SUPABASE_URL
+        oauth_params = {
             "provider": "google",
-            "options": {
-                "redirect_to": callback_url,
-                "query_params": {
-                    "access_type": "offline",  # Get refresh token
-                    "prompt": "consent"  # Force consent screen for refresh token
-                }
-            }
-        })
+            "redirect_to": callback_url,
+            "access_type": "offline",  # Get refresh token
+            "prompt": "consent",  # Force consent screen for refresh token
+            "code_challenge": code_challenge,
+            "code_challenge_method": "s256"
+        }
         
-        if oauth_response and oauth_response.url:
-            logger.info("Google Sign-In OAuth URL generated successfully")
-            
-            # Create response with CSRF cookie
-            response_data = {
-                "auth_url": oauth_response.url,
-                "message": "Redirect to auth_url to complete Google Sign-In"
-            }
-            
-            json_response = JSONResponse(content=response_data)
-            
-            # Set state (contains CSRF + redirect) in HttpOnly cookie for validation on callback
-            # We store the full state_string in the cookie since we're not passing it via URL
-            # 
-            # IMPORTANT: SameSite=None is required here because:
-            # 1. Frontend (e.g., staging.quizify.ca) makes a fetch request to backend (backend-staging.railway.app)
-            # 2. For cross-origin requests, SameSite=Lax cookies won't be set by the browser
-            # 3. SameSite=None + Secure=True allows the cookie to be set cross-site
-            # 4. The cookie is then sent on the Google OAuth callback (same-site to backend)
-            cookie_settings = _get_cookie_settings()
-            json_response.set_cookie(
-                key=OAUTH_STATE_COOKIE_NAME,
-                value=state_string,  # Store full state (includes CSRF + redirect URL)
-                max_age=OAUTH_STATE_MAX_AGE,
-                httponly=True,
-                secure=True,  # Required for SameSite=None
-                samesite="none",  # Required for cross-origin cookie setting
-                path="/",
-                domain=cookie_settings.get("domain")
-            )
-            
-            return json_response
-        else:
-            logger.error("Failed to generate Google OAuth URL - no URL returned")
-            raise HTTPException(
-                status_code=500,
-                detail="Failed to generate Google Sign-In URL"
-            )
+        oauth_url = f"{supabase_url}/auth/v1/authorize?{urlencode(oauth_params)}"
+        
+        logger.info("Google Sign-In OAuth URL generated successfully with PKCE")
+        
+        # Create response with CSRF cookie
+        response_data = {
+            "auth_url": oauth_url,
+            "message": "Redirect to auth_url to complete Google Sign-In"
+        }
+        
+        json_response = JSONResponse(content=response_data)
+        
+        # Set state (contains CSRF + redirect + PKCE verifier) in HttpOnly cookie for validation on callback
+        # 
+        # IMPORTANT: SameSite=None is required here because:
+        # 1. Frontend (e.g., staging.quizify.ca) makes a fetch request to backend (backend-staging.railway.app)
+        # 2. For cross-origin requests, SameSite=Lax cookies won't be set by the browser
+        # 3. SameSite=None + Secure=True allows the cookie to be set cross-site
+        # 4. The cookie is then sent on the Google OAuth callback (same-site to backend)
+        cookie_settings = _get_cookie_settings()
+        json_response.set_cookie(
+            key=OAUTH_STATE_COOKIE_NAME,
+            value=state_string,  # Store full state (includes CSRF + redirect URL + PKCE verifier)
+            max_age=OAUTH_STATE_MAX_AGE,
+            httponly=True,
+            secure=True,  # Required for SameSite=None
+            samesite="none",  # Required for cross-origin cookie setting
+            path="/",
+            domain=cookie_settings.get("domain")
+        )
+        
+        return json_response
             
     except HTTPException:
         raise
@@ -1497,7 +1494,7 @@ async def google_signin_callback(
         # Even on error, try to extract redirect from state (if valid)
         redirect_path = None
         if state_cookie:
-            is_valid, redirect_path = _verify_oauth_state_from_cookie(state_cookie)
+            is_valid, redirect_path, _ = _verify_oauth_state_from_cookie(state_cookie)
             # Don't fail on invalid state for error redirects - just use default
         
         # Use generic error message to avoid information disclosure from OAuth provider
@@ -1516,9 +1513,9 @@ async def google_signin_callback(
         )
         return clear_oauth_state_cookie(redirect_resp)
     
-    # ===== CSRF VALIDATION (Critical Security Check) =====
-    # Validate state from cookie to prevent login CSRF attacks
-    is_valid, redirect_path = _verify_oauth_state_from_cookie(state_cookie)
+    # ===== CSRF + PKCE VALIDATION (Critical Security Check) =====
+    # Validate state from cookie to prevent login CSRF attacks and retrieve PKCE verifier
+    is_valid, redirect_path, code_verifier = _verify_oauth_state_from_cookie(state_cookie)
     
     if not is_valid:
         logger.warning("OAuth state validation failed - possible CSRF attack")
@@ -1527,13 +1524,22 @@ async def google_signin_callback(
         )
         return clear_oauth_state_cookie(redirect_resp)
     
+    if not code_verifier:
+        logger.error("PKCE code_verifier missing from OAuth state - cannot complete PKCE flow")
+        redirect_resp = RedirectResponse(
+            url=f"{app_config.FRONTEND_URL}/login?error=pkce_failed&message=Security%20validation%20failed.%20Please%20try%20again."
+        )
+        return clear_oauth_state_cookie(redirect_resp)
+    
     try:
         supabase = get_supabase()
         
-        # Exchange the code for a session
-        # This is equivalent to supabase.auth.exchangeCodeForSession(code)
+        # Exchange the code for a session with PKCE verifier
+        # SECURITY: We pass the code_verifier that was stored in the signed cookie
+        # during initiate. This completes the PKCE flow for server-side OAuth.
         auth_response = supabase.auth.exchange_code_for_session({
-            "auth_code": code
+            "auth_code": code,
+            "code_verifier": code_verifier
         })
         
         if not auth_response or not auth_response.session:
