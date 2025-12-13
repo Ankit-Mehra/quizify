@@ -1421,14 +1421,20 @@ async def google_signin_initiate(
             
             # Set state (contains CSRF + redirect) in HttpOnly cookie for validation on callback
             # We store the full state_string in the cookie since we're not passing it via URL
+            # 
+            # IMPORTANT: SameSite=None is required here because:
+            # 1. Frontend (e.g., staging.quizify.ca) makes a fetch request to backend (backend-staging.railway.app)
+            # 2. For cross-origin requests, SameSite=Lax cookies won't be set by the browser
+            # 3. SameSite=None + Secure=True allows the cookie to be set cross-site
+            # 4. The cookie is then sent on the Google OAuth callback (same-site to backend)
             cookie_settings = _get_cookie_settings()
             json_response.set_cookie(
                 key=OAUTH_STATE_COOKIE_NAME,
                 value=state_string,  # Store full state (includes CSRF + redirect URL)
                 max_age=OAUTH_STATE_MAX_AGE,
                 httponly=True,
-                secure=cookie_settings["secure"],
-                samesite="lax",  # Must be lax for OAuth redirect to work
+                secure=True,  # Required for SameSite=None
+                samesite="none",  # Required for cross-origin cookie setting
                 path="/",
                 domain=cookie_settings.get("domain")
             )
