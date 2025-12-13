@@ -6,8 +6,14 @@ testing mode detection, and Supabase client initialization.
 """
 
 import os
+import jwt
+import logging
 from typing import Optional
 from supabase import create_client, Client
+
+# Configure basic logging for config module (since app_logger depends on config)
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 class Config:
@@ -252,6 +258,22 @@ class Config:
             return cls._supabase_client
         
         # Create and cache the client
+        try:
+            # Debug: Verify key role to prevent permission errors
+            # We decode without verification just to check the 'role' claim
+            claims = jwt.decode(key, options={"verify_signature": False})
+            role = claims.get("role")
+            if role != "service_role":
+                logger.warning(
+                    f"⚠️  Supabase client initialized with role '{role}'. "
+                    "Backend operations requiring admin privileges (like accessing user_tier_info) "
+                    "WILL FAIL. Please ensure SUPABASE_SERVICE_ROLE_KEY is set to the service_role key."
+                )
+            else:
+                logger.info("✅ Supabase client initialized with 'service_role' privileges")
+        except Exception as e:
+            logger.warning(f"Could not validate Supabase key role: {e}")
+
         cls._supabase_client = create_client(
             supabase_url=cls.SUPABASE_URL,
             supabase_key=key
