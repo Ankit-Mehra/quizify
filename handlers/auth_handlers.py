@@ -50,6 +50,10 @@ def _get_cookie_settings() -> dict:
     
     Returns secure cookie settings for production, consistent settings for testing.
     Note: secure=True always (matches existing login() behavior) - tests run with HTTPS mocking.
+    
+    IMPORTANT: For cross-origin deployments (frontend on Vercel, backend on Railway),
+    we must use SameSite=None to allow cookies to be sent with cross-origin requests.
+    This requires Secure=True (enforced by browsers).
     """
     if app_config.is_testing():
         # Match existing login() behavior: secure=True, no domain for testing
@@ -61,10 +65,12 @@ def _get_cookie_settings() -> dict:
             "path": "/"
         }
     
+    # Production: Use SameSite=None for cross-origin cookie support
+    # This is required when frontend (Vercel) and backend (Railway) are on different domains
     return {
         "httponly": True,
         "secure": True,
-        "samesite": "lax",
+        "samesite": "none",  # Required for cross-origin requests
         "domain": app_config.COOKIE_DOMAIN,
         "max_age": ACCESS_TOKEN_EXPIRE,
         "path": "/"
@@ -299,12 +305,14 @@ async def login(request_body: LoginRequest, response: Response, request: Request
         # Set access token cookie
         # Domain allows cookie to be shared across all subdomains (www, api, etc.)
         # Without Domain attribute, cookie would be host-only (locked to api.quizify.ca)
+        # SameSite=None required for cross-origin requests (Vercel frontend -> Railway backend)
+        samesite_value = "lax" if app_config.is_testing() else "none"
         response.set_cookie(
             key="access_token",
             value=access_token,
             httponly=True,
             secure=True,
-            samesite="lax",
+            samesite=samesite_value,
             domain=app_config.COOKIE_DOMAIN if not app_config.is_testing() else None,
             max_age=ACCESS_TOKEN_EXPIRE
         )
@@ -314,7 +322,7 @@ async def login(request_body: LoginRequest, response: Response, request: Request
             value=refresh_token,
             httponly=True,
             secure=True,
-            samesite="lax",
+            samesite=samesite_value,
             domain=app_config.COOKIE_DOMAIN if not app_config.is_testing() else None,
             max_age=REFRESH_TOKEN_EXPIRE
         )
@@ -392,12 +400,14 @@ async def refresh_session(request: Request, response: Response):
             raise HTTPException(status_code=401, detail="Invalid refresh token or session expired")
         new_access_token = session.session.access_token
 
+        # SameSite=None required for cross-origin requests (Vercel frontend -> Railway backend)
+        samesite_value = "lax" if app_config.is_testing() else "none"
         response.set_cookie(
             key="access_token",
             value=new_access_token,
             httponly=True,
             secure=True,
-            samesite="lax",
+            samesite=samesite_value,
             domain=app_config.COOKIE_DOMAIN if not app_config.is_testing() else None,
             max_age=ACCESS_TOKEN_EXPIRE
         )
