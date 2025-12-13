@@ -74,16 +74,18 @@ def validate_redirect_url(redirect_url: Optional[str]) -> Optional[str]:
     """
     Validate and sanitize redirect_url to prevent open redirects and CRLF injection.
     
-    Only allows:
-    - Relative paths starting with / (but not //)
-    - No protocol:// embedded
-    - No control characters
+    SECURITY: Only accepts RELATIVE paths (starting with /).
+    The backend always prepends FRONTEND_URL to ensure redirects stay within
+    our controlled domain. This prevents open redirect attacks.
+    
+    For Vercel preview deployments, the frontend should NOT send absolute URLs.
+    Instead, configure the backend's FRONTEND_URL to match the deployment.
     
     Args:
-        redirect_url: The URL to validate
+        redirect_url: The relative path to validate (e.g., /dashboard)
         
     Returns:
-        Sanitized URL or None if invalid
+        Sanitized relative path or None if invalid
     """
     if not redirect_url:
         return None
@@ -103,7 +105,12 @@ def validate_redirect_url(redirect_url: Optional[str]) -> Optional[str]:
         logger.debug(f"Validated redirect_url: {redirect_url}")
         return redirect_url
     
-    logger.warning(f"Rejecting non-relative redirect_url: {redirect_url[:50]}...")
+    # Reject absolute URLs - frontend should only send relative paths
+    if "://" in redirect_url:
+        logger.warning(f"Rejecting absolute redirect_url (security risk): {redirect_url[:50]}... - Frontend should send relative paths only")
+        return None
+    
+    logger.warning(f"Rejecting invalid redirect_url format: {redirect_url[:50]}...")
     return None
 
 
@@ -267,4 +274,75 @@ def verify_oauth_state(state: str, expected_csrf: Optional[str]) -> Tuple[bool, 
         
     except Exception as e:
         logger.warning(f"OAuth state verification failed: {e}")
+        return False, None
+
+
+def verify_oauth_state_from_cookie(state_cookie: Optional[str]) -> Tuple[bool, Optional[str]]:
+    """
+    Verify an OAuth state stored entirely in the cookie.
+    
+    This is used when the state is stored in the HttpOnly cookie instead of
+    being passed via URL query parameter. This approach is needed when the
+    OAuth provider's redirect URL allowlist doesn't support query parameters.
+    
+    Validates:
+    - State cookie is present
+    - HMAC signature to prevent tampering
+    - Timestamp is not too old (OAUTH_STATE_MAX_AGE seconds)
+    
+    Args:
+        state_cookie: The full state string from the cookie
+        
+    Returns:
+        Tuple of (is_valid, redirect_url):
+        - is_valid: True if state is valid, False otherwise
+        - redirect_url: The redirect URL from state, or None
+    """
+    if not state_cookie:
+        logger.warning("OAuth state cookie is missing")
+        return False, None
+    
+    try:
+        # Decode base64
+        signed_state = base64.urlsafe_b64decode(state_cookie.encode()).decode()
+        
+        # Split payload and signature
+        if '.' not in signed_state:
+            logger.warning("OAuth state missing signature separator")
+            return False, None
+        
+        payload_json, signature = signed_state.rsplit('.', 1)
+        
+        # Verify HMAC signature
+        expected_signature = hmac.new(
+            get_csrf_signing_key(),
+            payload_json.encode(),
+            hashlib.sha256
+        ).hexdigest()[:16]
+        
+        if not hmac.compare_digest(signature, expected_signature):
+            logger.warning("OAuth state signature verification failed - tampering detected")
+            return False, None
+        
+        # Parse payload
+        payload = json.loads(payload_json)
+        
+        # Verify timestamp is not too old
+        state_ts = payload.get("ts", 0)
+        now_ts = int(datetime.now(timezone.utc).timestamp())
+        if now_ts - state_ts > OAUTH_STATE_MAX_AGE:
+            logger.warning(f"OAuth state expired (age: {now_ts - state_ts}s)")
+            return False, None
+        
+        # Extract and validate redirect URL
+        redirect_url = payload.get("redirect")
+        if redirect_url:
+            # Re-validate redirect URL to be safe
+            redirect_url = validate_redirect_url(redirect_url)
+        
+        logger.debug("OAuth state cookie verification successful")
+        return True, redirect_url
+        
+    except Exception as e:
+        logger.warning(f"OAuth state cookie verification failed: {e}")
         return False, None
