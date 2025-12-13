@@ -302,30 +302,8 @@ async def login(request_body: LoginRequest, response: Response, request: Request
                 detail="Session management service temporarily unavailable. Please try again."
             )
         
-        # Set access token cookie
-        # Domain allows cookie to be shared across all subdomains (www, api, etc.)
-        # Without Domain attribute, cookie would be host-only (locked to api.quizify.ca)
-        # SameSite=None required for cross-origin requests (Vercel frontend -> Railway backend)
-        samesite_value = "lax" if app_config.is_testing() else "none"
-        response.set_cookie(
-            key="access_token",
-            value=access_token,
-            httponly=True,
-            secure=True,
-            samesite=samesite_value,
-            domain=app_config.COOKIE_DOMAIN if not app_config.is_testing() else None,
-            max_age=ACCESS_TOKEN_EXPIRE
-        )
-        # Set refresh token cookie
-        response.set_cookie(
-            key="refresh_token",
-            value=refresh_token,
-            httponly=True,
-            secure=True,
-            samesite=samesite_value,
-            domain=app_config.COOKIE_DOMAIN if not app_config.is_testing() else None,
-            max_age=REFRESH_TOKEN_EXPIRE
-        )
+        # Set auth cookies using centralized helper for consistency
+        _set_auth_cookies(response, access_token, refresh_token)
 
         # Prepare response - only include access_token in test mode for testing convenience
         response_data = {
@@ -400,16 +378,12 @@ async def refresh_session(request: Request, response: Response):
             raise HTTPException(status_code=401, detail="Invalid refresh token or session expired")
         new_access_token = session.session.access_token
 
-        # SameSite=None required for cross-origin requests (Vercel frontend -> Railway backend)
-        samesite_value = "lax" if app_config.is_testing() else "none"
+        # Use centralized cookie settings for consistency
+        cookie_settings = _get_cookie_settings()
         response.set_cookie(
             key="access_token",
             value=new_access_token,
-            httponly=True,
-            secure=True,
-            samesite=samesite_value,
-            domain=app_config.COOKIE_DOMAIN if not app_config.is_testing() else None,
-            max_age=ACCESS_TOKEN_EXPIRE
+            **cookie_settings
         )
         return {"message": "Session refreshed"}
     except Exception:
