@@ -6,8 +6,14 @@ testing mode detection, and Supabase client initialization.
 """
 
 import os
+import jwt
+import logging
 from typing import Optional
 from supabase import create_client, Client
+
+# Configure basic logging for config module (since app_logger depends on config)
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 class Config:
@@ -24,6 +30,7 @@ class Config:
     # Supabase configuration
     SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
     SUPABASE_KEY: str = os.getenv("SUPABASE_KEY", "")
+    SUPABASE_SERVICE_ROLE_KEY: str = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
     STORAGE_NAME: str = os.getenv("SUPABASE_STORAGE_NAME", "")
     
     # Testing environment detection
@@ -235,9 +242,14 @@ class Config:
         if cls.is_testing():
             return None  # type: ignore - Tests will mock database functions
         
-        if not cls.SUPABASE_URL or not cls.SUPABASE_KEY:
+        # Use Service Role Key if available, otherwise fall back to SUPABASE_KEY
+        # This ensures we have admin privileges for backend operations which is required
+        # for accessing protected views like user_tier_info
+        key = cls.SUPABASE_SERVICE_ROLE_KEY or cls.SUPABASE_KEY
+        
+        if not cls.SUPABASE_URL or not key:
             raise RuntimeError(
-                "SUPABASE_URL and SUPABASE_KEY must be set. "
+                "SUPABASE_URL and SUPABASE_KEY (or SUPABASE_SERVICE_ROLE_KEY) must be set. "
                 "Application cannot start without database configuration."
             )
         
@@ -246,9 +258,25 @@ class Config:
             return cls._supabase_client
         
         # Create and cache the client
+        try:
+            # Debug: Verify key role to prevent permission errors
+            # We decode without verification just to check the 'role' claim
+            claims = jwt.decode(key, options={"verify_signature": False})
+            role = claims.get("role")
+            if role != "service_role":
+                logger.warning(
+                    f"⚠️  Supabase client initialized with role '{role}'. "
+                    "Backend operations requiring admin privileges (like accessing user_tier_info) "
+                    "WILL FAIL. Please ensure SUPABASE_SERVICE_ROLE_KEY is set to the service_role key."
+                )
+            else:
+                logger.info("✅ Supabase client initialized with 'service_role' privileges")
+        except Exception as e:
+            logger.warning(f"Could not validate Supabase key role: {e}")
+
         cls._supabase_client = create_client(
             supabase_url=cls.SUPABASE_URL,
-            supabase_key=cls.SUPABASE_KEY
+            supabase_key=key
         )
         
         return cls._supabase_client

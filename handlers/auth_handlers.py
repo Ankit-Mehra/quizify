@@ -24,6 +24,7 @@ from services.oauth_utils import (
     is_new_user as _is_new_user,
     generate_oauth_state as _generate_oauth_state,
     verify_oauth_state as _verify_oauth_state,
+    verify_oauth_state_from_cookie as _verify_oauth_state_from_cookie,
 )
 
 security = HTTPBearer(auto_error=False)
@@ -1382,19 +1383,14 @@ async def google_signin_initiate(
     try:
         supabase = get_supabase()
         
-        # Build the callback URL
+        # Build the callback URL (clean URL without query params for Supabase allowlist matching)
         backend_url = app_config.BACKEND_URL
         callback_url = f"{backend_url}/api/auth/google/signin/callback"
         
         # Generate CSRF-protected state with optional redirect URL
-        # NOTE: Our state is passed as a query param in redirect_to, NOT as OAuth's state parameter.
-        # This works because:
-        # 1. Supabase uses its OWN state parameter for PKCE with Google
-        # 2. Our redirect_to URL (with ?state=...) is where Supabase redirects AFTER OAuth completes
-        # 3. Supabase preserves existing query params when redirecting (see prepPKCERedirectURL in gotrue)
-        # 4. The 'code' we receive is from Supabase (not Google) - Supabase already exchanged with Google
+        # The state is stored in the cookie and NOT in the redirect_to URL
+        # This ensures the redirect_to URL matches Supabase's allowlist exactly
         state_string, csrf_token = _generate_oauth_state(redirect_url)
-        callback_url = f"{callback_url}?state={state_string}"
         
         # Use Supabase's signInWithOAuth to get the OAuth URL
         # SECURITY: Supabase handles PKCE internally. Our CSRF protection (state + cookie) is
@@ -1423,11 +1419,12 @@ async def google_signin_initiate(
             
             json_response = JSONResponse(content=response_data)
             
-            # Set CSRF token in HttpOnly cookie for validation on callback
+            # Set state (contains CSRF + redirect) in HttpOnly cookie for validation on callback
+            # We store the full state_string in the cookie since we're not passing it via URL
             cookie_settings = _get_cookie_settings()
             json_response.set_cookie(
                 key=OAUTH_STATE_COOKIE_NAME,
-                value=csrf_token,
+                value=state_string,  # Store full state (includes CSRF + redirect URL)
                 max_age=OAUTH_STATE_MAX_AGE,
                 httponly=True,
                 secure=cookie_settings["secure"],
@@ -1456,7 +1453,6 @@ async def google_signin_initiate(
 
 async def google_signin_callback(
     code: str = Query(None, description="Authorization code from Google"),
-    state: str = Query(None, description="State parameter containing CSRF token and redirect URL"),
     error: str = Query(None, description="Error from Google OAuth"),
     error_description: str = Query(None, description="Error description from Google"),
     response: Response = None,
@@ -1469,18 +1465,18 @@ async def google_signin_callback(
     authenticates. It validates the CSRF token and exchanges the code for a session.
     
     Security features:
-    - CSRF token from state is validated against HttpOnly cookie
+    - State (CSRF + redirect) is stored in HttpOnly cookie (not URL)
     - State signature is verified to prevent tampering
-    - Redirect URL is re-validated before use
+    - Redirect URL is re-validated before use (relative paths only)
     - Auth tokens are set in HttpOnly cookies only
     """
     logger.info("Processing Google Sign-In callback")
     
-    # Get CSRF token from cookie for validation
-    csrf_cookie = request.cookies.get(OAUTH_STATE_COOKIE_NAME) if request else None
+    # Get state from cookie (contains CSRF + redirect URL)
+    state_cookie = request.cookies.get(OAUTH_STATE_COOKIE_NAME) if request else None
     
-    # Helper to clear the CSRF cookie on any response
-    def clear_csrf_cookie(resp):
+    # Helper to clear the state cookie on any response
+    def clear_oauth_state_cookie(resp):
         cookie_settings = _get_cookie_settings()
         resp.delete_cookie(
             key=OAUTH_STATE_COOKIE_NAME,
@@ -1494,8 +1490,8 @@ async def google_signin_callback(
         logger.error(f"Google Sign-In error: {error} - {error_description}")
         # Even on error, try to extract redirect from state (if valid)
         redirect_path = None
-        if state and csrf_cookie:
-            is_valid, redirect_path = _verify_oauth_state(state, csrf_cookie)
+        if state_cookie:
+            is_valid, redirect_path = _verify_oauth_state_from_cookie(state_cookie)
             # Don't fail on invalid state for error redirects - just use default
         
         # Use generic error message to avoid information disclosure from OAuth provider
@@ -1505,25 +1501,25 @@ async def google_signin_callback(
         redirect_resp = RedirectResponse(
             url=f"{base_url}{separator}error=oauth_error&message=Authentication%20failed.%20Please%20try%20again."
         )
-        return clear_csrf_cookie(redirect_resp)
+        return clear_oauth_state_cookie(redirect_resp)
     
     if not code:
         logger.error("No authorization code in Google Sign-In callback")
         redirect_resp = RedirectResponse(
             url=f"{app_config.FRONTEND_URL}/login?error=no_code&message=No%20authorization%20code%20received"
         )
-        return clear_csrf_cookie(redirect_resp)
+        return clear_oauth_state_cookie(redirect_resp)
     
     # ===== CSRF VALIDATION (Critical Security Check) =====
-    # Validate state parameter against CSRF cookie to prevent login CSRF attacks
-    is_valid, redirect_path = _verify_oauth_state(state, csrf_cookie)
+    # Validate state from cookie to prevent login CSRF attacks
+    is_valid, redirect_path = _verify_oauth_state_from_cookie(state_cookie)
     
     if not is_valid:
         logger.warning("OAuth state validation failed - possible CSRF attack")
         redirect_resp = RedirectResponse(
             url=f"{app_config.FRONTEND_URL}/login?error=csrf_failed&message=Security%20validation%20failed.%20Please%20try%20again."
         )
-        return clear_csrf_cookie(redirect_resp)
+        return clear_oauth_state_cookie(redirect_resp)
     
     try:
         supabase = get_supabase()
@@ -1539,7 +1535,7 @@ async def google_signin_callback(
             redirect_resp = RedirectResponse(
                 url=f"{app_config.FRONTEND_URL}/login?error=exchange_failed&message=Failed%20to%20complete%20sign-in"
             )
-            return clear_csrf_cookie(redirect_resp)
+            return clear_oauth_state_cookie(redirect_resp)
         
         session = auth_response.session
         user = auth_response.user
@@ -1559,7 +1555,7 @@ async def google_signin_callback(
             redirect_resp = RedirectResponse(
                 url=f"{app_config.FRONTEND_URL}/login?error=service_unavailable&message=Session%20service%20temporarily%20unavailable"
             )
-            return clear_csrf_cookie(redirect_resp)
+            return clear_oauth_state_cookie(redirect_resp)
         
         try:
             session_service = SessionService(redis_client)
@@ -1579,16 +1575,16 @@ async def google_signin_callback(
             redirect_resp = RedirectResponse(
                 url=f"{app_config.FRONTEND_URL}/login?error=too_many_sessions&message=Too%20many%20active%20sessions.%20Please%20logout%20from%20other%20devices."
             )
-            return clear_csrf_cookie(redirect_resp)
+            return clear_oauth_state_cookie(redirect_resp)
         except Exception as redis_error:
             logger.error(f"Redis error during Google Sign-In session creation: {redis_error}")
             redirect_resp = RedirectResponse(
                 url=f"{app_config.FRONTEND_URL}/login?error=session_failed&message=Failed%20to%20create%20session"
             )
-            return clear_csrf_cookie(redirect_resp)
+            return clear_oauth_state_cookie(redirect_resp)
         
-        # Build safe redirect URL (redirect_path already validated in _verify_oauth_state)
-        # Preserve any query params from redirect_path and append our success params
+        # Build safe redirect URL (redirect_path already validated in _verify_oauth_state_from_cookie)
+        # Only relative paths are accepted for security - backend always uses FRONTEND_URL as base
         base_redirect_url = f"{app_config.FRONTEND_URL}{redirect_path}" if redirect_path else app_config.FRONTEND_URL
         
         # Use proper separator based on whether URL already has query params
@@ -1606,8 +1602,8 @@ async def google_signin_callback(
         # Set auth cookies using helper for consistency
         _set_auth_cookies(final_redirect, session.access_token, session.refresh_token)
         
-        # Clear the CSRF cookie since OAuth flow is complete
-        clear_csrf_cookie(final_redirect)
+        # Clear the state cookie since OAuth flow is complete
+        clear_oauth_state_cookie(final_redirect)
         
         return final_redirect
         
