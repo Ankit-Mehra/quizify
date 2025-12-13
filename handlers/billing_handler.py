@@ -8,7 +8,12 @@ import stripe
 from fastapi import HTTPException
 from services.logger import app_logger as logger
 from services.billing_service import BillingService, _short_stripe_id
-from services.db_services.supabase_quiz import get_supabase
+from config import config as app_config
+
+
+def get_service_role_client():
+    """Get service role client for billing admin operations."""
+    return app_config.get_service_role_client()
 
 
 async def verify_checkout_session(
@@ -89,7 +94,7 @@ async def verify_checkout_session(
         
         # Check if subscription is already provisioned in database
         # This handles the case where webhook processed before user returned
-        supabase = get_supabase()
+        supabase = get_service_role_client()
         profile = supabase.table("profiles").select(
             "stripe_subscription_id", "billing_plan", "subscription_status"
         ).eq("id", user_id).single().execute()

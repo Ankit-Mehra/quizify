@@ -90,9 +90,9 @@ def quiz_unit_cost(quiz_type: str) -> int:
 
 async def get_billing_state(user_id: str) -> UserBillingState:
     """Fetch user's current billing state from profiles table."""
-    # Use service role client to ensure we can read billing data
-    from services.db_services.supabase_quiz import get_supabase
-    supabase = get_supabase()
+    # Use service role client - billing operations require admin access
+    from config import config as app_config
+    supabase = app_config.get_service_role_client()
     
     response = supabase.table("profiles").select("*").eq("id", user_id).single().execute()
     
@@ -164,8 +164,9 @@ async def consume_units(user_id: str, quiz_type: str) -> bool:
     """
     needed = quiz_unit_cost(quiz_type)
     
-    from services.db_services.supabase_quiz import get_supabase
-    supabase = get_supabase()
+    # Service role required for atomic credit operations
+    from config import config as app_config
+    supabase = app_config.get_service_role_client()
     
     # Use atomic RPC to debit units safely
     # This prevents double-spending under concurrent load
@@ -239,8 +240,8 @@ async def add_purchased_units(user_id: str, units: int) -> bool:
     Returns:
         True if successful, False on error
     """
-    from services.db_services.supabase_quiz import get_supabase
-    supabase = get_supabase()
+    from config import config as app_config
+    supabase = app_config.get_service_role_client()
     
     # Use atomic RPC to add units safely (prevents race conditions)
     try:
@@ -270,11 +271,11 @@ async def reset_monthly_credits_for_user(user_id: str) -> bool:
     Returns:
         True if successful
     """
-    from services.db_services.supabase_quiz import get_supabase
+    from config import config as app_config
     from datetime import datetime, timezone
     from dateutil.relativedelta import relativedelta
     
-    supabase = get_supabase()
+    supabase = app_config.get_service_role_client()
     state = await get_billing_state(user_id)
     
     now = datetime.now(timezone.utc)
@@ -303,11 +304,11 @@ async def reset_expired_monthly_credits() -> dict:
     Returns:
         Dict with reset_count and any errors
     """
-    from services.db_services.supabase_quiz import get_supabase
+    from config import config as app_config
     from datetime import datetime, timezone
     from dateutil.relativedelta import relativedelta
     
-    supabase = get_supabase()
+    supabase = app_config.get_service_role_client()
     now = datetime.now(timezone.utc)
     
     # Use calendar month boundaries for consistency with Stripe billing cycles
@@ -1515,9 +1516,8 @@ class BillingService:
                 try:
                     units = int(units)
                     # Use atomic RPC to add units safely (prevents race conditions)
-                    # This is the same RPC used by add_purchased_units() function
-                    from services.db_services.supabase_quiz import get_supabase
-                    supabase = get_supabase()
+                    from config import config as app_config
+                    supabase = app_config.get_service_role_client()
                     
                     supabase.rpc("add_purchased_credit_units", {
                         "p_user_id": user_id,

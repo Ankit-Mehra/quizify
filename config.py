@@ -6,14 +6,8 @@ testing mode detection, and Supabase client initialization.
 """
 
 import os
-import jwt
-import logging
 from typing import Optional
 from supabase import create_client, Client
-
-# Configure basic logging for config module (since app_logger depends on config)
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 
 class Config:
@@ -23,9 +17,6 @@ class Config:
     Centralizes all environment variable access and provides
     utility methods for common configuration needs.
     """
-    
-    # Singleton Supabase client instance (cached to preserve PKCE state)
-    _supabase_client: Optional[Client] = None
     
     # Supabase configuration
     SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
@@ -42,8 +33,11 @@ class Config:
     DEVELOPMENT_MODE: bool = os.getenv("DEVELOPMENT_MODE", "false").lower() == "true"
     
     # Cookie domain for cross-subdomain authentication
-    # Domain must start with '.' to work across subdomains (www, api, etc.)
-    COOKIE_DOMAIN: str = os.getenv("COOKIE_DOMAIN", ".quizify.ca")
+    # Set to ".quizify.ca" for production (works across www, api subdomains)
+    # Set to empty string "" or don't set for staging/development (uses current host)
+    # Domain must start with '.' to work across subdomains
+    _cookie_domain_raw: str = os.getenv("COOKIE_DOMAIN", "")
+    COOKIE_DOMAIN: str = _cookie_domain_raw if _cookie_domain_raw else None  # type: ignore
     
     # Frontend URL for redirects after email confirmation, password reset, etc.
     FRONTEND_URL: str = os.getenv("FRONTEND_URL", "https://www.quizify.ca")
@@ -217,106 +211,86 @@ class Config:
         return cls.DEVELOPMENT_MODE
     
     @classmethod
-    def get_supabase_client(cls) -> Client:
+    def get_service_role_client(cls) -> Client:
         """
-        Get a cached Supabase client instance (singleton pattern).
+        Get a Supabase client with Service Role (Admin) privileges.
         
-        The client is cached to:
-        1. Improve performance by reusing connection pools
-        2. Reduce initialization overhead
-        
-        NOTE: Supabase handles PKCE internally for OAuth flows. Our implementation
-        adds a separate layer of CSRF protection using a state parameter + HttpOnly cookie
-        mechanism. This stateful CSRF validation is independent of Supabase's internal PKCE
-        handling and is not affected by caching the Supabase client.
-        
-        In testing mode, returns None (tests will mock this).
-        In production, fails fast if credentials are missing.
+        WARNING: This client bypasses Row Level Security (RLS).
+        Use ONLY for:
+        - Stripe/external webhooks (no user context)
+        - Cron jobs (system tasks)
+        - Accessing auth.users data (e.g., user_tier_info view)
+        - Billing operations (credit consumption, subscription management)
         
         Returns:
-            Client: Supabase client instance (cached)
+            Client: Supabase client with admin privileges
             
         Raises:
-            RuntimeError: If Supabase credentials are not configured (non-testing mode)
+            RuntimeError: If SUPABASE_SERVICE_ROLE_KEY is not configured
         """
         if cls.is_testing():
-            return None  # type: ignore - Tests will mock database functions
+            return None  # type: ignore
         
-        # Use Service Role Key if available, otherwise fall back to SUPABASE_KEY
-        # This ensures we have admin privileges for backend operations which is required
-        # for accessing protected views like user_tier_info
-        key = cls.SUPABASE_SERVICE_ROLE_KEY or cls.SUPABASE_KEY
-        
-        if not cls.SUPABASE_URL or not key:
+        if not cls.SUPABASE_URL or not cls.SUPABASE_SERVICE_ROLE_KEY:
             raise RuntimeError(
-                "SUPABASE_URL and SUPABASE_KEY (or SUPABASE_SERVICE_ROLE_KEY) must be set. "
-                "Application cannot start without database configuration."
+                "SUPABASE_SERVICE_ROLE_KEY is required for admin operations. "
+                "Set it in your environment variables."
             )
-        
-        # Return cached client if available
-        if cls._supabase_client is not None:
-            return cls._supabase_client
-        
-        # Create and cache the client
-        try:
-            # Debug: Verify key role to prevent permission errors
-            # We decode without verification just to check the 'role' claim
-            claims = jwt.decode(key, options={"verify_signature": False})
-            role = claims.get("role")
-            if role != "service_role":
-                logger.warning(
-                    f"⚠️  Supabase client initialized with role '{role}'. "
-                    "Backend operations requiring admin privileges (like accessing user_tier_info) "
-                    "WILL FAIL. Please ensure SUPABASE_SERVICE_ROLE_KEY is set to the service_role key."
-                )
-            else:
-                logger.info("✅ Supabase client initialized with 'service_role' privileges")
-        except Exception as e:
-            logger.warning(f"Could not validate Supabase key role: {e}")
+            
+        return create_client(cls.SUPABASE_URL, cls.SUPABASE_SERVICE_ROLE_KEY)
 
-        cls._supabase_client = create_client(
-            supabase_url=cls.SUPABASE_URL,
-            supabase_key=key
-        )
+    @classmethod
+    def get_supabase_client(cls) -> Client:
+        """
+        Get a Supabase client instance (service role).
         
-        return cls._supabase_client
+        DEPRECATED: Use get_service_role_client() for admin tasks
+        or get_authenticated_supabase_client() for user operations.
+        
+        Kept for backward compatibility - aliases to get_service_role_client().
+        """
+        return cls.get_service_role_client()
     
     @classmethod
     def get_authenticated_supabase_client(cls, user_token: str) -> Client:
         """
         Get an authenticated Supabase client with a user token.
         
-        This creates a client that uses the user's JWT token instead of the service role key,
-        which ensures Row Level Security (RLS) policies are properly enforced.
+        This creates a client that uses the user's JWT token with the anon key,
+        ensuring Row Level Security (RLS) policies are properly enforced.
+        
+        Use this for ALL user-initiated operations:
+        - Creating/reading/updating quizzes
+        - File uploads/downloads
+        - User profile operations
+        - Share link management
         
         Args:
-            user_token: JWT token for user authentication
+            user_token: JWT access token for user authentication
             
         Returns:
-            Client: Authenticated Supabase client with user token
+            Client: Authenticated Supabase client with RLS enforcement
             
         Raises:
             RuntimeError: If Supabase credentials are not configured
         """
+        if cls.is_testing():
+            return None  # type: ignore
+            
         if not cls.SUPABASE_URL or not cls.SUPABASE_KEY:
             raise RuntimeError(
-                "SUPABASE_URL and SUPABASE_KEY must be set. "
-                "Application cannot start without database configuration."
+                "SUPABASE_URL and SUPABASE_KEY (anon key) must be set."
             )
         
-        # Create a new client and set the user's access token
-        # This makes all operations run under the user's auth context, enforcing RLS
+        # Create client with anon key (respects RLS)
         client = create_client(
             supabase_url=cls.SUPABASE_URL,
-            supabase_key=cls.SUPABASE_KEY
+            supabase_key=cls.SUPABASE_KEY  # This is the anon key
         )
         
-        # Set the auth token for PostgREST (database) operations
-        # This ensures RLS policies see auth.uid() correctly
+        # Set the user's JWT for PostgREST operations
+        # This makes auth.uid() return the user's ID in RLS policies
         client.postgrest.auth(user_token)
-        
-        # Note: For storage operations, use httpx directly with Authorization header
-        # The storage SDK doesn't expose a simple way to set the user token globally
         
         return client
     

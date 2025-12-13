@@ -19,7 +19,17 @@ from schemas.export import (
     ExportQuestionMatching
 )
 from services.logger import app_logger as logger
-from services.db_services.supabase_quiz import get_supabase, get_authed_supabase_client
+from config import config as app_config
+
+
+def get_service_role_client():
+    """Get service role client for admin operations."""
+    return app_config.get_service_role_client()
+
+
+def get_authed_supabase_client(user_token: str):
+    """Get authenticated client for user operations with RLS."""
+    return app_config.get_authenticated_supabase_client(user_token)
 
 
 async def load_quiz_for_export(
@@ -56,7 +66,7 @@ async def load_quiz_for_export(
         if user_token:
             supabase = get_authed_supabase_client(user_token)
         else:
-            supabase = get_supabase()
+            supabase = get_service_role_client()
         
         # Fetch quiz metadata
         def fetch_quiz():
@@ -264,7 +274,7 @@ async def verify_quiz_ownership(
     if user_token:
         supabase = get_authed_supabase_client(user_token)
     else:
-        supabase = get_supabase()
+        supabase = get_service_role_client()
     
     def check_ownership():
         response = supabase.table("quizzes").select("id, created_by").eq("id", quiz_id).execute()

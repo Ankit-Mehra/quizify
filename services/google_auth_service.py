@@ -492,10 +492,10 @@ async def store_google_tokens(user_id: str, credentials: Credentials) -> None:
         Refresh token is encrypted before storage if GOOGLE_TOKEN_ENCRYPTION_KEY is set.
     """
     import asyncio
-
-    from services.db_services.supabase_quiz import get_supabase
+    from config import config as app_config
     
-    supabase = get_supabase()
+    # Service role required - storing tokens is a system operation
+    supabase = app_config.get_service_role_client()
     
     # Encrypt the refresh token before storage
     encrypted_token = _encrypt_token(credentials.refresh_token)
@@ -533,10 +533,10 @@ async def get_google_credentials(user_id: str) -> Optional[Credentials]:
         the user to allow reconnection with fresh tokens.
     """
     import asyncio
-
-    from services.db_services.supabase_quiz import get_supabase
+    from config import config as app_config
     
-    supabase = get_supabase()
+    # Service role required - reading encrypted tokens is a system operation
+    supabase = app_config.get_service_role_client()
     
     def get_profile():
         response = supabase.table("profiles").select(
@@ -583,10 +583,10 @@ async def disconnect_google(user_id: str) -> bool:
         True if successful
     """
     import asyncio
-
-    from services.db_services.supabase_quiz import get_supabase
+    from config import config as app_config
     
-    supabase = get_supabase()
+    # Service role required for token operations
+    supabase = app_config.get_service_role_client()
     
     def clear_tokens():
         return supabase.table("profiles").update({
@@ -618,10 +618,10 @@ async def is_user_connected(user_id: str) -> bool:
         True if user has valid Google connection, False otherwise
     """
     import asyncio
-
-    from services.db_services.supabase_quiz import get_supabase
+    from config import config as app_config
     
-    supabase = get_supabase()
+    # Service role required for token operations
+    supabase = app_config.get_service_role_client()
     
     # First check if there's a stored token at all
     def get_profile():

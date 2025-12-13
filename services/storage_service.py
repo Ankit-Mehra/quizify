@@ -13,7 +13,12 @@ per user via the user_files table.
 from typing import Optional, TypedDict
 from fastapi import HTTPException
 from services.logger import app_logger as logger
-from services.db_services.supabase_quiz import get_supabase
+from config import config as app_config
+
+
+def get_supabase():
+    """Get service role client for storage operations."""
+    return app_config.get_service_role_client()
 
 
 # Storage quota constants in bytes

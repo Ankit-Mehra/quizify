@@ -13,7 +13,16 @@ from typing import Optional, List
 from uuid import UUID
 
 from config import Config
-from services.db_services.supabase_quiz import get_supabase, get_authed_supabase_client
+
+
+def get_service_role_client():
+    """Get service role client for system operations."""
+    return Config.get_service_role_client()
+
+
+def get_authed_supabase_client(user_token: str):
+    """Get authenticated client for user operations with RLS."""
+    return Config.get_authenticated_supabase_client(user_token)
 
 # Module logger for share operations
 logger = logging.getLogger(__name__)
@@ -66,7 +75,7 @@ async def generate_unique_slug(max_attempts: int = 10) -> str:
     if Config.is_testing():
         return generate_slug()
     
-    supabase = get_supabase()
+    supabase = get_service_role_client()
     
     for _ in range(max_attempts):
         slug = generate_slug()
@@ -143,7 +152,7 @@ async def create_share_link(
     if user_token:
         supabase = get_authed_supabase_client(user_token)
     else:
-        supabase = get_supabase()
+        supabase = get_service_role_client()
     
     # Verify quiz exists and user owns it
     quiz_result = (
@@ -243,7 +252,7 @@ async def revoke_share_link(
     if user_token:
         supabase = get_authed_supabase_client(user_token)
     else:
-        supabase = get_supabase()
+        supabase = get_service_role_client()
     
     # Verify quiz exists and user owns it
     quiz_result = (
@@ -316,7 +325,7 @@ async def get_share_status(
     if user_token:
         supabase = get_authed_supabase_client(user_token)
     else:
-        supabase = get_supabase()
+        supabase = get_service_role_client()
     
     # Get quiz with share fields
     quiz_result = (
@@ -400,7 +409,7 @@ async def get_public_quiz_by_slug(slug: str) -> dict:
             "shared_at": datetime.now(timezone.utc).isoformat(),
         }
     
-    supabase = get_supabase()
+    supabase = get_service_role_client()
     
     # SECURITY: Use sanitized view for defense-in-depth
     # The public_quizzes view excludes created_by and other sensitive fields
