@@ -51,9 +51,12 @@ def _get_cookie_settings() -> dict:
     Returns secure cookie settings for production, consistent settings for testing.
     Note: secure=True always (matches existing login() behavior) - tests run with HTTPS mocking.
     
-    IMPORTANT: For cross-origin deployments (frontend on Vercel, backend on Railway),
-    we must use SameSite=None to allow cookies to be sent with cross-origin requests.
-    This requires Secure=True (enforced by browsers).
+    IMPORTANT: For cross-origin deployments where the frontend and backend are on
+    different domains, we must use SameSite=None to allow cookies to be sent with
+    cross-origin requests. This requires Secure=True (enforced by browsers).
+    
+    SECURITY NOTE: SameSite=None is safe here because we use JWT + Redis session
+    validation (not cookie-only auth). CSRF attacks cannot forge JWT signatures.
     """
     if app_config.is_testing():
         # Match existing login() behavior: secure=True, no domain for testing
