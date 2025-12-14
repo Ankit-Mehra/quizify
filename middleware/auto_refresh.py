@@ -6,51 +6,17 @@ from starlette.datastructures import MutableHeaders
 import os
 import httpx
 from services.logger import app_logger as logger
-from config import config as app_config
+from services.cookie_utils import (
+    delete_auth_cookie as _delete_auth_cookie,
+    ACCESS_TOKEN_EXPIRE,
+    REFRESH_TOKEN_EXPIRE,
+)
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-ACCESS_TOKEN_EXPIRE = 3600  # 1 hour
-REFRESH_TOKEN_EXPIRE = 60 * 60 * 24 * 30  # 30 days, mirror auth handler
 
 # Module-level async HTTP client for connection reuse
 _http_client: httpx.AsyncClient | None = None
-
-
-def _get_cookie_delete_settings() -> dict:
-    """
-    Get cookie settings for deletion.
-    
-    IMPORTANT: Cookie deletion must use the same domain, path, secure, and samesite
-    attributes as when the cookie was set. Otherwise browsers won't delete it.
-    """
-    if app_config.is_testing():
-        return {
-            "path": "/",
-            "secure": True,
-            "samesite": "lax",
-            "httponly": True
-        }
-    return {
-        "path": "/",
-        "domain": app_config.COOKIE_DOMAIN,
-        "secure": True,
-        "samesite": "none",
-        "httponly": True
-    }
-
-
-def _delete_auth_cookie(response, key: str) -> None:
-    """Delete an auth cookie with proper attributes."""
-    settings = _get_cookie_delete_settings()
-    response.delete_cookie(
-        key=key,
-        path=settings.get("path", "/"),
-        domain=settings.get("domain"),
-        secure=settings.get("secure", True),
-        samesite=settings.get("samesite", "none"),
-        httponly=settings.get("httponly", True)
-    )
 
 
 def _get_http_client() -> httpx.AsyncClient:

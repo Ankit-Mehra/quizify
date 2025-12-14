@@ -18,6 +18,13 @@ from schemas.auth import (
 )
 from services.db_services.supabase_quiz import get_user_tier_info_cached, invalidate_user_tier_cache
 from services.logger import app_logger as logger
+from services.cookie_utils import (
+    get_cookie_settings as _get_cookie_settings,
+    delete_auth_cookie as _delete_auth_cookie,
+    set_auth_cookies as _set_auth_cookies,
+    ACCESS_TOKEN_EXPIRE,
+    REFRESH_TOKEN_EXPIRE,
+)
 from services.redis.sessions import SessionInfo, SessionService, TooManySessionsError
 from services.oauth_utils import (
     OAUTH_STATE_COOKIE_NAME,
@@ -39,63 +46,6 @@ if app_config.is_testing():
     logger.info("Auth handlers initialized in TEST mode")
 else:
     logger.info("Auth handlers initialized with Supabase client")
-
-ACCESS_TOKEN_EXPIRE = 3600  # 1 hour
-REFRESH_TOKEN_EXPIRE = 60 * 60 * 24 * 30  # 30 days
-
-
-def _get_cookie_settings() -> dict:
-    """
-    Get cookie settings based on environment.
-    
-    Returns secure cookie settings for production, consistent settings for testing.
-    Note: secure=True always (matches existing login() behavior) - tests run with HTTPS mocking.
-    
-    IMPORTANT: For cross-origin deployments where the frontend and backend are on
-    different domains, we must use SameSite=None to allow cookies to be sent with
-    cross-origin requests. This requires Secure=True (enforced by browsers).
-    
-    SECURITY NOTE: SameSite=None is safe here because we use JWT + Redis session
-    validation (not cookie-only auth). CSRF attacks cannot forge JWT signatures.
-    """
-    if app_config.is_testing():
-        # Match existing login() behavior: secure=True, no domain for testing
-        return {
-            "httponly": True,
-            "secure": True,  # Consistent with login() function
-            "samesite": "lax",
-            "max_age": ACCESS_TOKEN_EXPIRE,
-            "path": "/"
-        }
-    
-    # Production: Use SameSite=None for cross-origin cookie support
-    # This is required when frontend (Vercel) and backend (Railway) are on different domains
-    return {
-        "httponly": True,
-        "secure": True,
-        "samesite": "none",  # Required for cross-origin requests
-        "domain": app_config.COOKIE_DOMAIN,
-        "max_age": ACCESS_TOKEN_EXPIRE,
-        "path": "/"
-    }
-
-
-def _delete_auth_cookie(response: Response, key: str) -> None:
-    """
-    Delete an auth cookie with proper attributes.
-    
-    IMPORTANT: Cookie deletion must use the same domain, path, secure, and samesite
-    attributes as when the cookie was set. Otherwise browsers won't delete it.
-    """
-    cookie_settings = _get_cookie_settings()
-    response.delete_cookie(
-        key=key,
-        path=cookie_settings.get("path", "/"),
-        domain=cookie_settings.get("domain"),
-        secure=cookie_settings.get("secure", True),
-        samesite=cookie_settings.get("samesite", "none"),
-        httponly=cookie_settings.get("httponly", True)
-    )
 
 
 async def _invalidate_oauth_user_cache(user_id: str) -> None:
@@ -152,37 +102,6 @@ def _mask_email(email: Optional[str]) -> str:
         masked_domain = domain[0] + "***"
     
     return f"{masked_local}@{masked_domain}"
-
-
-def _set_auth_cookies(response: Response, access_token: str, refresh_token: str) -> None:
-    """
-    Set authentication cookies on a response object.
-    
-    This helper ensures consistent cookie settings across all auth endpoints:
-    - login, google_signin_callback, google_signin_token
-    
-    Args:
-        response: FastAPI Response or RedirectResponse object
-        access_token: JWT access token from Supabase
-        refresh_token: Refresh token from Supabase
-    """
-    cookie_settings = _get_cookie_settings()
-    
-    response.set_cookie(
-        key="access_token",
-        value=access_token,
-        **cookie_settings
-    )
-    response.set_cookie(
-        key="refresh_token",
-        value=refresh_token,
-        max_age=REFRESH_TOKEN_EXPIRE,
-        httponly=True,
-        secure=cookie_settings["secure"],
-        samesite=cookie_settings["samesite"],
-        domain=cookie_settings.get("domain"),
-        path="/"
-    )
 
 
 def get_redis_client(request: Request) -> Optional[Any]:
