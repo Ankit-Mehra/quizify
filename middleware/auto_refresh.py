@@ -6,12 +6,14 @@ from starlette.datastructures import MutableHeaders
 import os
 import httpx
 from services.logger import app_logger as logger
-from config import config as app_config
+from services.cookie_utils import (
+    delete_auth_cookie as _delete_auth_cookie,
+    ACCESS_TOKEN_EXPIRE,
+    REFRESH_TOKEN_EXPIRE,
+)
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-ACCESS_TOKEN_EXPIRE = 3600  # 1 hour
-REFRESH_TOKEN_EXPIRE = 60 * 60 * 24 * 30  # 30 days, mirror auth handler
 
 # Module-level async HTTP client for connection reuse
 _http_client: httpx.AsyncClient | None = None
@@ -152,16 +154,8 @@ class SupabaseAutoRefreshMiddleware(BaseHTTPMiddleware):
                         content={"detail": "Session expired. Please log in again."}
                     )
                     # Clear both tokens so frontend knows user is logged out
-                    response.delete_cookie(
-                        key="refresh_token",
-                        domain=app_config.COOKIE_DOMAIN if not app_config.is_testing() else None,
-                        path="/"
-                    )
-                    response.delete_cookie(
-                        key="access_token",
-                        domain=app_config.COOKIE_DOMAIN if not app_config.is_testing() else None,
-                        path="/"
-                    )
+                    _delete_auth_cookie(response, "refresh_token")
+                    _delete_auth_cookie(response, "access_token")
                     return response
             except Exception:
                 logger.exception("Token refresh failed - clearing cookies")
@@ -170,16 +164,8 @@ class SupabaseAutoRefreshMiddleware(BaseHTTPMiddleware):
                     content={"detail": "Session expired. Please log in again."}
                 )
                 # Clear both tokens
-                response.delete_cookie(
-                    key="refresh_token",
-                    domain=app_config.COOKIE_DOMAIN if not app_config.is_testing() else None,
-                    path="/"
-                )
-                response.delete_cookie(
-                    key="access_token",
-                    domain=app_config.COOKIE_DOMAIN if not app_config.is_testing() else None,
-                    path="/"
-                )
+                _delete_auth_cookie(response, "refresh_token")
+                _delete_auth_cookie(response, "access_token")
                 return response
 
         # No access and no refresh token — let route-level auth handle it

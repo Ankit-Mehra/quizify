@@ -661,3 +661,52 @@ class TestGoogleSignInIntegration:
         assert len(states) == 10
         assert len(csrfs) == 10
         assert len(verifiers) == 10
+
+
+# ============================================================================
+# OAuth Cache Invalidation Tests
+# ============================================================================
+
+class TestOAuthCacheInvalidation:
+    """Test that cache is invalidated after OAuth login to sync fresh profile data."""
+    
+    @patch("handlers.auth_handlers.invalidate_user_tier_cache")
+    async def test_cache_invalidation_failure_is_non_fatal(self, mock_invalidate_cache):
+        """Cache invalidation failure should not break OAuth flow."""
+        # Setup mock to raise exception
+        mock_invalidate_cache.side_effect = Exception("Redis unavailable")
+        
+        # Import the helper function
+        from handlers.auth_handlers import _invalidate_oauth_user_cache
+        
+        # Should not raise - failure is non-fatal
+        await _invalidate_oauth_user_cache("user-123")
+        
+        # Verify it was called
+        mock_invalidate_cache.assert_called_once_with("user-123")
+    
+    @patch("handlers.auth_handlers.invalidate_user_tier_cache")
+    async def test_cache_invalidation_helper_logs_success(self, mock_invalidate_cache):
+        """Cache invalidation helper should work without errors on success."""
+        mock_invalidate_cache.return_value = None
+        
+        from handlers.auth_handlers import _invalidate_oauth_user_cache
+        
+        # Should complete successfully
+        await _invalidate_oauth_user_cache("user-456")
+        
+        mock_invalidate_cache.assert_called_once_with("user-456")
+    
+    @patch("handlers.auth_handlers.invalidate_user_tier_cache")
+    async def test_cache_invalidation_called_with_correct_user_id(self, mock_invalidate_cache):
+        """Cache invalidation should be called with the correct user ID."""
+        mock_invalidate_cache.return_value = None
+        
+        from handlers.auth_handlers import _invalidate_oauth_user_cache
+        
+        test_user_id = "test-user-abc-123"
+        await _invalidate_oauth_user_cache(test_user_id)
+        
+        # Verify the exact user_id was passed
+        mock_invalidate_cache.assert_called_once_with(test_user_id)
+

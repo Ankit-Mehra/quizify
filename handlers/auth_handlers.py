@@ -16,8 +16,13 @@ from schemas.auth import (
     SignupRequest,
     UpdateEmailRequest,
 )
-from services.db_services.supabase_quiz import get_user_tier_info_cached
+from services.db_services.supabase_quiz import get_user_tier_info_cached, invalidate_user_tier_cache
 from services.logger import app_logger as logger
+from services.cookie_utils import (
+    get_cookie_settings as _get_cookie_settings,
+    delete_auth_cookie as _delete_auth_cookie,
+    set_auth_cookies as _set_auth_cookies,
+)
 from services.redis.sessions import SessionInfo, SessionService, TooManySessionsError
 from services.oauth_utils import (
     OAUTH_STATE_COOKIE_NAME,
@@ -40,44 +45,21 @@ if app_config.is_testing():
 else:
     logger.info("Auth handlers initialized with Supabase client")
 
-ACCESS_TOKEN_EXPIRE = 3600  # 1 hour
-REFRESH_TOKEN_EXPIRE = 60 * 60 * 24 * 30  # 30 days
 
-
-def _get_cookie_settings() -> dict:
+async def _invalidate_oauth_user_cache(user_id: str) -> None:
     """
-    Get cookie settings based on environment.
+    Invalidate user tier cache after OAuth login.
     
-    Returns secure cookie settings for production, consistent settings for testing.
-    Note: secure=True always (matches existing login() behavior) - tests run with HTTPS mocking.
+    This ensures fresh data (including avatar) is fetched on next request.
+    OAuth logins may update profile data that was cached before login.
     
-    IMPORTANT: For cross-origin deployments where the frontend and backend are on
-    different domains, we must use SameSite=None to allow cookies to be sent with
-    cross-origin requests. This requires Secure=True (enforced by browsers).
-    
-    SECURITY NOTE: SameSite=None is safe here because we use JWT + Redis session
-    validation (not cookie-only auth). CSRF attacks cannot forge JWT signatures.
+    Non-fatal: if invalidation fails, cache will expire naturally in 5 minutes.
     """
-    if app_config.is_testing():
-        # Match existing login() behavior: secure=True, no domain for testing
-        return {
-            "httponly": True,
-            "secure": True,  # Consistent with login() function
-            "samesite": "lax",
-            "max_age": ACCESS_TOKEN_EXPIRE,
-            "path": "/"
-        }
-    
-    # Production: Use SameSite=None for cross-origin cookie support
-    # This is required when frontend (Vercel) and backend (Railway) are on different domains
-    return {
-        "httponly": True,
-        "secure": True,
-        "samesite": "none",  # Required for cross-origin requests
-        "domain": app_config.COOKIE_DOMAIN,
-        "max_age": ACCESS_TOKEN_EXPIRE,
-        "path": "/"
-    }
+    try:
+        await invalidate_user_tier_cache(user_id)
+        logger.debug(f"Invalidated tier cache for OAuth user {_short_user_id(user_id)}")
+    except Exception as cache_error:
+        logger.warning(f"Failed to invalidate tier cache: {cache_error}")
 
 
 def _short_user_id(user_id: Optional[str]) -> str:
@@ -118,37 +100,6 @@ def _mask_email(email: Optional[str]) -> str:
         masked_domain = domain[0] + "***"
     
     return f"{masked_local}@{masked_domain}"
-
-
-def _set_auth_cookies(response: Response, access_token: str, refresh_token: str) -> None:
-    """
-    Set authentication cookies on a response object.
-    
-    This helper ensures consistent cookie settings across all auth endpoints:
-    - login, google_signin_callback, google_signin_token
-    
-    Args:
-        response: FastAPI Response or RedirectResponse object
-        access_token: JWT access token from Supabase
-        refresh_token: Refresh token from Supabase
-    """
-    cookie_settings = _get_cookie_settings()
-    
-    response.set_cookie(
-        key="access_token",
-        value=access_token,
-        **cookie_settings
-    )
-    response.set_cookie(
-        key="refresh_token",
-        value=refresh_token,
-        max_age=REFRESH_TOKEN_EXPIRE,
-        httponly=True,
-        secure=cookie_settings["secure"],
-        samesite=cookie_settings["samesite"],
-        domain=cookie_settings.get("domain"),
-        path="/"
-    )
 
 
 def get_redis_client(request: Request) -> Optional[Any]:
@@ -466,10 +417,9 @@ async def logout(
         else:
             logger.warning(f"No session_id found for user {_short_user_id(user_id)} during logout - session may remain in Redis")
         
-        # Must match domain used when setting cookies
-        domain = app_config.COOKIE_DOMAIN if not app_config.is_testing() else None
-        response.delete_cookie(key="access_token", path="/", domain=domain, httponly=True)
-        response.delete_cookie(key="refresh_token", path="/", domain=domain, httponly=True)
+        # Delete cookies with same attributes used when setting them
+        _delete_auth_cookie(response, "access_token")
+        _delete_auth_cookie(response, "refresh_token")
         logger.info(f"User {_short_user_id(user_id)} logged out successfully")
         return {"message": "Successfully logged out"}
     except Exception as e:
@@ -949,10 +899,9 @@ async def logout_all_devices(
             # Don't fail if Redis deletion fails (fallback mode)
             logger.warning(f"Failed to delete Redis sessions (fallback mode): {redis_error}")
         
-        # Clear cookies for current device
-        domain = app_config.COOKIE_DOMAIN if not app_config.is_testing() else None
-        response.delete_cookie(key="access_token", path="/", domain=domain, httponly=True)
-        response.delete_cookie(key="refresh_token", path="/", domain=domain, httponly=True)
+        # Delete cookies with same attributes used when setting them
+        _delete_auth_cookie(response, "access_token")
+        _delete_auth_cookie(response, "refresh_token")
         
         return {
             "message": f"Successfully logged out from {count} device(s)",
@@ -1468,8 +1417,11 @@ async def google_signin_callback(
         cookie_settings = _get_cookie_settings()
         resp.delete_cookie(
             key=OAUTH_STATE_COOKIE_NAME,
-            path="/",
-            domain=cookie_settings.get("domain")
+            path=cookie_settings["path"],
+            domain=cookie_settings.get("domain"),  # domain may not exist in test mode
+            secure=cookie_settings["secure"],
+            samesite=cookie_settings["samesite"],
+            httponly=cookie_settings["httponly"]
         )
         return resp
     
@@ -1599,6 +1551,9 @@ async def google_signin_callback(
         # Set auth cookies using helper for consistency
         _set_auth_cookies(final_redirect, session.access_token, session.refresh_token)
         
+        # Invalidate cache to ensure fresh profile data (including avatar)
+        await _invalidate_oauth_user_cache(user_id)
+        
         # Clear the state cookie since OAuth flow is complete
         clear_oauth_state_cookie(final_redirect)
         
@@ -1709,6 +1664,9 @@ async def google_signin_token(
         
         # Set auth cookies using helper for consistency
         _set_auth_cookies(response, session.access_token, session.refresh_token)
+        
+        # Invalidate cache to ensure fresh profile data (including avatar)
+        await _invalidate_oauth_user_cache(user_id)
         
         # Build response
         result = {
