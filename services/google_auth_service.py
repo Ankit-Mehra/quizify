@@ -51,6 +51,11 @@ GOOGLE_FORMS_SCOPES = [
     "https://www.googleapis.com/auth/forms.body"
 ]
 
+# Allow OAuth scope changes - Google may return additional scopes (openid, email, profile)
+# beyond what we requested. This is normal behavior and we only need forms.body.
+# See: https://github.com/oauthlib/oauthlib/issues/715
+os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
+
 # Token encryption setup
 _fernet = None
 _encryption_warned = False
@@ -434,6 +439,10 @@ def exchange_code_for_tokens(code: str) -> Credentials:
         
         flow.fetch_token(code=code)
         credentials = flow.credentials
+        
+        # Log if additional scopes were granted (informational)
+        if credentials.scopes and set(credentials.scopes) != set(GOOGLE_FORMS_SCOPES):
+            logger.debug(f"Google granted additional scopes: {credentials.scopes}")
         
         logger.info("Successfully exchanged authorization code for tokens")
         return credentials
