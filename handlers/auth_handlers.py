@@ -1599,6 +1599,16 @@ async def google_signin_callback(
         # Set auth cookies using helper for consistency
         _set_auth_cookies(final_redirect, session.access_token, session.refresh_token)
         
+        # Invalidate user tier cache to ensure fresh data (including avatar) is fetched
+        # This is important for OAuth logins where profile data may have been updated
+        try:
+            from services.db_services.supabase_quiz import invalidate_user_tier_cache
+            await invalidate_user_tier_cache(user_id)
+            logger.debug(f"Invalidated tier cache for Google Sign-In user {_short_user_id(user_id)}")
+        except Exception as cache_error:
+            # Non-fatal: cache will expire naturally in 5 minutes
+            logger.warning(f"Failed to invalidate tier cache: {cache_error}")
+        
         # Clear the state cookie since OAuth flow is complete
         clear_oauth_state_cookie(final_redirect)
         
@@ -1709,6 +1719,16 @@ async def google_signin_token(
         
         # Set auth cookies using helper for consistency
         _set_auth_cookies(response, session.access_token, session.refresh_token)
+        
+        # Invalidate user tier cache to ensure fresh data (including avatar) is fetched
+        # This is important for OAuth logins where profile data may have been updated
+        try:
+            from services.db_services.supabase_quiz import invalidate_user_tier_cache
+            await invalidate_user_tier_cache(user_id)
+            logger.debug(f"Invalidated tier cache for Google ID token user {_short_user_id(user_id)}")
+        except Exception as cache_error:
+            # Non-fatal: cache will expire naturally in 5 minutes
+            logger.warning(f"Failed to invalidate tier cache: {cache_error}")
         
         # Build response
         result = {
