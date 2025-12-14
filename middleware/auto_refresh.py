@@ -17,6 +17,42 @@ REFRESH_TOKEN_EXPIRE = 60 * 60 * 24 * 30  # 30 days, mirror auth handler
 _http_client: httpx.AsyncClient | None = None
 
 
+def _get_cookie_delete_settings() -> dict:
+    """
+    Get cookie settings for deletion.
+    
+    IMPORTANT: Cookie deletion must use the same domain, path, secure, and samesite
+    attributes as when the cookie was set. Otherwise browsers won't delete it.
+    """
+    if app_config.is_testing():
+        return {
+            "path": "/",
+            "secure": True,
+            "samesite": "lax",
+            "httponly": True
+        }
+    return {
+        "path": "/",
+        "domain": app_config.COOKIE_DOMAIN,
+        "secure": True,
+        "samesite": "none",
+        "httponly": True
+    }
+
+
+def _delete_auth_cookie(response, key: str) -> None:
+    """Delete an auth cookie with proper attributes."""
+    settings = _get_cookie_delete_settings()
+    response.delete_cookie(
+        key=key,
+        path=settings.get("path", "/"),
+        domain=settings.get("domain"),
+        secure=settings.get("secure", True),
+        samesite=settings.get("samesite", "none"),
+        httponly=settings.get("httponly", True)
+    )
+
+
 def _get_http_client() -> httpx.AsyncClient:
     """Get or create the shared async HTTP client."""
     global _http_client
@@ -152,16 +188,8 @@ class SupabaseAutoRefreshMiddleware(BaseHTTPMiddleware):
                         content={"detail": "Session expired. Please log in again."}
                     )
                     # Clear both tokens so frontend knows user is logged out
-                    response.delete_cookie(
-                        key="refresh_token",
-                        domain=app_config.COOKIE_DOMAIN if not app_config.is_testing() else None,
-                        path="/"
-                    )
-                    response.delete_cookie(
-                        key="access_token",
-                        domain=app_config.COOKIE_DOMAIN if not app_config.is_testing() else None,
-                        path="/"
-                    )
+                    _delete_auth_cookie(response, "refresh_token")
+                    _delete_auth_cookie(response, "access_token")
                     return response
             except Exception:
                 logger.exception("Token refresh failed - clearing cookies")
@@ -170,16 +198,8 @@ class SupabaseAutoRefreshMiddleware(BaseHTTPMiddleware):
                     content={"detail": "Session expired. Please log in again."}
                 )
                 # Clear both tokens
-                response.delete_cookie(
-                    key="refresh_token",
-                    domain=app_config.COOKIE_DOMAIN if not app_config.is_testing() else None,
-                    path="/"
-                )
-                response.delete_cookie(
-                    key="access_token",
-                    domain=app_config.COOKIE_DOMAIN if not app_config.is_testing() else None,
-                    path="/"
-                )
+                _delete_auth_cookie(response, "refresh_token")
+                _delete_auth_cookie(response, "access_token")
                 return response
 
         # No access and no refresh token — let route-level auth handle it

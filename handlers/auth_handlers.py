@@ -80,6 +80,24 @@ def _get_cookie_settings() -> dict:
     }
 
 
+def _delete_auth_cookie(response: Response, key: str) -> None:
+    """
+    Delete an auth cookie with proper attributes.
+    
+    IMPORTANT: Cookie deletion must use the same domain, path, secure, and samesite
+    attributes as when the cookie was set. Otherwise browsers won't delete it.
+    """
+    cookie_settings = _get_cookie_settings()
+    response.delete_cookie(
+        key=key,
+        path=cookie_settings.get("path", "/"),
+        domain=cookie_settings.get("domain"),
+        secure=cookie_settings.get("secure", True),
+        samesite=cookie_settings.get("samesite", "none"),
+        httponly=cookie_settings.get("httponly", True)
+    )
+
+
 def _short_user_id(user_id: Optional[str]) -> str:
     """Return obfuscated user identifier for logging."""
     if not user_id:
@@ -466,10 +484,9 @@ async def logout(
         else:
             logger.warning(f"No session_id found for user {_short_user_id(user_id)} during logout - session may remain in Redis")
         
-        # Must match domain used when setting cookies
-        domain = app_config.COOKIE_DOMAIN if not app_config.is_testing() else None
-        response.delete_cookie(key="access_token", path="/", domain=domain, httponly=True)
-        response.delete_cookie(key="refresh_token", path="/", domain=domain, httponly=True)
+        # Delete cookies with same attributes used when setting them
+        _delete_auth_cookie(response, "access_token")
+        _delete_auth_cookie(response, "refresh_token")
         logger.info(f"User {_short_user_id(user_id)} logged out successfully")
         return {"message": "Successfully logged out"}
     except Exception as e:
@@ -949,10 +966,9 @@ async def logout_all_devices(
             # Don't fail if Redis deletion fails (fallback mode)
             logger.warning(f"Failed to delete Redis sessions (fallback mode): {redis_error}")
         
-        # Clear cookies for current device
-        domain = app_config.COOKIE_DOMAIN if not app_config.is_testing() else None
-        response.delete_cookie(key="access_token", path="/", domain=domain, httponly=True)
-        response.delete_cookie(key="refresh_token", path="/", domain=domain, httponly=True)
+        # Delete cookies with same attributes used when setting them
+        _delete_auth_cookie(response, "access_token")
+        _delete_auth_cookie(response, "refresh_token")
         
         return {
             "message": f"Successfully logged out from {count} device(s)",
@@ -1468,8 +1484,11 @@ async def google_signin_callback(
         cookie_settings = _get_cookie_settings()
         resp.delete_cookie(
             key=OAUTH_STATE_COOKIE_NAME,
-            path="/",
-            domain=cookie_settings.get("domain")
+            path=cookie_settings.get("path", "/"),
+            domain=cookie_settings.get("domain"),
+            secure=cookie_settings.get("secure", True),
+            samesite=cookie_settings.get("samesite", "none"),
+            httponly=cookie_settings.get("httponly", True)
         )
         return resp
     
