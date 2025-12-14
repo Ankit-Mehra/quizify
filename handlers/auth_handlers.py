@@ -16,7 +16,7 @@ from schemas.auth import (
     SignupRequest,
     UpdateEmailRequest,
 )
-from services.db_services.supabase_quiz import get_user_tier_info_cached
+from services.db_services.supabase_quiz import get_user_tier_info_cached, invalidate_user_tier_cache
 from services.logger import app_logger as logger
 from services.redis.sessions import SessionInfo, SessionService, TooManySessionsError
 from services.oauth_utils import (
@@ -96,6 +96,22 @@ def _delete_auth_cookie(response: Response, key: str) -> None:
         samesite=cookie_settings.get("samesite", "none"),
         httponly=cookie_settings.get("httponly", True)
     )
+
+
+async def _invalidate_oauth_user_cache(user_id: str) -> None:
+    """
+    Invalidate user tier cache after OAuth login.
+    
+    This ensures fresh data (including avatar) is fetched on next request.
+    OAuth logins may update profile data that was cached before login.
+    
+    Non-fatal: if invalidation fails, cache will expire naturally in 5 minutes.
+    """
+    try:
+        await invalidate_user_tier_cache(user_id)
+        logger.debug(f"Invalidated tier cache for OAuth user {_short_user_id(user_id)}")
+    except Exception as cache_error:
+        logger.warning(f"Failed to invalidate tier cache: {cache_error}")
 
 
 def _short_user_id(user_id: Optional[str]) -> str:
@@ -1618,15 +1634,8 @@ async def google_signin_callback(
         # Set auth cookies using helper for consistency
         _set_auth_cookies(final_redirect, session.access_token, session.refresh_token)
         
-        # Invalidate user tier cache to ensure fresh data (including avatar) is fetched
-        # This is important for OAuth logins where profile data may have been updated
-        try:
-            from services.db_services.supabase_quiz import invalidate_user_tier_cache
-            await invalidate_user_tier_cache(user_id)
-            logger.debug(f"Invalidated tier cache for Google Sign-In user {_short_user_id(user_id)}")
-        except Exception as cache_error:
-            # Non-fatal: cache will expire naturally in 5 minutes
-            logger.warning(f"Failed to invalidate tier cache: {cache_error}")
+        # Invalidate cache to ensure fresh profile data (including avatar)
+        await _invalidate_oauth_user_cache(user_id)
         
         # Clear the state cookie since OAuth flow is complete
         clear_oauth_state_cookie(final_redirect)
@@ -1739,15 +1748,8 @@ async def google_signin_token(
         # Set auth cookies using helper for consistency
         _set_auth_cookies(response, session.access_token, session.refresh_token)
         
-        # Invalidate user tier cache to ensure fresh data (including avatar) is fetched
-        # This is important for OAuth logins where profile data may have been updated
-        try:
-            from services.db_services.supabase_quiz import invalidate_user_tier_cache
-            await invalidate_user_tier_cache(user_id)
-            logger.debug(f"Invalidated tier cache for Google ID token user {_short_user_id(user_id)}")
-        except Exception as cache_error:
-            # Non-fatal: cache will expire naturally in 5 minutes
-            logger.warning(f"Failed to invalidate tier cache: {cache_error}")
+        # Invalidate cache to ensure fresh profile data (including avatar)
+        await _invalidate_oauth_user_cache(user_id)
         
         # Build response
         result = {
