@@ -67,11 +67,11 @@ def delete_auth_cookie(response: "Response", key: str) -> None:
     cookie_settings = get_cookie_settings()
     response.delete_cookie(
         key=key,
-        path=cookie_settings.get("path", "/"),
-        domain=cookie_settings.get("domain"),
-        secure=cookie_settings.get("secure", True),
-        samesite=cookie_settings.get("samesite", "none"),
-        httponly=cookie_settings.get("httponly", True)
+        path=cookie_settings["path"],
+        domain=cookie_settings.get("domain"),  # domain may not exist in test mode
+        secure=cookie_settings["secure"],
+        samesite=cookie_settings["samesite"],
+        httponly=cookie_settings["httponly"]
     )
 
 

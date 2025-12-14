@@ -22,8 +22,6 @@ from services.cookie_utils import (
     get_cookie_settings as _get_cookie_settings,
     delete_auth_cookie as _delete_auth_cookie,
     set_auth_cookies as _set_auth_cookies,
-    ACCESS_TOKEN_EXPIRE,
-    REFRESH_TOKEN_EXPIRE,
 )
 from services.redis.sessions import SessionInfo, SessionService, TooManySessionsError
 from services.oauth_utils import (
@@ -1419,11 +1417,11 @@ async def google_signin_callback(
         cookie_settings = _get_cookie_settings()
         resp.delete_cookie(
             key=OAUTH_STATE_COOKIE_NAME,
-            path=cookie_settings.get("path", "/"),
-            domain=cookie_settings.get("domain"),
-            secure=cookie_settings.get("secure", True),
-            samesite=cookie_settings.get("samesite", "none"),
-            httponly=cookie_settings.get("httponly", True)
+            path=cookie_settings["path"],
+            domain=cookie_settings.get("domain"),  # domain may not exist in test mode
+            secure=cookie_settings["secure"],
+            samesite=cookie_settings["samesite"],
+            httponly=cookie_settings["httponly"]
         )
         return resp
     
