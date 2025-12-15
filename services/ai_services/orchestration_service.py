@@ -15,6 +15,38 @@ from services.logger import ai_logger as logger
 from schemas.quiz import BloomLevel, Difficulty
 
 
+# Minimum length for a valid explanation (shorter = likely just "X matches Y" or empty)
+# 30 chars allows for at least one meaningful sentence fragment
+MIN_EXPLANATION_LENGTH = 30
+
+# Template for fallback matching explanation when LLM doesn't provide one
+MATCHING_FALLBACK_TEMPLATE = "In this matching exercise: {pairs}. Understanding these relationships helps reinforce key concepts from the material."
+
+
+def build_matching_fallback_explanation(left: List[str], right: List[str], correct_answer: List[int]) -> str:
+    """
+    Build a fallback explanation for matching questions when the LLM doesn't provide one.
+    
+    Args:
+        left: List of items on the left side
+        right: List of items on the right side  
+        correct_answer: List of indices mapping left[i] to right[correct_answer[i]]
+        
+    Returns:
+        A simple but useful explanation string
+    """
+    if not left or not right or not correct_answer:
+        return ""
+        
+    pairs_desc = []
+    for i, left_item in enumerate(left):
+        if i < len(correct_answer) and correct_answer[i] < len(right):
+            right_item = right[correct_answer[i]]
+            pairs_desc.append(f"{left_item} corresponds to {right_item}")
+    
+    return MATCHING_FALLBACK_TEMPLATE.format(pairs="; ".join(pairs_desc))
+
+
 class QuizOrchestrationService:
     """
     Orchestrates question generation using RAG-retrieved context.
@@ -432,20 +464,14 @@ class QuizOrchestrationService:
             explanation = result.get("explanation", "")
             
             # Fallback if generation didn't include explanation
-            if not explanation or len(explanation) < 30:
-                left = result.get("left", [])
-                right = result.get("right", [])
-                correct_answer = result.get("correct_answer", [])
-                
-                if left and right and correct_answer:
-                    pairs_desc = []
-                    for i, left_item in enumerate(left):
-                        if i < len(correct_answer) and correct_answer[i] < len(right):
-                            right_item = right[correct_answer[i]]
-                            pairs_desc.append(f"{left_item} corresponds to {right_item}")
-                    
-                    explanation = f"In this matching exercise: {'; '.join(pairs_desc)}. Understanding these relationships helps reinforce key concepts from the material."
-                    logger.info(f"Used fallback explanation for matching question")
+            if not explanation or len(explanation) < MIN_EXPLANATION_LENGTH:
+                explanation = build_matching_fallback_explanation(
+                    left=result.get("left", []),
+                    right=result.get("right", []),
+                    correct_answer=result.get("correct_answer", [])
+                )
+                if explanation:
+                    logger.info("Used fallback explanation for matching question")
             
             logger.info(f"Matching question generated successfully with {len(result.get('left', []))} pairs")
             
