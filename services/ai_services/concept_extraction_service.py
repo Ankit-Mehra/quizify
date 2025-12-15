@@ -13,6 +13,16 @@ from services.ai_services.pricing import calculate_cost
 from config import config
 
 
+# Configuration for batch extraction optimization
+# Process multiple chunks per LLM call to minimize API latency overhead
+# 8 chunks × ~512 tokens = ~4K tokens per call (well within gpt-4.1-mini's 128K context)
+CHUNKS_PER_BATCH = 8
+
+# Maximum parallel batches to avoid rate limiting
+# With 8 chunks/batch and 10 parallel: 80 chunks processed in ~2-3 seconds
+MAX_PARALLEL_BATCHES = 10
+
+
 CONCEPT_EXTRACTION_PROMPT = """
 Analyze the following text and extract key concepts that would be good for quiz questions.
 
@@ -39,6 +49,37 @@ Extract 3-8 high-quality concepts. Prioritize:
 - Named entities (people, places, organizations)
 - Important processes or methods
 - Central themes and topics
+"""
+
+
+# Batch extraction prompt - processes multiple sections in one call
+# This dramatically reduces API latency overhead (1 call vs N calls)
+BATCH_CONCEPT_EXTRACTION_PROMPT = """
+Analyze the following document sections and extract key concepts that would be good for quiz questions.
+
+For each concept, identify:
+1. name: The concept name (1-4 words)
+2. type: One of [entity, keyword, topic, definition, process]
+3. relevance: Score from 0.0 to 1.0 based on importance for understanding the material
+4. source_text: A key sentence or phrase containing this concept
+5. section: Which section number (1-{num_sections}) this concept came from
+
+Document Sections:
+{sections_text}
+
+Return JSON format:
+{{
+  "concepts": [
+    {{"name": "...", "type": "...", "relevance": 0.8, "source_text": "...", "section": 1}}
+  ]
+}}
+
+Extract 15-30 high-quality concepts total across all sections. Prioritize:
+- Key terms and definitions that are central to the material
+- Named entities (people, places, organizations, tools)
+- Important processes, methods, or frameworks
+- Central themes and relationships between concepts
+- Avoid duplicates - if a concept appears in multiple sections, include it once with highest relevance
 """
 
 
@@ -104,7 +145,14 @@ class ConceptExtractionService:
         content_source_type: str = "text"
     ) -> List[Dict[str, Any]]:
         """
-        Extract concepts from chunks and store them.
+        Extract concepts from chunks using optimized batch processing.
+        
+        Architecture: Instead of 1 chunk → 1 LLM call (slow due to API latency),
+        we batch multiple chunks per call to minimize round-trips.
+        
+        Performance comparison (79 chunks):
+        - Old: 20 chunks × 1 call each = 20 calls in 2 rounds = ~22 seconds
+        - New: 79 chunks ÷ 8 per batch = 10 calls in 1 round = ~2-3 seconds
         
         Args:
             chunks: List of chunk dicts from ingestion
@@ -118,80 +166,136 @@ class ConceptExtractionService:
             List of stored concept records
         """
         trace_id = trace_id or str(uuid4())
+        total_chunks = len(chunks)
         
-        logger.info(f"Extracting concepts from {len(chunks)} chunks for doc {document_id}")
+        logger.info(f"Extracting concepts from {total_chunks} chunks for doc {document_id}")
         
-        # Limit chunks to process - use smaller limit for faster quiz generation
-        # Most quizzes need 10-20 questions, so 20 chunks is plenty
-        max_chunks_for_extraction = min(20, config.MAX_CHUNKS_PER_DOCUMENT)
-        if len(chunks) > max_chunks_for_extraction:
-            logger.info(f"Limiting chunk processing from {len(chunks)} to {max_chunks_for_extraction} for faster extraction")
-            chunks = chunks[:max_chunks_for_extraction]
+        # Group chunks into batches for efficient processing
+        # Each batch is processed in a single LLM call
+        batches = []
+        for i in range(0, total_chunks, CHUNKS_PER_BATCH):
+            batch = chunks[i:i + CHUNKS_PER_BATCH]
+            batches.append(batch)
         
-        # Process chunks in parallel with rate limiting
-        # Increased from 5 to 10 for faster processing (mini model handles it well)
-        semaphore = asyncio.Semaphore(10)
+        num_batches = len(batches)
+        logger.info(f"[BATCH] Processing {total_chunks} chunks in {num_batches} batches ({CHUNKS_PER_BATCH} chunks/batch)")
         
-        async def process_chunk(chunk):
+        # Process all batches in parallel with rate limiting
+        semaphore = asyncio.Semaphore(MAX_PARALLEL_BATCHES)
+        
+        async def process_batch(batch: List[Dict], batch_idx: int):
             async with semaphore:
-                return await self._extract_from_chunk(chunk, user_id, document_id, trace_id, content_source_type)
-
-        tasks = [process_chunk(chunk) for chunk in chunks]
+                return await self._extract_from_batch(
+                    batch, batch_idx, user_id, document_id, trace_id, content_source_type
+                )
+        
+        start_time = time.time()
+        tasks = [process_batch(batch, idx) for idx, batch in enumerate(batches)]
         results = await asyncio.gather(*tasks, return_exceptions=True)
+        batch_time = time.time() - start_time
+        
+        logger.info(f"[BATCH] All {num_batches} batches completed in {batch_time:.2f}s")
         
         # Flatten results, skip failures
         extracted_concepts_data = []
-        for result in results:
+        successful_batches = 0
+        for batch_idx, result in enumerate(results):
             if isinstance(result, list):
                 extracted_concepts_data.extend(result)
+                successful_batches += 1
             elif isinstance(result, Exception):
-                logger.error(f"Chunk extraction failed: {result}")
-            
+                logger.error(f"Batch {batch_idx} extraction failed: {result}")
+        
+        logger.info(f"[BATCH] {successful_batches}/{num_batches} batches succeeded, extracted {len(extracted_concepts_data)} raw concepts")
+        
         if not extracted_concepts_data:
             logger.warning(f"No concepts extracted for document {document_id}")
             return []
 
-        # Limit total concepts
-        if len(extracted_concepts_data) > config.MAX_CONCEPTS_PER_DOCUMENT:
-            # Sort by relevance and take top N
-            extracted_concepts_data.sort(key=lambda x: x.get("relevance_score", 0), reverse=True)
-            extracted_concepts_data = extracted_concepts_data[:config.MAX_CONCEPTS_PER_DOCUMENT]
+        # Deduplicate concepts by name (batch extraction may have overlaps)
+        seen_names = set()
+        unique_concepts = []
+        for concept in extracted_concepts_data:
+            name_lower = concept.get("name", "").lower().strip()
+            if name_lower and name_lower not in seen_names:
+                seen_names.add(name_lower)
+                unique_concepts.append(concept)
+        
+        logger.info(f"[BATCH] After deduplication: {len(unique_concepts)} unique concepts")
+        
+        # Limit total concepts and sort by relevance
+        if len(unique_concepts) > config.MAX_CONCEPTS_PER_DOCUMENT:
+            unique_concepts.sort(key=lambda x: x.get("relevance_score", 0), reverse=True)
+            unique_concepts = unique_concepts[:config.MAX_CONCEPTS_PER_DOCUMENT]
 
         # Generate embeddings for concepts (batch async)
-        concept_names = [c["name"] for c in extracted_concepts_data]
+        concept_names = [c["name"] for c in unique_concepts]
         if concept_names:
             embeddings = await self._get_embeddings(concept_names, user_id, trace_id)
-            for i, concept in enumerate(extracted_concepts_data):
+            for i, concept in enumerate(unique_concepts):
                 concept["embedding"] = embeddings[i]
         
         # Store in DB (with user_token for RLS)
-        stored_concepts = create_concepts(extracted_concepts_data, user_token)
+        stored_concepts = create_concepts(unique_concepts, user_token)
         logger.info(f"Stored {len(stored_concepts)} concepts for document {document_id}")
         
         return stored_concepts
     
-    async def _extract_from_chunk(
+    async def _extract_from_batch(
         self,
-        chunk: Dict[str, Any],
+        chunks: List[Dict[str, Any]],
+        batch_idx: int,
         user_id: str,
         document_id: str,
         trace_id: str,
         content_source_type: str = "text"
     ) -> List[Dict[str, Any]]:
-        """Extract concepts from a single chunk using the configured mini LLM model."""
+        """
+        Extract concepts from a batch of chunks in a single LLM call.
+        
+        This is the key optimization: by sending multiple chunks per call,
+        we amortize the API latency (~500-800ms) across more content.
+        
+        Args:
+            chunks: List of 1-8 chunk dicts to process together
+            batch_idx: Index of this batch (for logging)
+            user_id: UUID of the user
+            document_id: UUID of the parent document
+            trace_id: Trace ID for analytics
+            content_source_type: Source type for analytics
+            
+        Returns:
+            List of formatted concept dicts ready for DB storage
+        """
         start_time = time.time()
         model = config.LLM_MODEL_MINI
+        num_chunks = len(chunks)
+        
+        # Build sections text with numbered headers
+        sections_parts = []
+        chunk_id_map = {}  # section_num -> chunk_id for later reference
+        
+        for i, chunk in enumerate(chunks):
+            section_num = i + 1
+            chunk_id_map[section_num] = chunk.get("id")
+            content = chunk.get("content", "").strip()
+            if content:
+                sections_parts.append(f"--- Section {section_num} ---\n{content}")
+        
+        sections_text = "\n\n".join(sections_parts)
         
         # Build PostHog tracking kwargs
         posthog_kwargs = _build_posthog_kwargs(
             user_id=user_id,
             trace_id=trace_id,
             properties={
-                "call_type": "concept_extraction",
+                "call_type": "concept_extraction_batch",
                 "document_id": document_id,
                 "generation_mode": "enhanced",
                 "content_source_type": content_source_type,
                 "feature": "quiz_generation",
+                "batch_idx": batch_idx,
+                "chunks_in_batch": num_chunks,
             }
         )
         
@@ -199,8 +303,11 @@ class ConceptExtractionService:
             response = await self.client.chat.completions.create(
                 model=model,
                 messages=[
-                    {"role": "system", "content": "You are an expert educational content analyzer."},
-                    {"role": "user", "content": CONCEPT_EXTRACTION_PROMPT.format(chunk_text=chunk["content"])}
+                    {"role": "system", "content": "You are an expert educational content analyzer. Extract key concepts that would make excellent quiz questions."},
+                    {"role": "user", "content": BATCH_CONCEPT_EXTRACTION_PROMPT.format(
+                        num_sections=num_chunks,
+                        sections_text=sections_text
+                    )}
                 ],
                 response_format={"type": "json_object"},
                 temperature=0.3,
@@ -217,61 +324,73 @@ class ConceptExtractionService:
                 data = json.loads(content)
                 concepts = data.get("concepts", [])
             except json.JSONDecodeError:
-                logger.error(f"Failed to parse JSON from concept extraction: {content[:100]}...")
+                logger.error(f"Batch {batch_idx}: Failed to parse JSON: {content[:100]}...")
                 concepts = []
-                
-            # Track analytics (sync, fire-and-forget)
+            
+            # Track analytics
             cost = calculate_cost(model, usage.prompt_tokens, usage.completion_tokens)
             track_llm_call(
                 user_id=user_id,
                 trace_id=trace_id,
-                call_type="extraction",
+                call_type="extraction_batch",
                 model=model,
                 input_tokens=usage.prompt_tokens,
                 output_tokens=usage.completion_tokens,
                 latency_ms=latency_ms,
                 cost_usd=cost,
-                metadata={"chunk_id": chunk.get("id"), "document_id": document_id}
+                metadata={
+                    "batch_idx": batch_idx,
+                    "chunks_in_batch": num_chunks,
+                    "document_id": document_id,
+                    "concepts_extracted": len(concepts)
+                }
             )
             
-            # Format for DB
+            logger.debug(f"Batch {batch_idx}: extracted {len(concepts)} concepts in {latency_ms}ms")
+            
+            # Format concepts for DB storage
             formatted_concepts = []
             for c in concepts:
+                # Map section number back to chunk_id
+                section_num = c.get("section", 1)
+                chunk_id = chunk_id_map.get(section_num, chunks[0].get("id") if chunks else None)
+                
                 formatted_concepts.append({
                     "document_id": document_id,
                     "user_id": user_id,
-                    "chunk_id": chunk.get("id"),
+                    "chunk_id": chunk_id,
                     "name": c.get("name", "Unknown"),
                     "concept_type": c.get("type", "keyword"),
                     "relevance_score": float(c.get("relevance", 0.5)),
                     "source_text": c.get("source_text", ""),
-                    "metadata": {}
+                    "metadata": {"batch_idx": batch_idx}
                 })
-                
+            
             return formatted_concepts
             
         except Exception as e:
-            logger.error(f"Error extracting concepts from chunk: {str(e)}")
-            # Track failure to Supabase (sync)
+            logger.error(f"Batch {batch_idx}: Error extracting concepts: {str(e)}")
+            # Track failure
             track_llm_call(
                 user_id=user_id,
                 trace_id=trace_id,
-                call_type="extraction",
+                call_type="extraction_batch",
                 model=model,
                 input_tokens=0,
                 output_tokens=0,
                 latency_ms=int((time.time() - start_time) * 1000),
                 success=False,
-                error_message=str(e)
+                error_message=str(e),
+                metadata={"batch_idx": batch_idx, "chunks_in_batch": num_chunks}
             )
-            # Capture to PostHog Error Tracking for proper stack traces
             capture_exception(
                 exception=e,
                 distinct_id=user_id,
                 properties={
                     "generation_mode": "enhanced",
-                    "stage": "concept_extraction",
+                    "stage": "concept_extraction_batch",
                     "model": model,
+                    "batch_idx": batch_idx,
                     "content_source_type": content_source_type,
                     "trace_id": trace_id,
                 }
