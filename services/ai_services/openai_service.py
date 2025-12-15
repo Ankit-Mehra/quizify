@@ -42,6 +42,7 @@ from services.ai_services.prompt_smart import (
 from services.ai_services.prompts import build_quiz_prompt_mixed
 from services.posthog_service import get_posthog_client, is_posthog_enabled, is_posthog_wrapper_active
 from services.logger import ai_logger as logger
+from config import config
 
 logger.debug("OpenAI service initialized")
 load_dotenv()
@@ -400,7 +401,7 @@ async def generate_quiz_for_type(
     # Use retry wrapper for transient errors (rate limits, connection issues)
     response = await _retry_with_backoff(
         lambda: client.chat.completions.create(
-            model="gpt-4o",
+            model=config.LLM_MODEL_PRIMARY,
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
             **posthog_kwargs
@@ -465,7 +466,7 @@ async def generate_quiz_async(
         "num_questions": num_questions,
         "content_length": len(text),
         "feature": "quiz_generation",
-        "model": "gpt-4o-mini",
+        "model": config.LLM_MODEL_MINI,
         "generation_mode": generation_mode,
         "quiz_type": generation_mode,  # Epic 5.1: Add quiz_type (standard/enhanced)
     }
@@ -485,7 +486,7 @@ async def generate_quiz_async(
     # Use retry wrapper for transient errors (rate limits, connection issues)
     response = await _retry_with_backoff(
         lambda: client.chat.completions.create(
-            model="gpt-4o-mini",
+            model=config.LLM_MODEL_MINI,
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
             **posthog_kwargs

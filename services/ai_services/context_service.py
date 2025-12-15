@@ -114,9 +114,10 @@ class ContextService:
         if not aggregated_parts:
             logger.warning("No content found for matching question aggregation")
             return ""
-            
-        context = "Use the following sources to create 4 matching pairs:\n\n"
-        context += "\n\n".join(aggregated_parts)
+        
+        # Join the content parts - do NOT include prompt instructions
+        # The prompt template already has instructions, context should be pure content
+        context = "\n\n".join(aggregated_parts)
         
         logger.debug(f"Aggregated context from {len(aggregated_parts)} concepts for matching")
         return context

@@ -1,6 +1,8 @@
 import json
 import time
 from typing import Dict, Any, List, Tuple
+
+from config import config
 from services.ai_services.openai_service import get_openai_client, _build_posthog_kwargs
 from services.db_services.supabase_llm_analytics import track_llm_call
 from services.posthog_service import capture_exception
@@ -20,17 +22,25 @@ Context:
 
 Tasks:
 1. VERIFY: Is the answer factually accurate and supported by the context?
-2. EXPLAIN: Why is the correct answer right? Why are other options wrong?
+2. EXPLAIN: Write an educational explanation that:
+   - Explains WHY the correct answer is right (with reasoning, not just restating)
+   - Provides context about the underlying concept
+   - Briefly explains why incorrect options are wrong (if applicable)
+   - Helps the learner understand, not just memorize
 
 Return JSON:
 {{
     "is_accurate": true/false,
     "confidence_score": 0.0-1.0,
     "issues": [],
-    "explanation": "Clear explanation of why the correct answer is right, referencing the context."
+    "explanation": "Educational explanation that teaches the concept, not just states the answer."
 }}
 
 Be strict on accuracy. If the answer isn't clearly supported by context, set is_accurate=false.
+
+GOOD EXPLANATION: "The mitochondria is called the powerhouse of the cell because it produces ATP through cellular respiration. The nucleus stores DNA but doesn't generate energy, while ribosomes synthesize proteins."
+
+BAD EXPLANATION: "The correct answer is mitochondria because mitochondria is the powerhouse of the cell."
 """
 
 # Separate prompt for MATCHING questions (different structure: left/right/indices)
@@ -52,19 +62,30 @@ Tasks:
    - DO NOT require pairs to appear verbatim in the context
    - Only reject if a pair is FACTUALLY INCORRECT (contradicts known facts)
    - If the pairs make educational sense for the topic, ACCEPT them
-2. EXPLAIN: Briefly explain why these pairs are good matches.
+
+2. EXPLAIN: Write an educational explanation that:
+   - Explains the MEANING or SIGNIFICANCE of each matching pair
+   - Provides context about WHY each pair belongs together
+   - Helps the learner understand the underlying concept, not just memorize the match
+   - References relevant details from the source context
+   - DO NOT just restate "X matches with Y" - explain the relationship
 
 Return JSON:
 {{
     "is_accurate": true,
     "confidence_score": 0.85,
     "issues": [],
-    "explanation": "Clear explanation of why the matching pairs are valid."
+    "explanation": "Detailed educational explanation of each pair's relationship and significance."
 }}
 
 CRITICAL: Default to is_accurate=true unless pairs are genuinely wrong.
 Accept paraphrased, inferred, or educationally reasonable matches.
 The goal is to verify FACTUAL correctness, not exact text matching.
+
+EXPLANATION EXAMPLE (for a geography matching question):
+"Paris is the capital of France, serving as the country's political and cultural center since the 10th century. Berlin became Germany's capital after reunification in 1990, though it had previously served as capital of Prussia. Madrid has been Spain's capital since 1561 when Philip II moved the court there. Rome, known as the 'Eternal City,' has been Italy's capital since 1871 following Italian unification."
+
+DO NOT write: "Paris matches with France because Paris is the capital of France."
 """
 
 # Legacy prompts kept for backward compatibility (individual calls)
@@ -153,7 +174,7 @@ class ExplanationService:
             Tuple of (is_valid, confidence_score, issues_list, explanation_text)
         """
         start_time = time.time()
-        model = "gpt-4o-mini"
+        model = config.LLM_MODEL_MINI
         
         try:
             # Detect question type and build appropriate prompt
@@ -280,7 +301,7 @@ class ExplanationService:
                 properties={
                     "generation_mode": "enhanced",
                     "stage": "verify_and_explain",
-                    "model": "gpt-4o-mini",
+                    "model": config.LLM_MODEL_MINI,
                     "content_source_type": content_source_type,
                     "trace_id": trace_id,
                 }
@@ -302,7 +323,7 @@ class ExplanationService:
         Note: Consider using verify_and_explain() instead for better performance.
         """
         start_time = time.time()
-        model = "gpt-4o-mini" # Use mini for verification to save cost/time
+        model = config.LLM_MODEL_MINI
         
         try:
             prompt = VERIFICATION_PROMPT.format(
@@ -370,7 +391,7 @@ class ExplanationService:
                 properties={
                     "generation_mode": "enhanced",
                     "stage": "verification",
-                    "model": "gpt-4o-mini",
+                    "model": config.LLM_MODEL_MINI,
                     "content_source_type": content_source_type,
                     "trace_id": trace_id,
                 }
@@ -390,7 +411,7 @@ class ExplanationService:
         Generate detailed explanation string.
         """
         start_time = time.time()
-        model = "gpt-4o-mini" 
+        model = config.LLM_MODEL_MINI
         
         try:
             # Prepare distractors string
@@ -471,7 +492,7 @@ class ExplanationService:
                 properties={
                     "generation_mode": "enhanced",
                     "stage": "explanation_generation",
-                    "model": "gpt-4o-mini",
+                    "model": config.LLM_MODEL_MINI,
                     "content_source_type": content_source_type,
                     "trace_id": trace_id,
                 }
