@@ -190,6 +190,10 @@ OUTPUT REQUIREMENTS (STRICTLY FOLLOW):
    - [0,1,2,3] means left[0]→right[0], left[1]→right[1], etc.
    - [2,0,3,1] means left[0]→right[2], left[1]→right[0], etc.
 5. "confidence_score" - A float between 0 and 1
+6. "explanation" - An educational explanation of each pair (2-4 sentences total)
+   - Explain WHY each pair belongs together
+   - Use your knowledge to provide educational context
+   - DO NOT just list "X matches Y" - explain the relationship
 
 NEVER return null for any field. All arrays must have exactly 4 items.
 
@@ -199,7 +203,8 @@ JSON FORMAT (copy this structure exactly):
   "left": ["Einstein", "Newton", "Curie", "Darwin"],
   "right": ["Relativity", "Gravity", "Radioactivity", "Evolution"],
   "correct_answer": [0, 1, 2, 3],
-  "confidence_score": 0.95
+  "confidence_score": 0.95,
+  "explanation": "Einstein developed the theory of relativity, revolutionizing our understanding of space and time. Newton formulated the law of universal gravitation. Marie Curie pioneered research on radioactivity, discovering polonium and radium. Darwin proposed the theory of evolution by natural selection."
 }}
 """
 

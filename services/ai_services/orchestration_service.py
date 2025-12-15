@@ -427,30 +427,12 @@ class QuizOrchestrationService:
                 }
             )
             
-            # Verify + Explain matching question using dedicated matching prompt
-            # This generates educational explanations, not just "X matches with Y"
-            is_valid, confidence, issues, explanation = await self.explanation_service.verify_and_explain(
-                question_data=result,
-                context=context,
-                user_id=user_id,
-                trace_id=trace_id,
-                content_source_type=content_source_type
-            )
+            # For matching questions, explanation is generated inline during generation (faster)
+            # No separate verification call needed - we trust the primary model
+            explanation = result.get("explanation", "")
             
-            # For matching, we're lenient on verification (structure validation is sufficient)
-            # but we always want a useful educational explanation
-            if not is_valid:
-                logger.warning(f"Matching question verification flagged issues (proceeding anyway): {issues}")
-            
-            # Check if explanation is unhelpful (LLM said "can't verify" instead of explaining)
-            unhelpful_phrases = ["cannot verify", "can't verify", "unable to verify", 
-                                 "context doesn't contain", "context does not contain",
-                                 "not provided", "not present", "not included"]
-            explanation_lower = explanation.lower() if explanation else ""
-            is_unhelpful = any(phrase in explanation_lower for phrase in unhelpful_phrases) or len(explanation) < 50
-            
-            if is_unhelpful:
-                # Build a simple but useful fallback explanation from the pairs
+            # Fallback if generation didn't include explanation
+            if not explanation or len(explanation) < 30:
                 left = result.get("left", [])
                 right = result.get("right", [])
                 correct_answer = result.get("correct_answer", [])
@@ -463,7 +445,7 @@ class QuizOrchestrationService:
                             pairs_desc.append(f"{left_item} corresponds to {right_item}")
                     
                     explanation = f"In this matching exercise: {'; '.join(pairs_desc)}. Understanding these relationships helps reinforce key concepts from the material."
-                    logger.info(f"Used fallback explanation for matching question due to unhelpful LLM response")
+                    logger.info(f"Used fallback explanation for matching question")
             
             logger.info(f"Matching question generated successfully with {len(result.get('left', []))} pairs")
             
