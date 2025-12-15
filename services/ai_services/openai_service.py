@@ -26,6 +26,7 @@ from typing import List, Optional, Dict, Any
 from uuid import uuid4
 
 from dotenv import load_dotenv
+import httpx
 from httpx import Timeout
 from openai import AsyncOpenAI as BaseAsyncOpenAI, RateLimitError, APIConnectionError, APITimeoutError
 from pydantic import ValidationError
@@ -170,15 +171,27 @@ def _create_openai_client() -> BaseAsyncOpenAI:
         if posthog_client:
             # Import PostHog wrapper only when needed
             from posthog.ai.openai import AsyncOpenAI as PostHogAsyncOpenAI
-            logger.info("Using PostHog-wrapped AsyncOpenAI client for LLM analytics (timeout: 90s read)")
+            logger.info("Using PostHog-wrapped AsyncOpenAI client for LLM analytics (timeout: 90s read, max_connections: 20)")
+            # Configure httpx with higher connection limits for parallel batch requests
+            # Default is 10 connections per host which serializes parallel calls
+            http_client = httpx.AsyncClient(
+                timeout=LLM_TIMEOUT,
+                limits=httpx.Limits(max_connections=50, max_keepalive_connections=20)
+            )
             return PostHogAsyncOpenAI(
                 api_key=OPENAI_API_KEY,
                 posthog_client=posthog_client,
-                timeout=LLM_TIMEOUT
+                http_client=http_client
             )
     
-    logger.info("Using standard AsyncOpenAI client (PostHog analytics disabled, timeout: 90s read)")
-    return BaseAsyncOpenAI(api_key=OPENAI_API_KEY, timeout=LLM_TIMEOUT)
+    logger.info("Using standard AsyncOpenAI client (PostHog analytics disabled, timeout: 90s read, max_connections: 20)")
+    # Configure httpx with higher connection limits for parallel batch requests
+    # Default is 10 connections per host which serializes parallel calls
+    http_client = httpx.AsyncClient(
+        timeout=LLM_TIMEOUT,
+        limits=httpx.Limits(max_connections=50, max_keepalive_connections=20)
+    )
+    return BaseAsyncOpenAI(api_key=OPENAI_API_KEY, http_client=http_client)
 
 
 def get_openai_client() -> BaseAsyncOpenAI:
