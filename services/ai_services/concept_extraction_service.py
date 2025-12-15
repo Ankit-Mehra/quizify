@@ -15,7 +15,7 @@ from config import config
 
 # Configuration for batch extraction optimization
 # Process multiple chunks per LLM call to minimize API latency overhead
-# 8 chunks × ~512 tokens = ~4K tokens per call (well within gpt-4.1-mini's 128K context)
+# 8 chunks × ~512 tokens = ~4K tokens per call (well within mini model's 128K context)
 CHUNKS_PER_BATCH = 8
 
 # Maximum parallel batches to avoid rate limiting
@@ -212,6 +212,10 @@ class ConceptExtractionService:
             logger.warning(f"No concepts extracted for document {document_id}")
             return []
 
+        # Sort by relevance BEFORE deduplication to ensure highest-relevance instance is kept
+        # (per prompt instruction: "include it once with highest relevance")
+        extracted_concepts_data.sort(key=lambda x: x.get("relevance_score", 0), reverse=True)
+        
         # Deduplicate concepts by name (batch extraction may have overlaps)
         seen_names = set()
         unique_concepts = []
@@ -257,7 +261,7 @@ class ConceptExtractionService:
         we amortize the API latency (~500-800ms) across more content.
         
         Args:
-            chunks: List of 1-8 chunk dicts to process together
+            chunks: List of up to 8 chunk dicts (last batch may have fewer)
             batch_idx: Index of this batch (for logging)
             user_id: UUID of the user
             document_id: UUID of the parent document
@@ -279,8 +283,9 @@ class ConceptExtractionService:
             section_num = i + 1
             chunk_id_map[section_num] = chunk.get("id")
             content = chunk.get("content", "").strip()
-            if content:
-                sections_parts.append(f"--- Section {section_num} ---\n{content}")
+            if not content:
+                continue  # Skip empty chunks to avoid malformed section headers
+            sections_parts.append(f"--- Section {section_num} ---\n{content}")
         
         sections_text = "\n\n".join(sections_parts)
         
@@ -346,14 +351,14 @@ class ConceptExtractionService:
                 }
             )
             
-            logger.debug(f"Batch {batch_idx}: extracted {len(concepts)} concepts in {latency_ms}ms")
+            logger.debug("Batch %s: extracted %s concepts in %sms", batch_idx, len(concepts), latency_ms)
             
             # Format concepts for DB storage
             formatted_concepts = []
             for c in concepts:
-                # Map section number back to chunk_id
+                # Map section number back to chunk_id (fallback to section 1 if invalid)
                 section_num = c.get("section", 1)
-                chunk_id = chunk_id_map.get(section_num, chunks[0].get("id") if chunks else None)
+                chunk_id = chunk_id_map.get(section_num, chunk_id_map.get(1, chunks[0].get("id") if chunks else None))
                 
                 formatted_concepts.append({
                     "document_id": document_id,
