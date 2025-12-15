@@ -171,7 +171,7 @@ Return this exact JSON format:
 """
 
 RAG_PROMPT_MATCHING = """You are an expert educational content creator.
-Create a {difficulty} difficulty matching question.
+Create a {difficulty} difficulty matching question at the {bloom_level} Bloom's Taxonomy level.
 
 Topic: {concept_name}
 
