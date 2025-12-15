@@ -76,7 +76,7 @@ Return JSON format:
   ]
 }}
 
-Extract 20-40 high-quality concepts total across all sections. Prioritize:
+Extract 30-50 high-quality concepts total across all sections (aim for 4-6 per section). Prioritize:
 - Key terms and definitions that are central to the material
 - Named entities (people, places, organizations, tools)
 - Important processes, methods, or frameworks
