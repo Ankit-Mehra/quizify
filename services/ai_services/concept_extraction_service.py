@@ -15,14 +15,14 @@ from config import config
 
 # Configuration for batch extraction optimization
 # Process multiple chunks per LLM call to minimize API latency overhead
-# Larger batches = fewer API calls = less rate limiting impact
-# 16 chunks × ~512 tokens = ~8K tokens per call (well within mini model's 128K context)
-CHUNKS_PER_BATCH = 16
+# Smaller batches = more focused extraction = better quality concepts
+# 8 chunks × ~512 tokens = ~4K tokens per call (well within mini model's 128K context)
+CHUNKS_PER_BATCH = 8
 
-# Maximum parallel batches - reduced to avoid OpenAI rate limiting
-# Testing showed 10 parallel requests don't actually run concurrently
-# With 16 chunks/batch and 5 parallel: 80 chunks in 5 batches
-MAX_PARALLEL_BATCHES = 5
+# Maximum parallel batches - with httpx connection limits fixed, these run truly parallel
+# 10 batches × 8 chunks = 80 chunks processed simultaneously
+# Your Tier 1 limits: 500 RPM, 200K TPM - plenty of headroom for 10 parallel requests
+MAX_PARALLEL_BATCHES = 10
 
 
 CONCEPT_EXTRACTION_PROMPT = """
