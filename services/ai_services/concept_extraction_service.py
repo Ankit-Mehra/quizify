@@ -15,12 +15,14 @@ from config import config
 
 # Configuration for batch extraction optimization
 # Process multiple chunks per LLM call to minimize API latency overhead
-# 8 chunks × ~512 tokens = ~4K tokens per call (well within mini model's 128K context)
-CHUNKS_PER_BATCH = 8
+# Larger batches = fewer API calls = less rate limiting impact
+# 16 chunks × ~512 tokens = ~8K tokens per call (well within mini model's 128K context)
+CHUNKS_PER_BATCH = 16
 
-# Maximum parallel batches to avoid rate limiting
-# With 8 chunks/batch and 10 parallel: 80 chunks processed in ~2-3 seconds
-MAX_PARALLEL_BATCHES = 10
+# Maximum parallel batches - reduced to avoid OpenAI rate limiting
+# Testing showed 10 parallel requests don't actually run concurrently
+# With 16 chunks/batch and 5 parallel: 80 chunks in 5 batches
+MAX_PARALLEL_BATCHES = 5
 
 
 CONCEPT_EXTRACTION_PROMPT = """
@@ -74,7 +76,7 @@ Return JSON format:
   ]
 }}
 
-Extract 15-30 high-quality concepts total across all sections. Prioritize:
+Extract 20-40 high-quality concepts total across all sections. Prioritize:
 - Key terms and definitions that are central to the material
 - Named entities (people, places, organizations, tools)
 - Important processes, methods, or frameworks
