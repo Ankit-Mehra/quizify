@@ -426,29 +426,22 @@ class QuizOrchestrationService:
                 }
             )
             
-            # Skip verification for matching questions - structure validation is sufficient
-            # Matching questions already pass strict structure validation above
-            # Verification LLM was being too strict and rejecting valid questions
+            # Verify + Explain matching question using dedicated matching prompt
+            # This generates educational explanations, not just "X matches with Y"
+            is_valid, confidence, issues, explanation = await self.explanation_service.verify_and_explain(
+                question_data=result,
+                context=context,
+                user_id=user_id,
+                trace_id=trace_id,
+                content_source_type=content_source_type
+            )
+            
+            # For matching, we're lenient on verification (structure validation is sufficient)
+            # but we always want the educational explanation
+            if not is_valid:
+                logger.warning(f"Matching question verification flagged issues (proceeding anyway): {issues}")
+            
             logger.info(f"Matching question generated successfully with {len(result.get('left', []))} pairs")
-            
-            # Build explanation from the pairs themselves
-            left = result.get("left", [])
-            right = result.get("right", [])
-            correct_answer = result.get("correct_answer", [])
-            
-            if left and right and correct_answer and len(left) == len(right) == len(correct_answer):
-                pairs_explanation = []
-                for left_item, idx in zip(left, correct_answer):
-                    if 0 <= idx < len(right):
-                        pairs_explanation.append(f"'{left_item}' matches with '{right[idx]}'")
-                
-                # Only use pairs explanation if we have valid pairs
-                if pairs_explanation:
-                    explanation = "Correct matches: " + "; ".join(pairs_explanation) + "."
-                else:
-                    explanation = "Match each term on the left with the corresponding term on the right."
-            else:
-                explanation = "Match each term on the left with the corresponding term on the right."
             
             # Format Result
             result["explanation"] = explanation
