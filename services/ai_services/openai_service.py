@@ -182,14 +182,14 @@ def _create_openai_client() -> BaseAsyncOpenAI:
         if posthog_client:
             # Import PostHog wrapper only when needed
             from posthog.ai.openai import AsyncOpenAI as PostHogAsyncOpenAI
-            logger.info("Using PostHog-wrapped AsyncOpenAI client for LLM analytics (timeout: 90s read, max_connections: 20)")
+            logger.info("Using PostHog-wrapped AsyncOpenAI client for LLM analytics (timeout: 90s read, max_connections: 50, keepalive: 20)")
             return PostHogAsyncOpenAI(
                 api_key=OPENAI_API_KEY,
                 posthog_client=posthog_client,
                 http_client=_http_client
             )
     
-    logger.info("Using standard AsyncOpenAI client (PostHog analytics disabled, timeout: 90s read, max_connections: 20)")
+    logger.info("Using standard AsyncOpenAI client (PostHog analytics disabled, timeout: 90s read, max_connections: 50, keepalive: 20)")
     return BaseAsyncOpenAI(api_key=OPENAI_API_KEY, http_client=_http_client)
 
 
