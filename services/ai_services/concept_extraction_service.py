@@ -44,7 +44,7 @@ Extract 3-8 high-quality concepts. Prioritize:
 
 class ConceptExtractionService:
     """
-    Service for extracting key concepts from document chunks using GPT-4o-mini.
+    Service for extracting key concepts from document chunks using LLM.
     
     This replaces heavy NLP libraries (spaCy, KeyBERT) with LLM-based extraction
     for zero memory overhead and better context-aware results.
@@ -129,7 +129,7 @@ class ConceptExtractionService:
             chunks = chunks[:max_chunks_for_extraction]
         
         # Process chunks in parallel with rate limiting
-        # Increased from 5 to 10 for faster processing (gpt-4o-mini handles it well)
+        # Increased from 5 to 10 for faster processing (mini model handles it well)
         semaphore = asyncio.Semaphore(10)
         
         async def process_chunk(chunk):
@@ -178,9 +178,9 @@ class ConceptExtractionService:
         trace_id: str,
         content_source_type: str = "text"
     ) -> List[Dict[str, Any]]:
-        """Extract concepts from a single chunk using GPT-4o-mini."""
+        """Extract concepts from a single chunk using the configured mini LLM model."""
         start_time = time.time()
-        model = "gpt-4o-mini"
+        model = config.LLM_MODEL_MINI
         
         # Build PostHog tracking kwargs
         posthog_kwargs = _build_posthog_kwargs(

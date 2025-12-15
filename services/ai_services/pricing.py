@@ -9,6 +9,9 @@ from typing import Dict
 # Pricing per 1K tokens (as of Dec 2024)
 # Source: https://openai.com/pricing
 LLM_PRICING: Dict[str, Dict[str, float]] = {
+    "gpt-4.1": {"input": 0.002, "output": 0.008},
+    "gpt-4.1-mini": {"input": 0.0004, "output": 0.0016},
+    # Legacy models (keep for backward compatibility)
     "gpt-4o": {"input": 0.0025, "output": 0.01},
     "gpt-4o-mini": {"input": 0.00015, "output": 0.0006},
     "text-embedding-3-small": {"input": 0.00002, "output": 0},

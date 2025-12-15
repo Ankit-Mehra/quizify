@@ -3,6 +3,7 @@ import time
 import random
 from typing import Dict, Any, Optional, List
 
+from config import config
 from services.ai_services.openai_service import get_openai_client, _build_posthog_kwargs
 from services.ai_services.context_service import ContextService
 from services.ai_services.pricing import calculate_cost
@@ -126,7 +127,7 @@ class QuizOrchestrationService:
         )
         
         # 4. Call LLM with PostHog tracking
-        model = "gpt-4o"  # Use stronger model for generation
+        model = config.LLM_MODEL_PRIMARY
         posthog_kwargs = _build_posthog_kwargs(
             user_id=user_id,
             trace_id=trace_id,
@@ -229,7 +230,7 @@ class QuizOrchestrationService:
                 user_id=user_id,
                 trace_id=trace_id,
                 call_type="generation",
-                model="gpt-4o",
+                model=config.LLM_MODEL_PRIMARY,
                 input_tokens=0,
                 output_tokens=0,
                 latency_ms=int((time.time() - start_time) * 1000),
@@ -244,7 +245,7 @@ class QuizOrchestrationService:
                 properties={
                     "generation_mode": "enhanced",
                     "stage": "rag_question_generation",
-                    "model": "gpt-4o",
+                    "model": config.LLM_MODEL_PRIMARY,
                     "question_type": question_type,
                     "content_source_type": content_source_type,
                     "trace_id": trace_id,
@@ -365,7 +366,7 @@ class QuizOrchestrationService:
         )
         
         # Call LLM
-        model = "gpt-4o"
+        model = config.LLM_MODEL_PRIMARY
         posthog_kwargs = _build_posthog_kwargs(
             user_id=user_id,
             trace_id=trace_id,
@@ -462,7 +463,7 @@ class QuizOrchestrationService:
                 user_id=user_id,
                 trace_id=trace_id,
                 call_type="matching_generation",
-                model="gpt-4o",
+                model=config.LLM_MODEL_PRIMARY,
                 input_tokens=0,
                 output_tokens=0,
                 latency_ms=int((time.time() - start_time) * 1000),
@@ -476,7 +477,7 @@ class QuizOrchestrationService:
                 properties={
                     "generation_mode": "enhanced",
                     "stage": "rag_matching_generation",
-                    "model": "gpt-4o",
+                    "model": config.LLM_MODEL_PRIMARY,
                     "question_type": "matching",
                     "content_source_type": content_source_type,
                     "trace_id": trace_id,

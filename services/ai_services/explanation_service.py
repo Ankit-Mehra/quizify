@@ -1,6 +1,8 @@
 import json
 import time
 from typing import Dict, Any, List, Tuple
+
+from config import config
 from services.ai_services.openai_service import get_openai_client, _build_posthog_kwargs
 from services.db_services.supabase_llm_analytics import track_llm_call
 from services.posthog_service import capture_exception
@@ -172,7 +174,7 @@ class ExplanationService:
             Tuple of (is_valid, confidence_score, issues_list, explanation_text)
         """
         start_time = time.time()
-        model = "gpt-4o-mini"
+        model = config.LLM_MODEL_MINI
         
         try:
             # Detect question type and build appropriate prompt
@@ -299,7 +301,7 @@ class ExplanationService:
                 properties={
                     "generation_mode": "enhanced",
                     "stage": "verify_and_explain",
-                    "model": "gpt-4o-mini",
+                    "model": config.LLM_MODEL_MINI,
                     "content_source_type": content_source_type,
                     "trace_id": trace_id,
                 }
@@ -321,7 +323,7 @@ class ExplanationService:
         Note: Consider using verify_and_explain() instead for better performance.
         """
         start_time = time.time()
-        model = "gpt-4o-mini" # Use mini for verification to save cost/time
+        model = config.LLM_MODEL_MINI
         
         try:
             prompt = VERIFICATION_PROMPT.format(
@@ -389,7 +391,7 @@ class ExplanationService:
                 properties={
                     "generation_mode": "enhanced",
                     "stage": "verification",
-                    "model": "gpt-4o-mini",
+                    "model": config.LLM_MODEL_MINI,
                     "content_source_type": content_source_type,
                     "trace_id": trace_id,
                 }
@@ -409,7 +411,7 @@ class ExplanationService:
         Generate detailed explanation string.
         """
         start_time = time.time()
-        model = "gpt-4o-mini" 
+        model = config.LLM_MODEL_MINI
         
         try:
             # Prepare distractors string
@@ -490,7 +492,7 @@ class ExplanationService:
                 properties={
                     "generation_mode": "enhanced",
                     "stage": "explanation_generation",
-                    "model": "gpt-4o-mini",
+                    "model": config.LLM_MODEL_MINI,
                     "content_source_type": content_source_type,
                     "trace_id": trace_id,
                 }

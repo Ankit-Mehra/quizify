@@ -59,6 +59,16 @@ class Config:
         "Mozilla/5.0 (compatible; QuizifyBot/1.0; +https://quizify.app/bot)"
     )
     
+    # ============================================================================
+    # AI Model Configuration
+    # ============================================================================
+    # Centralized model selection - change models in ONE place
+    # Primary model: Used for quiz generation (higher quality, slightly more expensive)
+    # Mini model: Used for verification, explanation, concept extraction (cost-efficient)
+    
+    LLM_MODEL_PRIMARY: str = os.getenv("LLM_MODEL_PRIMARY", "gpt-4.1")
+    LLM_MODEL_MINI: str = os.getenv("LLM_MODEL_MINI", "gpt-4.1-mini")
+    
     # LlamaIndex & RAG Configuration
     EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
     EMBEDDING_DIMENSIONS: int = int(os.getenv("EMBEDDING_DIMENSIONS", "1536"))
