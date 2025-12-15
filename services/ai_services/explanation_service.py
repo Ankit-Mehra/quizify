@@ -60,14 +60,14 @@ Tasks:
    - Each pair should represent a reasonable relationship (term→definition, concept→example, cause→effect, etc.)
    - Pairs can be derived from, summarized from, or logically related to the context
    - DO NOT require pairs to appear verbatim in the context
-   - Only reject if a pair is FACTUALLY INCORRECT (contradicts known facts)
-   - If the pairs make educational sense for the topic, ACCEPT them
+   - Only mark is_accurate=false if a pair is FACTUALLY INCORRECT (contradicts known facts)
+   - If you cannot verify from context alone, but pairs seem reasonable, mark is_accurate=true
 
-2. EXPLAIN: Write an educational explanation that:
-   - Explains the MEANING or SIGNIFICANCE of each matching pair
+2. EXPLAIN: ALWAYS write an educational explanation that:
+   - Explains each matching pair's relationship and significance
    - Provides context about WHY each pair belongs together
-   - Helps the learner understand the underlying concept, not just memorize the match
-   - References relevant details from the source context
+   - Uses your general knowledge if context is limited
+   - NEVER say "I cannot verify" or "context doesn't contain" - just explain the pairs
    - DO NOT just restate "X matches with Y" - explain the relationship
 
 Return JSON:
@@ -75,17 +75,20 @@ Return JSON:
     "is_accurate": true,
     "confidence_score": 0.85,
     "issues": [],
-    "explanation": "Detailed educational explanation of each pair's relationship and significance."
+    "explanation": "Educational explanation of each pair's relationship."
 }}
 
-CRITICAL: Default to is_accurate=true unless pairs are genuinely wrong.
-Accept paraphrased, inferred, or educationally reasonable matches.
-The goal is to verify FACTUAL correctness, not exact text matching.
+CRITICAL RULES:
+- ALWAYS set is_accurate=true unless pairs are PROVABLY WRONG
+- ALWAYS provide a useful explanation, even if context is limited
+- Use your knowledge to explain educational concepts
+- NEVER return an explanation that says you can't verify - that's not helpful to learners
 
-EXPLANATION EXAMPLE (for a geography matching question):
-"Paris is the capital of France, serving as the country's political and cultural center since the 10th century. Berlin became Germany's capital after reunification in 1990, though it had previously served as capital of Prussia. Madrid has been Spain's capital since 1561 when Philip II moved the court there. Rome, known as the 'Eternal City,' has been Italy's capital since 1871 following Italian unification."
+GOOD EXPLANATION EXAMPLE:
+"Project initiation involves defining the project scope and objectives before work begins. Task breakdown (WBS) divides complex projects into manageable components. Constraints like time, budget, and resources limit project options and require trade-offs. A tracking system monitors progress against plans, enabling timely corrective actions."
 
-DO NOT write: "Paris matches with France because Paris is the capital of France."
+BAD EXPLANATION (NEVER DO THIS):
+"I cannot verify these matches because the context doesn't contain the specific definitions."
 """
 
 # Legacy prompts kept for backward compatibility (individual calls)

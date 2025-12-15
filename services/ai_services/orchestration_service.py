@@ -438,9 +438,32 @@ class QuizOrchestrationService:
             )
             
             # For matching, we're lenient on verification (structure validation is sufficient)
-            # but we always want the educational explanation
+            # but we always want a useful educational explanation
             if not is_valid:
                 logger.warning(f"Matching question verification flagged issues (proceeding anyway): {issues}")
+            
+            # Check if explanation is unhelpful (LLM said "can't verify" instead of explaining)
+            unhelpful_phrases = ["cannot verify", "can't verify", "unable to verify", 
+                                 "context doesn't contain", "context does not contain",
+                                 "not provided", "not present", "not included"]
+            explanation_lower = explanation.lower() if explanation else ""
+            is_unhelpful = any(phrase in explanation_lower for phrase in unhelpful_phrases) or len(explanation) < 50
+            
+            if is_unhelpful:
+                # Build a simple but useful fallback explanation from the pairs
+                left = result.get("left", [])
+                right = result.get("right", [])
+                correct_answer = result.get("correct_answer", [])
+                
+                if left and right and correct_answer:
+                    pairs_desc = []
+                    for i, left_item in enumerate(left):
+                        if i < len(correct_answer) and correct_answer[i] < len(right):
+                            right_item = right[correct_answer[i]]
+                            pairs_desc.append(f"{left_item} corresponds to {right_item}")
+                    
+                    explanation = f"In this matching exercise: {'; '.join(pairs_desc)}. Understanding these relationships helps reinforce key concepts from the material."
+                    logger.info(f"Used fallback explanation for matching question due to unhelpful LLM response")
             
             logger.info(f"Matching question generated successfully with {len(result.get('left', []))} pairs")
             
