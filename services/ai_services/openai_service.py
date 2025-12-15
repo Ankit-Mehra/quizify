@@ -154,6 +154,7 @@ async def _retry_with_backoff(coro_factory, max_retries: int = LLM_MAX_RETRIES):
 # Global client instance with thread-safe initialization
 # Note: Client type is determined at first initialization and persists until restart
 _client: Optional[BaseAsyncOpenAI] = None
+_http_client: Optional[httpx.AsyncClient] = None
 _client_lock = threading.Lock()
 
 
@@ -165,33 +166,31 @@ def _create_openai_client() -> BaseAsyncOpenAI:
     returns the standard AsyncOpenAI client.
     
     Both clients are configured with LLM_TIMEOUT to prevent hung requests.
+    The httpx client is stored globally for proper lifecycle management.
     """
+    global _http_client
+    
+    # Create httpx client with higher connection limits for parallel batch requests
+    # Default is 10 connections per host which serializes parallel calls
+    _http_client = httpx.AsyncClient(
+        timeout=LLM_TIMEOUT,
+        limits=httpx.Limits(max_connections=50, max_keepalive_connections=20)
+    )
+    
     if is_posthog_enabled():
         posthog_client = get_posthog_client()
         if posthog_client:
             # Import PostHog wrapper only when needed
             from posthog.ai.openai import AsyncOpenAI as PostHogAsyncOpenAI
             logger.info("Using PostHog-wrapped AsyncOpenAI client for LLM analytics (timeout: 90s read, max_connections: 20)")
-            # Configure httpx with higher connection limits for parallel batch requests
-            # Default is 10 connections per host which serializes parallel calls
-            http_client = httpx.AsyncClient(
-                timeout=LLM_TIMEOUT,
-                limits=httpx.Limits(max_connections=50, max_keepalive_connections=20)
-            )
             return PostHogAsyncOpenAI(
                 api_key=OPENAI_API_KEY,
                 posthog_client=posthog_client,
-                http_client=http_client
+                http_client=_http_client
             )
     
     logger.info("Using standard AsyncOpenAI client (PostHog analytics disabled, timeout: 90s read, max_connections: 20)")
-    # Configure httpx with higher connection limits for parallel batch requests
-    # Default is 10 connections per host which serializes parallel calls
-    http_client = httpx.AsyncClient(
-        timeout=LLM_TIMEOUT,
-        limits=httpx.Limits(max_connections=50, max_keepalive_connections=20)
-    )
-    return BaseAsyncOpenAI(api_key=OPENAI_API_KEY, http_client=http_client)
+    return BaseAsyncOpenAI(api_key=OPENAI_API_KEY, http_client=_http_client)
 
 
 def get_openai_client() -> BaseAsyncOpenAI:
@@ -212,6 +211,25 @@ def get_openai_client() -> BaseAsyncOpenAI:
         if _client is None:
             _client = _create_openai_client()
         return _client
+
+
+async def cleanup_openai_client() -> None:
+    """
+    Cleanup OpenAI client and httpx resources.
+    
+    Should be called on application shutdown to properly close connections
+    and prevent resource leaks. This is especially important for the httpx
+    AsyncClient which manages connection pooling.
+    """
+    global _client, _http_client
+    
+    if _http_client is not None:
+        await _http_client.aclose()
+        _http_client = None
+        logger.info("httpx client closed")
+    
+    _client = None
+    logger.info("OpenAI client cleaned up")
 
 
 # Mapping from type -> prompt builder
