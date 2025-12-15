@@ -15,6 +15,38 @@ from services.logger import ai_logger as logger
 from schemas.quiz import BloomLevel, Difficulty
 
 
+# Minimum length for a valid explanation (shorter = likely just "X matches Y" or empty)
+# 30 chars allows for at least one meaningful sentence fragment
+MIN_EXPLANATION_LENGTH = 30
+
+# Template for fallback matching explanation when LLM doesn't provide one
+MATCHING_FALLBACK_TEMPLATE = "In this matching exercise: {pairs}. Understanding these relationships helps reinforce key concepts from the material."
+
+
+def build_matching_fallback_explanation(left: List[str], right: List[str], correct_answer: List[int]) -> str:
+    """
+    Build a fallback explanation for matching questions when the LLM doesn't provide one.
+    
+    Args:
+        left: List of items on the left side
+        right: List of items on the right side  
+        correct_answer: List of indices mapping left[i] to right[correct_answer[i]]
+        
+    Returns:
+        A simple but useful explanation string
+    """
+    if not left or not right or not correct_answer:
+        return ""
+        
+    pairs_desc = []
+    for i, left_item in enumerate(left):
+        if i < len(correct_answer) and correct_answer[i] < len(right):
+            right_item = right[correct_answer[i]]
+            pairs_desc.append(f"{left_item} corresponds to {right_item}")
+    
+    return MATCHING_FALLBACK_TEMPLATE.format(pairs="; ".join(pairs_desc))
+
+
 class QuizOrchestrationService:
     """
     Orchestrates question generation using RAG-retrieved context.
@@ -427,20 +459,19 @@ class QuizOrchestrationService:
                 }
             )
             
-            # Verify + Explain matching question using dedicated matching prompt
-            # This generates educational explanations, not just "X matches with Y"
-            is_valid, confidence, issues, explanation = await self.explanation_service.verify_and_explain(
-                question_data=result,
-                context=context,
-                user_id=user_id,
-                trace_id=trace_id,
-                content_source_type=content_source_type
-            )
+            # For matching questions, explanation is generated inline during generation (faster)
+            # No separate verification call needed - we trust the primary model
+            explanation = result.get("explanation", "")
             
-            # For matching, we're lenient on verification (structure validation is sufficient)
-            # but we always want the educational explanation
-            if not is_valid:
-                logger.warning(f"Matching question verification flagged issues (proceeding anyway): {issues}")
+            # Fallback if generation didn't include explanation
+            if not explanation or len(explanation) < MIN_EXPLANATION_LENGTH:
+                explanation = build_matching_fallback_explanation(
+                    left=result.get("left", []),
+                    right=result.get("right", []),
+                    correct_answer=result.get("correct_answer", [])
+                )
+                if explanation:
+                    logger.info("Used fallback explanation for matching question")
             
             logger.info(f"Matching question generated successfully with {len(result.get('left', []))} pairs")
             
