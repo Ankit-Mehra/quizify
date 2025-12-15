@@ -11,6 +11,7 @@ from services.cookie_utils import (
     ACCESS_TOKEN_EXPIRE,
     REFRESH_TOKEN_EXPIRE,
 )
+from config import config as app_config
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
