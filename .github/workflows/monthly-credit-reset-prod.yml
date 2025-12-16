@@ -11,7 +11,6 @@ on:
 jobs:
   reset-credits:
     runs-on: ubuntu-latest
-    environment: production
     
     steps:
       - name: Reset monthly credits for free users (Production)
@@ -33,7 +32,8 @@ jobs:
           echo "$body"
           
           # Check if response is valid JSON
-          if echo "$body" | jq empty 2>/dev/null; then
+          jq_error=$(echo "$body" | jq empty 2>&1 >/dev/null)
+          if [ $? -eq 0 ]; then
             echo "✅ Valid JSON response"
             reset_count=$(echo "$body" | jq -r '.reset_count // 0')
             error_count=$(echo "$body" | jq -r '.error_count // 0')
@@ -47,6 +47,9 @@ jobs:
             echo "error_count=$error_count" >> $GITHUB_OUTPUT
           else
             echo "⚠️ Invalid JSON response"
+            if [ -n "$jq_error" ]; then
+              echo "jq error: $jq_error"
+            fi
           fi
           
           # Fail the workflow if HTTP status is not 200

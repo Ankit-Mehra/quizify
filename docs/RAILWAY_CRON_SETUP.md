@@ -16,12 +16,16 @@ The cron job calls the `/api/cron/reset-monthly-credits` endpoint daily to reset
 ## 🔑 Step 1: Set Environment Variable
 
 1. **Go to Railway Dashboard** → Your Project → Variables
-2. **Add new variable**:
+2. **Generate a secure API key**:
+   ```bash
+   python -c "import secrets; print(secrets.token_urlsafe(32))"
+   ```
+3. **Add new variable**:
    ```
    Variable Name: CRON_API_KEY
-   Value: _Cf1Xmf640BkbWxJxVX-GqKoc9MAinGzwinGolptjSQ
+   Value: <paste-your-generated-key-here>
    ```
-3. **Click "Add"** and redeploy your service
+4. **Click "Add"** and redeploy your service
 
 ⚠️ **IMPORTANT**: Keep this key secret! Anyone with this key can trigger credit resets.
 
@@ -39,7 +43,7 @@ The cron job calls the `/api/cron/reset-monthly-credits` endpoint daily to reset
    - **Request Method**: POST
    - **Custom Headers**:
      ```
-     X-Cron-API-Key: _Cf1Xmf640BkbWxJxVX-GqKoc9MAinGzwinGolptjSQ
+     X-Cron-API-Key: <your-generated-api-key-here>
      ```
    - **Notifications**: Enable email on failure (optional)
 3. **Save and Activate**
@@ -105,7 +109,7 @@ SELECT cron.schedule(
         url := 'https://your-app.railway.app/api/cron/reset-monthly-credits',
         headers := jsonb_build_object(
             'Content-Type', 'application/json',
-            'X-Cron-API-Key', '_Cf1Xmf640BkbWxJxVX-GqKoc9MAinGzwinGolptjSQ'
+            'X-Cron-API-Key', '<your-generated-api-key-here>'
         )
     );
     $$
@@ -122,7 +126,7 @@ SELECT * FROM cron.job;
    - URL: `https://your-app.railway.app/api/cron/reset-monthly-credits`
    - Schedule: Daily at 00:00
    - HTTP Method: POST
-   - Custom Headers: `X-Cron-API-Key: _Cf1Xmf640BkbWxJxVX-GqKoc9MAinGzwinGolptjSQ`
+   - Custom Headers: `X-Cron-API-Key: <your-generated-api-key-here>`
 
 ---
 
@@ -133,9 +137,9 @@ SELECT * FROM cron.job;
 Test the endpoint manually to ensure it works:
 
 ```bash
-# Replace with your actual Railway URL
-curl -X POST https://quizify-production.up.railway.app/api/cron/reset-monthly-credits \
-  -H "X-Cron-API-Key: _Cf1Xmf640BkbWxJxVX-GqKoc9MAinGzwinGolptjSQ" \
+# Replace with your actual Railway URL and API key
+curl -X POST https://your-app.railway.app/api/cron/reset-monthly-credits \
+  -H "X-Cron-API-Key: <your-generated-api-key-here>" \
   -v
 
 # Expected response:
@@ -212,7 +216,7 @@ LIMIT 10;
    - `billing_plan = 'pro'` but `subscription_status NOT IN ('active', 'trialing')`
 
 3. **Resets Credits**:
-   - `free_credit_units_remaining = free_credit_units_monthly` (default: 6 units = 3 credits)
+   - `free_credit_units_remaining = free_credit_units_monthly` (default: 6 units; **conversion:** 1 credit = 2 units, so 6 units = 3 credits)
 
 4. **Updates Period**:
    - `current_period_start = first day of current month`
@@ -325,9 +329,9 @@ If you need to change when the cron runs:
 If you need to manually reset credits outside the schedule:
 
 ```bash
-# Use the same curl command
-curl -X POST https://quizify-production.up.railway.app/api/cron/reset-monthly-credits \
-  -H "X-Cron-API-Key: _Cf1Xmf640BkbWxJxVX-GqKoc9MAinGzwinGolptjSQ" \
+# Use the same curl command (replace with your Railway URL and API key)
+curl -X POST https://your-app.railway.app/api/cron/reset-monthly-credits \
+  -H "X-Cron-API-Key: <your-generated-api-key-here>" \
   -f
 
 # Or via Railway CLI
