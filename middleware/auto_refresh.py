@@ -11,6 +11,7 @@ from services.cookie_utils import (
     ACCESS_TOKEN_EXPIRE,
     REFRESH_TOKEN_EXPIRE,
 )
+from services.redis.sessions import SessionService
 from config import config as app_config
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -149,6 +150,19 @@ class SupabaseAutoRefreshMiddleware(BaseHTTPMiddleware):
                         "Refresh token invalid - clearing cookies",
                         extra={"status": refresh_resp.status_code, "response": refresh_resp.text}
                     )
+                    
+                    # Cleanup Redis session before returning 401
+                    redis_client = getattr(request.app.state, "redis", None)
+                    if redis_client and refresh_token:
+                        try:
+                            session_service = SessionService(redis_client)
+                            session_id = await session_service.find_session_by_refresh_token(refresh_token)
+                            if session_id:
+                                await session_service.logout(session_id)
+                                logger.info(f"Cleaned up expired session {session_id[:12]}... on auto-logout (refresh failed)")
+                        except Exception as cleanup_error:
+                            logger.warning(f"Failed to cleanup session on auto-logout: {cleanup_error}")
+                    
                     # Don't call the next handler - return 401 directly and clear cookies
                     response = JSONResponse(
                         status_code=HTTP_401_UNAUTHORIZED,
@@ -160,6 +174,19 @@ class SupabaseAutoRefreshMiddleware(BaseHTTPMiddleware):
                     return response
             except Exception:
                 logger.exception("Token refresh failed - clearing cookies")
+                
+                # Cleanup Redis session before returning 401
+                redis_client = getattr(request.app.state, "redis", None)
+                if redis_client and refresh_token:
+                    try:
+                        session_service = SessionService(redis_client)
+                        session_id = await session_service.find_session_by_refresh_token(refresh_token)
+                        if session_id:
+                            await session_service.logout(session_id)
+                            logger.info(f"Cleaned up expired session {session_id[:12]}... on auto-logout (refresh exception)")
+                    except Exception as cleanup_error:
+                        logger.warning(f"Failed to cleanup session on auto-logout: {cleanup_error}")
+                
                 response = JSONResponse(
                     status_code=HTTP_401_UNAUTHORIZED,
                     content={"detail": "Session expired. Please log in again."}
