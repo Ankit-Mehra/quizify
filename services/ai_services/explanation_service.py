@@ -264,12 +264,31 @@ class ExplanationService:
                 ],
                 response_format={"type": "json_object"},
                 temperature=0.2,
+                max_tokens=600,  # Cap output for predictable latency/cost
                 **posthog_kwargs
             )
             
             latency_ms = int((time.time() - start_time) * 1000)
             content = response.choices[0].message.content
-            result = json.loads(content)
+            
+            # Defensive JSON parsing
+            try:
+                result = json.loads(content)
+            except json.JSONDecodeError as json_err:
+                logger.error(f"verify_and_explain: invalid JSON from LLM: {content[:200]}")
+                track_llm_call(
+                    user_id=user_id,
+                    trace_id=trace_id,
+                    call_type="verify_explain",
+                    model=model,
+                    input_tokens=response.usage.prompt_tokens,
+                    output_tokens=response.usage.completion_tokens,
+                    latency_ms=latency_ms,
+                    success=False,
+                    error_message=f"JSON decode error: {str(json_err)}",
+                    cost_usd=calculate_cost(model, response.usage.prompt_tokens, response.usage.completion_tokens)
+                )
+                return False, 0.0, ["Model returned invalid JSON"], ""
             
             # Track analytics (combined call)
             track_llm_call(
@@ -355,12 +374,31 @@ class ExplanationService:
                 ],
                 response_format={"type": "json_object"},
                 temperature=0.1,
+                max_tokens=300,  # Verification needs less output than explanation
                 **posthog_kwargs
             )
             
             latency_ms = int((time.time() - start_time) * 1000)
             content = response.choices[0].message.content
-            result = json.loads(content)
+            
+            # Defensive JSON parsing
+            try:
+                result = json.loads(content)
+            except json.JSONDecodeError as json_err:
+                logger.error(f"verify_question: invalid JSON from LLM: {content[:200]}")
+                track_llm_call(
+                    user_id=user_id,
+                    trace_id=trace_id,
+                    call_type="verification",
+                    model=model,
+                    input_tokens=response.usage.prompt_tokens,
+                    output_tokens=response.usage.completion_tokens,
+                    latency_ms=latency_ms,
+                    success=False,
+                    error_message=f"JSON decode error: {str(json_err)}",
+                    cost_usd=calculate_cost(model, response.usage.prompt_tokens, response.usage.completion_tokens)
+                )
+                return False, 0.0, ["Model returned invalid JSON"]
             
             # Track analytics
             track_llm_call(
@@ -449,12 +487,35 @@ class ExplanationService:
                 ],
                 response_format={"type": "json_object"},
                 temperature=0.7,
+                max_tokens=500,  # Cap explanation length for predictable cost
                 **posthog_kwargs
             )
             
             latency_ms = int((time.time() - start_time) * 1000)
             content = response.choices[0].message.content
-            result = json.loads(content)
+            
+            # Defensive JSON parsing
+            try:
+                result = json.loads(content)
+            except json.JSONDecodeError as json_err:
+                logger.error(f"generate_explanation: invalid JSON from LLM: {content[:200]}")
+                track_llm_call(
+                    user_id=user_id,
+                    trace_id=trace_id,
+                    call_type="explanation",
+                    model=model,
+                    input_tokens=response.usage.prompt_tokens,
+                    output_tokens=response.usage.completion_tokens,
+                    latency_ms=latency_ms,
+                    success=False,
+                    error_message=f"JSON decode error: {str(json_err)}",
+                    cost_usd=calculate_cost(model, response.usage.prompt_tokens, response.usage.completion_tokens)
+                )
+                # Return user-friendly fallback
+                correct_answer = question_data.get("correct_answer", "")
+                if correct_answer:
+                    return f"The correct answer is: {correct_answer}. A detailed explanation could not be generated at this time."
+                return "An explanation could not be generated at this time."
             
             # Track analytics
             track_llm_call(
