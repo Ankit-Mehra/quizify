@@ -467,20 +467,27 @@ async def _generate_questions_parallel(
             
             matching_results = await asyncio.gather(*matching_tasks, return_exceptions=True)
             
+            # Track failed matching questions for retry
+            failed_matching_items = []
             for i, res in enumerate(matching_results):
                 if isinstance(res, dict):
                     valid_questions.append(res)
                 else:
                     logger.error(f"Matching question {i} failed: {res}")
-                    # Fallback to MCQ for failed matching
-                    logger.info(f"Falling back to MCQ for failed matching question {i}")
-                    try:
-                        idx = matching_indices[i]
-                        concept = concept_type_pairs[idx][0]
-                        bloom_level, difficulty = bloom_difficulty_pairs[idx]
-                        fallback_result = await orchestration_service.generate_question_for_concept(
-                            concept=concept,
-                            question_type="multiple_choice",
+                    failed_matching_items.append((i, matching_indices[i]))
+            
+            # Retry failed matching questions (same as non-matching retry logic)
+            if failed_matching_items:
+                logger.info(f"Retrying {len(failed_matching_items)} failed matching questions...")
+                retry_tasks = []
+                for orig_i, idx in failed_matching_items:
+                    bloom_level, difficulty = bloom_difficulty_pairs[idx]
+                    # Get the same 4 concepts used in the original attempt
+                    start_idx = orig_i * 4
+                    concepts_for_retry = available_concepts[start_idx:start_idx + 4] if start_idx + 4 <= len(available_concepts) else available_concepts[-4:]
+                    retry_tasks.append(
+                        orchestration_service.generate_matching_question(
+                            concepts=concepts_for_retry,
                             user_id=user_id,
                             user_token=user_token,
                             trace_id=trace_id,
@@ -488,9 +495,39 @@ async def _generate_questions_parallel(
                             difficulty=difficulty,
                             content_source_type=content_source_type
                         )
-                        valid_questions.append(fallback_result)
-                    except Exception as e:
-                        logger.error(f"Matching fallback to MCQ also failed: {e}")
+                    )
+                
+                retry_results = await asyncio.gather(*retry_tasks, return_exceptions=True)
+                
+                # Track items that still failed after retry for MCQ fallback
+                fallback_items = []
+                for (orig_i, idx), res in zip(failed_matching_items, retry_results):
+                    if isinstance(res, dict):
+                        valid_questions.append(res)
+                    else:
+                        logger.error(f"Retry failed for matching question {orig_i}, will try MCQ fallback")
+                        fallback_items.append(idx)
+                
+                # Fallback to MCQ for items that failed retry
+                if fallback_items:
+                    logger.info(f"Fallback: {len(fallback_items)} matching questions switching to multiple_choice")
+                    for idx in fallback_items:
+                        try:
+                            concept = concept_type_pairs[idx][0]
+                            bloom_level, difficulty = bloom_difficulty_pairs[idx]
+                            fallback_result = await orchestration_service.generate_question_for_concept(
+                                concept=concept,
+                                question_type="multiple_choice",
+                                user_id=user_id,
+                                user_token=user_token,
+                                trace_id=trace_id,
+                                bloom_level=bloom_level,
+                                difficulty=difficulty,
+                                content_source_type=content_source_type
+                            )
+                            valid_questions.append(fallback_result)
+                        except Exception as e:
+                            logger.error(f"Matching fallback to MCQ also failed: {e}")
     
     if not valid_questions:
         raise ValueError(
