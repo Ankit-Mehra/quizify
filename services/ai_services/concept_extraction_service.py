@@ -4,7 +4,7 @@ import asyncio
 from typing import List, Dict, Any, Optional
 from uuid import uuid4
 
-from services.ai_services.openai_service import get_openai_client, get_batch_openai_client, _build_posthog_kwargs
+from services.ai_services.openai_service import get_openai_client, _build_posthog_kwargs
 from services.logger import ai_logger as logger
 from services.db_services.supabase_concepts import create_concepts
 from services.db_services.supabase_llm_analytics import track_llm_call
@@ -19,10 +19,10 @@ from config import config
 # 8 chunks × ~512 tokens = ~4K tokens per call (well within mini model's 128K context)
 CHUNKS_PER_BATCH = 8
 
-# Maximum parallel batches - reduced to avoid OpenAI burst rate limiting
-# Testing showed 10 parallel requests cause 30-45s response times vs expected 5-7s
-# With 5 parallel batches: 79 chunks in 2 waves = still fast but less throttling
-MAX_PARALLEL_BATCHES = 5
+# Maximum parallel batches - run all batches in parallel for fastest completion
+# Even if OpenAI throttles individual requests (30-45s each), parallel execution
+# means total time = slowest batch (~45s) instead of sum of all batches
+MAX_PARALLEL_BATCHES = 10
 
 
 CONCEPT_EXTRACTION_PROMPT = """
@@ -94,10 +94,9 @@ class ConceptExtractionService:
     """
     
     def __init__(self):
-        # Regular client for embeddings (PostHog tracking is fine, not parallelized heavily)
+        # Single PostHog-wrapped client for all operations
+        # PostHog automatically tracks token usage and latency
         self.client = get_openai_client()
-        # Dedicated batch client for parallel extraction (bypasses PostHog to enable true parallelism)
-        self.batch_client = get_batch_openai_client()
     
     async def _get_embeddings(self, texts: List[str], user_id: str, trace_id: str) -> List[List[float]]:
         """Generate embeddings using OpenAI client (with PostHog tracking)."""
@@ -193,10 +192,6 @@ class ConceptExtractionService:
         global_start = time.time()
         
         async def process_batch(batch: List[Dict], batch_idx: int):
-            # Stagger batch starts by 100ms each to avoid burst rate limiting
-            # This prevents all 10 requests hitting OpenAI at the exact same millisecond
-            await asyncio.sleep(batch_idx * 0.1)
-            
             async with semaphore:
                 batch_start_times[batch_idx] = time.time() - global_start
                 logger.info(f"[BATCH {batch_idx}] Starting at +{batch_start_times[batch_idx]:.2f}s")
@@ -297,7 +292,8 @@ class ConceptExtractionService:
             List of formatted concept dicts ready for DB storage
         """
         start_time = time.time()
-        model = config.LLM_MODEL_MINI
+        # Use nano model for fastest concept extraction (~5s per batch vs 25-50s with mini)
+        model = config.LLM_MODEL_NANO
         num_chunks = len(chunks)
         
         # Build sections text with numbered headers
@@ -314,11 +310,21 @@ class ConceptExtractionService:
         
         sections_text = "\n\n".join(sections_parts)
         
-        # Note: We use batch_client here (bypasses PostHog) for true parallel execution
-        # PostHog tracking is done manually via track_llm_call() below
-        
         try:
-            response = await self.batch_client.chat.completions.create(
+            # Build PostHog kwargs for tracking (distinct_id, trace_id, properties)
+            posthog_kwargs = _build_posthog_kwargs(
+                user_id=user_id,
+                trace_id=trace_id,
+                properties={
+                    "generation_mode": "concept_extraction",
+                    "batch_idx": batch_idx,
+                    "chunks_in_batch": num_chunks,
+                    "document_id": document_id,
+                }
+            )
+            
+            # PostHog-wrapped client automatically tracks tokens and latency
+            response = await self.client.chat.completions.create(
                 model=model,
                 messages=[
                     {"role": "system", "content": "You are an expert educational content analyzer. Extract key concepts that would make excellent quiz questions."},
@@ -328,7 +334,8 @@ class ConceptExtractionService:
                     )}
                 ],
                 response_format={"type": "json_object"},
-                temperature=0.3
+                temperature=0.3,
+                **posthog_kwargs
             )
             
             latency_ms = int((time.time() - start_time) * 1000)
