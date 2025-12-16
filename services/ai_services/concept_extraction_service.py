@@ -23,12 +23,14 @@ CHUNKS_PER_BATCH = 8
 # For gpt-4.1-nano with your tier limits, 8-10 is safe
 MAX_PARALLEL_BATCHES = 10
 
-# For medium-sized docs (<= 200k chars), a single LLM call is faster than many batched calls
+# For medium-sized docs (<= 150k chars), a single LLM call is faster than many batched calls
 # This eliminates network round trips and decoding passes
-DOC_SINGLE_CALL_CHAR_THRESHOLD = 200_000
+# Threshold set to 150k to safely stay within nano model's 128K token context (with prompt overhead)
+DOC_SINGLE_CALL_CHAR_THRESHOLD = 150_000
 
 # Compact per-batch concept limits to keep responses small and fast
-# We'll get ~8 concepts per batch × 10 batches = 80 raw, dedupe to ~50
+# Example: 8 concepts/batch × 10 batches = 80 raw concepts, deduped to ~50 final
+# Actual batch count varies by document size (num_chunks / CHUNKS_PER_BATCH)
 MAX_CONCEPTS_PER_BATCH = 8
 
 # Hard cap on LLM response size for concept extraction
@@ -204,6 +206,7 @@ class ConceptExtractionService:
                 document_id=document_id,
                 trace_id=trace_id,
                 content_source_type=content_source_type,
+                is_single_call=True,
             )
             extracted_concepts_data = raw_concepts or []
             successful_batches = 1 if extracted_concepts_data else 0
@@ -244,7 +247,7 @@ class ConceptExtractionService:
                 batch_start_times[batch_idx] = time.time() - global_start
                 logger.info(f"[BATCH {batch_idx}] Starting at +{batch_start_times[batch_idx]:.2f}s")
                 result = await self._extract_from_batch(
-                    batch, batch_idx, user_id, document_id, trace_id, content_source_type
+                    batch, batch_idx, user_id, document_id, trace_id, content_source_type, is_single_call=False
                 )
                 batch_end_times[batch_idx] = time.time() - global_start
                 logger.info(f"[BATCH {batch_idx}] Finished at +{batch_end_times[batch_idx]:.2f}s (took {batch_end_times[batch_idx] - batch_start_times[batch_idx]:.2f}s)")
@@ -356,7 +359,8 @@ class ConceptExtractionService:
         user_id: str,
         document_id: str,
         trace_id: str,
-        content_source_type: str = "text"
+        content_source_type: str = "text",
+        is_single_call: bool = False
     ) -> List[Dict[str, Any]]:
         """
         Extract concepts from a batch of chunks in a single LLM call.
@@ -371,6 +375,7 @@ class ConceptExtractionService:
             document_id: UUID of the parent document
             trace_id: Trace ID for analytics
             content_source_type: Source type for analytics
+            is_single_call: True if processing entire document in one call, False for multi-batch mode
             
         Returns:
             List of formatted concept dicts ready for DB storage
@@ -407,13 +412,15 @@ class ConceptExtractionService:
                 }
             )
             
-            # Calculate max concepts for this batch (scale with chunk count for single-call mode)
-            # Single-call: all chunks -> request full 50 concepts
-            # Multi-batch: 8 chunks -> request 8 concepts per batch
-            max_concepts_for_batch = min(
-                config.MAX_CONCEPTS_PER_DOCUMENT,
-                max(MAX_CONCEPTS_PER_BATCH, num_chunks)  # At least 1 concept per chunk
-            )
+            # Calculate max concepts and tokens based on mode
+            # Single-call: entire document -> request config.MAX_CONCEPTS_PER_DOCUMENT, allow 2000 tokens
+            # Multi-batch: each batch -> request MAX_CONCEPTS_PER_BATCH (or num_chunks if smaller), cap at 800 tokens
+            if is_single_call:
+                max_concepts_for_batch = config.MAX_CONCEPTS_PER_DOCUMENT
+                max_output_tokens = 2000
+            else:
+                max_concepts_for_batch = min(MAX_CONCEPTS_PER_BATCH, num_chunks)
+                max_output_tokens = MAX_OUTPUT_TOKENS_PER_BATCH
             
             # PostHog-wrapped client automatically tracks tokens and latency
             response = await self.client.chat.completions.create(
@@ -434,7 +441,7 @@ class ConceptExtractionService:
                 ],
                 response_format={"type": "json_object"},
                 temperature=0.3,
-                max_tokens=MAX_OUTPUT_TOKENS_PER_BATCH if num_chunks <= CHUNKS_PER_BATCH else 2000,
+                max_tokens=max_output_tokens,
                 **posthog_kwargs
             )
             
