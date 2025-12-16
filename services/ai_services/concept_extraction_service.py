@@ -323,13 +323,25 @@ class ConceptExtractionService:
         extracted_concepts_data.sort(key=lambda x: x.get("relevance_score", 0), reverse=True)
         
         # Deduplicate concepts by name (batch extraction may have overlaps)
+        # For unnamed concepts, deduplicate by source_text to avoid similar content
         seen_names = set()
+        seen_source_texts = set()
         unique_concepts: List[Dict[str, Any]] = []
+        
         for concept in extracted_concepts_data:
             name_lower = concept.get("name", "").lower().strip()
-            if name_lower and name_lower not in seen_names:
-                seen_names.add(name_lower)
-                unique_concepts.append(concept)
+            if name_lower:
+                # Named concept - deduplicate by name
+                if name_lower not in seen_names:
+                    seen_names.add(name_lower)
+                    unique_concepts.append(concept)
+            else:
+                # Unnamed concept - deduplicate by source_text to avoid duplicate content
+                source_text = concept.get("source_text", "").strip()
+                if source_text and source_text not in seen_source_texts:
+                    seen_source_texts.add(source_text)
+                    unique_concepts.append(concept)
+                # Skip concepts with no name and no source_text (malformed)
         
         logger.info(f"[BATCH] After deduplication: {len(unique_concepts)} unique concepts")
         
