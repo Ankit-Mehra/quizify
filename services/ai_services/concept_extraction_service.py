@@ -189,9 +189,15 @@ class ConceptExtractionService:
         
         async def process_batch(batch: List[Dict], batch_idx: int):
             async with semaphore:
-                return await self._extract_from_batch(
+                batch_start = time.time()
+                logger.info(f"[BATCH] start batch {batch_idx} ({len(batch)} chunks)")
+                result = await self._extract_from_batch(
                     batch, batch_idx, user_id, document_id, trace_id, content_source_type
                 )
+                logger.info(
+                    f"[BATCH] end batch {batch_idx} ({len(batch)} chunks) took {time.time() - batch_start:.2f}s"
+                )
+                return result
         
         start_time = time.time()
         # Create tasks immediately (schedule in event loop) - crucial for true parallelism
