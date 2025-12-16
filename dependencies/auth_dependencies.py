@@ -114,7 +114,9 @@ async def _validate_request_session(request: Request, user_id: str) -> Optional[
     session_service = SessionService(redis_client)
     session_info = await session_service.validate_session(session_id)
     if not session_info:
-        logger.warning("Session %s not found for user %s", _short_id(session_id), _short_id(user_id, 8))
+        logger.warning("Session %s not found for user %s - cleaned up by validate_session", _short_id(session_id), _short_id(user_id, 8))
+        # Note: validate_session() already calls logout() if session is expired
+        # This 401 is returned after cleanup has already occurred
         raise HTTPException(status_code=401, detail="Session expired or invalid")
 
     if session_info.user_id != user_id:
