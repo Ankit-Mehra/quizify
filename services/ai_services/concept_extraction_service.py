@@ -4,7 +4,7 @@ import asyncio
 from typing import List, Dict, Any, Optional
 from uuid import uuid4
 
-from services.ai_services.openai_service import get_openai_client
+from services.ai_services.openai_service import get_openai_client, _build_posthog_kwargs
 from services.logger import ai_logger as logger
 from services.db_services.supabase_concepts import create_concepts
 from services.db_services.supabase_llm_analytics import track_llm_call
@@ -311,6 +311,18 @@ class ConceptExtractionService:
         sections_text = "\n\n".join(sections_parts)
         
         try:
+            # Build PostHog kwargs for tracking (distinct_id, trace_id, properties)
+            posthog_kwargs = _build_posthog_kwargs(
+                user_id=user_id,
+                trace_id=trace_id,
+                properties={
+                    "generation_mode": "concept_extraction",
+                    "batch_idx": batch_idx,
+                    "chunks_in_batch": num_chunks,
+                    "document_id": document_id,
+                }
+            )
+            
             # PostHog-wrapped client automatically tracks tokens and latency
             response = await self.client.chat.completions.create(
                 model=model,
@@ -322,7 +334,8 @@ class ConceptExtractionService:
                     )}
                 ],
                 response_format={"type": "json_object"},
-                temperature=0.3
+                temperature=0.3,
+                **posthog_kwargs
             )
             
             latency_ms = int((time.time() - start_time) * 1000)
