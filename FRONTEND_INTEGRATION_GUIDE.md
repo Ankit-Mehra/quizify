@@ -307,7 +307,7 @@ When rendered, it will look like this:
 
 ## 📞 Questions?
 
-- **Backend Changes**: See `PR_168_DESCRIPTION.md` for full details
+- **Backend Changes**: See the PR description for full details on implementation
 - **API Contract**: All existing endpoints work the same, just added optional field
 - **Testing**: Test data available in staging environment
 - **Support**: Reach out in #quiz-generation Slack channel

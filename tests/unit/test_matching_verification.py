@@ -188,7 +188,7 @@ class TestMatchingQuestionVerification:
         with patch.object(service.client.chat.completions, 'create', new_callable=AsyncMock) as mock_create:
             mock_create.return_value = mock_openai_response
             
-            is_valid, confidence, issues, explanation = await service.verify_and_explain(
+            is_valid, confidence, issues, explanation, distractor_explanations = await service.verify_and_explain(
                 question_data=matching_question_data,
                 context="Sprint is a time-boxed iteration. Backlog is a prioritized list of work.",
                 user_id="test-user-123",
@@ -230,7 +230,7 @@ class TestMatchingQuestionVerification:
         with patch.object(service.client.chat.completions, 'create', new_callable=AsyncMock) as mock_create:
             mock_create.return_value = mock_openai_response
             
-            is_valid, confidence, issues, explanation = await service.verify_and_explain(
+            is_valid, confidence, issues, explanation, distractor_explanations = await service.verify_and_explain(
                 question_data=mcq_question_data,
                 context="A Sprint is a time-boxed iteration in Scrum.",
                 user_id="test-user-123",

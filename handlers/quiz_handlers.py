@@ -412,6 +412,7 @@ async def _generate_questions_parallel(
             # For each matching question, we need 4 UNIQUE concepts
             # Ensure each matching question uses different concepts
             matching_tasks = []
+            matching_concepts_map = {}  # Store concepts used for each question index for retry
             used_concept_indices = set()
             concept_pool_idx = 0  # Track position across all matching questions
             
@@ -453,6 +454,9 @@ async def _generate_questions_parallel(
                         logger.error(f"No available concepts for matching question {i}, skipping")
                         continue
             
+                # Store concepts for potential retry
+                matching_concepts_map[i] = concepts_for_matching
+            
                 matching_tasks.append(
                     orchestration_service.generate_matching_question(
                         concepts=concepts_for_matching,
@@ -476,15 +480,17 @@ async def _generate_questions_parallel(
                     logger.error(f"Matching question {i} failed: {res}")
                     failed_matching_items.append((i, matching_indices[i]))
             
-            # Retry failed matching questions (same as non-matching retry logic)
+            # Retry failed matching questions using the SAME concepts as original attempt
             if failed_matching_items:
                 logger.info(f"Retrying {len(failed_matching_items)} failed matching questions...")
                 retry_tasks = []
                 for orig_i, idx in failed_matching_items:
                     bloom_level, difficulty = bloom_difficulty_pairs[idx]
-                    # Get the same 4 concepts used in the original attempt
-                    start_idx = orig_i * 4
-                    concepts_for_retry = available_concepts[start_idx:start_idx + 4] if start_idx + 4 <= len(available_concepts) else available_concepts[-4:]
+                    # Get the exact same 4 concepts used in the original attempt
+                    concepts_for_retry = matching_concepts_map.get(orig_i, [])
+                    if not concepts_for_retry:
+                        logger.error(f"Cannot retry matching question {orig_i}: original concepts not found")
+                        continue
                     retry_tasks.append(
                         orchestration_service.generate_matching_question(
                             concepts=concepts_for_retry,
