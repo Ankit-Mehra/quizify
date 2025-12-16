@@ -1,4 +1,4 @@
-name: Monthly Credit Reset (Staging)
+name: Daily Credit Reset (Staging)
 
 on:
   schedule:
@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-      - name: Reset monthly credits for free users (Staging)
+      - name: Reset daily credits for free users (Staging)
         id: reset
         run: |
           echo "🧪 Calling STAGING credit reset endpoint..."
@@ -63,7 +63,7 @@ jobs:
       - name: Create job summary
         if: always()
         run: |
-          echo "## Monthly Credit Reset Results 🔄 (STAGING)" >> $GITHUB_STEP_SUMMARY
+          echo "## Daily Credit Reset Results 🔄 (STAGING)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Environment:** Staging" >> $GITHUB_STEP_SUMMARY
           echo "**Date:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
@@ -83,4 +83,4 @@ jobs:
       - name: Notify on failure
         if: failure()
         run: |
-          echo "::error::Monthly credit reset failed on STAGING! Check the logs above for details."
+          echo "::error::Daily credit reset failed on STAGING! Check the logs above for details."

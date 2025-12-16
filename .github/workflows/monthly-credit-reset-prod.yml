@@ -1,4 +1,4 @@
-name: Monthly Credit Reset (Production)
+name: Daily Credit Reset (Production)
 
 on:
   schedule:
@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-      - name: Reset monthly credits for free users (Production)
+      - name: Reset daily credits for free users (Production)
         id: reset
         run: |
           echo "🚀 Calling PRODUCTION credit reset endpoint..."
@@ -63,7 +63,7 @@ jobs:
       - name: Create job summary
         if: always()
         run: |
-          echo "## Monthly Credit Reset Results 🔄 (PRODUCTION)" >> $GITHUB_STEP_SUMMARY
+          echo "## Daily Credit Reset Results 🔄 (PRODUCTION)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Environment:** Production" >> $GITHUB_STEP_SUMMARY
           echo "**Date:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
@@ -83,4 +83,4 @@ jobs:
       - name: Notify on failure
         if: failure()
         run: |
-          echo "::error::Monthly credit reset failed! Check the logs above for details."
+          echo "::error::Daily credit reset failed! Check the logs above for details."
