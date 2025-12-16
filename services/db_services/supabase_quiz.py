@@ -123,6 +123,11 @@ def save_quiz_to_database(
                 base["chunk_id"] = str(q.chunk_id)
             if hasattr(q, "confidence_score") and q.confidence_score is not None:
                 base["confidence_score"] = q.confidence_score
+            
+            # Add distractor_explanations for MCQ and fill_blank questions
+            # This is a JSONB field - None will be stored as NULL
+            if hasattr(q, "distractor_explanations") and q.distractor_explanations:
+                base["distractor_explanations"] = q.distractor_explanations
 
             if q.type == "multiple_choice":
                 base["options"] = q.options

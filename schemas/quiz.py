@@ -297,6 +297,10 @@ class EnhancedQuestion(BaseModel):
     correct_answer: Union[str, bool, List[int]]
     explanation: str
     source: str
+    # Structured distractor explanations (MCQ and fill_blank only)
+    # Maps incorrect options to their explanations
+    # Example: {"Paris": "Paris is the capital of France, not Germany"}
+    distractor_explanations: Optional[Dict[str, str]] = None
     # Enhanced mode fields (optional for standard mode)
     bloom_level: Optional[BloomLevel] = None
     difficulty: Optional[Difficulty] = None

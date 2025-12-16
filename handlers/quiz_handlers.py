@@ -133,6 +133,8 @@ async def _generate_standard_mode(
             correct_answer=q_dict.get("correct_answer"),
             explanation=q_dict.get("explanation", ""),
             source=q_dict.get("source", ""),
+            # Distractor explanations - retrieved from database (may be NULL for older questions)
+            distractor_explanations=q_dict.get("distractor_explanations"),
             # Standard mode doesn't have these - leave as None
             bloom_level=None,
             difficulty=None,
@@ -570,7 +572,9 @@ def _build_enhanced_questions(valid_questions: List[Dict]) -> List[EnhancedQuest
             concept_id=q.get("concept_id"),
             concept_name=q.get("concept_name"),
             chunk_id=q.get("chunk_id"),
-            confidence_score=q.get("confidence_score")
+            confidence_score=q.get("confidence_score"),
+            # Distractor explanations - populated for MCQ and fill_blank
+            distractor_explanations=q.get("distractor_explanations")
         )
         final_questions.append(eq)
     return final_questions
