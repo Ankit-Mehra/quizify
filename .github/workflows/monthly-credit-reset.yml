@@ -1,0 +1,81 @@
+name: Monthly Credit Reset
+
+on:
+  schedule:
+    # Run daily at midnight UTC (12:00 AM UTC)
+    - cron: '0 0 * * *'
+  
+  # Allow manual triggering from GitHub Actions tab
+  workflow_dispatch:
+
+jobs:
+  reset-credits:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Reset monthly credits for free users
+        id: reset
+        run: |
+          echo "Calling credit reset endpoint..."
+          
+          response=$(curl -X POST ${{ secrets.RAILWAY_API_URL }}/api/cron/reset-monthly-credits \
+            -H "X-Cron-API-Key: ${{ secrets.CRON_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            -s -w "\n%{http_code}" \
+            --max-time 30)
+          
+          http_code=$(echo "$response" | tail -n1)
+          body=$(echo "$response" | head -n-1)
+          
+          echo "HTTP Status: $http_code"
+          echo "Response Body:"
+          echo "$body"
+          
+          # Check if response is valid JSON
+          if echo "$body" | jq empty 2>/dev/null; then
+            echo "✅ Valid JSON response"
+            reset_count=$(echo "$body" | jq -r '.reset_count // 0')
+            error_count=$(echo "$body" | jq -r '.error_count // 0')
+            
+            echo "📊 Results:"
+            echo "  - Users reset: $reset_count"
+            echo "  - Errors: $error_count"
+            
+            # Output for GitHub Actions summary
+            echo "reset_count=$reset_count" >> $GITHUB_OUTPUT
+            echo "error_count=$error_count" >> $GITHUB_OUTPUT
+          else
+            echo "⚠️ Invalid JSON response"
+          fi
+          
+          # Fail the workflow if HTTP status is not 200
+          if [ "$http_code" != "200" ]; then
+            echo "❌ Credit reset failed with HTTP status $http_code"
+            exit 1
+          fi
+          
+          echo "✅ Credit reset completed successfully"
+      
+      - name: Create job summary
+        if: always()
+        run: |
+          echo "## Monthly Credit Reset Results 🔄" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Date:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ steps.reset.outcome }}" == "success" ]; then
+            echo "✅ **Status:** Success" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "- Users reset: ${{ steps.reset.outputs.reset_count }}" >> $GITHUB_STEP_SUMMARY
+            echo "- Errors: ${{ steps.reset.outputs.error_count }}" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ **Status:** Failed" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Check the workflow logs for details." >> $GITHUB_STEP_SUMMARY
+          fi
+      
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "::error::Monthly credit reset failed! Check the logs above for details."
