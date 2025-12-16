@@ -379,33 +379,11 @@ async def _generate_questions_parallel(
         # Use ALL available concepts for matching (not just those assigned to matching slots)
         # This ensures diverse matching questions with unique concept sets
         if all_concepts:
-            # Deduplicate concepts by name (or content for unnamed) to avoid similar matching questions
-            seen_names = set()
-            seen_unnamed = set()
-            unique_concepts = []
-            included_empty_source = False  # Only include one concept with empty source_text
-            for c in all_concepts:
-                name = c.get("name", "").lower().strip()
-                if name:
-                    if name not in seen_names:
-                        seen_names.add(name)
-                        unique_concepts.append(c)
-                else:
-                    # Deduplicate unnamed concepts by their content
-                    concept_key = c.get("source_text", "")[:100]  # Use first 100 chars of source
-                    if concept_key and concept_key not in seen_unnamed:
-                        seen_unnamed.add(concept_key)
-                        unique_concepts.append(c)
-                    elif not concept_key and not included_empty_source:
-                        # No source_text - include at most one such concept
-                        unique_concepts.append(c)
-                        included_empty_source = True
-            
-            # Sort by relevance to prioritize important concepts
-            unique_concepts.sort(key=lambda x: x.get("relevance_score", 0), reverse=True)
-            available_concepts = unique_concepts
-            logger.info(f"[TIMING] Concept dedup+sort took {time.time()-t_matching_start:.2f}s")
-            logger.info(f"Using {len(available_concepts)} unique concepts for {len(matching_indices)} matching questions")
+            # Concepts are already deduplicated in concept extraction, skip redundant dedup
+            # Just sort by relevance to prioritize important concepts
+            available_concepts = sorted(all_concepts, key=lambda x: x.get("relevance_score", 0), reverse=True)
+            logger.info(f"[TIMING] Concept sort took {time.time()-t_matching_start:.2f}s")
+            logger.info(f"Using {len(available_concepts)} concepts for {len(matching_indices)} matching questions")
         else:
             # Fallback to concepts assigned to matching slots
             available_concepts = [concept_type_pairs[i][0] for i in matching_indices]
