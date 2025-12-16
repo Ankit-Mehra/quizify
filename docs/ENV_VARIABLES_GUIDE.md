@@ -275,3 +275,35 @@ SUPABASE_STORAGE_NAME=quiz-files  # ⚠️ Add this!
    - Update `BACKEND_CORS_ORIGINS` with your real domain
 
 That's it! The lazy loading refactor made your code cleaner but didn't reduce the number of required environment variables. 🎉
+
+---
+
+## 🕐 Cron Job Configuration (REQUIRED for Production)
+
+### CRON_API_KEY
+
+```bash
+CRON_API_KEY=your_secure_random_key_here
+```
+
+**Used by:**
+- `api/cron_routes.py` - Monthly credit reset endpoint
+- Railway cron job (or other schedulers)
+
+**Why required:** 
+- Authenticates scheduled tasks that reset free user credits monthly
+- Without this, the cron endpoint will block all requests in production
+
+**How to generate:**
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+
+**Setup instructions:**
+- See [RAILWAY_CRON_SETUP.md](./RAILWAY_CRON_SETUP.md) for complete Railway cron job configuration
+- This is critical for production - free users won't get monthly credit resets without it
+
+**Security:**
+- Keep this key secret (like a password)
+- Anyone with this key can trigger credit resets
+- Uses constant-time comparison to prevent timing attacks
