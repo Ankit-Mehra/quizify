@@ -170,8 +170,9 @@ Return this exact JSON format:
 }}
 """
 
+# Bug fix: Added missing {bloom_level} placeholder to matching prompt (was causing template errors)
 RAG_PROMPT_MATCHING = """You are an expert educational content creator.
-Create a {difficulty} difficulty matching question.
+Create a {difficulty} difficulty matching question at the {bloom_level} Bloom's Taxonomy level.
 
 Topic: {concept_name}
 

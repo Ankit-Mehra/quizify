@@ -25,8 +25,8 @@ class TestBatchGrouping:
     
     def test_chunks_per_batch_is_configured(self):
         """Verify batch size constant is set."""
-        assert CHUNKS_PER_BATCH == 8
-        assert MAX_PARALLEL_BATCHES == 10
+        assert CHUNKS_PER_BATCH == 8  # Smaller batches for better quality
+        assert MAX_PARALLEL_BATCHES == 10  # True parallel with httpx fix
     
     def test_batch_grouping_exact_multiple(self):
         """Test batching when chunks are exact multiple of batch size."""
@@ -39,8 +39,8 @@ class TestBatchGrouping:
             batches.append(batch)
         
         assert len(batches) == 2
-        assert len(batches[0]) == 8
-        assert len(batches[1]) == 8
+        assert len(batches[0]) == CHUNKS_PER_BATCH
+        assert len(batches[1]) == CHUNKS_PER_BATCH
     
     def test_batch_grouping_incomplete_final_batch(self):
         """Test batching when last batch has fewer chunks than batch size."""
@@ -53,8 +53,8 @@ class TestBatchGrouping:
             batches.append(batch)
         
         assert len(batches) == 3
-        assert len(batches[0]) == 8
-        assert len(batches[1]) == 8
+        assert len(batches[0]) == CHUNKS_PER_BATCH
+        assert len(batches[1]) == CHUNKS_PER_BATCH
         assert len(batches[2]) == 3  # Incomplete final batch
     
     def test_batch_grouping_single_chunk(self):
@@ -275,13 +275,13 @@ class TestBatchCalculations:
     """Test batch calculation math for various document sizes."""
     
     @pytest.mark.parametrize("num_chunks,expected_batches,last_batch_size", [
-        (1, 1, 1),      # Single chunk
-        (8, 1, 8),      # Exact batch size
-        (9, 2, 1),      # One over batch size
-        (16, 2, 8),     # Two exact batches
-        (79, 10, 7),    # Real-world example from logs
-        (100, 13, 4),   # Large document
-        (0, 0, 0),      # Empty (edge case)
+        (1, 1, 1),       # Single chunk
+        (8, 1, 8),       # Exact batch size
+        (9, 2, 1),       # One over batch size
+        (16, 2, 8),      # Two exact batches
+        (79, 10, 7),     # Real-world example from logs (79 chunks / 8 = 10 batches)
+        (100, 13, 4),    # Large document (100 / 8 = 12.5 -> 13 batches, last has 4)
+        (0, 0, 0),       # Empty (edge case)
     ])
     def test_batch_calculation(self, num_chunks, expected_batches, last_batch_size):
         """Test batch count and last batch size calculations."""
