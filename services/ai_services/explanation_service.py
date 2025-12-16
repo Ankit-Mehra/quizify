@@ -1,6 +1,6 @@
 import json
 import time
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List, Optional, Tuple
 
 from config import config
 from services.ai_services.openai_service import get_openai_client, _build_posthog_kwargs
@@ -242,7 +242,7 @@ class ExplanationService:
         user_id: str,
         trace_id: str,
         content_source_type: str = "text"
-    ) -> Tuple[bool, float, List[str], str]:
+    ) -> Tuple[bool, float, List[str], str, Optional[Dict[str, str]]]:
         """
         Combined verification + explanation in a single LLM call.
         
@@ -257,7 +257,8 @@ class ExplanationService:
             content_source_type: Source type for analytics (text, file, url)
         
         Returns:
-            Tuple of (is_valid, confidence_score, issues_list, explanation_text)
+            Tuple of (is_valid, confidence_score, issues_list, explanation_text, distractor_explanations_dict)
+            distractor_explanations_dict is None for true_false and matching, populated for MCQ and fill_blank
         """
         start_time = time.time()
         model = config.LLM_MODEL_MINI
@@ -392,7 +393,7 @@ class ExplanationService:
                     error_message=f"JSON decode error: {str(json_err)}",
                     cost_usd=calculate_cost(model, response.usage.prompt_tokens, response.usage.completion_tokens)
                 )
-                return False, 0.0, ["Model returned invalid JSON"], ""
+                return False, 0.0, ["Model returned invalid JSON"], "", None
             
             # Track analytics (combined call)
             track_llm_call(
@@ -415,7 +416,8 @@ class ExplanationService:
                 result.get("is_accurate", False),
                 result.get("confidence_score", 0.0),
                 result.get("issues", []),
-                result.get("explanation", "")
+                result.get("explanation", ""),
+                result.get("distractor_explanations", None)  # None for true_false/matching, dict for MCQ/fill_blank
             )
             
         except Exception as e:
@@ -432,7 +434,7 @@ class ExplanationService:
                     "trace_id": trace_id,
                 }
             )
-            return False, 0.0, [f"Verification error: {str(e)}"], ""
+            return False, 0.0, [f"Verification error: {str(e)}"], "", None
 
     async def verify_question(
         self,
