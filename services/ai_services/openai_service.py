@@ -157,6 +157,12 @@ _client: Optional[BaseAsyncOpenAI] = None
 _http_client: Optional[httpx.AsyncClient] = None
 _client_lock = threading.Lock()
 
+# Dedicated batch client for parallel operations (bypasses PostHog wrapper)
+# PostHog's wrapper appears to serialize async calls, defeating parallelism
+_batch_client: Optional[BaseAsyncOpenAI] = None
+_batch_http_client: Optional[httpx.AsyncClient] = None
+_batch_client_lock = threading.Lock()
+
 
 def _create_openai_client() -> BaseAsyncOpenAI:
     """
@@ -221,15 +227,52 @@ async def cleanup_openai_client() -> None:
     and prevent resource leaks. This is especially important for the httpx
     AsyncClient which manages connection pooling.
     """
-    global _client, _http_client
+    global _client, _http_client, _batch_client, _batch_http_client
     
     if _http_client is not None:
         await _http_client.aclose()
         _http_client = None
         logger.info("httpx client closed")
     
+    if _batch_http_client is not None:
+        await _batch_http_client.aclose()
+        _batch_http_client = None
+        logger.info("batch httpx client closed")
+    
     _client = None
-    logger.info("OpenAI client cleaned up")
+    _batch_client = None
+    logger.info("OpenAI clients cleaned up")
+
+
+def get_batch_openai_client() -> BaseAsyncOpenAI:
+    """
+    Get a dedicated OpenAI client optimized for parallel batch operations.
+    
+    This client bypasses the PostHog wrapper which appears to serialize
+    async calls, defeating parallelism. Use this for batch concept extraction
+    and other high-parallelism operations.
+    
+    Analytics for batch operations are tracked separately via track_llm_call().
+    """
+    global _batch_client, _batch_http_client
+    
+    # Fast path
+    if _batch_client is not None:
+        return _batch_client
+    
+    with _batch_client_lock:
+        if _batch_client is None:
+            # Create dedicated httpx client with high connection limits for true parallelism
+            _batch_http_client = httpx.AsyncClient(
+                timeout=LLM_TIMEOUT,
+                limits=httpx.Limits(max_connections=50, max_keepalive_connections=20)
+            )
+            _batch_client = BaseAsyncOpenAI(
+                api_key=OPENAI_API_KEY,
+                http_client=_batch_http_client
+            )
+            logger.info("Created dedicated batch OpenAI client (no PostHog wrapper, max_connections: 50)")
+        return _batch_client
 
 
 # Mapping from type -> prompt builder
