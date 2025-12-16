@@ -1,13 +1,17 @@
-# Railway Cron Job Setup Guide
+# Automated Credit Reset Setup Guide
 
 **Date**: December 16, 2025  
-**Purpose**: Configure Railway to automatically reset free user credits monthly
+**Purpose**: Configure automated daily credit resets for free users
 
 ---
 
 ## 📋 Overview
 
 The cron job calls the `/api/cron/reset-monthly-credits` endpoint daily to reset expired free credit allowances. Pro users are handled separately via Stripe webhooks.
+
+## ⚠️ Important: Railway Cron Limitation
+
+**Railway's native cron feature only works for short-lived tasks that exit after completion.** Since Quizify is a long-running FastAPI web server that never exits, you must use an external cron service to hit the API endpoint.
 
 ## 🔑 Step 1: Set Environment Variable
 
@@ -23,49 +27,102 @@ The cron job calls the `/api/cron/reset-monthly-credits` endpoint daily to reset
 
 ---
 
-## 🤖 Step 2: Create Cron Job in Railway
+## 🤖 Step 2: Choose a Cron Service
 
-### Option A: Railway Dashboard (Recommended)
+### Option A: cron-job.org (Recommended - Free)
 
-1. **Go to Railway Dashboard** → Your Project
-2. **Click "New"** → **"Cron Job"**
-3. **Configure the cron job**:
+1. **Create Account**: Go to [cron-job.org](https://cron-job.org) and sign up
+2. **Create New Cron Job**:
+   - **Title**: `Quizify Daily Credit Reset`
+   - **URL**: `https://your-app.railway.app/api/cron/reset-monthly-credits`
+   - **Schedule**: Every day at 00:00 UTC (midnight)
+   - **Request Method**: POST
+   - **Custom Headers**:
+     ```
+     X-Cron-API-Key: _Cf1Xmf640BkbWxJxVX-GqKoc9MAinGzwinGolptjSQ
+     ```
+   - **Notifications**: Enable email on failure (optional)
+3. **Save and Activate**
 
-   **Name**: `daily-credit-reset`
-   
-   **Schedule**: `0 0 * * *`
-   - Translation: Run daily at midnight UTC (12:00 AM UTC)
-   - [Cron expression helper](https://crontab.guru/#0_0_*_*_*)
-   
-   **Command**:
-   ```bash
-   curl -X POST ${{RAILWAY_PUBLIC_DOMAIN}}/api/cron/reset-monthly-credits -H "X-Cron-API-Key: ${{CRON_API_KEY}}" -f
-   ```
-   
-   Or if you need the full URL:
-   ```bash
-   curl -X POST https://quizify-production.up.railway.app/api/cron/reset-monthly-credits -H "X-Cron-API-Key: ${{CRON_API_KEY}}" -f
-   ```
+### Option B: GitHub Actions (Free, Code-based)
 
-4. **Click "Create"**
+1. **Create Workflow File**: `.github/workflows/monthly-credit-reset.yml`
 
-### Option B: Railway CLI (Alternative)
+```yaml
+name: Monthly Credit Reset
+on:
+  schedule:
+    - cron: '0 0 * * *'  # Daily at midnight UTC
+  workflow_dispatch:  # Allow manual trigger
 
-If Railway doesn't have UI-based cron jobs, use Railway CLI:
-
-```bash
-# Install Railway CLI
-npm i -g @railway/cli
-
-# Login to Railway
-railway login
-
-# Link to your project
-railway link
-
-# Add cron job (if Railway supports it via CLI)
-railway run "curl -X POST https://quizify-production.up.railway.app/api/cron/reset-monthly-credits -H 'X-Cron-API-Key: ${CRON_API_KEY}' -f"
+jobs:
+  reset-credits:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call credit reset endpoint
+        run: |
+          response=$(curl -X POST https://your-app.railway.app/api/cron/reset-monthly-credits \
+            -H "X-Cron-API-Key: ${{ secrets.CRON_API_KEY }}" \
+            -f -s -w "\n%{http_code}")
+          
+          http_code=$(echo "$response" | tail -n1)
+          body=$(echo "$response" | head -n-1)
+          
+          echo "HTTP Status: $http_code"
+          echo "Response: $body"
+          
+          if [ "$http_code" != "200" ]; then
+            echo "Credit reset failed with status $http_code"
+            exit 1
+          fi
 ```
+
+2. **Add Secret to GitHub**:
+   - Go to your repository → Settings → Secrets and variables → Actions
+   - Create new secret: `CRON_API_KEY` = `_Cf1Xmf640BkbWxJxVX-GqKoc9MAinGzwinGolptjSQ`
+
+3. **Commit and Push**:
+   ```bash
+   git add .github/workflows/monthly-credit-reset.yml
+   git commit -m "ci: add daily credit reset workflow"
+   git push
+   ```
+
+### Option C: Supabase pg_cron (If Using Supabase)
+
+Run this in your Supabase SQL Editor:
+
+```sql
+-- Enable pg_cron extension
+CREATE EXTENSION IF NOT EXISTS pg_cron;
+
+-- Schedule the credit reset job
+SELECT cron.schedule(
+    'daily-credit-reset',
+    '0 0 * * *',  -- Daily at midnight UTC
+    $$
+    SELECT net.http_post(
+        url := 'https://your-app.railway.app/api/cron/reset-monthly-credits',
+        headers := jsonb_build_object(
+            'Content-Type', 'application/json',
+            'X-Cron-API-Key', '_Cf1Xmf640BkbWxJxVX-GqKoc9MAinGzwinGolptjSQ'
+        )
+    );
+    $$
+);
+
+-- Verify the job was created
+SELECT * FROM cron.job;
+```
+
+### Option D: EasyCron (Free Tier Available)
+
+1. **Sign up**: [easycron.com](https://www.easycron.com)
+2. **Create Cron Job**:
+   - URL: `https://your-app.railway.app/api/cron/reset-monthly-credits`
+   - Schedule: Daily at 00:00
+   - HTTP Method: POST
+   - Custom Headers: `X-Cron-API-Key: _Cf1Xmf640BkbWxJxVX-GqKoc9MAinGzwinGolptjSQ`
 
 ---
 
