@@ -16,13 +16,26 @@ from config import config
 # Configuration for batch extraction optimization
 # Process multiple chunks per LLM call to minimize API latency overhead
 # Smaller batches = more focused extraction = better quality concepts
-# 8 chunks × ~512 tokens = ~4K tokens per call (well within mini model's 128K context)
+# 8 chunks × ~512 tokens = ~4K tokens per call (well within nano model's 128K context)
 CHUNKS_PER_BATCH = 8
 
 # Maximum parallel batches - run all batches in parallel for fastest completion
-# Even if OpenAI throttles individual requests (30-45s each), parallel execution
-# means total time = slowest batch (~45s) instead of sum of all batches
+# For gpt-4.1-nano with your tier limits, 8-10 is safe
 MAX_PARALLEL_BATCHES = 10
+
+# For medium-sized docs (<= 150k chars), a single LLM call is faster than many batched calls
+# This eliminates network round trips and decoding passes
+# Threshold set to 150k to safely stay within nano model's 128K token context (with prompt overhead)
+DOC_SINGLE_CALL_CHAR_THRESHOLD = 150_000
+
+# Compact per-batch concept limits to keep responses small and fast
+# Example: 8 concepts/batch × 10 batches = 80 raw concepts, deduped to ~50 final
+# Actual batch count varies by document size (num_chunks / CHUNKS_PER_BATCH)
+MAX_CONCEPTS_PER_BATCH = 8
+
+# Hard cap on LLM response size for concept extraction
+# With 8 concepts × ~80 tokens each = ~640, cap at 800 for safety
+MAX_OUTPUT_TOKENS_PER_BATCH = 800
 
 
 CONCEPT_EXTRACTION_PROMPT = """
@@ -63,7 +76,7 @@ For each concept, identify:
 1. name: The concept name (1-4 words)
 2. type: One of [entity, keyword, topic, definition, process]
 3. relevance: Score from 0.0 to 1.0 based on importance for understanding the material
-4. source_text: A key sentence or phrase containing this concept
+4. source_text: A short phrase (max 15 words) from the original text that best illustrates this concept
 5. section: Which section number (1-{num_sections}) this concept came from
 
 Document Sections:
@@ -76,12 +89,13 @@ Return JSON format:
   ]
 }}
 
-Extract 30-50 high-quality concepts total across all sections (aim for 4-6 per section). Prioritize:
+Extract at most {max_concepts} high-quality, non-duplicate concepts across all sections combined. Prioritize:
 - Key terms and definitions that are central to the material
 - Named entities (people, places, organizations, tools)
 - Important processes, methods, or frameworks
-- Central themes and relationships between concepts
-- Avoid duplicates - if a concept appears in multiple sections, include it once with highest relevance
+- Central themes and important relationships between concepts
+
+If multiple sections mention the same concept, include it only once with the highest relevance score.
 """
 
 
@@ -174,6 +188,43 @@ class ConceptExtractionService:
         
         logger.info(f"Extracting concepts from {total_chunks} chunks for doc {document_id}")
         
+        # Estimate total document size for this concept extraction
+        total_chars = sum(len(c.get("content", "")) for c in chunks)
+        logger.info(f"[BATCH] Total content length: {total_chars} characters")
+        
+        # Fast path: for medium-sized docs, run a single batch call over all chunks
+        # This avoids multiple LLM calls and significantly reduces wall-clock time
+        if total_chars <= DOC_SINGLE_CALL_CHAR_THRESHOLD:
+            logger.info(
+                f"[BATCH] Using single-call extraction for doc {document_id} "
+                f"(chars={total_chars} <= {DOC_SINGLE_CALL_CHAR_THRESHOLD})"
+            )
+            raw_concepts = await self._extract_from_batch(
+                chunks=chunks,
+                batch_idx=0,
+                user_id=user_id,
+                document_id=document_id,
+                trace_id=trace_id,
+                content_source_type=content_source_type,
+                is_single_call=True,
+            )
+            extracted_concepts_data = raw_concepts or []
+            successful_batches = 1 if extracted_concepts_data else 0
+            logger.info(
+                f"[BATCH] {successful_batches}/1 batches succeeded, "
+                f"extracted {len(extracted_concepts_data)} raw concepts"
+            )
+            return await self._post_process_and_store_concepts(
+                extracted_concepts_data,
+                user_id,
+                user_token,
+                document_id,
+                trace_id,
+            )
+        
+        # Multi-batch path for very large documents
+        logger.info(f"[BATCH] Using multi-batch extraction (doc too large for single call)")
+        
         # Group chunks into batches for efficient processing
         # Each batch is processed in a single LLM call
         batches = []
@@ -196,7 +247,7 @@ class ConceptExtractionService:
                 batch_start_times[batch_idx] = time.time() - global_start
                 logger.info(f"[BATCH {batch_idx}] Starting at +{batch_start_times[batch_idx]:.2f}s")
                 result = await self._extract_from_batch(
-                    batch, batch_idx, user_id, document_id, trace_id, content_source_type
+                    batch, batch_idx, user_id, document_id, trace_id, content_source_type, is_single_call=False
                 )
                 batch_end_times[batch_idx] = time.time() - global_start
                 logger.info(f"[BATCH {batch_idx}] Finished at +{batch_end_times[batch_idx]:.2f}s (took {batch_end_times[batch_idx] - batch_start_times[batch_idx]:.2f}s)")
@@ -209,12 +260,27 @@ class ConceptExtractionService:
         results = await asyncio.gather(*tasks, return_exceptions=True)
         batch_time = time.time() - start_time
         
-        # Log diagnostic: if batches are parallel, batch_time should be ~= time for slowest batch (~5-7s)
-        # If sequential, batch_time ~= num_batches * avg_batch_time (~55s for 10 batches)
-        avg_per_batch = batch_time / num_batches if num_batches > 0 else 0
-        logger.info(f"[BATCH] All {num_batches} batches completed in {batch_time:.2f}s (avg {avg_per_batch:.2f}s/batch)")
-        if batch_time > (avg_per_batch * 2):
-            logger.warning(f"[BATCH] ⚠️  Batches appear to be running SEQUENTIALLY (expected ~{avg_per_batch:.2f}s if parallel, got {batch_time:.2f}s)")
+        # Accurate parallelism diagnostic: compare total time to max individual batch duration
+        if num_batches > 0 and batch_start_times and batch_end_times:
+            durations = [
+                batch_end_times[i] - batch_start_times[i]
+                for i in batch_end_times.keys()
+                if i in batch_start_times
+            ]
+            avg_per_batch = sum(durations) / len(durations) if durations else 0
+            max_batch_duration = max(durations) if durations else 0
+            logger.info(
+                f"[BATCH] All {num_batches} batches completed in {batch_time:.2f}s "
+                f"(avg {avg_per_batch:.2f}s/batch, max {max_batch_duration:.2f}s)"
+            )
+            # If total time >> max single batch, parallelism is limited
+            if batch_time > max_batch_duration * 1.5:
+                logger.warning(
+                    f"[BATCH] ⚠️ Limited parallelism detected "
+                    f"(total {batch_time:.2f}s vs max single-batch {max_batch_duration:.2f}s)"
+                )
+        else:
+            logger.info(f"[BATCH] All {num_batches} batches completed in {batch_time:.2f}s")
         
         # Flatten results, skip failures
         extracted_concepts_data = []
@@ -228,17 +294,37 @@ class ConceptExtractionService:
         
         logger.info(f"[BATCH] {successful_batches}/{num_batches} batches succeeded, extracted {len(extracted_concepts_data)} raw concepts")
         
+        return await self._post_process_and_store_concepts(
+            extracted_concepts_data,
+            user_id,
+            user_token,
+            document_id,
+            trace_id,
+        )
+    
+    async def _post_process_and_store_concepts(
+        self,
+        extracted_concepts_data: List[Dict[str, Any]],
+        user_id: str,
+        user_token: str,
+        document_id: str,
+        trace_id: str,
+    ) -> List[Dict[str, Any]]:
+        """
+        Deduplicate, embed, and store extracted concepts.
+        
+        Shared by both single-call and multi-batch extraction paths.
+        """
         if not extracted_concepts_data:
             logger.warning(f"No concepts extracted for document {document_id}")
             return []
 
         # Sort by relevance BEFORE deduplication to ensure highest-relevance instance is kept
-        # (per prompt instruction: "include it once with highest relevance")
         extracted_concepts_data.sort(key=lambda x: x.get("relevance_score", 0), reverse=True)
         
         # Deduplicate concepts by name (batch extraction may have overlaps)
         seen_names = set()
-        unique_concepts = []
+        unique_concepts: List[Dict[str, Any]] = []
         for concept in extracted_concepts_data:
             name_lower = concept.get("name", "").lower().strip()
             if name_lower and name_lower not in seen_names:
@@ -248,9 +334,10 @@ class ConceptExtractionService:
         logger.info(f"[BATCH] After deduplication: {len(unique_concepts)} unique concepts")
         
         # Limit total concepts and sort by relevance
-        if len(unique_concepts) > config.MAX_CONCEPTS_PER_DOCUMENT:
+        max_concepts = config.MAX_CONCEPTS_PER_DOCUMENT
+        if len(unique_concepts) > max_concepts:
             unique_concepts.sort(key=lambda x: x.get("relevance_score", 0), reverse=True)
-            unique_concepts = unique_concepts[:config.MAX_CONCEPTS_PER_DOCUMENT]
+            unique_concepts = unique_concepts[:max_concepts]
 
         # Generate embeddings for concepts (batch async)
         concept_names = [c["name"] for c in unique_concepts]
@@ -272,7 +359,8 @@ class ConceptExtractionService:
         user_id: str,
         document_id: str,
         trace_id: str,
-        content_source_type: str = "text"
+        content_source_type: str = "text",
+        is_single_call: bool = False
     ) -> List[Dict[str, Any]]:
         """
         Extract concepts from a batch of chunks in a single LLM call.
@@ -287,6 +375,7 @@ class ConceptExtractionService:
             document_id: UUID of the parent document
             trace_id: Trace ID for analytics
             content_source_type: Source type for analytics
+            is_single_call: True if processing entire document in one call, False for multi-batch mode
             
         Returns:
             List of formatted concept dicts ready for DB storage
@@ -323,18 +412,36 @@ class ConceptExtractionService:
                 }
             )
             
+            # Calculate max concepts and tokens based on mode
+            # Single-call: entire document -> request config.MAX_CONCEPTS_PER_DOCUMENT, allow 2000 tokens
+            # Multi-batch: each batch -> request MAX_CONCEPTS_PER_BATCH (or num_chunks if smaller), cap at 800 tokens
+            if is_single_call:
+                max_concepts_for_batch = config.MAX_CONCEPTS_PER_DOCUMENT
+                max_output_tokens = 2000
+            else:
+                max_concepts_for_batch = min(MAX_CONCEPTS_PER_BATCH, num_chunks)
+                max_output_tokens = MAX_OUTPUT_TOKENS_PER_BATCH
+            
             # PostHog-wrapped client automatically tracks tokens and latency
             response = await self.client.chat.completions.create(
                 model=model,
                 messages=[
-                    {"role": "system", "content": "You are an expert educational content analyzer. Extract key concepts that would make excellent quiz questions."},
-                    {"role": "user", "content": BATCH_CONCEPT_EXTRACTION_PROMPT.format(
-                        num_sections=num_chunks,
-                        sections_text=sections_text
-                    )}
+                    {
+                        "role": "system",
+                        "content": "You are an expert educational content analyzer. Extract key concepts that would make excellent quiz questions."
+                    },
+                    {
+                        "role": "user",
+                        "content": BATCH_CONCEPT_EXTRACTION_PROMPT.format(
+                            num_sections=num_chunks,
+                            sections_text=sections_text,
+                            max_concepts=max_concepts_for_batch,
+                        )
+                    },
                 ],
                 response_format={"type": "json_object"},
                 temperature=0.3,
+                max_tokens=max_output_tokens,
                 **posthog_kwargs
             )
             
