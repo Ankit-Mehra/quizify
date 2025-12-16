@@ -83,7 +83,7 @@ jobs:
 
 2. **Add Secret to GitHub**:
    - Go to your repository → Settings → Secrets and variables → Actions
-   - Create new secret: `CRON_API_KEY` = `_Cf1Xmf640BkbWxJxVX-GqKoc9MAinGzwinGolptjSQ`
+   - Create new secret: `CRON_API_KEY` = `your api key`
 
 3. **Commit and Push**:
    ```bash
