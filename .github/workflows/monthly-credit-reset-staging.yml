@@ -32,7 +32,7 @@ jobs:
           echo "$body"
           
           # Check if response is valid JSON
-          jq_error=$(echo "$body" | jq empty 2>&1 >/dev/null)
+          jq_error=$(echo "$body" | jq empty 2>&1)
           if [ $? -eq 0 ]; then
             echo "✅ Valid JSON response"
             reset_count=$(echo "$body" | jq -r '.reset_count // 0')

@@ -53,7 +53,7 @@ The cron job calls the `/api/cron/reset-monthly-credits` endpoint daily to reset
 1. **Create Workflow File**: `.github/workflows/monthly-credit-reset.yml`
 
 ```yaml
-name: Monthly Credit Reset
+name: Daily Credit Reset
 on:
   schedule:
     - cron: '0 0 * * *'  # Daily at midnight UTC
@@ -83,7 +83,7 @@ jobs:
 
 2. **Add Secret to GitHub**:
    - Go to your repository → Settings → Secrets and variables → Actions
-   - Create new secret: `CRON_API_KEY` = `your api key`
+   - Create new secret: `CRON_API_KEY` = `<your-generated-api-key-here>`
 
 3. **Commit and Push**:
    ```bash
@@ -216,7 +216,7 @@ LIMIT 10;
    - `billing_plan = 'pro'` but `subscription_status NOT IN ('active', 'trialing')`
 
 3. **Resets Credits**:
-   - `free_credit_units_remaining = free_credit_units_monthly` (default: 6 units; **conversion:** 1 credit = 2 units, so 6 units = 3 credits)
+   - `free_credit_units_remaining = free_credit_units_monthly` (default: 6 units; system tracks "units" internally—this equals 3 credits for users, since 1 credit = 2 units)
 
 4. **Updates Period**:
    - `current_period_start = first day of current month`
@@ -247,7 +247,7 @@ LIMIT 10;
 
 **Fix**:
 1. Verify `CRON_API_KEY` in Railway environment variables
-2. Ensure curl command uses same key: `${{CRON_API_KEY}}`
+2. Ensure curl command uses same key: `<your-generated-api-key-here>`
 3. Check for whitespace/newlines in key
 
 ### Issue: "Cron endpoint not configured"
