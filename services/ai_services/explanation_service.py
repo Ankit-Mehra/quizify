@@ -1,6 +1,6 @@
 import json
 import time
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List, Optional, Tuple
 
 from config import config
 from services.ai_services.openai_service import get_openai_client, _build_posthog_kwargs
@@ -33,14 +33,97 @@ Return JSON:
     "is_accurate": true/false,
     "confidence_score": 0.0-1.0,
     "issues": [],
-    "explanation": "Educational explanation that teaches the concept, not just states the answer."
+    "explanation": "Educational explanation of WHY the correct answer is right.",
+    "distractor_explanations": {{
+        "option_name_1": "Why this option is incorrect...",
+        "option_name_2": "Why this option is incorrect..."
+    }}
 }}
 
 Be strict on accuracy. If the answer isn't clearly supported by context, set is_accurate=false.
 
-GOOD EXPLANATION: "The mitochondria is called the powerhouse of the cell because it produces ATP through cellular respiration. The nucleus stores DNA but doesn't generate energy, while ribosomes synthesize proteins."
+GOOD EXPLANATION: "The mitochondria is called the powerhouse of the cell because it produces ATP through cellular respiration."
+GOOD DISTRACTOR: "The nucleus stores DNA and controls cell activities, but does not generate energy."
 
 BAD EXPLANATION: "The correct answer is mitochondria because mitochondria is the powerhouse of the cell."
+"""
+
+# Separate prompt for FILL-IN-THE-BLANK questions
+VERIFY_AND_EXPLAIN_FILL_BLANK_PROMPT = """
+Verify and explain this fill-in-the-blank quiz question based on the provided context.
+
+Question: {question}
+Correct Answer to fill the blank: {correct_answer}
+Options: {options}
+
+Context:
+{context}
+
+Tasks:
+1. VERIFY: Is the answer factually accurate and supported by the context?
+   - Does this word/phrase correctly complete the sentence?
+   - Is it the most appropriate term for the blank?
+
+2. EXPLAIN: Write an educational explanation that:
+   - Explains WHY this word/phrase correctly fills the blank
+   - Provides context about the concept being tested
+   - Explains the meaning and significance of the term
+   - Briefly explains why the other options don't fit as well
+   - Helps the learner understand the concept, not just memorize the answer
+
+Return JSON:
+{{
+    "is_accurate": true/false,
+    "confidence_score": 0.0-1.0,
+    "issues": [],
+    "explanation": "Educational explanation about why this term correctly fills the blank.",
+    "distractor_explanations": {{
+        "option_name_1": "Why this option doesn't fit the blank as well...",
+        "option_name_2": "Why this option doesn't fit the blank as well..."
+    }}
+}}
+
+Be strict on accuracy. If the answer isn't clearly supported by context, set is_accurate=false.
+
+GOOD EXPLANATION: "The term 'retrospective' correctly fills the blank because it refers to the specific Scrum ceremony held at the end of each sprint where the team reflects on their process and identifies improvements. This differs from the sprint review, which focuses on demonstrating completed work to stakeholders."
+
+BAD EXPLANATION: "The correct answer is retrospective because retrospective fits in the blank."
+"""
+
+# Separate prompt for TRUE/FALSE questions
+VERIFY_AND_EXPLAIN_TRUE_FALSE_PROMPT = """
+Verify and explain this true/false quiz question based on the provided context.
+
+Question: {question}
+Correct Answer: {correct_answer}
+
+Context:
+{context}
+
+Tasks:
+1. VERIFY: Is the statement's truth value factually accurate and supported by the context?
+   - Is the statement actually true/false as claimed?
+   - Is this clearly supported or contradicted by the context?
+
+2. EXPLAIN: Write an educational explanation that:
+   - Explains WHY the statement is true or false
+   - Provides evidence from the context or general knowledge
+   - Clarifies any misconceptions the statement might reveal
+   - Helps the learner understand the underlying concept
+
+Return JSON:
+{{
+    "is_accurate": true/false,
+    "confidence_score": 0.0-1.0,
+    "issues": [],
+    "explanation": "Educational explanation about why the statement is true or false."
+}}
+
+Be strict on accuracy. If the truth value isn't clearly supported by context, set is_accurate=false.
+
+GOOD EXPLANATION: "This statement is FALSE because the mitochondria produces ATP through cellular respiration, not the nucleus. The nucleus stores genetic material (DNA) and controls cell activities, but energy production occurs in the mitochondria."
+
+BAD EXPLANATION: "The statement is false because that's not how it works."
 """
 
 # Separate prompt for MATCHING questions (different structure: left/right/indices)
@@ -159,7 +242,7 @@ class ExplanationService:
         user_id: str,
         trace_id: str,
         content_source_type: str = "text"
-    ) -> Tuple[bool, float, List[str], str]:
+    ) -> Tuple[bool, float, List[str], str, Optional[Dict[str, str]]]:
         """
         Combined verification + explanation in a single LLM call.
         
@@ -174,7 +257,8 @@ class ExplanationService:
             content_source_type: Source type for analytics (text, file, url)
         
         Returns:
-            Tuple of (is_valid, confidence_score, issues_list, explanation_text)
+            Tuple of (is_valid, confidence_score, issues_list, explanation_text, distractor_explanations_dict)
+            distractor_explanations_dict is None for true_false and matching, populated for MCQ and fill_blank
         """
         start_time = time.time()
         model = config.LLM_MODEL_MINI
@@ -231,8 +315,29 @@ class ExplanationService:
                     matched_pairs=matched_pairs_str,
                     context=context[:2000]  # Limit context size
                 )
+            
+            elif question_type == "fill_blank":
+                # Fill-in-the-blank: focus on why this word/phrase fits the blank
+                options = question_data.get("options", [])
+                options_str = ", ".join(str(opt) for opt in options) if options else "N/A"
+                
+                prompt = VERIFY_AND_EXPLAIN_FILL_BLANK_PROMPT.format(
+                    question=question_data.get("question"),
+                    correct_answer=question_data.get("correct_answer"),
+                    options=options_str,
+                    context=context[:2000]
+                )
+            
+            elif question_type == "true_false":
+                # True/False: explain why the statement is true or false
+                prompt = VERIFY_AND_EXPLAIN_TRUE_FALSE_PROMPT.format(
+                    question=question_data.get("question"),
+                    correct_answer=question_data.get("correct_answer"),
+                    context=context[:2000]
+                )
+            
             else:
-                # MCQ, fill_blank, true_false use options
+                # Multiple choice (default): explain correct answer and why distractors are wrong
                 options = question_data.get("options", [])
                 options_str = ", ".join(str(opt) for opt in options) if options else "N/A"
                 
@@ -264,12 +369,31 @@ class ExplanationService:
                 ],
                 response_format={"type": "json_object"},
                 temperature=0.2,
+                max_tokens=800,  # Increased to handle MCQ with multiple detailed distractor explanations
                 **posthog_kwargs
             )
             
             latency_ms = int((time.time() - start_time) * 1000)
             content = response.choices[0].message.content
-            result = json.loads(content)
+            
+            # Defensive JSON parsing
+            try:
+                result = json.loads(content)
+            except json.JSONDecodeError as json_err:
+                logger.error(f"verify_and_explain: invalid JSON from LLM: {content[:200]}")
+                track_llm_call(
+                    user_id=user_id,
+                    trace_id=trace_id,
+                    call_type="verify_explain",
+                    model=model,
+                    input_tokens=response.usage.prompt_tokens,
+                    output_tokens=response.usage.completion_tokens,
+                    latency_ms=latency_ms,
+                    success=False,
+                    error_message=f"JSON decode error: {str(json_err)}",
+                    cost_usd=calculate_cost(model, response.usage.prompt_tokens, response.usage.completion_tokens)
+                )
+                return False, 0.0, ["Model returned invalid JSON"], "", None
             
             # Track analytics (combined call)
             track_llm_call(
@@ -292,7 +416,8 @@ class ExplanationService:
                 result.get("is_accurate", False),
                 result.get("confidence_score", 0.0),
                 result.get("issues", []),
-                result.get("explanation", "")
+                result.get("explanation", ""),
+                result.get("distractor_explanations", None)  # None for true_false/matching, dict for MCQ/fill_blank
             )
             
         except Exception as e:
@@ -309,7 +434,7 @@ class ExplanationService:
                     "trace_id": trace_id,
                 }
             )
-            return False, 0.0, [f"Verification error: {str(e)}"], ""
+            return False, 0.0, [f"Verification error: {str(e)}"], "", None
 
     async def verify_question(
         self,
@@ -355,12 +480,31 @@ class ExplanationService:
                 ],
                 response_format={"type": "json_object"},
                 temperature=0.1,
+                max_tokens=500,  # Increased to allow more detailed verification output
                 **posthog_kwargs
             )
             
             latency_ms = int((time.time() - start_time) * 1000)
             content = response.choices[0].message.content
-            result = json.loads(content)
+            
+            # Defensive JSON parsing
+            try:
+                result = json.loads(content)
+            except json.JSONDecodeError as json_err:
+                logger.error(f"verify_question: invalid JSON from LLM: {content[:200]}")
+                track_llm_call(
+                    user_id=user_id,
+                    trace_id=trace_id,
+                    call_type="verification",
+                    model=model,
+                    input_tokens=response.usage.prompt_tokens,
+                    output_tokens=response.usage.completion_tokens,
+                    latency_ms=latency_ms,
+                    success=False,
+                    error_message=f"JSON decode error: {str(json_err)}",
+                    cost_usd=calculate_cost(model, response.usage.prompt_tokens, response.usage.completion_tokens)
+                )
+                return False, 0.0, ["Model returned invalid JSON"]
             
             # Track analytics
             track_llm_call(
@@ -449,12 +593,35 @@ class ExplanationService:
                 ],
                 response_format={"type": "json_object"},
                 temperature=0.7,
+                max_tokens=500,  # Cap explanation length for predictable cost
                 **posthog_kwargs
             )
             
             latency_ms = int((time.time() - start_time) * 1000)
             content = response.choices[0].message.content
-            result = json.loads(content)
+            
+            # Defensive JSON parsing
+            try:
+                result = json.loads(content)
+            except json.JSONDecodeError as json_err:
+                logger.error(f"generate_explanation: invalid JSON from LLM: {content[:200]}")
+                track_llm_call(
+                    user_id=user_id,
+                    trace_id=trace_id,
+                    call_type="explanation",
+                    model=model,
+                    input_tokens=response.usage.prompt_tokens,
+                    output_tokens=response.usage.completion_tokens,
+                    latency_ms=latency_ms,
+                    success=False,
+                    error_message=f"JSON decode error: {str(json_err)}",
+                    cost_usd=calculate_cost(model, response.usage.prompt_tokens, response.usage.completion_tokens)
+                )
+                # Return user-friendly fallback
+                correct_answer = question_data.get("correct_answer", "")
+                if correct_answer:
+                    return f"The correct answer is: {correct_answer}. A detailed explanation could not be generated at this time."
+                return "An explanation could not be generated at this time."
             
             # Track analytics
             track_llm_call(

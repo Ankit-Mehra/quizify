@@ -23,6 +23,10 @@ class QuestionBase(BaseModel):
     id: Optional[UUID] = None
     quiz_id: Optional[UUID] = None
     explanation: str = ""
+    # NEW: Structured distractor explanations for MCQ and fill_blank questions
+    # Frontend can choose to parse this or just use the main explanation field
+    # Example: {"nucleus": "The nucleus stores DNA...", "ribosome": "Ribosomes synthesize..."}
+    distractor_explanations: Optional[Dict[str, str]] = None
     source: str = ""
     # Enhanced metadata (optional for backward compatibility)
     bloom_level: Optional[str] = None

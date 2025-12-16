@@ -223,7 +223,7 @@ class QuizOrchestrationService:
             )
             
             # 7. Verify + Explain in ONE LLM call (50% faster than separate calls)
-            is_valid, confidence, issues, explanation = await self.explanation_service.verify_and_explain(
+            is_valid, confidence, issues, explanation, distractor_explanations = await self.explanation_service.verify_and_explain(
                 question_data=result,
                 context=context,
                 user_id=user_id,
@@ -239,6 +239,10 @@ class QuizOrchestrationService:
             # 8. Format Result with metadata
             # Use .value for JSON serialization compatibility
             result["explanation"] = explanation
+            # NEW: Add structured distractor explanations for MCQ and fill_blank
+            # Frontend can choose to parse this or just use the main explanation field
+            if distractor_explanations:
+                result["distractor_explanations"] = distractor_explanations
             result["type"] = question_type
             result["bloom_level"] = bloom_level.value
             result["difficulty"] = difficulty.value
