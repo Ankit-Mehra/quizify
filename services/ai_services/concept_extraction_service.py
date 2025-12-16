@@ -19,10 +19,10 @@ from config import config
 # 8 chunks × ~512 tokens = ~4K tokens per call (well within mini model's 128K context)
 CHUNKS_PER_BATCH = 8
 
-# Maximum parallel batches - with httpx connection limits fixed, these run truly parallel
-# 10 batches × 8 chunks = 80 chunks processed simultaneously
-# Your Tier 1 limits: 500 RPM, 200K TPM - plenty of headroom for 10 parallel requests
-MAX_PARALLEL_BATCHES = 10
+# Maximum parallel batches - reduced to avoid OpenAI burst rate limiting
+# Testing showed 10 parallel requests cause 30-45s response times vs expected 5-7s
+# With 5 parallel batches: 79 chunks in 2 waves = still fast but less throttling
+MAX_PARALLEL_BATCHES = 5
 
 
 CONCEPT_EXTRACTION_PROMPT = """
@@ -185,13 +185,18 @@ class ConceptExtractionService:
         num_batches = len(batches)
         logger.info(f"[BATCH] Processing {total_chunks} chunks in {num_batches} batches ({CHUNKS_PER_BATCH} chunks/batch)")
         
-        # Process all batches in parallel with rate limiting
+        # Process batches with staggered starts to avoid OpenAI burst rate limiting
+        # OpenAI throttles response times when hit with many simultaneous requests
         semaphore = asyncio.Semaphore(MAX_PARALLEL_BATCHES)
         batch_start_times = {}
         batch_end_times = {}
         global_start = time.time()
         
         async def process_batch(batch: List[Dict], batch_idx: int):
+            # Stagger batch starts by 100ms each to avoid burst rate limiting
+            # This prevents all 10 requests hitting OpenAI at the exact same millisecond
+            await asyncio.sleep(batch_idx * 0.1)
+            
             async with semaphore:
                 batch_start_times[batch_idx] = time.time() - global_start
                 logger.info(f"[BATCH {batch_idx}] Starting at +{batch_start_times[batch_idx]:.2f}s")
