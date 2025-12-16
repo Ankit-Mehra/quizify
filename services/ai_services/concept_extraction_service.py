@@ -183,6 +183,8 @@ class ConceptExtractionService:
         logger.info(f"[BATCH] Processing {total_chunks} chunks in {num_batches} batches ({CHUNKS_PER_BATCH} chunks/batch)")
         
         # Process all batches in parallel with rate limiting
+        # CRITICAL: Use asyncio.create_task() to schedule tasks immediately in the event loop
+        # Without this, OpenAI SDK's async calls may execute sequentially despite httpx settings
         semaphore = asyncio.Semaphore(MAX_PARALLEL_BATCHES)
         
         async def process_batch(batch: List[Dict], batch_idx: int):
@@ -192,11 +194,18 @@ class ConceptExtractionService:
                 )
         
         start_time = time.time()
-        tasks = [process_batch(batch, idx) for idx, batch in enumerate(batches)]
+        # Create tasks immediately (schedule in event loop) - crucial for true parallelism
+        tasks = [asyncio.create_task(process_batch(batch, idx)) for idx, batch in enumerate(batches)]
+        
         results = await asyncio.gather(*tasks, return_exceptions=True)
         batch_time = time.time() - start_time
         
-        logger.info(f"[BATCH] All {num_batches} batches completed in {batch_time:.2f}s")
+        # Log diagnostic: if batches are parallel, batch_time should be ~= time for slowest batch (~5-7s)
+        # If sequential, batch_time ~= num_batches * avg_batch_time (~55s for 10 batches)
+        avg_per_batch = batch_time / num_batches if num_batches > 0 else 0
+        logger.info(f"[BATCH] All {num_batches} batches completed in {batch_time:.2f}s (avg {avg_per_batch:.2f}s/batch)")
+        if batch_time > (avg_per_batch * 2):
+            logger.warning(f"[BATCH] ⚠️  Batches appear to be running SEQUENTIALLY (expected ~{avg_per_batch:.2f}s if parallel, got {batch_time:.2f}s)")
         
         # Flatten results, skip failures
         extracted_concepts_data = []
