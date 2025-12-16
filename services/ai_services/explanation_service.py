@@ -369,7 +369,7 @@ class ExplanationService:
                 ],
                 response_format={"type": "json_object"},
                 temperature=0.2,
-                max_tokens=600,  # Cap output for predictable latency/cost
+                max_tokens=800,  # Increased to handle MCQ with multiple detailed distractor explanations
                 **posthog_kwargs
             )
             
@@ -480,7 +480,7 @@ class ExplanationService:
                 ],
                 response_format={"type": "json_object"},
                 temperature=0.1,
-                max_tokens=300,  # Verification needs less output than explanation
+                max_tokens=500,  # Increased to allow more detailed verification output
                 **posthog_kwargs
             )
             
