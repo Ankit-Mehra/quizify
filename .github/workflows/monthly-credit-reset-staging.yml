@@ -1,9 +1,9 @@
-name: Monthly Credit Reset
+name: Monthly Credit Reset (Staging)
 
 on:
   schedule:
-    # Run daily at midnight UTC (12:00 AM UTC)
-    - cron: '0 0 * * *'
+    # Run daily at 1 AM UTC (offset from prod by 1 hour)
+    - cron: '0 1 * * *'
   
   # Allow manual triggering from GitHub Actions tab
   workflow_dispatch:
@@ -11,14 +11,15 @@ on:
 jobs:
   reset-credits:
     runs-on: ubuntu-latest
+    environment: staging
     
     steps:
-      - name: Reset monthly credits for free users
+      - name: Reset monthly credits for free users (Staging)
         id: reset
         run: |
-          echo "Calling credit reset endpoint..."
+          echo "🧪 Calling STAGING credit reset endpoint..."
           
-          response=$(curl -X POST ${{ secrets.RAILWAY_API_URL }}/api/cron/reset-monthly-credits \
+          response=$(curl -X POST ${{ secrets.RAILWAY_API_URL_STAGING }}/api/cron/reset-monthly-credits \
             -H "X-Cron-API-Key: ${{ secrets.CRON_API_KEY }}" \
             -H "Content-Type: application/json" \
             -s -w "\n%{http_code}" \
@@ -59,8 +60,9 @@ jobs:
       - name: Create job summary
         if: always()
         run: |
-          echo "## Monthly Credit Reset Results 🔄" >> $GITHUB_STEP_SUMMARY
+          echo "## Monthly Credit Reset Results 🔄 (STAGING)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment:** Staging" >> $GITHUB_STEP_SUMMARY
           echo "**Date:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
@@ -78,4 +80,4 @@ jobs:
       - name: Notify on failure
         if: failure()
         run: |
-          echo "::error::Monthly credit reset failed! Check the logs above for details."
+          echo "::error::Monthly credit reset failed on STAGING! Check the logs above for details."
