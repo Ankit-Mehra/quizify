@@ -68,6 +68,7 @@ class Config:
     
     LLM_MODEL_PRIMARY: str = os.getenv("LLM_MODEL_PRIMARY", "gpt-4.1")
     LLM_MODEL_MINI: str = os.getenv("LLM_MODEL_MINI", "gpt-4.1-mini")
+    LLM_MODEL_NANO: str = os.getenv("LLM_MODEL_NANO", "gpt-4.1-nano")  # Fastest, for concept extraction
     
     # LlamaIndex & RAG Configuration
     EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
