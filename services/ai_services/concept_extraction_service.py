@@ -186,15 +186,21 @@ class ConceptExtractionService:
         logger.info(f"[BATCH] Processing {total_chunks} chunks in {num_batches} batches ({CHUNKS_PER_BATCH} chunks/batch)")
         
         # Process all batches in parallel with rate limiting
-        # CRITICAL: Use asyncio.create_task() to schedule tasks immediately in the event loop
-        # Without this, OpenAI SDK's async calls may execute sequentially despite httpx settings
         semaphore = asyncio.Semaphore(MAX_PARALLEL_BATCHES)
+        batch_start_times = {}
+        batch_end_times = {}
+        global_start = time.time()
         
         async def process_batch(batch: List[Dict], batch_idx: int):
             async with semaphore:
-                return await self._extract_from_batch(
+                batch_start_times[batch_idx] = time.time() - global_start
+                logger.info(f"[BATCH {batch_idx}] Starting at +{batch_start_times[batch_idx]:.2f}s")
+                result = await self._extract_from_batch(
                     batch, batch_idx, user_id, document_id, trace_id, content_source_type
                 )
+                batch_end_times[batch_idx] = time.time() - global_start
+                logger.info(f"[BATCH {batch_idx}] Finished at +{batch_end_times[batch_idx]:.2f}s (took {batch_end_times[batch_idx] - batch_start_times[batch_idx]:.2f}s)")
+                return result
         
         start_time = time.time()
         # Create tasks immediately (schedule in event loop) - crucial for true parallelism
