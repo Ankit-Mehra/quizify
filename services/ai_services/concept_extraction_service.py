@@ -4,7 +4,7 @@ import asyncio
 from typing import List, Dict, Any, Optional
 from uuid import uuid4
 
-from services.ai_services.openai_service import get_openai_client, _build_posthog_kwargs
+from services.ai_services.openai_service import get_openai_client, get_batch_openai_client, _build_posthog_kwargs
 from services.logger import ai_logger as logger
 from services.db_services.supabase_concepts import create_concepts
 from services.db_services.supabase_llm_analytics import track_llm_call
@@ -94,7 +94,10 @@ class ConceptExtractionService:
     """
     
     def __init__(self):
+        # Regular client for embeddings (PostHog tracking is fine, not parallelized heavily)
         self.client = get_openai_client()
+        # Dedicated batch client for parallel extraction (bypasses PostHog to enable true parallelism)
+        self.batch_client = get_batch_openai_client()
     
     async def _get_embeddings(self, texts: List[str], user_id: str, trace_id: str) -> List[List[float]]:
         """Generate embeddings using OpenAI client (with PostHog tracking)."""
@@ -300,23 +303,11 @@ class ConceptExtractionService:
         
         sections_text = "\n\n".join(sections_parts)
         
-        # Build PostHog tracking kwargs
-        posthog_kwargs = _build_posthog_kwargs(
-            user_id=user_id,
-            trace_id=trace_id,
-            properties={
-                "call_type": "concept_extraction_batch",
-                "document_id": document_id,
-                "generation_mode": "enhanced",
-                "content_source_type": content_source_type,
-                "feature": "quiz_generation",
-                "batch_idx": batch_idx,
-                "chunks_in_batch": num_chunks,
-            }
-        )
+        # Note: We use batch_client here (bypasses PostHog) for true parallel execution
+        # PostHog tracking is done manually via track_llm_call() below
         
         try:
-            response = await self.client.chat.completions.create(
+            response = await self.batch_client.chat.completions.create(
                 model=model,
                 messages=[
                     {"role": "system", "content": "You are an expert educational content analyzer. Extract key concepts that would make excellent quiz questions."},
@@ -326,8 +317,7 @@ class ConceptExtractionService:
                     )}
                 ],
                 response_format={"type": "json_object"},
-                temperature=0.3,
-                **posthog_kwargs
+                temperature=0.3
             )
             
             latency_ms = int((time.time() - start_time) * 1000)
