@@ -33,14 +33,97 @@ Return JSON:
     "is_accurate": true/false,
     "confidence_score": 0.0-1.0,
     "issues": [],
-    "explanation": "Educational explanation that teaches the concept, not just states the answer."
+    "explanation": "Educational explanation of WHY the correct answer is right.",
+    "distractor_explanations": {{
+        "option_name_1": "Why this option is incorrect...",
+        "option_name_2": "Why this option is incorrect..."
+    }}
 }}
 
 Be strict on accuracy. If the answer isn't clearly supported by context, set is_accurate=false.
 
-GOOD EXPLANATION: "The mitochondria is called the powerhouse of the cell because it produces ATP through cellular respiration. The nucleus stores DNA but doesn't generate energy, while ribosomes synthesize proteins."
+GOOD EXPLANATION: "The mitochondria is called the powerhouse of the cell because it produces ATP through cellular respiration."
+GOOD DISTRACTOR: "The nucleus stores DNA and controls cell activities, but does not generate energy."
 
 BAD EXPLANATION: "The correct answer is mitochondria because mitochondria is the powerhouse of the cell."
+"""
+
+# Separate prompt for FILL-IN-THE-BLANK questions
+VERIFY_AND_EXPLAIN_FILL_BLANK_PROMPT = """
+Verify and explain this fill-in-the-blank quiz question based on the provided context.
+
+Question: {question}
+Correct Answer to fill the blank: {correct_answer}
+Options: {options}
+
+Context:
+{context}
+
+Tasks:
+1. VERIFY: Is the answer factually accurate and supported by the context?
+   - Does this word/phrase correctly complete the sentence?
+   - Is it the most appropriate term for the blank?
+
+2. EXPLAIN: Write an educational explanation that:
+   - Explains WHY this word/phrase correctly fills the blank
+   - Provides context about the concept being tested
+   - Explains the meaning and significance of the term
+   - Briefly explains why the other options don't fit as well
+   - Helps the learner understand the concept, not just memorize the answer
+
+Return JSON:
+{{
+    "is_accurate": true/false,
+    "confidence_score": 0.0-1.0,
+    "issues": [],
+    "explanation": "Educational explanation about why this term correctly fills the blank.",
+    "distractor_explanations": {{
+        "option_name_1": "Why this option doesn't fit the blank as well...",
+        "option_name_2": "Why this option doesn't fit the blank as well..."
+    }}
+}}
+
+Be strict on accuracy. If the answer isn't clearly supported by context, set is_accurate=false.
+
+GOOD EXPLANATION: "The term 'retrospective' correctly fills the blank because it refers to the specific Scrum ceremony held at the end of each sprint where the team reflects on their process and identifies improvements. This differs from the sprint review, which focuses on demonstrating completed work to stakeholders."
+
+BAD EXPLANATION: "The correct answer is retrospective because retrospective fits in the blank."
+"""
+
+# Separate prompt for TRUE/FALSE questions
+VERIFY_AND_EXPLAIN_TRUE_FALSE_PROMPT = """
+Verify and explain this true/false quiz question based on the provided context.
+
+Question: {question}
+Correct Answer: {correct_answer}
+
+Context:
+{context}
+
+Tasks:
+1. VERIFY: Is the statement's truth value factually accurate and supported by the context?
+   - Is the statement actually true/false as claimed?
+   - Is this clearly supported or contradicted by the context?
+
+2. EXPLAIN: Write an educational explanation that:
+   - Explains WHY the statement is true or false
+   - Provides evidence from the context or general knowledge
+   - Clarifies any misconceptions the statement might reveal
+   - Helps the learner understand the underlying concept
+
+Return JSON:
+{{
+    "is_accurate": true/false,
+    "confidence_score": 0.0-1.0,
+    "issues": [],
+    "explanation": "Educational explanation about why the statement is true or false."
+}}
+
+Be strict on accuracy. If the truth value isn't clearly supported by context, set is_accurate=false.
+
+GOOD EXPLANATION: "This statement is FALSE because the mitochondria produces ATP through cellular respiration, not the nucleus. The nucleus stores genetic material (DNA) and controls cell activities, but energy production occurs in the mitochondria."
+
+BAD EXPLANATION: "The statement is false because that's not how it works."
 """
 
 # Separate prompt for MATCHING questions (different structure: left/right/indices)
@@ -231,8 +314,29 @@ class ExplanationService:
                     matched_pairs=matched_pairs_str,
                     context=context[:2000]  # Limit context size
                 )
+            
+            elif question_type == "fill_blank":
+                # Fill-in-the-blank: focus on why this word/phrase fits the blank
+                options = question_data.get("options", [])
+                options_str = ", ".join(str(opt) for opt in options) if options else "N/A"
+                
+                prompt = VERIFY_AND_EXPLAIN_FILL_BLANK_PROMPT.format(
+                    question=question_data.get("question"),
+                    correct_answer=question_data.get("correct_answer"),
+                    options=options_str,
+                    context=context[:2000]
+                )
+            
+            elif question_type == "true_false":
+                # True/False: explain why the statement is true or false
+                prompt = VERIFY_AND_EXPLAIN_TRUE_FALSE_PROMPT.format(
+                    question=question_data.get("question"),
+                    correct_answer=question_data.get("correct_answer"),
+                    context=context[:2000]
+                )
+            
             else:
-                # MCQ, fill_blank, true_false use options
+                # Multiple choice (default): explain correct answer and why distractors are wrong
                 options = question_data.get("options", [])
                 options_str = ", ".join(str(opt) for opt in options) if options else "N/A"
                 
