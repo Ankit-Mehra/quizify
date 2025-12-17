@@ -141,8 +141,13 @@ class CsvQuizifyExporter(BaseExporter):
             letter = option_letters[i] if i < len(option_letters) else str(i + 1)
             is_correct = option == question.correct_answer if include_answers else ""
             
+            # Only include distractor explanations for incorrect options
             distractor_expl = ""
-            if include_answers and question.distractor_explanations:
+            if (
+                include_answers
+                and question.distractor_explanations
+                and option != question.correct_answer
+            ):
                 distractor_expl = question.distractor_explanations.get(option, "")
             
             row = [
@@ -218,8 +223,13 @@ class CsvQuizifyExporter(BaseExporter):
         
         # Add word bank options as additional rows
         for i, word in enumerate(question.options):
+            # Only include distractor explanations for incorrect options
             distractor_expl = ""
-            if include_answers and question.distractor_explanations:
+            if (
+                include_answers
+                and question.distractor_explanations
+                and word != question.correct_answer
+            ):
                 distractor_expl = question.distractor_explanations.get(word, "")
 
             word_row = [

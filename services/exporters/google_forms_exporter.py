@@ -442,10 +442,20 @@ class GoogleFormsExporter(BaseExporter):
                     feedback_text += f"{explanation}\n\n"
                 
                 if distractors and isinstance(distractors, dict):
+                    # Filter out the correct answer (case-insensitive)
+                    correct_lower = (
+                        question.correct_answer.strip().lower()
+                        if isinstance(question.correct_answer, str)
+                        else None
+                    )
                     feedback_text += "Why other options are incorrect:\n"
                     for opt, reason in distractors.items():
                         # Skip explanations for the correct answer to avoid marking it as incorrect
-                        if opt == question.correct_answer:
+                        if (
+                            isinstance(opt, str)
+                            and correct_lower is not None
+                            and opt.strip().lower() == correct_lower
+                        ):
                             continue
                         feedback_text += f"• {opt}: {reason}\n"
                 
@@ -557,15 +567,21 @@ class GoogleFormsExporter(BaseExporter):
                     feedback_text += f"\n\nExplanation: {explanation}"
                 
                 if distractors and isinstance(distractors, dict):
+                    # Pre-compute correct answer (normalized) outside the loop
+                    correct_lower = (
+                        question.correct_answer.strip().lower()
+                        if isinstance(question.correct_answer, str)
+                        else None
+                    )
                     feedback_text += "\n\nWhy other options are incorrect:"
                     for opt, reason in distractors.items():
                         # For fill-in-the-blank questions, avoid showing an
                         # explanation that treats the correct answer as incorrect.
-                        try:
-                            correct = (question.correct_answer or "").strip().lower()
-                        except AttributeError:
-                            correct = ""
-                        if isinstance(opt, str) and opt.strip().lower() == correct:
+                        if (
+                            isinstance(opt, str)
+                            and correct_lower is not None
+                            and opt.strip().lower() == correct_lower
+                        ):
                             continue
                         feedback_text += f"\n• {opt}: {reason}"
             

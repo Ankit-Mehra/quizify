@@ -195,12 +195,17 @@ class MoodleXmlExporter(BaseExporter):
                     fb_html += f"<p><b>Explanation:</b> {self._escape_html(explanation)}</p>"
                 
                 if distractors and isinstance(distractors, dict):
-                    # Filter out the correct answer from distractor explanations to avoid confusion
+                    # Filter out the correct answer from distractor explanations (case-insensitive)
                     correct_answer = getattr(question, "correct_answer", None)
+                    correct_lower = correct_answer.strip().lower() if isinstance(correct_answer, str) else None
                     filtered_items = [
                         (opt, reason)
                         for opt, reason in distractors.items()
-                        if opt != correct_answer
+                        if not (
+                            isinstance(opt, str)
+                            and correct_lower is not None
+                            and opt.strip().lower() == correct_lower
+                        )
                     ]
                     if filtered_items:
                         fb_html += "<p><b>Why other options are incorrect:</b></p><ul>"
@@ -320,12 +325,17 @@ class MoodleXmlExporter(BaseExporter):
                     fb_html += f"<p><b>Explanation:</b> {self._escape_html(explanation)}</p>"
                 
                 if distractors and isinstance(distractors, dict):
-                    # Filter out the correct answer from distractor explanations to avoid confusion
+                    # Filter out the correct answer from distractor explanations (case-insensitive for text answers)
                     correct_answer = getattr(question, "correct_answer", None)
+                    correct_lower = correct_answer.strip().lower() if isinstance(correct_answer, str) else None
                     filtered_items = [
                         (opt, reason)
                         for opt, reason in distractors.items()
-                        if opt != correct_answer
+                        if not (
+                            isinstance(opt, str)
+                            and correct_lower is not None
+                            and opt.strip().lower() == correct_lower
+                        )
                     ]
                     if filtered_items:
                         fb_html += "<p><b>Why other options are incorrect:</b></p><ul>"

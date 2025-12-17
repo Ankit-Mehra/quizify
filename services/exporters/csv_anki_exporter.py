@@ -136,11 +136,20 @@ class CsvAnkiExporter(BaseExporter):
                 back_parts.append(f"<i>Explanation: {question.explanation}</i>")
             
             if question.distractor_explanations:
-                # Filter out the correct answer from distractor explanations
+                # Filter out the correct answer from distractor explanations (case-insensitive)
+                correct_answer_lower = (
+                    question.correct_answer.lower()
+                    if isinstance(question.correct_answer, str)
+                    else None
+                )
                 distractor_items = [
                     (opt, reason)
                     for opt, reason in question.distractor_explanations.items()
-                    if opt != question.correct_answer
+                    if not (
+                        isinstance(opt, str)
+                        and correct_answer_lower is not None
+                        and opt.lower() == correct_answer_lower
+                    )
                 ]
                 
                 if distractor_items:
