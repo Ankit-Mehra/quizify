@@ -935,27 +935,19 @@ async def get_active_sessions(
         
         # Get current session ID from request state (set by auth middleware)
         current_session_id = getattr(request.state, "session_id", None)
-        logger.debug(f"Current session ID from request state: {current_session_id[:12] if current_session_id else 'None'}...")
         
         # Get sessions from Redis
-        redis_client = get_redis_client(request)
-        if not redis_client:
-            logger.error(f"Redis unavailable when fetching sessions for user {_short_user_id(user_id)}")
-            raise HTTPException(
-                status_code=503,
-                detail="Session management service temporarily unavailable. Please try again."
-            )
-        
+        sessions: List[SessionInfo] = []
         try:
-            session_service = SessionService(redis_client)
-            sessions = await session_service.list_sessions(user_id)
-            logger.info(f"Found {len(sessions)} active sessions for user {_short_user_id(user_id)}")
+            redis_client = get_redis_client(request)
+            if redis_client:
+                session_service = SessionService(redis_client)
+                sessions = await session_service.list_sessions(user_id)
+                logger.info(f"Found {len(sessions)} active sessions for user {_short_user_id(user_id)}")
         except Exception as redis_error:
-            logger.error(f"Failed to fetch Redis sessions for user {_short_user_id(user_id)}: {redis_error}")
-            raise HTTPException(
-                status_code=503,
-                detail="Failed to retrieve sessions. Please try again."
-            )
+            logger.warning(f"Failed to fetch Redis sessions (fallback mode): {redis_error}")
+            # Return empty list in fallback mode
+            return []
         
         # Convert to dict for API response
         return [
