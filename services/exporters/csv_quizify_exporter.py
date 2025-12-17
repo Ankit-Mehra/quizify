@@ -60,6 +60,7 @@ class CsvQuizifyExporter(BaseExporter):
         "is_correct",
         "correct_answer",
         "explanation",
+        "distractor_explanation",
     ]
 
     async def export(
@@ -140,6 +141,15 @@ class CsvQuizifyExporter(BaseExporter):
             letter = option_letters[i] if i < len(option_letters) else str(i + 1)
             is_correct = option == question.correct_answer if include_answers else ""
             
+            # Only include distractor explanations for incorrect options
+            distractor_expl = ""
+            if (
+                include_answers
+                and question.distractor_explanations
+                and option != question.correct_answer
+            ):
+                distractor_expl = question.distractor_explanations.get(option, "")
+            
             row = [
                 quiz_data.title,
                 quiz_data.description or "",
@@ -152,6 +162,7 @@ class CsvQuizifyExporter(BaseExporter):
                 str(is_correct) if include_answers else "",
                 question.correct_answer if include_answers else "",
                 question.explanation or "" if include_answers else "",
+                distractor_expl,
             ]
             rows.append(row)
         
@@ -179,6 +190,7 @@ class CsvQuizifyExporter(BaseExporter):
             "",  # No is_correct flag for T/F
             answer if include_answers else "",
             question.explanation or "" if include_answers else "",
+            "",  # No distractor explanation
         ]
         
         return [row]
@@ -204,12 +216,22 @@ class CsvQuizifyExporter(BaseExporter):
             "",  # No is_correct flag
             question.correct_answer if include_answers else "",
             question.explanation or "" if include_answers else "",
+            "",  # No distractor explanation for main row
         ]
         
         rows = [main_row]
         
         # Add word bank options as additional rows
         for i, word in enumerate(question.options):
+            # Only include distractor explanations for incorrect options
+            distractor_expl = ""
+            if (
+                include_answers
+                and question.distractor_explanations
+                and word != question.correct_answer
+            ):
+                distractor_expl = question.distractor_explanations.get(word, "")
+
             word_row = [
                 quiz_data.title,
                 quiz_data.description or "",
@@ -222,6 +244,7 @@ class CsvQuizifyExporter(BaseExporter):
                 str(word == question.correct_answer) if include_answers else "",
                 question.correct_answer if include_answers else "",
                 "",  # No explanation on word bank rows
+                distractor_expl,
             ]
             rows.append(word_row)
         
@@ -256,6 +279,7 @@ class CsvQuizifyExporter(BaseExporter):
                 right_letter if include_answers else "",  # Matching letter
                 right_item if include_answers else "",  # Matching right text
                 question.explanation or "" if (include_answers and i == 0) else "",  # Explanation only on first row
+                "",  # No distractor explanation
             ]
             rows.append(row)
         

@@ -166,6 +166,7 @@ def _transform_questions(questions_data: list) -> list[ExportQuestion]:
                     options=_ensure_list(q.get("options", [])),
                     correct_answer=str(q.get("correct_answer", "")),
                     explanation=q.get("explanation"),
+                    distractor_explanations=q.get("distractor_explanations"),
                     source=q.get("source")
                 ))
                 
@@ -187,6 +188,7 @@ def _transform_questions(questions_data: list) -> list[ExportQuestion]:
                     options=_ensure_list(q.get("options", [])),
                     correct_answer=str(q.get("correct_answer", "")),
                     explanation=q.get("explanation"),
+                    distractor_explanations=q.get("distractor_explanations"),
                     source=q.get("source")
                 ))
                 

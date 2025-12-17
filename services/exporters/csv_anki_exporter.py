@@ -130,9 +130,35 @@ class CsvAnkiExporter(BaseExporter):
             back_parts = [f"<b>Correct: {question.correct_answer}</b>"]
         
         # Add explanation if requested
-        if include_explanations and question.explanation:
-            back_parts.append("")
-            back_parts.append(f"<i>Explanation: {question.explanation}</i>")
+        if include_explanations:
+            if question.explanation:
+                back_parts.append("")
+                back_parts.append(f"<i>Explanation: {question.explanation}</i>")
+            
+            if question.distractor_explanations:
+                # Filter out the correct answer from distractor explanations (case-insensitive)
+                correct_answer_lower = (
+                    question.correct_answer.lower()
+                    if isinstance(question.correct_answer, str)
+                    else None
+                )
+                distractor_items = [
+                    (opt, reason)
+                    for opt, reason in question.distractor_explanations.items()
+                    if not (
+                        isinstance(opt, str)
+                        and correct_answer_lower is not None
+                        and opt.lower() == correct_answer_lower
+                    )
+                ]
+                
+                if distractor_items:
+                    back_parts.append("")
+                    back_parts.append("<i>Why other options are incorrect:</i>")
+                    back_parts.append("<ul>")
+                    for opt, reason in distractor_items:
+                        back_parts.append(f"<li><b>{opt}:</b> {reason}</li>")
+                    back_parts.append("</ul>")
         
         back = "<br>".join(back_parts)
         
@@ -182,9 +208,27 @@ class CsvAnkiExporter(BaseExporter):
         
         back_parts = [f"<b>{question.correct_answer}</b>"]
         
-        if include_explanations and question.explanation:
-            back_parts.append("")
-            back_parts.append(f"<i>Explanation: {question.explanation}</i>")
+        if include_explanations:
+            if question.explanation:
+                back_parts.append("")
+                back_parts.append(f"<i>Explanation: {question.explanation}</i>")
+            
+            if question.distractor_explanations:
+                # Filter out the correct answer (case-insensitive)
+                correct = question.correct_answer.strip().lower()
+                distractor_items = [
+                    (opt, reason)
+                    for opt, reason in question.distractor_explanations.items()
+                    if opt.strip().lower() != correct
+                ]
+                
+                if distractor_items:
+                    back_parts.append("")
+                    back_parts.append("<i>Why other options are incorrect:</i>")
+                    back_parts.append("<ul>")
+                    for opt, reason in distractor_items:
+                        back_parts.append(f"<li><b>{opt}:</b> {reason}</li>")
+                    back_parts.append("</ul>")
         
         back = "<br>".join(back_parts)
         

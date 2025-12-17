@@ -8,7 +8,7 @@ This module defines the Pydantic models for the export API including:
 """
 
 from enum import Enum
-from typing import List, Optional, Literal, Union
+from typing import List, Optional, Literal, Union, Dict
 from pydantic import BaseModel, Field, ConfigDict
 from uuid import UUID
 from datetime import datetime
@@ -96,6 +96,7 @@ class ExportQuestionMCQ(BaseModel):
     options: List[str]
     correct_answer: str
     explanation: Optional[str] = None
+    distractor_explanations: Optional[Dict[str, str]] = None
     source: Optional[str] = None
 
 
@@ -117,6 +118,7 @@ class ExportQuestionFillBlank(BaseModel):
     options: List[str]  # Word bank
     correct_answer: str
     explanation: Optional[str] = None
+    distractor_explanations: Optional[Dict[str, str]] = None
     source: Optional[str] = None
 
 
