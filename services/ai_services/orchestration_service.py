@@ -64,8 +64,8 @@ class QuizOrchestrationService:
         context: str,
         *,
         max_words: int = 100,
-        head_words: int = 50,
-        tail_words: int = 50,
+        head_words: int | None = None,
+        tail_words: int | None = None,
         separator: str = "..."
     ) -> str:
         """Return a compact snippet that includes both start and end of context.
@@ -77,18 +77,33 @@ class QuizOrchestrationService:
         if not context:
             return ""
 
-        words = context.split()
+        # Normalize whitespace so short and long contexts behave consistently.
+        normalized = " ".join(context.split())
+        if not normalized:
+            return ""
+
+        words = normalized.split(" ")
         if len(words) <= max_words:
-            return context
+            return normalized
 
+        if head_words is None and tail_words is None:
+            head_words = max(0, max_words // 2)
+            tail_words = max(0, max_words - head_words)
+        else:
+            head_words = max(0, head_words or 0)
+            tail_words = max(0, tail_words or 0)
+
+        # Ensure we never exceed the requested max word budget.
         if head_words + tail_words > max_words:
-            remaining = max_words
-            head_words = max(0, remaining // 2)
-            tail_words = max(0, remaining - head_words)
+            head_words = max(0, max_words // 2)
+            tail_words = max(0, max_words - head_words)
 
-        start = " ".join(words[:head_words])
-        end = " ".join(words[-tail_words:]) if tail_words > 0 else ""
-        return f"{start} {separator} {end}".strip()
+        start = " ".join(words[:head_words]).strip()
+        end = " ".join(words[-tail_words:]).strip() if tail_words > 0 else ""
+
+        if start and end:
+            return f"{start} {separator} {end}".strip()
+        return start or end
     
     def _validate_question_structure(self, result: Dict[str, Any], question_type: str) -> None:
         """
