@@ -13,12 +13,12 @@ from schemas.billing import UserBillingState
 class TestGetUserTierInfo:
     """Tests for get_user_tier_info function."""
     
-    @patch('services.db_services.supabase_quiz.get_supabase')
-    def test_get_user_tier_info_success(self, mock_get_supabase):
+    @patch('services.db_services.supabase_quiz.app_config.get_service_role_client')
+    def test_get_user_tier_info_success(self, mock_get_service_role_client):
         """Test successful retrieval of user tier info."""
-        # Mock the Supabase client
+        # Mock the Supabase service role client
         mock_supabase = MagicMock()
-        mock_get_supabase.return_value = mock_supabase
+        mock_get_service_role_client.return_value = mock_supabase
         
         # Mock the response
         mock_response = MagicMock()
@@ -43,12 +43,12 @@ class TestGetUserTierInfo:
         assert result['account_tier'] == 'free'
         assert result['credit_units_remaining'] == 4
         
-    @patch('services.db_services.supabase_quiz.get_supabase')
-    def test_get_user_tier_info_user_not_found(self, mock_get_supabase):
+    @patch('services.db_services.supabase_quiz.app_config.get_service_role_client')
+    def test_get_user_tier_info_user_not_found(self, mock_get_service_role_client):
         """Test error handling when user is not found."""
-        # Mock the Supabase client
+        # Mock the Supabase service role client
         mock_supabase = MagicMock()
-        mock_get_supabase.return_value = mock_supabase
+        mock_get_service_role_client.return_value = mock_supabase
         
         # Mock empty response
         mock_response = MagicMock()
