@@ -50,3 +50,10 @@ class TestOrchestrationSourceSnippet:
         # max_words=10, head_words=0, tail_words=5
         snippet = service._format_source_snippet(context, max_words=10, head_words=0, tail_words=5)
         assert snippet == "... w15 w16 w17 w18 w19"
+
+    def test_zero_or_negative_max_words_returns_separator_only(self, service):
+        context = "some context words"
+        # max_words=0 -> head=0, tail=0 -> returns separator
+        assert service._format_source_snippet(context, max_words=0) == "..."
+        # max_words=-5 -> treated as 0 -> returns separator
+        assert service._format_source_snippet(context, max_words=-5) == "..."
