@@ -26,12 +26,20 @@ class UserTierInfo(BaseModel):
     id: str
     email: str
     display_name: Optional[str] = None  # FIXED: Was 'name', should be 'display_name'
+    avatar_url: Optional[str] = None  # Avatar URL from OAuth providers (Google, etc.)
     account_tier: str
     role: str = "user"  # ADDED: Missing role field
     current_quiz_count: int
     quizzes_attempted: int
     quota_limit: int
     quota_exceeded: bool
+    # Credit fields (Epic 6.3 - Hybrid billing)
+    available_credits: Optional[float] = None
+    monthly_credits: Optional[float] = None
+    purchased_credits: Optional[float] = None
+    billing_plan: Optional[str] = None
+    period_end: Optional[str] = None
+    created_at: Optional[str] = None
 
 # Lazy load Supabase client to avoid initialization issues in tests
 def get_supabase():
