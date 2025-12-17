@@ -63,9 +63,9 @@ class QuizOrchestrationService:
     def _format_source_snippet(
         context: str,
         *,
-        max_words: int = 100,
-        head_words: int = 50,
-        tail_words: int = 50,
+        max_words: int = 500,
+        head_words: int = 250,
+        tail_words: int = 250,
         separator: str = "..."
     ) -> str:
         """Return a compact snippet that includes both start and end of context.
