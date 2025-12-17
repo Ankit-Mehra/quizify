@@ -50,7 +50,8 @@ def _validate_content_length(content: str) -> None:
     Validate content meets minimum length requirement for quiz generation.
     
     This is a pure validation function - no async, no side effects.
-    Credit validation is handled separately in generate_quiz_rag_async.
+    Credit validation is handled by the calling handlers (e.g., generate_quiz_from_text,
+    generate_quiz_from_file_openai) before generate_quiz_rag_async is invoked.
     
     Raises:
         HTTPException: 400 if content too short
