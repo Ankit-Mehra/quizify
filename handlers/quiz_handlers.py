@@ -604,34 +604,6 @@ def sanitize_filename(filename: str) -> str:
     
     return sanitized
 
-async def validate_and_consume_credits(user_id: str, quiz_type: str) -> None:
-    """
-    DEPRECATED: Use validate_credits_available() before generation and 
-    consume_credits_after_success() after successful generation.
-    
-    This function consumes credits BEFORE generation, which means credits are lost
-    if generation fails (e.g., concept extraction failure, AI error).
-    
-    Kept for backward compatibility but should be migrated to the new pattern.
-    """
-    success = await consume_units(user_id, quiz_type)
-    if not success:
-        state = await get_billing_state(user_id)
-        if state.plan == "pro":
-            message = "Not enough credits. Purchase additional credits to continue."
-        else:
-            message = "Not enough credits. Upgrade to Pro or purchase credits."
-        raise HTTPException(
-            status_code=402,
-            detail={
-                "error": "insufficient_credits",
-                "message": message,
-                "available_credits": state.available_credits,
-                "required_credits": 0.5 if quiz_type == "standard" else 1.0,
-                "plan": state.plan
-            }
-        )
-
 
 async def validate_credits_available(user_id: str, quiz_type: str) -> None:
     """
