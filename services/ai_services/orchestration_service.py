@@ -63,31 +63,32 @@ class QuizOrchestrationService:
     def _format_source_snippet(
         context: str,
         *,
-        max_chars: int = 500,
-        head_chars: int = 250,
-        tail_chars: int = 250,
+        max_words: int = 100,
+        head_words: int = 50,
+        tail_words: int = 50,
         separator: str = "..."
     ) -> str:
         """Return a compact snippet that includes both start and end of context.
 
-        For long contexts, returns: <start><separator><end>.
+        Uses word boundaries (not raw characters) so the snippet reads naturally.
+        For long contexts, returns: <start words><separator><end words>.
         For short contexts, returns the context as-is.
         """
         if not context:
             return ""
 
-        if len(context) <= max_chars:
+        words = context.split()
+        if len(words) <= max_words:
             return context
 
-        sep_len = len(separator)
-        if head_chars + tail_chars + sep_len > max_chars:
-            remaining = max_chars - sep_len
-            head_chars = max(0, remaining // 2)
-            tail_chars = max(0, remaining - head_chars)
+        if head_words + tail_words > max_words:
+            remaining = max_words
+            head_words = max(0, remaining // 2)
+            tail_words = max(0, remaining - head_words)
 
-        start = context[:head_chars]
-        end = context[-tail_chars:] if tail_chars > 0 else ""
-        return f"{start}{separator}{end}"
+        start = " ".join(words[:head_words])
+        end = " ".join(words[-tail_words:]) if tail_words > 0 else ""
+        return f"{start} {separator} {end}".strip()
     
     def _validate_question_structure(self, result: Dict[str, Any], question_type: str) -> None:
         """
