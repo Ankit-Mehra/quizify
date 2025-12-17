@@ -45,26 +45,20 @@ MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB = 10,485,760 bytes
 # Helper Functions for generate_quiz_rag_async (Refactored for SRP)
 # =============================================================================
 
-async def _validate_quiz_request(
-    request: EnhancedTextQuizRequest,
-    user_id: str,
-    user_token: str
-) -> None:
+def _validate_content_length(content: str) -> None:
     """
-    Validate user has sufficient credits and content length before quiz generation.
+    Validate content meets minimum length requirement for quiz generation.
     
-    NOTE: This only VALIDATES credits, it does NOT consume them.
-    Credits are consumed AFTER successful generation via consume_credits_after_success().
+    This is a pure validation function - no async, no side effects.
+    Credit validation is handled separately in generate_quiz_rag_async.
     
     Raises:
-        HTTPException: 402 if insufficient credits, 400 if content too short
+        HTTPException: 400 if content too short
     """
-    await validate_credits_available(user_id, request.mode)
-    
-    if len(request.content) < MIN_CONTENT_LENGTH:
+    if len(content) < MIN_CONTENT_LENGTH:
         raise HTTPException(
             status_code=400,
-            detail=f"Content too short. Minimum {MIN_CONTENT_LENGTH} characters required, got {len(request.content)}."
+            detail=f"Content too short. Minimum {MIN_CONTENT_LENGTH} characters required, got {len(content)}."
         )
 
 
@@ -928,6 +922,9 @@ async def generate_quiz_from_text(
                 detail="Authentication required to generate quiz"
             )
         
+        # Validate credits BEFORE generation
+        await validate_credits_available(current_user_id, data.mode)
+        
         # Use unified generation function that handles both modes
         enhanced_request = EnhancedTextQuizRequest(
             title=data.title,
@@ -1237,7 +1234,7 @@ async def generate_quiz_from_url(
             current_user_id, 
             user_token,
             content_source_type="url",
-            content_source_reference=content_source_reference  # file_id if PDF, URL otherwise
+            content_source_reference=content_source_reference
         )
         
         # Save metadata for URL-based quiz
@@ -1285,17 +1282,15 @@ async def generate_quiz_rag_async(
     """
     Generate a quiz with support for both standard and enhanced (RAG) modes.
     
-    Modes:
-    - standard: Fast generation using direct LLM calls (generate_quizzes_single_async)
-    - enhanced: Full RAG pipeline with concept extraction, Bloom's taxonomy, etc.
+    IMPORTANT: Callers MUST validate credits before calling this function.
+    This function handles:
+    - Content length validation
+    - Quiz generation (standard or enhanced mode)
+    - Credit consumption AFTER successful generation
     
-    Pipeline (enhanced mode):
-    1. Validate quota and content length
-    2. Ingest content (chunk & embed)
-    3. Extract concepts from chunks
-    4. Assign question types and Bloom/difficulty levels
-    5. Generate questions with context
-    6. Save to database
+    Modes:
+    - standard: Fast generation using direct LLM calls
+    - enhanced: Full RAG pipeline with concept extraction, Bloom's taxonomy, etc.
     
     Args:
         request: Enhanced quiz request with content, title, options, and mode
@@ -1308,14 +1303,14 @@ async def generate_quiz_rag_async(
         EnhancedQuizGenerationResponse with generated questions
         
     Raises:
-        HTTPException: 403 if quota exceeded, 400 if content too short, 500 on error
+        HTTPException: 400 if content too short, 500 on generation error
     """
     trace_id = str(uuid4())
     
-    # Step 1: Validate request (quota and content length)
-    await _validate_quiz_request(request, user_id, user_token)
+    # Validate content length (credit validation done by caller)
+    _validate_content_length(request.content)
     
-    # Step 2: Route to appropriate generation mode
+    # Route to appropriate generation mode
     if request.mode == "standard":
         try:
             return await _generate_standard_mode(

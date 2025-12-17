@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 from fastapi import HTTPException
 from schemas.quiz import EnhancedTextQuizRequest
-from handlers.quiz_handlers import generate_quiz_rag_async
+from handlers.quiz_handlers import generate_quiz_rag_async, validate_credits_available
 
 @pytest.mark.asyncio
 async def test_rag_pipeline_flow():
@@ -120,34 +120,28 @@ async def test_rag_pipeline_flow():
 # === Error Scenario Tests ===
 
 @pytest.mark.asyncio
-async def test_rag_pipeline_quota_exceeded():
-    """Test that quota exceeded raises 403 error."""
+async def test_validate_credits_available_raises_402():
+    """Test that validate_credits_available raises 402 when insufficient credits."""
     user_id = str(uuid4())
-    user_token = "fake_token"
-    request = EnhancedTextQuizRequest(
-        title="Test Quiz",
-        content="This is test content about machine learning concepts.",
-        num_questions=5,
-        question_type="multiple_choice"
-    )
     
-    with patch("handlers.quiz_handlers.validate_credits_available") as mock_validate_credits:
-        # Simulate insufficient credits (402 Payment Required)
-        mock_validate_credits.side_effect = HTTPException(
-            status_code=402,
-            detail={
-                "error": "insufficient_credits",
-                "message": "Not enough credits. Upgrade to Pro or buy more credits.",
-                "available_credits": 0.5,
-                "required_credits": 1.0,
-                "plan": "free"
-            }
+    with patch("handlers.quiz_handlers.get_billing_state") as mock_get_state:
+        from schemas.billing import UserBillingState
+        # Mock billing state with insufficient credits
+        mock_get_state.return_value = UserBillingState(
+            user_id=user_id,
+            plan='free',
+            credit_units_monthly=6,
+            credit_units_remaining=0,
+            credit_units_purchased=0,
+            free_credit_units_monthly=6,
+            free_credit_units_remaining=1  # 1 unit = 0.5 credits, need 2 units (1.0 credits) for enhanced
         )
         
         with pytest.raises(HTTPException) as exc_info:
-            await generate_quiz_rag_async(request, user_id, user_token)
+            await validate_credits_available(user_id, "enhanced")
         
         assert exc_info.value.status_code == 402
+        assert exc_info.value.detail["error"] == "insufficient_credits"
 
 
 @pytest.mark.asyncio
