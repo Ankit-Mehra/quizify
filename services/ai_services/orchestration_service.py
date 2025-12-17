@@ -58,6 +58,54 @@ class QuizOrchestrationService:
         self.client = get_openai_client()
         self.context_service = ContextService()
         self.explanation_service = ExplanationService()
+
+    @staticmethod
+    def _format_source_snippet(
+        context: str,
+        *,
+        max_words: int = 100,
+        head_words: int | None = None,
+        tail_words: int | None = None,
+        separator: str = "..."
+    ) -> str:
+        """Return a compact snippet that includes both start and end of context.
+
+        Uses word boundaries (not raw characters) so the snippet reads naturally.
+        For long contexts, returns: <start words><separator><end words>.
+        For short contexts, returns the context as-is.
+        """
+        if not context:
+            return ""
+
+        words = context.split()
+        if not words:
+            return ""
+
+        if len(words) <= max_words:
+            return " ".join(words)
+
+        if head_words is None and tail_words is None:
+            head_words = max(0, max_words // 2)
+            tail_words = max(0, max_words - head_words)
+        else:
+            head_words = max(0, head_words or 0)
+            tail_words = max(0, tail_words or 0)
+
+        # Ensure we never exceed the requested max word budget.
+        if head_words + tail_words > max_words:
+            head_words = max(0, max_words // 2)
+            tail_words = max(0, max_words - head_words)
+
+        parts = []
+        if head_words > 0:
+            parts.append(" ".join(words[:head_words]))
+        
+        parts.append(separator)
+        
+        if tail_words > 0:
+            parts.append(" ".join(words[-tail_words:]))
+            
+        return " ".join(parts)
     
     def _validate_question_structure(self, result: Dict[str, Any], question_type: str) -> None:
         """
@@ -253,9 +301,8 @@ class QuizOrchestrationService:
             result["concept_name"] = concept.get("name")
             chunk_id = concept.get("chunk_id")
             result["chunk_id"] = str(chunk_id) if chunk_id else None
-            # Store truncated context as source (the actual text used for generation)
-            # Limit to 500 chars to avoid bloating the database
-            result["source"] = context[:500] + "..." if len(context) > 500 else context
+            # Store source snippet (start + end) to keep context useful while bounded
+            result["source"] = self._format_source_snippet(context)
             
             return result
             
@@ -487,7 +534,7 @@ class QuizOrchestrationService:
             result["concept_id"] = str(primary_concept.get("id")) if primary_concept.get("id") else None
             result["concept_name"] = ", ".join(concept_names)
             result["chunk_id"] = None  # Multiple chunks used
-            result["source"] = context[:500] + "..." if len(context) > 500 else context
+            result["source"] = self._format_source_snippet(context)
             
             return result
             
