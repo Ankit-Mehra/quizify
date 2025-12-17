@@ -58,6 +58,36 @@ class QuizOrchestrationService:
         self.client = get_openai_client()
         self.context_service = ContextService()
         self.explanation_service = ExplanationService()
+
+    @staticmethod
+    def _format_source_snippet(
+        context: str,
+        *,
+        max_chars: int = 500,
+        head_chars: int = 250,
+        tail_chars: int = 250,
+        separator: str = "..."
+    ) -> str:
+        """Return a compact snippet that includes both start and end of context.
+
+        For long contexts, returns: <start><separator><end>.
+        For short contexts, returns the context as-is.
+        """
+        if not context:
+            return ""
+
+        if len(context) <= max_chars:
+            return context
+
+        sep_len = len(separator)
+        if head_chars + tail_chars + sep_len > max_chars:
+            remaining = max_chars - sep_len
+            head_chars = max(0, remaining // 2)
+            tail_chars = max(0, remaining - head_chars)
+
+        start = context[:head_chars]
+        end = context[-tail_chars:] if tail_chars > 0 else ""
+        return f"{start}{separator}{end}"
     
     def _validate_question_structure(self, result: Dict[str, Any], question_type: str) -> None:
         """
@@ -253,9 +283,8 @@ class QuizOrchestrationService:
             result["concept_name"] = concept.get("name")
             chunk_id = concept.get("chunk_id")
             result["chunk_id"] = str(chunk_id) if chunk_id else None
-            # Store truncated context as source (the actual text used for generation)
-            # Limit to 500 chars to avoid bloating the database
-            result["source"] = context[:500] + "..." if len(context) > 500 else context
+            # Store source snippet (start + end) to keep context useful while bounded
+            result["source"] = self._format_source_snippet(context)
             
             return result
             
@@ -487,7 +516,7 @@ class QuizOrchestrationService:
             result["concept_id"] = str(primary_concept.get("id")) if primary_concept.get("id") else None
             result["concept_name"] = ", ".join(concept_names)
             result["chunk_id"] = None  # Multiple chunks used
-            result["source"] = context[:500] + "..." if len(context) > 500 else context
+            result["source"] = self._format_source_snippet(context)
             
             return result
             
