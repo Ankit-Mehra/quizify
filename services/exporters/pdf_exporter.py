@@ -520,10 +520,28 @@ class PdfExporter(BaseExporter):
         max_len = max(len(left_items), len(shuffled_right))
         letters = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']
         
+        # Create a style for table cells that allows wrapping
+        cell_style = ParagraphStyle(
+            name='TableCell',
+            parent=self.styles['Normal'],
+            fontSize=10,
+            leading=12,
+        )
+        
         for i in range(max_len):
-            left_text = f"___ {i + 1}. {self._escape_text(left_items[i])}" if i < len(left_items) else ""
-            right_text = f"{letters[i]}. {self._escape_text(shuffled_right[i])}" if i < len(shuffled_right) else ""
-            table_data.append([left_text, right_text])
+            if i < len(left_items):
+                left_content = f"___ {i + 1}. {self._escape_text(left_items[i])}"
+                left_cell = Paragraph(left_content, cell_style)
+            else:
+                left_cell = ""
+                
+            if i < len(shuffled_right):
+                right_content = f"{letters[i]}. {self._escape_text(shuffled_right[i])}"
+                right_cell = Paragraph(right_content, cell_style)
+            else:
+                right_cell = ""
+                
+            table_data.append([left_cell, right_cell])
         
         # Create table
         table = Table(table_data, colWidths=[3.25 * inch, 3.25 * inch])
@@ -572,6 +590,19 @@ class PdfExporter(BaseExporter):
                         f"<i>Explanation: {self._escape_text(explanation)}</i>",
                         self.styles['ExplanationText']
                     ))
+                
+                # Add distractor explanations if available (MCQ/FillBlank)
+                distractors = getattr(question, 'distractor_explanations', None)
+                if distractors and isinstance(distractors, dict):
+                    story.append(Paragraph(
+                        "<i>Why other options are incorrect:</i>",
+                        self.styles['ExplanationText']
+                    ))
+                    for option, reason in distractors.items():
+                        story.append(Paragraph(
+                            f"• {self._escape_text(option)}: {self._escape_text(reason)}",
+                            self.styles['ExplanationText']
+                        ))
 
     def _get_answer_text(self, question, number: int) -> str:
         """Get formatted answer text for answer key.

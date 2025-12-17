@@ -425,12 +425,33 @@ class GoogleFormsExporter(BaseExporter):
         
         # Add grading if answer key is included
         if options.include_answer_key:
-            item["item"]["questionItem"]["question"]["grading"] = {
+            grading = {
                 "pointValue": self.DEFAULT_POINT_VALUE,
                 "correctAnswers": {
                     "answers": [{"value": question.options[correct_idx]}]
                 }
             }
+            
+            # Add feedback if explanations are included
+            if options.include_explanations:
+                explanation = getattr(question, 'explanation', None)
+                distractors = getattr(question, 'distractor_explanations', None)
+                
+                feedback_text = ""
+                if explanation:
+                    feedback_text += f"{explanation}\n\n"
+                
+                if distractors and isinstance(distractors, dict):
+                    feedback_text += "Why other options are incorrect:\n"
+                    for opt, reason in distractors.items():
+                        feedback_text += f"• {opt}: {reason}\n"
+                
+                if feedback_text:
+                    feedback_text = feedback_text.strip()
+                    grading["whenRight"] = {"text": feedback_text}
+                    grading["whenWrong"] = {"text": feedback_text}
+            
+            item["item"]["questionItem"]["question"]["grading"] = grading
         
         return item
     
@@ -469,12 +490,19 @@ class GoogleFormsExporter(BaseExporter):
         
         # Add grading if answer key is included
         if options.include_answer_key:
-            item["item"]["questionItem"]["question"]["grading"] = {
+            grading = {
                 "pointValue": self.DEFAULT_POINT_VALUE,
                 "correctAnswers": {
                     "answers": [{"value": correct_value}]
                 }
             }
+            
+            if options.include_explanations and getattr(question, 'explanation', None):
+                feedback = {"text": question.explanation}
+                grading["whenRight"] = feedback
+                grading["whenWrong"] = feedback
+                
+            item["item"]["questionItem"]["question"]["grading"] = grading
         
         return item
     
@@ -516,10 +544,24 @@ class GoogleFormsExporter(BaseExporter):
         # For text questions, we only set pointValue and generalFeedback.
         # generalFeedback shows the expected answer during manual grading.
         if options.include_answer_key:
+            feedback_text = f"Expected answer: {question.correct_answer}"
+            
+            if options.include_explanations:
+                explanation = getattr(question, 'explanation', None)
+                distractors = getattr(question, 'distractor_explanations', None)
+                
+                if explanation:
+                    feedback_text += f"\n\nExplanation: {explanation}"
+                
+                if distractors and isinstance(distractors, dict):
+                    feedback_text += "\n\nWhy other options are incorrect:"
+                    for opt, reason in distractors.items():
+                        feedback_text += f"\n• {opt}: {reason}"
+            
             item["item"]["questionItem"]["question"]["grading"] = {
                 "pointValue": self.DEFAULT_POINT_VALUE,
                 "generalFeedback": {
-                    "text": f"Expected answer: {question.correct_answer}"
+                    "text": feedback_text
                 }
                 # NOTE: whenRight/whenWrong CANNOT be used with textQuestion.
                 # Google Forms API error: "Correct/incorrect answer feedback can only be set for multiple choice questions."

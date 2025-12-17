@@ -130,9 +130,18 @@ class CsvAnkiExporter(BaseExporter):
             back_parts = [f"<b>Correct: {question.correct_answer}</b>"]
         
         # Add explanation if requested
-        if include_explanations and question.explanation:
-            back_parts.append("")
-            back_parts.append(f"<i>Explanation: {question.explanation}</i>")
+        if include_explanations:
+            if question.explanation:
+                back_parts.append("")
+                back_parts.append(f"<i>Explanation: {question.explanation}</i>")
+            
+            if question.distractor_explanations:
+                back_parts.append("")
+                back_parts.append("<i>Why other options are incorrect:</i>")
+                back_parts.append("<ul>")
+                for opt, reason in question.distractor_explanations.items():
+                    back_parts.append(f"<li><b>{opt}:</b> {reason}</li>")
+                back_parts.append("</ul>")
         
         back = "<br>".join(back_parts)
         
@@ -164,7 +173,7 @@ class CsvAnkiExporter(BaseExporter):
 
     def _fill_to_cards(
         self,
-        question: ExportQuestionFillBlank,
+        question: "ExportQuestionFillBlank",
         include_explanations: bool
     ) -> List[List[str]]:
         """
@@ -182,9 +191,18 @@ class CsvAnkiExporter(BaseExporter):
         
         back_parts = [f"<b>{question.correct_answer}</b>"]
         
-        if include_explanations and question.explanation:
-            back_parts.append("")
-            back_parts.append(f"<i>Explanation: {question.explanation}</i>")
+        if include_explanations:
+            if question.explanation:
+                back_parts.append("")
+                back_parts.append(f"<i>Explanation: {question.explanation}</i>")
+            
+            if question.distractor_explanations:
+                back_parts.append("")
+                back_parts.append("<i>Why other options are incorrect:</i>")
+                back_parts.append("<ul>")
+                for opt, reason in question.distractor_explanations.items():
+                    back_parts.append(f"<li><b>{opt}:</b> {reason}</li>")
+                back_parts.append("</ul>")
         
         back = "<br>".join(back_parts)
         

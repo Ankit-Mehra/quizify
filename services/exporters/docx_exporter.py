@@ -437,6 +437,29 @@ class DocxExporter(BaseExporter):
                     exp_run.font.size = Pt(10)
                     exp_run.font.italic = True
                     exp_run.font.color.rgb = RGBColor(0x4a, 0x4a, 0x4a)
+                
+                # Add distractor explanations if available (MCQ/FillBlank)
+                distractors = getattr(question, 'distractor_explanations', None)
+                if distractors and isinstance(distractors, dict):
+                    dist_header = doc.add_paragraph()
+                    dist_header.paragraph_format.left_indent = Inches(0.5)
+                    dist_header_run = dist_header.add_run("Why other options are incorrect:")
+                    dist_header_run.font.size = Pt(10)
+                    dist_header_run.font.italic = True
+                    dist_header_run.font.color.rgb = RGBColor(0x4a, 0x4a, 0x4a)
+                    
+                    for option, reason in distractors.items():
+                        dist_para = doc.add_paragraph()
+                        dist_para.paragraph_format.left_indent = Inches(0.75)
+                        
+                        opt_run = dist_para.add_run(f"• {option}: ")
+                        opt_run.font.size = Pt(10)
+                        opt_run.font.bold = True
+                        opt_run.font.color.rgb = RGBColor(0x4a, 0x4a, 0x4a)
+                        
+                        reason_run = dist_para.add_run(reason)
+                        reason_run.font.size = Pt(10)
+                        reason_run.font.color.rgb = RGBColor(0x4a, 0x4a, 0x4a)
 
     def _get_answer_text(self, question, number: int) -> str:
         """Get formatted answer text for answer key."""

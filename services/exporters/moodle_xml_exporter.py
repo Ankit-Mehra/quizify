@@ -182,10 +182,25 @@ class MoodleXmlExporter(BaseExporter):
                 fb_text.text = "<![CDATA[]]>"
         
         # General feedback (explanation)
-        if options.include_explanations and question.explanation:
-            general_fb = ET.SubElement(q_elem, "generalfeedback", {"format": "html"})
-            text = ET.SubElement(general_fb, "text")
-            text.text = f"<![CDATA[<p>{self._escape_html(question.explanation)}</p>]]>"
+        if options.include_explanations:
+            explanation = getattr(question, 'explanation', None)
+            distractors = getattr(question, 'distractor_explanations', None)
+            
+            if explanation or distractors:
+                general_fb = ET.SubElement(q_elem, "generalfeedback", {"format": "html"})
+                text = ET.SubElement(general_fb, "text")
+                
+                fb_html = ""
+                if explanation:
+                    fb_html += f"<p><b>Explanation:</b> {self._escape_html(explanation)}</p>"
+                
+                if distractors and isinstance(distractors, dict):
+                    fb_html += "<p><b>Why other options are incorrect:</b></p><ul>"
+                    for opt, reason in distractors.items():
+                        fb_html += f"<li><b>{self._escape_html(opt)}:</b> {self._escape_html(reason)}</li>"
+                    fb_html += "</ul>"
+                
+                text.text = f"<![CDATA[{fb_html}]]>"
     
     def _add_true_false_question(
         self,
@@ -284,10 +299,25 @@ class MoodleXmlExporter(BaseExporter):
             fb_text.text = "<![CDATA[Correct!]]>"
         
         # General feedback
-        if options.include_explanations and question.explanation:
-            general_fb = ET.SubElement(q_elem, "generalfeedback", {"format": "html"})
-            text = ET.SubElement(general_fb, "text")
-            text.text = f"<![CDATA[<p>{self._escape_html(question.explanation)}</p>]]>"
+        if options.include_explanations:
+            explanation = getattr(question, 'explanation', None)
+            distractors = getattr(question, 'distractor_explanations', None)
+            
+            if explanation or distractors:
+                general_fb = ET.SubElement(q_elem, "generalfeedback", {"format": "html"})
+                text = ET.SubElement(general_fb, "text")
+                
+                fb_html = ""
+                if explanation:
+                    fb_html += f"<p><b>Explanation:</b> {self._escape_html(explanation)}</p>"
+                
+                if distractors and isinstance(distractors, dict):
+                    fb_html += "<p><b>Why other options are incorrect:</b></p><ul>"
+                    for opt, reason in distractors.items():
+                        fb_html += f"<li><b>{self._escape_html(opt)}:</b> {self._escape_html(reason)}</li>"
+                    fb_html += "</ul>"
+                
+                text.text = f"<![CDATA[{fb_html}]]>"
     
     def _add_matching_question(
         self,

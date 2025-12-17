@@ -96,6 +96,7 @@ class ExportQuestionMCQ(BaseModel):
     options: List[str]
     correct_answer: str
     explanation: Optional[str] = None
+    distractor_explanations: Optional[dict] = None
     source: Optional[str] = None
 
 
@@ -117,6 +118,7 @@ class ExportQuestionFillBlank(BaseModel):
     options: List[str]  # Word bank
     correct_answer: str
     explanation: Optional[str] = None
+    distractor_explanations: Optional[dict] = None
     source: Optional[str] = None
 
 
