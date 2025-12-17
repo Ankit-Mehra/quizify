@@ -195,10 +195,18 @@ class MoodleXmlExporter(BaseExporter):
                     fb_html += f"<p><b>Explanation:</b> {self._escape_html(explanation)}</p>"
                 
                 if distractors and isinstance(distractors, dict):
-                    fb_html += "<p><b>Why other options are incorrect:</b></p><ul>"
-                    for opt, reason in distractors.items():
-                        fb_html += f"<li><b>{self._escape_html(opt)}:</b> {self._escape_html(reason)}</li>"
-                    fb_html += "</ul>"
+                    # Filter out the correct answer from distractor explanations to avoid confusion
+                    correct_answer = getattr(question, "correct_answer", None)
+                    filtered_items = [
+                        (opt, reason)
+                        for opt, reason in distractors.items()
+                        if opt != correct_answer
+                    ]
+                    if filtered_items:
+                        fb_html += "<p><b>Why other options are incorrect:</b></p><ul>"
+                        for opt, reason in filtered_items:
+                            fb_html += f"<li><b>{self._escape_html(opt)}:</b> {self._escape_html(reason)}</li>"
+                        fb_html += "</ul>"
                 
                 text.text = f"<![CDATA[{fb_html}]]>"
     
@@ -312,10 +320,18 @@ class MoodleXmlExporter(BaseExporter):
                     fb_html += f"<p><b>Explanation:</b> {self._escape_html(explanation)}</p>"
                 
                 if distractors and isinstance(distractors, dict):
-                    fb_html += "<p><b>Why other options are incorrect:</b></p><ul>"
-                    for opt, reason in distractors.items():
-                        fb_html += f"<li><b>{self._escape_html(opt)}:</b> {self._escape_html(reason)}</li>"
-                    fb_html += "</ul>"
+                    # Filter out the correct answer from distractor explanations to avoid confusion
+                    correct_answer = getattr(question, "correct_answer", None)
+                    filtered_items = [
+                        (opt, reason)
+                        for opt, reason in distractors.items()
+                        if opt != correct_answer
+                    ]
+                    if filtered_items:
+                        fb_html += "<p><b>Why other options are incorrect:</b></p><ul>"
+                        for opt, reason in filtered_items:
+                            fb_html += f"<li><b>{self._escape_html(opt)}:</b> {self._escape_html(reason)}</li>"
+                        fb_html += "</ul>"
                 
                 text.text = f"<![CDATA[{fb_html}]]>"
     

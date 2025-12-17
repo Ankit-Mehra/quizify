@@ -444,6 +444,9 @@ class GoogleFormsExporter(BaseExporter):
                 if distractors and isinstance(distractors, dict):
                     feedback_text += "Why other options are incorrect:\n"
                     for opt, reason in distractors.items():
+                        # Skip explanations for the correct answer to avoid marking it as incorrect
+                        if opt == question.correct_answer:
+                            continue
                         feedback_text += f"• {opt}: {reason}\n"
                 
                 if feedback_text:
@@ -556,6 +559,14 @@ class GoogleFormsExporter(BaseExporter):
                 if distractors and isinstance(distractors, dict):
                     feedback_text += "\n\nWhy other options are incorrect:"
                     for opt, reason in distractors.items():
+                        # For fill-in-the-blank questions, avoid showing an
+                        # explanation that treats the correct answer as incorrect.
+                        try:
+                            correct = (question.correct_answer or "").strip().lower()
+                        except AttributeError:
+                            correct = ""
+                        if isinstance(opt, str) and opt.strip().lower() == correct:
+                            continue
                         feedback_text += f"\n• {opt}: {reason}"
             
             item["item"]["questionItem"]["question"]["grading"] = {
