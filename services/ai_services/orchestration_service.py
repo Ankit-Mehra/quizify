@@ -77,14 +77,12 @@ class QuizOrchestrationService:
         if not context:
             return ""
 
-        # Normalize whitespace so short and long contexts behave consistently.
-        normalized = " ".join(context.split())
-        if not normalized:
+        words = context.split()
+        if not words:
             return ""
 
-        words = normalized.split(" ")
         if len(words) <= max_words:
-            return normalized
+            return " ".join(words)
 
         if head_words is None and tail_words is None:
             head_words = max(0, max_words // 2)
@@ -98,12 +96,16 @@ class QuizOrchestrationService:
             head_words = max(0, max_words // 2)
             tail_words = max(0, max_words - head_words)
 
-        start = " ".join(words[:head_words]).strip()
-        end = " ".join(words[-tail_words:]).strip() if tail_words > 0 else ""
-
-        if start and end:
-            return f"{start} {separator} {end}".strip()
-        return start or end
+        parts = []
+        if head_words > 0:
+            parts.append(" ".join(words[:head_words]))
+        
+        parts.append(separator)
+        
+        if tail_words > 0:
+            parts.append(" ".join(words[-tail_words:]))
+            
+        return " ".join(parts)
     
     def _validate_question_structure(self, result: Dict[str, Any], question_type: str) -> None:
         """

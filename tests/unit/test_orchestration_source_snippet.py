@@ -36,3 +36,17 @@ class TestOrchestrationSourceSnippet:
         snippet = service._format_source_snippet(context, max_words=10, head_words=9, tail_words=9)
         assert snippet.startswith(" ".join(words[:5]))
         assert snippet.endswith(" ".join(words[-5:]))
+
+    def test_head_only_truncation_includes_separator(self, service):
+        words = [f"w{i}" for i in range(20)]
+        context = " ".join(words)
+        # max_words=10, head_words=5, tail_words=0
+        snippet = service._format_source_snippet(context, max_words=10, head_words=5, tail_words=0)
+        assert snippet == "w0 w1 w2 w3 w4 ..."
+
+    def test_tail_only_truncation_includes_separator(self, service):
+        words = [f"w{i}" for i in range(20)]
+        context = " ".join(words)
+        # max_words=10, head_words=0, tail_words=5
+        snippet = service._format_source_snippet(context, max_words=10, head_words=0, tail_words=5)
+        assert snippet == "... w15 w16 w17 w18 w19"
