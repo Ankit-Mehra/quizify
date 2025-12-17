@@ -128,8 +128,8 @@ class CsvQuizifyExporter(BaseExporter):
 
     def _mcq_to_rows(
         self,
-        quiz_data: "QuizExportData",
-        question: "ExportQuestionMCQ",
+        quiz_data: QuizExportData,
+        question: ExportQuestionMCQ,
         question_number: int,
         include_answers: bool
     ) -> List[List[str]]:
@@ -165,8 +165,8 @@ class CsvQuizifyExporter(BaseExporter):
 
     def _tf_to_rows(
         self,
-        quiz_data: "QuizExportData",
-        question: "ExportQuestionTrueFalse",
+        quiz_data: QuizExportData,
+        question: ExportQuestionTrueFalse,
         question_number: int,
         include_answers: bool
     ) -> List[List[str]]:
@@ -192,8 +192,8 @@ class CsvQuizifyExporter(BaseExporter):
 
     def _fill_to_rows(
         self,
-        quiz_data: "QuizExportData",
-        question: "ExportQuestionFillBlank",
+        quiz_data: QuizExportData,
+        question: ExportQuestionFillBlank,
         question_number: int,
         include_answers: bool
     ) -> List[List[str]]:
@@ -242,8 +242,8 @@ class CsvQuizifyExporter(BaseExporter):
 
     def _matching_to_rows(
         self,
-        quiz_data: "QuizExportData",
-        question: "ExportQuestionMatching",
+        quiz_data: QuizExportData,
+        question: ExportQuestionMatching,
         question_number: int,
         include_answers: bool
     ) -> List[List[str]]:

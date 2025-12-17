@@ -173,7 +173,7 @@ class CsvAnkiExporter(BaseExporter):
 
     def _fill_to_cards(
         self,
-        question: "ExportQuestionFillBlank",
+        question: ExportQuestionFillBlank,
         include_explanations: bool
     ) -> List[List[str]]:
         """
