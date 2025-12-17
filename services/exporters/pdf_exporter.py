@@ -594,15 +594,29 @@ class PdfExporter(BaseExporter):
                 # Add distractor explanations if available (MCQ/FillBlank)
                 distractors = getattr(question, 'distractor_explanations', None)
                 if distractors and isinstance(distractors, dict):
-                    story.append(Paragraph(
-                        "<i>Why other options are incorrect:</i>",
-                        self.styles['ExplanationText']
-                    ))
-                    for option, reason in distractors.items():
+                    # Filter out correct answer
+                    correct_answer = getattr(question, 'correct_answer', '')
+                    filtered_distractors = []
+                    
+                    if isinstance(correct_answer, str):
+                        correct_norm = correct_answer.strip().lower()
+                        filtered_distractors = [
+                            (k, v) for k, v in distractors.items()
+                            if k.strip().lower() != correct_norm
+                        ]
+                    else:
+                        filtered_distractors = list(distractors.items())
+
+                    if filtered_distractors:
                         story.append(Paragraph(
-                            f"• {self._escape_text(option)}: {self._escape_text(reason)}",
+                            "<i>Why other options are incorrect:</i>",
                             self.styles['ExplanationText']
                         ))
+                        for option, reason in filtered_distractors:
+                            story.append(Paragraph(
+                                f"• {self._escape_text(option)}: {self._escape_text(reason)}",
+                                self.styles['ExplanationText']
+                            ))
 
     def _get_answer_text(self, question, number: int) -> str:
         """Get formatted answer text for answer key.
