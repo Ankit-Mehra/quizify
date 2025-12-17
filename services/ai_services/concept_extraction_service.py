@@ -425,11 +425,12 @@ class ConceptExtractionService:
             )
             
             # Calculate max concepts and tokens based on mode
-            # Single-call: entire document -> request config.MAX_CONCEPTS_PER_DOCUMENT, allow 2000 tokens
+            # Single-call: entire document -> request config.MAX_CONCEPTS_PER_DOCUMENT, allow 6000 tokens
+            # 50 concepts × ~100 tokens each (JSON structure) = 5000 tokens, cap at 6000 for safety
             # Multi-batch: each batch -> request MAX_CONCEPTS_PER_BATCH (or num_chunks if smaller), cap at 800 tokens
             if is_single_call:
                 max_concepts_for_batch = config.MAX_CONCEPTS_PER_DOCUMENT
-                max_output_tokens = 2000
+                max_output_tokens = 6000  # Fixed: was 2000, caused truncation on large docs
             else:
                 max_concepts_for_batch = min(MAX_CONCEPTS_PER_BATCH, num_chunks)
                 max_output_tokens = MAX_OUTPUT_TOKENS_PER_BATCH
