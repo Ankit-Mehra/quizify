@@ -14,7 +14,7 @@ from services.db_services.supabase_quiz import (  # noqa: F401
     get_quiz_from_database, save_metadata, 
     get_metadata, delete_quiz_from_database,
     get_user_tier_info_cached, get_quiz_metadata_cached,
-    get_authed_supabase_client)
+    get_authed_supabase_client, invalidate_user_tier_cache)
 from services.db_services.supabase_file import ( 
     get_file_record, save_file_to_supabase,
     parse_file_from_supabase)
@@ -51,12 +51,15 @@ async def _validate_quiz_request(
     user_token: str
 ) -> None:
     """
-    Validate user quota and content length before quiz generation.
+    Validate user has sufficient credits and content length before quiz generation.
+    
+    NOTE: This only VALIDATES credits, it does NOT consume them.
+    Credits are consumed AFTER successful generation via consume_credits_after_success().
     
     Raises:
-        HTTPException: 403 if quota exceeded, 400 if content too short
+        HTTPException: 402 if insufficient credits, 400 if content too short
     """
-    await validate_and_consume_credits(user_id, request.mode)
+    await validate_credits_available(user_id, request.mode)
     
     if len(request.content) < MIN_CONTENT_LENGTH:
         raise HTTPException(
@@ -144,6 +147,9 @@ async def _generate_standard_mode(
             confidence_score=None
         )
         final_questions.append(eq)
+    
+    # Consume credits AFTER successful generation
+    await consume_credits_after_success(user_id, request.mode)
     
     return EnhancedQuizGenerationResponse(
         quiz_id=quiz_id,
@@ -606,20 +612,51 @@ def sanitize_filename(filename: str) -> str:
 
 async def validate_and_consume_credits(user_id: str, quiz_type: str) -> None:
     """
-    Validate and consume credits for quiz generation.
+    DEPRECATED: Use validate_credits_available() before generation and 
+    consume_credits_after_success() after successful generation.
     
-    This function consumes credits atomically via the consume_credit_units RPC.
-    On success, credits are already deducted - no need to fetch state again.
+    This function consumes credits BEFORE generation, which means credits are lost
+    if generation fails (e.g., concept extraction failure, AI error).
     
-    Raises:
-        HTTPException 402 if insufficient credits
+    Kept for backward compatibility but should be migrated to the new pattern.
     """
     success = await consume_units(user_id, quiz_type)
     if not success:
-        # Only fetch state when we need to report the error
         state = await get_billing_state(user_id)
+        if state.plan == "pro":
+            message = "Not enough credits. Purchase additional credits to continue."
+        else:
+            message = "Not enough credits. Upgrade to Pro or purchase credits."
+        raise HTTPException(
+            status_code=402,
+            detail={
+                "error": "insufficient_credits",
+                "message": message,
+                "available_credits": state.available_credits,
+                "required_credits": 0.5 if quiz_type == "standard" else 1.0,
+                "plan": state.plan
+            }
+        )
+
+
+async def validate_credits_available(user_id: str, quiz_type: str) -> None:
+    """
+    Validate user has sufficient credits for quiz generation WITHOUT consuming them.
+    
+    This should be called BEFORE generation starts to fail fast without wasting resources.
+    Credits are consumed only after successful generation via consume_credits_after_success().
+    
+    Args:
+        user_id: UUID of the user
+        quiz_type: "standard" (0.5 credits) or "enhanced" (1.0 credits)
         
-        # Contextual error message based on user's current plan
+    Raises:
+        HTTPException 402 if insufficient credits
+    """
+    state = await get_billing_state(user_id)
+    required = 0.5 if quiz_type == "standard" else 1.0
+    
+    if state.available_credits < required:
         if state.plan == "pro":
             message = "Not enough credits. Purchase additional credits to continue."
         else:
@@ -631,11 +668,41 @@ async def validate_and_consume_credits(user_id: str, quiz_type: str) -> None:
                 "error": "insufficient_credits",
                 "message": message,
                 "available_credits": state.available_credits,
-                "required_credits": 0.5 if quiz_type == "standard" else 1.0,
+                "required_credits": required,
                 "plan": state.plan
             }
         )
-    # Success - credits consumed atomically, no need to return state
+
+
+async def consume_credits_after_success(user_id: str, quiz_type: str) -> bool:
+    """
+    Consume credits after successful quiz generation.
+    
+    This should be called AFTER generation succeeds. If this fails (rare), 
+    the quiz was still generated - log the error but don't fail the request.
+    
+    Args:
+        user_id: UUID of the user
+        quiz_type: "standard" (1 unit) or "enhanced" (2 units)
+        
+    Returns:
+        True if credits consumed successfully, False if failed (logged)
+    """
+    success = await consume_units(user_id, quiz_type)
+    if not success:
+        # This should rarely happen since we validated before generation
+        # Log for investigation but don't fail - quiz was already generated
+        logger.error(
+            f"Failed to consume credits for user {user_id[:8]}... after successful "
+            f"{quiz_type} quiz generation. Credits may not have been deducted."
+        )
+    else:
+        logger.info(f"Credits consumed for user {user_id[:8]}... ({quiz_type} quiz)")
+    
+    # Invalidate cache so next request sees updated balance
+    await invalidate_user_tier_cache(user_id)
+    
+    return success
 
 
 # === Generate quiz from file ===
@@ -651,8 +718,9 @@ async def generate_quiz_from_file_openai(
     if file.content_type not in ["application/pdf", "text/plain", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]:
         raise HTTPException(status_code=400, detail="Only PDF, DOCX, or TXT files are supported.")
 
-    # Validate quota BEFORE file processing and generation (don't waste AI API calls)
-    await validate_and_consume_credits(current_user_id, mode)
+    # Validate credits BEFORE file processing (don't waste resources on users without credits)
+    # Credits will be consumed AFTER successful generation in generate_quiz_rag_async
+    await validate_credits_available(current_user_id, mode)
 
     try:
         file_bytes = await file.read()
@@ -794,8 +862,9 @@ async def generate_quiz_from_fileid(
         logger.error(f"Error reading file {file_id}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error reading file: {str(e)}")
 
-    # Validate quota BEFORE generation (don't waste AI API calls)
-    await validate_and_consume_credits(current_user_id, data.mode)
+    # Validate credits BEFORE generation (don't waste AI calls on users without credits)
+    # Credits will be consumed AFTER successful generation in generate_quiz_rag_async
+    await validate_credits_available(current_user_id, data.mode)
 
     try:
         logger.info(f"Generating quiz questions from file content (length: {len(file_content)})")
@@ -1127,8 +1196,9 @@ async def generate_quiz_from_url(
 ):
     """Generate quiz from web URL (available for all tiers with quota limits)."""
     
-    # Validate quota BEFORE scraping and generation (don't waste resources)
-    await validate_and_consume_credits(current_user_id, data.mode)
+    # Validate credits BEFORE scraping (expensive operation)
+    # Credits will be consumed AFTER successful generation in generate_quiz_rag_async
+    await validate_credits_available(current_user_id, data.mode)
     
     try:
         # Get user tier info for logging (cached for performance)
@@ -1359,7 +1429,10 @@ async def _generate_enhanced_mode(
         
         logger.info(f"[TIMING] TOTAL PIPELINE took {time.time()-pipeline_start:.2f}s")
         
-        # Step 6: Build response
+        # Step 6: Consume credits AFTER successful generation
+        await consume_credits_after_success(user_id, request.mode)
+        
+        # Step 7: Build response
         return EnhancedQuizGenerationResponse(
             quiz_id=quiz_id,
             title=request.title,

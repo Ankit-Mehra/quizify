@@ -1,11 +1,11 @@
 """
 Unit tests for credit validation logic.
-Tests the validate_and_consume_credits function and get_user_tier_info function.
+Tests the validate_credits_available, consume_credits_after_success, and validate_and_consume_credits functions.
 """
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
 from fastapi import HTTPException
-from handlers.quiz_handlers import validate_and_consume_credits
+from handlers.quiz_handlers import validate_credits_available, consume_credits_after_success, validate_and_consume_credits
 from services.db_services.supabase_quiz import get_user_tier_info
 from schemas.billing import UserBillingState
 
@@ -141,3 +141,82 @@ class TestValidateAndConsumeCredits:
         
         assert exc_info.value.status_code == 402
         assert exc_info.value.detail['error'] == 'insufficient_credits'
+
+
+class TestValidateCreditsAvailable:
+    """Tests for validate_credits_available function (validates without consuming)."""
+    pytestmark = pytest.mark.asyncio
+    
+    @patch('handlers.quiz_handlers.get_billing_state', new_callable=AsyncMock)
+    async def test_validate_credits_available_sufficient(self, mock_get_state):
+        """Test credit validation passes when user has sufficient credits."""
+        # Mock billing state with sufficient credits
+        mock_get_state.return_value = UserBillingState(
+            user_id='test-user-id',
+            plan='free',
+            credit_units_monthly=6,
+            credit_units_remaining=4,
+            credit_units_purchased=0
+        )
+
+        # Should not raise exception
+        await validate_credits_available('test-user-id', quiz_type='enhanced')
+        
+        # Verify get_billing_state was called
+        mock_get_state.assert_called_once_with('test-user-id')
+        
+    @patch('handlers.quiz_handlers.get_billing_state', new_callable=AsyncMock)
+    async def test_validate_credits_available_insufficient(self, mock_get_state):
+        """Test credit validation fails when user has insufficient credits."""
+        # Mock billing state with insufficient credits (only 1 unit = 0.5 credits, need 2 units = 1.0 for enhanced)
+        mock_get_state.return_value = UserBillingState(
+            user_id='test-user-id',
+            plan='free',
+            credit_units_monthly=6,
+            credit_units_remaining=1,  # 1 unit = 0.5 credits
+            credit_units_purchased=0,
+            free_credit_units_monthly=6,
+            free_credit_units_remaining=0  # No free credits left
+        )
+
+        # Should raise 402 exception
+        with pytest.raises(HTTPException) as exc_info:
+            await validate_credits_available('test-user-id', quiz_type='enhanced')
+        
+        assert exc_info.value.status_code == 402
+        detail = exc_info.value.detail
+        assert detail['error'] == 'insufficient_credits'
+        assert detail['required_credits'] == 1.0
+        assert detail['available_credits'] == 0.5  # 1 unit = 0.5 credits
+
+
+class TestConsumeCreditsAfterSuccess:
+    """Tests for consume_credits_after_success function (consumes after generation)."""
+    pytestmark = pytest.mark.asyncio
+    
+    @patch('handlers.quiz_handlers.invalidate_user_tier_cache', new_callable=AsyncMock)
+    @patch('handlers.quiz_handlers.consume_units', new_callable=AsyncMock)
+    async def test_consume_credits_success(self, mock_consume, mock_invalidate):
+        """Test credit consumption succeeds after generation."""
+        mock_consume.return_value = True
+
+        # Should return True
+        result = await consume_credits_after_success('test-user-id', quiz_type='enhanced')
+        
+        assert result is True
+        mock_consume.assert_called_once_with('test-user-id', 'enhanced')
+        mock_invalidate.assert_called_once_with('test-user-id')
+        
+    @patch('handlers.quiz_handlers.invalidate_user_tier_cache', new_callable=AsyncMock)
+    @patch('handlers.quiz_handlers.consume_units', new_callable=AsyncMock)
+    async def test_consume_credits_failure_returns_false(self, mock_consume, mock_invalidate):
+        """Test credit consumption failure returns False (doesn't raise)."""
+        mock_consume.return_value = False
+
+        # Should return False, not raise
+        result = await consume_credits_after_success('test-user-id', quiz_type='enhanced')
+        
+        assert result is False
+        mock_consume.assert_called_once_with('test-user-id', 'enhanced')
+        # Cache should still be invalidated
+        mock_invalidate.assert_called_once_with('test-user-id')

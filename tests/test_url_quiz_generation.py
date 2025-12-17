@@ -18,7 +18,7 @@ class TestGenerateQuizFromUrl:
     @patch('handlers.quiz_handlers.save_quiz_to_database')
     @patch('handlers.quiz_handlers.generate_quizzes_single_async')
     @patch('handlers.quiz_handlers.scrape_content')
-    @patch('handlers.quiz_handlers.validate_and_consume_credits')
+    @patch('handlers.quiz_handlers.validate_credits_available')
     @patch('handlers.quiz_handlers.get_user_tier_info_cached')
     async def test_free_tier_user_success(
         self,
@@ -97,7 +97,7 @@ class TestGenerateQuizFromUrl:
     @patch('handlers.quiz_handlers.save_quiz_to_database')
     @patch('handlers.quiz_handlers.generate_quizzes_single_async')
     @patch('handlers.quiz_handlers.scrape_content')
-    @patch('handlers.quiz_handlers.validate_and_consume_credits')
+    @patch('handlers.quiz_handlers.validate_credits_available')
     @patch('handlers.quiz_handlers.get_user_tier_info_cached')
     async def test_basic_tier_user_success(
         self,
@@ -176,7 +176,7 @@ class TestGenerateQuizFromUrl:
     @patch('handlers.quiz_handlers.save_quiz_to_database')
     @patch('handlers.quiz_handlers.generate_quizzes_single_async')
     @patch('handlers.quiz_handlers.scrape_content')
-    @patch('handlers.quiz_handlers.validate_and_consume_credits')
+    @patch('handlers.quiz_handlers.validate_credits_available')
     @patch('handlers.quiz_handlers.get_user_tier_info_cached')
     async def test_pro_tier_user_success(
         self, mock_get_tier_info, mock_validate_quota, 
@@ -232,7 +232,7 @@ class TestGenerateQuizFromUrl:
         assert 'successfully' in result.message.lower()
     
     @pytest.mark.asyncio
-    @patch('handlers.quiz_handlers.validate_and_consume_credits')
+    @patch('handlers.quiz_handlers.validate_credits_available')
     @patch('handlers.quiz_handlers.get_user_tier_info_cached')
     async def test_free_tier_quota_exceeded(self, mock_get_tier_info, mock_validate_quota):
         """Test that quota enforcement applies to free tier users (5 quiz limit)."""
@@ -277,7 +277,7 @@ class TestGenerateQuizFromUrl:
         mock_validate_quota.assert_called_once_with('test-user-id', request.mode)
 
     @pytest.mark.asyncio
-    @patch('handlers.quiz_handlers.validate_and_consume_credits')
+    @patch('handlers.quiz_handlers.validate_credits_available')
     @patch('handlers.quiz_handlers.get_user_tier_info_cached')
     async def test_basic_tier_quota_exceeded(self, mock_get_tier_info, mock_validate_quota):
         """Test that quota enforcement still applies to basic tier users."""
@@ -321,7 +321,7 @@ class TestGenerateQuizFromUrl:
     
     @pytest.mark.asyncio
     @patch('handlers.quiz_handlers.scrape_content')
-    @patch('handlers.quiz_handlers.validate_and_consume_credits')
+    @patch('handlers.quiz_handlers.validate_credits_available')
     @patch('handlers.quiz_handlers.get_user_tier_info_cached')
     async def test_invalid_url_rejected(
         self, mock_get_tier_info, mock_validate_quota, mock_scrape
@@ -362,7 +362,7 @@ class TestGenerateQuizFromUrl:
     
     @pytest.mark.asyncio
     @patch('handlers.quiz_handlers.scrape_content')
-    @patch('handlers.quiz_handlers.validate_and_consume_credits')
+    @patch('handlers.quiz_handlers.validate_credits_available')
     @patch('handlers.quiz_handlers.get_user_tier_info_cached')
     async def test_scraping_timeout_handled(
         self, mock_get_tier_info, mock_validate_quota, mock_scrape
@@ -403,7 +403,7 @@ class TestGenerateQuizFromUrl:
     
     @pytest.mark.asyncio
     @patch('handlers.quiz_handlers.scrape_content')
-    @patch('handlers.quiz_handlers.validate_and_consume_credits')
+    @patch('handlers.quiz_handlers.validate_credits_available')
     @patch('handlers.quiz_handlers.get_user_tier_info_cached')
     async def test_insufficient_content_handled(
         self, mock_get_tier_info, mock_validate_quota, mock_scrape

@@ -28,10 +28,12 @@ async def test_rag_pipeline_flow():
          patch("handlers.quiz_handlers.ConceptExtractionService") as MockExtraction, \
          patch("handlers.quiz_handlers.QuizOrchestrationService") as MockOrchestration, \
          patch("handlers.quiz_handlers.save_quiz_to_database") as mock_save, \
-         patch("handlers.quiz_handlers.validate_and_consume_credits") as mock_validate_credits:
+         patch("handlers.quiz_handlers.validate_credits_available") as mock_validate_credits, \
+         patch("handlers.quiz_handlers.consume_credits_after_success") as mock_consume_credits:
         
         # Setup Quota Validation Mock (user has quota)
-        mock_validate_credits.return_value = None  # No exception = quota valid
+        mock_validate_credits.return_value = None  # No exception = credits available
+        mock_consume_credits.return_value = True  # Credits consumed successfully after generation
         
         # Setup Ingestion Mock
         ingestion_instance = MockIngestion.return_value
@@ -129,7 +131,7 @@ async def test_rag_pipeline_quota_exceeded():
         question_type="multiple_choice"
     )
     
-    with patch("handlers.quiz_handlers.validate_and_consume_credits") as mock_validate_credits:
+    with patch("handlers.quiz_handlers.validate_credits_available") as mock_validate_credits:
         # Simulate insufficient credits (402 Payment Required)
         mock_validate_credits.side_effect = HTTPException(
             status_code=402,
@@ -165,7 +167,7 @@ async def test_rag_pipeline_concept_extraction_failure():
     
     with patch("handlers.quiz_handlers.IngestionService") as MockIngestion, \
          patch("handlers.quiz_handlers.ConceptExtractionService") as MockExtraction, \
-         patch("handlers.quiz_handlers.validate_and_consume_credits") as mock_validate_credits:
+         patch("handlers.quiz_handlers.validate_credits_available") as mock_validate_credits:
         
         mock_validate_credits.return_value = None
         
@@ -204,9 +206,11 @@ async def test_rag_pipeline_all_questions_fail():
     with patch("handlers.quiz_handlers.IngestionService") as MockIngestion, \
          patch("handlers.quiz_handlers.ConceptExtractionService") as MockExtraction, \
          patch("handlers.quiz_handlers.QuizOrchestrationService") as MockOrchestration, \
-         patch("handlers.quiz_handlers.validate_and_consume_credits") as mock_validate_credits:
+         patch("handlers.quiz_handlers.validate_credits_available") as mock_validate_credits, \
+         patch("handlers.quiz_handlers.consume_credits_after_success") as mock_consume_credits:
         
         mock_validate_credits.return_value = None
+        mock_consume_credits.return_value = True  # Credits consumed after generation
         
         # Setup Ingestion Mock
         ingestion_instance = MockIngestion.return_value
@@ -255,7 +259,7 @@ async def test_rag_pipeline_content_too_short():
         question_type="mixed"
     )
     
-    with patch("handlers.quiz_handlers.validate_and_consume_credits") as mock_validate_credits:
+    with patch("handlers.quiz_handlers.validate_credits_available") as mock_validate_credits:
         mock_validate_credits.return_value = None
         
         with pytest.raises(HTTPException) as exc_info:
