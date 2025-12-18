@@ -861,6 +861,7 @@ async def generate_quiz_from_fileid(
             "content_source_reference": file_id,
             "file_name": file_record["original_filename"],
             "file_type": file_record["file_type"],
+            "file_size_bytes": file_record.get("file_size_bytes"),  # Added for consistency with text handler
             "word_count": len(file_content.split()),
             "created_by": current_user_id,
             "created_at": datetime.now().isoformat(),
@@ -932,13 +933,20 @@ async def generate_quiz_from_text(
                 f"(filename='{truncated_filename}', status_code={storage_exc.status_code}): "
                 f"{storage_exc.detail}"
             )
-            # Re-raise with the same status code but a clearer, storage-specific message
+            # Re-raise with context-specific error message
+            if storage_exc.status_code == 413:
+                detail = (
+                    "Unable to save your text input to storage because it is too large. "
+                    "Please try again with a smaller input."
+                )
+            else:
+                detail = (
+                    "Unable to save your text input to storage due to a temporary issue. "
+                    "Please try again later."
+                )
             raise HTTPException(
                 status_code=storage_exc.status_code,
-                detail=(
-                    "Unable to save your text input to storage. "
-                    "Please try again or use a smaller input."
-                ),
+                detail=detail,
             ) from storage_exc
         
         file_id = file_result.get('file_id')
