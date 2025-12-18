@@ -13,9 +13,7 @@ Tests include:
 """
 
 import pytest
-from unittest.mock import Mock, patch, MagicMock
-from fastapi import HTTPException
-from datetime import datetime
+from unittest.mock import Mock, patch
 
 
 class TestTextFileSaving:
@@ -45,7 +43,7 @@ class TestTextFileSaving:
         
         result = sanitize_filename("My Test Quiz")
         assert " " not in result
-        assert "_" in result or result == "My_Test_Quiz"
+        assert "_" in result
     
     def test_sanitize_filename_limits_length(self):
         """Test that filename is limited to 50 characters."""
@@ -123,52 +121,62 @@ class TestTextFileSavingIntegration:
         with patch('handlers.quiz_handlers.save_metadata') as mock:
             yield mock
 
-    def test_save_file_called_with_correct_params(
-        self, mock_save_file, mock_generate_quiz_rag, mock_validate_credits, mock_save_metadata
-    ):
-        """Test that save_file_to_supabase is called with correct parameters."""
-        from handlers.quiz_handlers import generate_quiz_from_text
-        from schemas.quiz import TextQuizRequest
-        import asyncio
+    def test_text_bytes_encoding_preserves_unicode(self):
+        """Test that text content with unicode is properly encoded to UTF-8."""
+        # Test various unicode characters
+        test_cases = [
+            "Simple ASCII text",
+            "Unicode: café, naïve, 日本語",
+            "Emojis: 🎉 📚 ✅",
+            "Mixed: Hello 世界! 🌍"
+        ]
         
-        # Create request with correct schema (question_type is a list)
-        request = TextQuizRequest(
-            title="Test Quiz",
-            content="This is test content for quiz generation that is long enough.",
-            num_questions=5,
-            question_type=["multiple_choice"]
-        )
-        
-        # Mock dependencies
-        with patch('handlers.quiz_handlers.get_current_user_id', return_value="user_123"), \
-             patch('handlers.quiz_handlers.get_current_user_token', return_value="token_abc"):
-            
-            # We need to call the function directly with mocked Depends
-            # This is a simplified test - full integration test would use TestClient
-            pass  # Function requires FastAPI Depends, tested via contract tests
+        for content in test_cases:
+            text_bytes = content.encode('utf-8')
+            assert isinstance(text_bytes, bytes)
+            assert text_bytes.decode('utf-8') == content
     
-    def test_storage_failure_raises_http_exception(self):
-        """Test that storage failures are properly handled."""
-        from handlers.quiz_handlers import save_file_to_supabase
-        
-        # Test that HTTPException is properly re-raised with clear message
-        # This would be tested in integration tests with mocked save_file_to_supabase
-        # that raises HTTPException
-        pass
-    
-    def test_filename_includes_timestamp(self):
-        """Test that generated filename includes timestamp."""
+    def test_sanitize_filename_generates_valid_storage_name(self):
+        """Test that sanitize_filename produces valid names for Supabase storage."""
         from handlers.quiz_handlers import sanitize_filename
-        from datetime import datetime
         
+        # Test various edge cases
+        test_cases = [
+            ("Normal Title", True),  # Should have underscores
+            ("Title@With#Special!Chars", True),  # Special chars removed
+            ("   Spaces   ", True),  # Leading/trailing spaces handled
+            ("", False),  # Empty returns default
+        ]
+        
+        for title, should_have_underscore in test_cases:
+            result = sanitize_filename(title)
+            assert result  # Should never be empty
+            assert len(result) <= 50  # Length limit enforced
+            # Should only contain alphanumeric, underscore, hyphen
+            assert all(c.isalnum() or c in '_-' for c in result)
+    
+    def test_filename_format_validation(self):
+        """Test that filename format is correct for text input storage."""
+        from handlers.quiz_handlers import sanitize_filename
+        import re
+        
+        # The actual implementation creates: {safe_title}_{timestamp}.txt
         safe_title = sanitize_filename("My Quiz")
-        timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
-        filename = f"{safe_title}_{timestamp}.txt"
         
+        # Verify sanitized title format
+        assert safe_title  # Not empty
+        assert len(safe_title) <= 50  # Length limited
+        
+        # Verify timestamp format (YYYYMMDDHHmmss = 14 digits)
+        timestamp_pattern = r'^\d{14}$'
+        from datetime import datetime
+        timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
+        assert re.match(timestamp_pattern, timestamp)
+        
+        # Verify final filename format
+        filename = f"{safe_title}_{timestamp}.txt"
         assert filename.endswith('.txt')
-        assert safe_title in filename
-        # Timestamp should be 14 characters (YYYYMMDDHHmmss)
-        assert len(timestamp) == 14
+        assert '_' in filename  # Contains separator
 
 
 class TestFileSizeLimit:

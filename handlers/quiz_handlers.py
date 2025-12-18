@@ -925,9 +925,11 @@ async def generate_quiz_from_text(
                 "text/plain",
             )
         except HTTPException as storage_exc:
+            # Truncate filename in logs to prevent potential PII exposure
+            truncated_filename = original_filename[:20] + '...' if len(original_filename) > 20 else original_filename
             logger.error(
                 f"Failed to save text input as file to Supabase Storage "
-                f"(filename='{original_filename}', status_code={storage_exc.status_code}): "
+                f"(filename='{truncated_filename}', status_code={storage_exc.status_code}): "
                 f"{storage_exc.detail}"
             )
             # Re-raise with the same status code but a clearer, storage-specific message
@@ -966,7 +968,7 @@ async def generate_quiz_from_text(
             "content_source_reference": file_id,
             "file_name": original_filename,
             "file_type": "text/plain",
-            "file_size_bytes": len(text_bytes),
+            "file_size_bytes": text_size,
             "word_count": len(data.content.split()),
             "created_by": current_user_id,
             "created_at": datetime.now().isoformat(),
