@@ -755,7 +755,6 @@ async def generate_quiz_from_file_openai(
             "content_source_reference": file_id,
             "file_name": file.filename,
             "file_type": file.content_type,
-            "file_size_bytes": file_size,
             "word_count": len(parsed_text.split()),
             "created_by": current_user_id,
             "created_at": datetime.now().isoformat(),
@@ -861,7 +860,6 @@ async def generate_quiz_from_fileid(
             "content_source_reference": file_id,
             "file_name": file_record["original_filename"],
             "file_type": file_record["file_type"],
-            "file_size_bytes": file_record.get("file_size_bytes"),  # Added for consistency with text handler
             "word_count": len(file_content.split()),
             "created_by": current_user_id,
             "created_at": datetime.now().isoformat(),
@@ -976,7 +974,6 @@ async def generate_quiz_from_text(
             "content_source_reference": file_id,
             "file_name": original_filename,
             "file_type": "text/plain",
-            "file_size_bytes": text_size,
             "word_count": len(data.content.split()),
             "created_by": current_user_id,
             "created_at": datetime.now().isoformat(),
