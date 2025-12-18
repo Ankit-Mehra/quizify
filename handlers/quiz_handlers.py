@@ -898,6 +898,25 @@ async def generate_quiz_from_text(
         # Validate credits BEFORE generation
         await validate_credits_available(current_user_id, data.mode)
         
+        # Save text content as a file in Supabase Storage (same as file uploads)
+        # This ensures text input is stored for reference and consistency with file/URL sources
+        text_bytes = data.content.encode('utf-8')
+        # Generate filename based on title or timestamp
+        safe_title = re.sub(r'[^\w\s-]', '', data.title or 'text_input')[:50].strip()
+        if not safe_title:
+            safe_title = 'text_input'
+        original_filename = f"{safe_title}_{datetime.now().strftime('%Y%m%d%H%M%S')}.txt"
+        
+        file_result = save_file_to_supabase(
+            current_user_id, 
+            text_bytes, 
+            original_filename, 
+            user_token, 
+            "text/plain"
+        )
+        file_id = file_result.get('file_id')
+        logger.info(f"Saved text input as file: {original_filename} (file_id: {file_id})")
+        
         # Use unified generation function that handles both modes
         enhanced_request = EnhancedTextQuizRequest(
             title=data.title,
@@ -911,17 +930,18 @@ async def generate_quiz_from_text(
             current_user_id, 
             user_token,
             content_source_type="text",
-            content_source_reference=None  # Text input has no reference
+            content_source_reference=file_id  # Now references the saved file
         )
         
-        # Save metadata for text-based quiz
+        # Save metadata for text-based quiz (now with file reference)
         metadata = {
             "quiz_id": result.quiz_id,
             "content_type": "text",
             "content_source_type": "text",
-            "content_source_reference": None,
-            "file_name": None,
+            "content_source_reference": file_id,
+            "file_name": original_filename,
             "file_type": "text/plain",
+            "file_size_bytes": len(text_bytes),
             "word_count": len(data.content.split()),
             "created_by": current_user_id,
             "created_at": datetime.now().isoformat(),
@@ -931,6 +951,7 @@ async def generate_quiz_from_text(
         
         # Update message and return EnhancedQuizGenerationResponse directly
         result.message = f"Quiz generated successfully from text ({data.mode} mode)"
+        result.file_id = file_id  # Include file_id in response for consistency
         return result
     
     except HTTPException as he:
