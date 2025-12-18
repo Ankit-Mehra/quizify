@@ -901,19 +901,44 @@ async def generate_quiz_from_text(
         # Save text content as a file in Supabase Storage (same as file uploads)
         # This ensures text input is stored for reference and consistency with file/URL sources
         text_bytes = data.content.encode('utf-8')
-        # Generate filename based on title or timestamp
-        safe_title = re.sub(r'[^\w\s-]', '', data.title or 'text_input')[:50].strip()
-        if not safe_title:
-            safe_title = 'text_input'
+        text_size = len(text_bytes)
+        
+        # Enforce the same maximum size limit as file uploads (10MB)
+        if text_size > MAX_FILE_SIZE:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Text content is too large. Maximum allowed size is 10MB ({MAX_FILE_SIZE} bytes). Your text is {text_size} bytes."
+            )
+        
+        # Generate filename based on title or timestamp using shared sanitization logic
+        safe_title = sanitize_filename(data.title or 'text_input')
         original_filename = f"{safe_title}_{datetime.now().strftime('%Y%m%d%H%M%S')}.txt"
         
-        file_result = save_file_to_supabase(
-            current_user_id, 
-            text_bytes, 
-            original_filename, 
-            user_token, 
-            "text/plain"
-        )
+        # Save the text input as a file in Supabase Storage
+        # Add localized error handling so storage failures surface clear messages
+        try:
+            file_result = save_file_to_supabase(
+                current_user_id,
+                text_bytes,
+                original_filename,
+                user_token,
+                "text/plain",
+            )
+        except HTTPException as storage_exc:
+            logger.error(
+                f"Failed to save text input as file to Supabase Storage "
+                f"(filename='{original_filename}', status_code={storage_exc.status_code}): "
+                f"{storage_exc.detail}"
+            )
+            # Re-raise with the same status code but a clearer, storage-specific message
+            raise HTTPException(
+                status_code=storage_exc.status_code,
+                detail=(
+                    "Unable to save your text input to storage. "
+                    "Please try again or use a smaller input."
+                ),
+            ) from storage_exc
+        
         file_id = file_result.get('file_id')
         logger.info(f"Saved text input as file: {original_filename} (file_id: {file_id})")
         
