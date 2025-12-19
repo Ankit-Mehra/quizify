@@ -214,9 +214,12 @@ def mock_file_id_generation(mock_question, mock_file_record, tier_info, quiz_id=
     if parsed_text is None:
         parsed_text = "Parsed text from stored file. This text needs to be long enough to pass the minimum content length check."
     
+    # Create async mock for parse function
+    async_parse_mock = AsyncMock(return_value=parsed_text)
+    
     with patch('handlers.quiz_handlers.get_user_tier_info_cached') as mock_tier, \
          patch('handlers.quiz_handlers.get_file_record') as mock_get_record, \
-         patch('handlers.quiz_handlers.parse_file_from_supabase') as mock_parse, \
+         patch('handlers.quiz_handlers.parse_file_from_supabase_async', async_parse_mock), \
          patch('handlers.quiz_handlers.generate_quizzes_single_async') as mock_generate, \
          patch('handlers.quiz_handlers.save_quiz_to_database') as mock_save_quiz, \
          patch('handlers.quiz_handlers.save_metadata') as mock_save_metadata, \
@@ -225,7 +228,6 @@ def mock_file_id_generation(mock_question, mock_file_record, tier_info, quiz_id=
         # Setup all mocks
         mock_tier.return_value = tier_info
         mock_get_record.return_value = mock_file_record
-        mock_parse.return_value = parsed_text
         mock_validate.return_value = None  # Success
         
         setup_successful_generation_mocks(mock_generate, mock_save_quiz, mock_question, quiz_id)
@@ -234,7 +236,7 @@ def mock_file_id_generation(mock_question, mock_file_record, tier_info, quiz_id=
         yield {
             'tier': mock_tier,
             'get_record': mock_get_record,
-            'parse': mock_parse,
+            'parse': async_parse_mock,
             'generate': mock_generate,
             'save_quiz': mock_save_quiz,
             'save_metadata': mock_save_metadata,
@@ -245,10 +247,13 @@ def mock_file_id_generation(mock_question, mock_file_record, tier_info, quiz_id=
 @contextmanager
 def mock_quota_exceeded(tier_info):
     """Context manager to mock quota exceeded scenario (no generation)."""
+    # Create async mock for parse function
+    async_parse_mock = AsyncMock(return_value="Extracted text content long enough.")
+    
     with patch('handlers.quiz_handlers.get_user_tier_info_cached') as mock_tier, \
          patch('handlers.quiz_handlers.reserve_credits_atomic') as mock_validate, \
          patch('handlers.quiz_handlers.get_file_record') as mock_get_record, \
-         patch('handlers.quiz_handlers.parse_file_from_supabase') as mock_parse:
+         patch('handlers.quiz_handlers.parse_file_from_supabase_async', async_parse_mock):
         
         mock_tier.return_value = tier_info
         
@@ -260,7 +265,6 @@ def mock_quota_exceeded(tier_info):
             'file_type': 'application/pdf',
             'storage_path': 'user-files/test.pdf'
         }
-        mock_parse.return_value = "Extracted text content long enough."
         
         # Map legacy tiers to new billing plans
         plan = tier_info['account_tier']
@@ -274,7 +278,7 @@ def mock_quota_exceeded(tier_info):
             'tier': mock_tier,
             'validate': mock_validate,
             'get_record': mock_get_record,
-            'parse': mock_parse
+            'parse': async_parse_mock
         }
 
 
@@ -656,4 +660,145 @@ class TestQuotaEnforcementFileIdEndpoint:
             
             # Verify quota check failed with 402
             assert exc_info.value.status_code == 402
+
+
+# ============================================================================
+# Early Validation Failure Regression Tests
+# ============================================================================
+
+class TestEarlyValidationFailures:
+    """
+    Regression tests for early validation failures in quiz generation.
+    
+    These tests ensure that validation failures that occur BEFORE credit reservation
+    (e.g., authentication failures, size validation) return proper error codes
+    (401, 413) instead of 500 UnboundLocalError.
+    
+    Issue: credits_reserved was initialized inside try block, causing UnboundLocalError
+    in finally block when early validation failed before credits_reserved was set.
+    Fix: Move credits_reserved = False BEFORE try block.
+    """
+    
+    @pytest.mark.asyncio
+    async def test_text_endpoint_undefined_user_returns_401_not_500(self):
+        """
+        Test that undefined user_id returns 401, not 500 UnboundLocalError.
+        
+        Regression test for: credits_reserved uninitialized on early auth failure.
+        The finally block should not raise UnboundLocalError when auth fails
+        before credits_reserved is set.
+        """
+        request_data = TextQuizRequest(
+            title="Test Quiz",
+            content="Test content for quiz generation about Python programming.",
+            num_questions=5,
+            question_type=["multiple_choice"]
+        )
+        
+        # Call handler with undefined user_id (simulates auth failure)
+        with pytest.raises(HTTPException) as exc_info:
+            await generate_quiz_from_text(
+                data=request_data,
+                current_user_id="undefined",  # Simulates auth failure
+                user_token="test-token"
+            )
+        
+        # Should return 401 (auth required), NOT 500 (UnboundLocalError)
+        assert exc_info.value.status_code == 401, \
+            f"Expected 401 for undefined user, got {exc_info.value.status_code}: {exc_info.value.detail}"
+        assert "Authentication required" in str(exc_info.value.detail)
+    
+    @pytest.mark.asyncio
+    async def test_text_endpoint_empty_user_returns_401_not_500(self):
+        """
+        Test that empty user_id returns 401, not 500 UnboundLocalError.
+        """
+        request_data = TextQuizRequest(
+            title="Test Quiz",
+            content="Test content for quiz generation about Python programming.",
+            num_questions=5,
+            question_type=["multiple_choice"]
+        )
+        
+        # Call handler with empty user_id
+        with pytest.raises(HTTPException) as exc_info:
+            await generate_quiz_from_text(
+                data=request_data,
+                current_user_id="",  # Empty user ID
+                user_token="test-token"
+            )
+        
+        # Should return 401, NOT 500
+        assert exc_info.value.status_code == 401, \
+            f"Expected 401 for empty user, got {exc_info.value.status_code}: {exc_info.value.detail}"
+    
+    @pytest.mark.asyncio
+    async def test_text_endpoint_oversized_content_returns_413_not_500(self):
+        """
+        Test that oversized content returns 413, not 500 UnboundLocalError.
+        
+        Regression test for: credits_reserved uninitialized on early size validation.
+        Size validation happens BEFORE credit reservation, so credits_reserved
+        must be initialized before the try block.
+        """
+        # Create content larger than 10MB limit
+        oversized_content = "x" * (11 * 1024 * 1024)  # 11MB
+        
+        request_data = TextQuizRequest(
+            title="Test Quiz",
+            content=oversized_content,
+            num_questions=5,
+            question_type=["multiple_choice"]
+        )
+        
+        # Call handler with oversized content
+        with pytest.raises(HTTPException) as exc_info:
+            await generate_quiz_from_text(
+                data=request_data,
+                current_user_id="test-user-id",
+                user_token="test-token"
+            )
+        
+        # Should return 413 (content too large), NOT 500 (UnboundLocalError)
+        assert exc_info.value.status_code == 413, \
+            f"Expected 413 for oversized content, got {exc_info.value.status_code}: {exc_info.value.detail}"
+        assert "too large" in str(exc_info.value.detail).lower()
+    
+    @pytest.mark.asyncio
+    async def test_file_endpoint_undefined_user_handled_gracefully(self):
+        """
+        Test that file endpoint handles undefined user without UnboundLocalError.
+        
+        Note: File endpoint reserves credits before user validation,
+        so we mock the credit reservation to test the finally block behavior.
+        """
+        # Create mock file with valid content type
+        file_content = b"Test file content"
+        mock_file = MagicMock()
+        mock_file.filename = "test.txt"
+        mock_file.content_type = "text/plain"
+        mock_file.read = AsyncMock(return_value=file_content)
+        
+        # Mock credit reservation to simulate it failing for undefined user
+        with patch('handlers.quiz_handlers.reserve_credits_atomic') as mock_reserve:
+            mock_reserve.side_effect = HTTPException(
+                status_code=401,
+                detail="Authentication required"
+            )
+            
+            with pytest.raises(HTTPException) as exc_info:
+                await generate_quiz_from_file_openai(
+                    file=mock_file,
+                    title="Test Quiz",
+                    num_questions=5,
+                    question_type=["multiple_choice"],
+                    mode="standard",
+                    current_user_id="undefined",
+                    user_token="test-token"
+                )
+            
+            # Should NOT be 500 (UnboundLocalError)
+            # The finally block should handle credits_reserved=False gracefully
+            assert exc_info.value.status_code != 500, \
+                f"Got unexpected 500 error (possible UnboundLocalError): {exc_info.value.detail}"
 

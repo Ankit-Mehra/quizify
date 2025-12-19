@@ -6,52 +6,19 @@ Supports automatic PDF download and text extraction from PDF URLs.
 import ipaddress
 import socket
 import os
+import time
+import threading
 import httpx
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urlparse
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeout
 import trafilatura
 from fastapi import HTTPException
 from services.logger import app_logger as logger
+from services.url_utils import redact_url_for_logging as _redact_url_for_logging  # Centralized URL redaction
 from config import config as app_config
 from services.ai_services.doc_service import extract_text_from_pdf
 from services.db_services.supabase_file import save_file_to_supabase_async
 from services.redis.browser_slots import browser_slot_manager
-
-
-def _redact_url_for_logging(url: str) -> str:
-    """
-    Redact sensitive information from URL for safe logging.
-    
-    Removes query parameters, fragments, and credentials to prevent
-    leaking secrets (API tokens, session IDs, passwords) to log files.
-    
-    Args:
-        url: The full URL to redact
-        
-    Returns:
-        URL with only scheme, host, and path (truncated if long)
-    """
-    try:
-        parsed = urlparse(url)
-        # Strip credentials from netloc
-        # Note: parsed.hostname strips brackets from IPv6, so we need to re-add them
-        hostname = parsed.hostname or ''
-        # Check if this is an IPv6 address (contains colons)
-        if hostname and ':' in hostname:
-            hostname = f'[{hostname}]'
-        safe_netloc = hostname
-        if parsed.port:
-            safe_netloc = f"{safe_netloc}:{parsed.port}"
-        
-        redacted = urlunparse((
-            parsed.scheme,
-            safe_netloc,
-            parsed.path[:100] if len(parsed.path) > 100 else parsed.path,  # Truncate long paths
-            '', '', ''  # No params, query, fragment
-        ))
-        return redacted
-    except Exception:
-        return url.split('?')[0][:80] if url else "unknown"
 
 
 # Constants
@@ -67,6 +34,15 @@ MAX_MEMORY_MB = 256  # Maximum memory per browser instance
 MAX_CONCURRENT_BROWSERS = 3  # Maximum concurrent browsers per user
 JS_EXECUTION_TIMEOUT = 10000  # JavaScript execution timeout (10s)
 PAGE_LOAD_TIMEOUT = 5000  # Additional page load timeout (5s)
+
+# DNS cache configuration
+# NOTE: DNS caching is DISABLED for security-critical SSRF validation paths.
+# The cache is only used for non-security paths like logging/metrics.
+# All calls to resolve_hostname_to_ips in validate_url and _validate_redirect_url
+# MUST use use_cache=False to prevent DNS rebinding attacks.
+DNS_CACHE_TTL = 30  # Cache DNS results for 30 seconds (for non-security paths only)
+_dns_cache: dict = {}  # {hostname: (ips, expiry_time)}
+_dns_cache_lock = threading.Lock()  # Thread-safe cache access
 
 # Security Note: We avoid --single-process and --no-sandbox flags when possible
 # as they disable Chrome's security sandbox. These flags should only be used
@@ -431,7 +407,8 @@ def _validate_redirect_url(url: str) -> None:
                 )
         except ValueError:
             # It's a hostname - resolve and check
-            resolved_ips = resolve_hostname_to_ips(hostname)
+            # SECURITY: Always use fresh DNS lookup (use_cache=False) to prevent DNS rebinding attacks
+            resolved_ips = resolve_hostname_to_ips(hostname, use_cache=False)
             for ip in resolved_ips:
                 if is_private_ip(ip):
                     logger.warning(f"SSRF attempt blocked: Redirect hostname {hostname} resolves to private IP ({ip})")
@@ -477,12 +454,18 @@ class SSRFSafeTransport(httpx.AsyncHTTPTransport):
         return response
 
 
-def resolve_hostname_to_ips(hostname: str) -> list:
+def resolve_hostname_to_ips(hostname: str, use_cache: bool = False) -> list:
     """
     Resolve hostname to IP addresses (IPv4 and IPv6) to prevent DNS rebinding.
     
+    SECURITY NOTE: Default is use_cache=False to prevent DNS rebinding attacks.
+    Caching should ONLY be enabled for non-security paths (e.g., logging/metrics).
+    All SSRF validation paths MUST use use_cache=False.
+    
     Args:
         hostname: The hostname to resolve
+        use_cache: Whether to use the DNS cache (default False for security).
+                  Only set to True for non-security-critical paths.
         
     Returns:
         List of IP addresses (both IPv4 and IPv6)
@@ -490,11 +473,33 @@ def resolve_hostname_to_ips(hostname: str) -> list:
     Raises:
         HTTPException: If hostname cannot be resolved
     """
+    global _dns_cache
+    current_time = time.time()
+    
+    # Check cache first (if enabled) - thread-safe access
+    if use_cache:
+        with _dns_cache_lock:
+            if hostname in _dns_cache:
+                cached_ips, expiry = _dns_cache[hostname]
+                if current_time < expiry:
+                    logger.debug(f"DNS cache hit for {hostname}: {cached_ips}")
+                    return cached_ips
+                else:
+                    # Cache expired - remove stale entry
+                    del _dns_cache[hostname]
+                    logger.debug(f"DNS cache expired for {hostname}")
+    
     try:
         # Get all IP addresses for the hostname (both IPv4 and IPv6)
         addr_info = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
         ips = list(set([str(addr[4][0]) for addr in addr_info]))
         logger.debug(f"Resolved {hostname} to IPs: {ips}")
+        
+        # Cache the result with TTL (thread-safe) - only if caching enabled
+        if use_cache:
+            with _dns_cache_lock:
+                _dns_cache[hostname] = (ips, current_time + DNS_CACHE_TTL)
+        
         return ips
     except socket.gaierror as e:
         logger.error(f"Failed to resolve hostname {hostname}: {str(e)}")
@@ -508,6 +513,14 @@ def resolve_hostname_to_ips(hostname: str) -> list:
             status_code=400,
             detail=f"Error resolving hostname: {str(e)}"
         )
+
+
+def clear_dns_cache() -> None:
+    """Clear the DNS cache. Useful for testing or forcing fresh lookups."""
+    global _dns_cache
+    with _dns_cache_lock:
+        _dns_cache = {}
+    logger.debug("DNS cache cleared")
 
 
 def validate_url(url: str) -> None:
@@ -577,8 +590,9 @@ def validate_url(url: str) -> None:
     except ValueError:
         # Not an IP address - it's a hostname
         # Resolve hostname to IP addresses to prevent DNS rebinding attacks
+        # SECURITY: Always use fresh DNS lookup (use_cache=False) for initial validation
         try:
-            resolved_ips = resolve_hostname_to_ips(hostname)
+            resolved_ips = resolve_hostname_to_ips(hostname, use_cache=False)
             
             # Check if ANY resolved IP is private/reserved
             for ip in resolved_ips:
@@ -682,10 +696,11 @@ async def scrape_content(url: str, user_id: str = "anonymous", user_token: str =
                 logger.info(f"Attempting scrape: {description} (timeout: {timeout/1000}s)")
                 
                 # SECURITY: Re-validate hostname resolution before connection to prevent DNS rebinding attacks
+                # Use use_cache=False to force fresh DNS lookup for this security-critical check
                 if original_hostname and not original_hostname.replace('.', '').isdigit():  # Only for hostnames, not IPs
                     try:
                         logger.debug(f"Re-validating hostname resolution for: {original_hostname}")
-                        current_ips = resolve_hostname_to_ips(original_hostname)
+                        current_ips = resolve_hostname_to_ips(original_hostname, use_cache=False)
                         
                         # Check if ANY current resolved IP is private/reserved
                         for ip in current_ips:

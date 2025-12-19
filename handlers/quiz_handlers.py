@@ -3,7 +3,6 @@ import asyncio
 import random
 import re
 import time
-from urllib.parse import urlparse, urlunparse
 from uuid import uuid4
 from services.ai_services.doc_service import ( 
     extract_text_from_pdf,
@@ -18,8 +17,9 @@ from services.db_services.supabase_quiz import (  # noqa: F401
     get_authed_supabase_client, invalidate_user_tier_cache)
 from services.db_services.supabase_file import ( 
     get_file_record, save_file_to_supabase_async,
-    parse_file_from_supabase, delete_file_from_supabase)
+    parse_file_from_supabase_async, delete_file_from_supabase_async)
 from services.billing_service import consume_units, get_billing_state, refund_units
+from services.url_utils import redact_url_for_storage  # Centralized URL redaction
 from dependencies.auth_dependencies import get_current_user_id, get_current_user_token
 from schemas.quiz import (
     TextQuizRequest, FileQuizRequest, WebQuizRequest,
@@ -40,55 +40,6 @@ from services.web_scraping_service import scrape_content
 MIN_CONTENT_LENGTH = 50  # Minimum characters required for quiz generation from uploaded files
 MIN_STORED_CONTENT_LENGTH = 10  # Minimum characters required for stored file content validation
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB = 10,485,760 bytes
-
-
-def redact_url_for_storage(url: str) -> str:
-    """
-    Redact sensitive information from URL for safe storage and logging.
-    
-    Removes:
-    - Query parameters (may contain API tokens, session IDs, PII)
-    - Fragments (may contain sensitive anchors)
-    - Username/password credentials (user:pass@host)
-    
-    Args:
-        url: The full URL to redact
-        
-    Returns:
-        URL with only scheme, host, and path (no credentials/query/fragment)
-        
-    Example:
-        Input:  https://user:pass@example.com/doc.pdf?token=secret&user=123
-        Output: https://example.com/doc.pdf
-    """
-    try:
-        parsed = urlparse(url)
-        # Strip username:password from netloc by using only hostname (and port if present)
-        # parsed.netloc may contain user:pass@host:port, but parsed.hostname is just the host
-        # Note: parsed.hostname strips brackets from IPv6 addresses, so we need to re-add them
-        hostname = parsed.hostname or ''
-        # Check if this is an IPv6 address (contains colons)
-        if hostname and ':' in hostname:
-            hostname = f'[{hostname}]'
-        safe_netloc = hostname
-        if parsed.port:
-            safe_netloc = f"{safe_netloc}:{parsed.port}"
-        
-        # Keep only scheme, safe netloc (host:port, no credentials), and path
-        # Drop query string, fragment, params, username, and password
-        redacted = urlunparse((
-            parsed.scheme,
-            safe_netloc,
-            parsed.path,
-            '',  # params
-            '',  # query (removed)
-            ''   # fragment (removed)
-        ))
-        return redacted
-    except Exception:
-        # If parsing fails, return a truncated version
-        # Strip query params and truncate
-        return url.split('?')[0][:100] if url else "unknown"
 
 
 # =============================================================================
@@ -746,6 +697,85 @@ async def finalize_credits_after_success(user_id: str, quiz_type: str) -> None:
     await invalidate_user_tier_cache(user_id)
 
 
+class CreditReservation:
+    """
+    Async context manager for atomic credit reservation with automatic refund on failure.
+    
+    This eliminates the need for manual credits_reserved bookkeeping and ensures
+    credits are always refunded on failure, preventing the early-exit bug where
+    credits_reserved could be uninitialized.
+    
+    Usage:
+        async with CreditReservation(user_id, quiz_type, user_token) as reservation:
+            # Do expensive operations
+            result = await generate_quiz(...)
+            reservation.mark_success()  # Credits consumed, no refund needed
+            return result
+        # If mark_success() not called, credits automatically refunded
+    
+    Attributes:
+        user_id: UUID of the user
+        quiz_type: "standard" or "enhanced"
+        user_token: User's auth token for file cleanup
+        reserved: True if credits were successfully reserved
+        succeeded: True if mark_success() was called
+        file_id: Optional file ID for cleanup on failure
+        original_filename: Optional filename for cleanup on failure
+    """
+    
+    def __init__(self, user_id: str, quiz_type: str, user_token: str = None):
+        self.user_id = user_id
+        self.quiz_type = quiz_type
+        self.user_token = user_token
+        self.reserved = False
+        self.succeeded = False
+        self.file_id = None
+        self.original_filename = None
+    
+    async def __aenter__(self) -> 'CreditReservation':
+        """Reserve credits atomically on context entry."""
+        await reserve_credits_atomic(self.user_id, self.quiz_type)
+        self.reserved = True
+        return self
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> bool:
+        """Refund credits and cleanup files if not marked as success."""
+        if self.reserved and not self.succeeded:
+            # Refund credits on failure
+            await refund_credits_on_failure(self.user_id, self.quiz_type)
+            
+            # Clean up orphaned file if it was saved
+            if self.file_id and self.original_filename and self.user_token:
+                try:
+                    await delete_file_from_supabase_async(
+                        self.file_id, 
+                        self.user_token, 
+                        self.user_id, 
+                        self.original_filename
+                    )
+                    logger.info(f"Cleaned up orphaned file after generation failure (file_id: {self.file_id})")
+                except Exception as cleanup_err:
+                    # Log but don't re-raise - cleanup failure shouldn't mask the original error
+                    logger.warning(f"Failed to cleanup orphaned file {self.file_id}: {cleanup_err}")
+        
+        # Don't suppress exceptions
+        return False
+        
+        # Don't suppress exceptions
+        return False
+    
+    def mark_success(self) -> None:
+        """Mark the operation as successful - credits will not be refunded."""
+        self.succeeded = True
+        # Fire-and-forget: finalize_credits_after_success is just logging + cache invalidation
+        # We can't await here, but the handler should call finalize_credits_after_success
+    
+    def track_file(self, file_id: str, original_filename: str) -> None:
+        """Track a file for cleanup on failure."""
+        self.file_id = file_id
+        self.original_filename = original_filename
+
+
 # === Generate quiz from file ===
 async def generate_quiz_from_file_openai(
     file: UploadFile = File(...),
@@ -864,7 +894,7 @@ async def generate_quiz_from_file_openai(
             # Clean up orphaned file if it was saved but generation failed
             if file_id and original_filename:
                 try:
-                    delete_file_from_supabase(file_id, user_token, current_user_id, original_filename)
+                    await delete_file_from_supabase_async(file_id, user_token, current_user_id, original_filename)
                     logger.info(f"Cleaned up orphaned file after generation failure (file_id: {file_id})")
                 except Exception as cleanup_err:
                     # Log but don't re-raise - cleanup failure shouldn't mask the original error
@@ -898,10 +928,10 @@ async def generate_quiz_from_fileid(
         storage_path = file_record.get("storage_path")
         logger.info(f"File storage path: {storage_path}")
         
-        # Try to get content from storage
+        # Try to get content from storage (async to avoid blocking event loop)
         try:
             logger.info("Attempting to get file content...")
-            file_content = parse_file_from_supabase(file_record, user_token)
+            file_content = await parse_file_from_supabase_async(file_record, user_token)
             logger.info(f"Successfully retrieved file content: {len(file_content)} characters")
         except HTTPException as he:
             if he.status_code == 404:
@@ -1126,7 +1156,7 @@ async def generate_quiz_from_text(
             # Clean up orphaned file if it was saved but generation failed
             if file_id and original_filename:
                 try:
-                    delete_file_from_supabase(file_id, user_token, current_user_id, original_filename)
+                    await delete_file_from_supabase_async(file_id, user_token, current_user_id, original_filename)
                     logger.info(f"Cleaned up orphaned file after generation failure (file_id: {file_id})")
                 except Exception as cleanup_err:
                     # Log but don't re-raise - cleanup failure shouldn't mask the original error
