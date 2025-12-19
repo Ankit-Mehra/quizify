@@ -7,6 +7,7 @@ of sensitive information (credentials, query params, tokens) in logs and storage
 All URL logging and storage throughout the application should use these helpers.
 """
 from urllib.parse import urlparse, urlunparse
+import ipaddress
 
 
 def redact_url(url: str, max_path_length: int = None) -> str:

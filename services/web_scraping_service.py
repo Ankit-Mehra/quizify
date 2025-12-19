@@ -59,12 +59,20 @@ def _is_running_in_container() -> bool:
     # Check for common container indicators
     container_indicators = [
         os.path.exists('/.dockerenv'),  # Docker
-        os.path.exists('/proc/1/cgroup') and 'docker' in open('/proc/1/cgroup', 'r').read(),
         os.environ.get('RAILWAY_ENVIRONMENT') is not None,  # Railway
         os.environ.get('HEROKU_DYNO_ID') is not None,  # Heroku
         os.environ.get('KUBERNETES_SERVICE_HOST') is not None,  # Kubernetes
         os.environ.get('CONTAINER') == 'true',  # Generic container flag
     ]
+    
+    # Check cgroup safely
+    if os.path.exists('/proc/1/cgroup'):
+        try:
+            with open('/proc/1/cgroup', 'r') as f:
+                if 'docker' in f.read():
+                    container_indicators.append(True)
+        except (IOError, OSError):
+            pass
     
     return any(container_indicators)
 
@@ -706,7 +714,17 @@ async def scrape_content(url: str, user_id: str = "anonymous", user_token: str =
                 
                 # SECURITY: Re-validate hostname resolution before connection to prevent DNS rebinding attacks
                 # Use use_cache=False to force fresh DNS lookup for this security-critical check
-                if original_hostname and not original_hostname.replace('.', '').isdigit():  # Only for hostnames, not IPs
+                
+                # Check if hostname is an IP literal
+                is_ip_literal = False
+                if original_hostname:
+                    try:
+                        ipaddress.ip_address(original_hostname)
+                        is_ip_literal = True
+                    except ValueError:
+                        is_ip_literal = False
+                
+                if original_hostname and not is_ip_literal:  # Only for hostnames, not IPs
                     try:
                         logger.debug(f"Re-validating hostname resolution for: {original_hostname}")
                         current_ips = resolve_hostname_to_ips(original_hostname, use_cache=False)

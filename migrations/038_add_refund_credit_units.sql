@@ -30,6 +30,11 @@ DECLARE
     v_caller_role TEXT;
     v_is_service_role BOOLEAN;
 BEGIN
+    -- Validate input
+    IF p_units <= 0 THEN
+        RAISE EXCEPTION 'Invalid refund amount: %. Units must be positive.', p_units;
+    END IF;
+
     -- ========================================================================
     -- SECURITY CHECK: Verify caller is service_role (backend only)
     -- ========================================================================

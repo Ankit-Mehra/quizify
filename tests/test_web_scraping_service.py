@@ -435,3 +435,16 @@ class TestDNSCacheSecurityRegression:
         
         # Verify cache is a dict
         assert isinstance(_dns_cache, dict), "DNS cache must be a dict"
+
+    def test_validate_url_ipv6_literal_handling(self):
+        """Test that IPv6 literals are correctly identified and not treated as hostnames."""
+        # This should pass validation (public IPv6)
+        # Note: We need a valid public IPv6 that isn't in the private ranges
+        # 2001:4860:4860::8888 is Google DNS
+        validate_url("http://[2001:4860:4860::8888]/index.html")
+        
+        # This should fail validation (private IPv6)
+        with pytest.raises(HTTPException) as exc_info:
+            validate_url("http://[fc00::1]/index.html")
+        assert exc_info.value.status_code == 400
+        assert "private or reserved" in exc_info.value.detail.lower()
