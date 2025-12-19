@@ -705,6 +705,13 @@ class CreditReservation:
     credits are always refunded on failure, preventing the early-exit bug where
     credits_reserved could be uninitialized.
     
+    NOTE: This class is currently not used by the handlers. The handlers use the
+    manual `credits_reserved` flag pattern with try-finally blocks. This class is
+    provided as an alternative pattern for future refactoring - it would reduce
+    code duplication but requires refactoring all quiz generation handlers.
+    The manual pattern was chosen initially for explicit visibility of the
+    reservation lifecycle during the security review process.
+    
     Usage:
         async with CreditReservation(user_id, quiz_type, user_token) as reservation:
             # Do expensive operations
@@ -757,9 +764,6 @@ class CreditReservation:
                 except Exception as cleanup_err:
                     # Log but don't re-raise - cleanup failure shouldn't mask the original error
                     logger.warning(f"Failed to cleanup orphaned file {self.file_id}: {cleanup_err}")
-        
-        # Don't suppress exceptions
-        return False
         
         # Don't suppress exceptions
         return False

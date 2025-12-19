@@ -293,7 +293,10 @@ async def refund_units(user_id: str, quiz_type: str) -> bool:
         }).execute()
         
         data = result.data
-        if data is True:
+        # Handle different PostgreSQL RPC return formats:
+        # - Direct boolean: True
+        # - List result: [True] or [{"refund_credit_units": True}]
+        if data is True or (isinstance(data, list) and data and (data[0] is True or data[0] == True)):
             logger.info(f"Refunded {units} units ({units/2} credits) to user {user_id[:8]} after failed generation")
             return True
         

@@ -48,9 +48,15 @@ def redact_url(url: str, max_path_length: int = None) -> str:
         # Note: parsed.hostname strips brackets from IPv6 addresses, so we need to re-add them
         hostname = parsed.hostname or ''
         
-        # Check if this is an IPv6 address (contains colons)
-        if hostname and ':' in hostname:
-            hostname = f'[{hostname}]'
+        # Check if this is an IPv6 address - use ipaddress module for accurate detection
+        # (simple colon check would incorrectly match hostnames with ports)
+        if hostname:
+            try:
+                ip = ipaddress.ip_address(hostname)
+                if ip.version == 6:
+                    hostname = f'[{hostname}]'
+            except ValueError:
+                pass  # Not an IP address, keep hostname as-is
         
         safe_netloc = hostname
         if parsed.port:

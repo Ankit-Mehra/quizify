@@ -1,6 +1,7 @@
 import httpx
 import uuid
 import asyncio
+import concurrent.futures
 from functools import partial
 from concurrent.futures import ThreadPoolExecutor
 from fastapi import HTTPException, Depends
@@ -61,7 +62,6 @@ def save_file_to_supabase(user_id: str, file_bytes: bytes, original_filename: st
     async function in a ThreadPoolExecutor which creates a new event loop per call.
     This is inefficient but safe for occasional use.
     """
-    import asyncio
     try:
         asyncio.get_running_loop()  # Check if loop is running (we're in async context)
         # We're in an async context - warn and use thread pool workaround
@@ -69,7 +69,6 @@ def save_file_to_supabase(user_id: str, file_bytes: bytes, original_filename: st
             "save_file_to_supabase called from async context. "
             "Prefer save_file_to_supabase_async for better performance."
         )
-        import concurrent.futures
         with concurrent.futures.ThreadPoolExecutor() as executor:
             future = executor.submit(
                 asyncio.run,
@@ -331,7 +330,6 @@ def read_file_content(path: str, token: str) -> bytes:
     NOTE: When called from an async context (loop.is_running()), this runs the
     async function in a ThreadPoolExecutor which creates a new event loop per call.
     """
-    import asyncio
     try:
         asyncio.get_running_loop()  # Check if loop is running (we're in async context)
         # We're in an async context - warn and use thread pool workaround
@@ -339,7 +337,6 @@ def read_file_content(path: str, token: str) -> bytes:
             "read_file_content called from async context. "
             "Prefer read_file_content_async for better performance."
         )
-        import concurrent.futures
         with concurrent.futures.ThreadPoolExecutor() as executor:
             future = executor.submit(
                 asyncio.run,
