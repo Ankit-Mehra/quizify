@@ -747,9 +747,9 @@ def setup_integration_mocks():
         stack.enter_context(patch("handlers.quiz_handlers.save_quiz_to_database", side_effect=mock_save_quiz_to_database))
         stack.enter_context(patch("handlers.quiz_handlers.get_user_quizzes", side_effect=mock_get_user_quizzes))
         stack.enter_context(patch("handlers.quiz_handlers.get_quiz_from_database", side_effect=mock_get_quiz_from_database))
-        stack.enter_context(patch("handlers.quiz_handlers.save_file_to_supabase", side_effect=mock_save_file_to_supabase))
+        stack.enter_context(patch("handlers.quiz_handlers.save_file_to_supabase_async", side_effect=mock_save_file_to_supabase))
         stack.enter_context(patch("handlers.quiz_handlers.save_metadata", side_effect=mock_save_metadata))
-        stack.enter_context(patch("handlers.file_handlers.save_file_to_supabase", side_effect=mock_save_file_to_supabase))
+        stack.enter_context(patch("handlers.file_handlers.save_file_to_supabase_async", side_effect=mock_save_file_to_supabase))
         
         yield mock_supabase
     

@@ -553,8 +553,6 @@ def delete_quiz_from_database(quiz_id: str, user_token: str = None) -> bool:
     except Exception as e:
         logger.error(f"Error deleting quiz: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to delete quiz")
-    except Exception as e:
-        logger.error(f"Error deleting quiz: {str(e)}", exc_info=True)
 
 def get_user_tier_info(user_id: str):
     """

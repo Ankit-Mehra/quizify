@@ -29,7 +29,6 @@ from services.oauth_utils import (
     OAUTH_STATE_MAX_AGE,
     is_new_user as _is_new_user,
     generate_oauth_state as _generate_oauth_state,
-    verify_oauth_state as _verify_oauth_state,
     verify_oauth_state_from_cookie as _verify_oauth_state_from_cookie,
 )
 

@@ -5,7 +5,6 @@ This module handles loading quiz data from the database and transforming
 it into the QuizExportData format used by all exporters.
 """
 
-from typing import Optional
 from uuid import UUID
 from datetime import datetime
 from fastapi import HTTPException

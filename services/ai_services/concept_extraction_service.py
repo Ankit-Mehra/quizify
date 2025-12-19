@@ -223,7 +223,7 @@ class ConceptExtractionService:
             )
         
         # Multi-batch path for very large documents
-        logger.info(f"[BATCH] Using multi-batch extraction (doc too large for single call)")
+        logger.info("[BATCH] Using multi-batch extraction (doc too large for single call)")
         
         # Group chunks into batches for efficient processing
         # Each batch is processed in a single LLM call

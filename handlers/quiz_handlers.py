@@ -46,29 +46,34 @@ def redact_url_for_storage(url: str) -> str:
     """
     Redact sensitive information from URL for safe storage and logging.
     
-    Removes query parameters and fragments to prevent leaking:
-    - API tokens/keys in query strings
-    - Session IDs
-    - User identifiers
-    - PII in URL parameters
+    Removes:
+    - Query parameters (may contain API tokens, session IDs, PII)
+    - Fragments (may contain sensitive anchors)
+    - Username/password credentials (user:pass@host)
     
     Args:
         url: The full URL to redact
         
     Returns:
-        URL with only scheme, host, and path (no query/fragment)
+        URL with only scheme, host, and path (no credentials/query/fragment)
         
     Example:
-        Input:  https://example.com/doc.pdf?token=secret&user=123
+        Input:  https://user:pass@example.com/doc.pdf?token=secret&user=123
         Output: https://example.com/doc.pdf
     """
     try:
         parsed = urlparse(url)
-        # Keep only scheme, netloc (host), and path
+        # Strip username:password from netloc by using only hostname (and port if present)
+        # parsed.netloc may contain user:pass@host:port, but parsed.hostname is just the host
+        safe_netloc = parsed.hostname or ''
+        if parsed.port:
+            safe_netloc = f"{safe_netloc}:{parsed.port}"
+        
+        # Keep only scheme, safe netloc (host:port, no credentials), and path
         # Drop query string, fragment, params, username, and password
         redacted = urlunparse((
             parsed.scheme,
-            parsed.netloc,
+            safe_netloc,
             parsed.path,
             '',  # params
             '',  # query (removed)
@@ -77,7 +82,7 @@ def redact_url_for_storage(url: str) -> str:
         return redacted
     except Exception:
         # If parsing fails, return a truncated version
-        # Truncate to hostname + first 50 chars of path
+        # Strip query params and truncate
         return url.split('?')[0][:100] if url else "unknown"
 
 
@@ -749,12 +754,14 @@ async def generate_quiz_from_file_openai(
     if file.content_type not in ["application/pdf", "text/plain", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]:
         raise HTTPException(status_code=400, detail="Only PDF, DOCX, or TXT files are supported.")
 
+    # Track whether we need to refund credits on failure
+    # Initialize BEFORE reservation attempt to avoid uninitialized variable in finally
+    credits_reserved = False
+    
     # ATOMIC CREDIT RESERVATION: Reserve credits BEFORE any expensive operations
     # This prevents TOCTOU race conditions where concurrent requests bypass limits
     await reserve_credits_atomic(current_user_id, mode)
-    
-    # Track whether we need to refund credits on failure
-    credits_reserved = True
+    credits_reserved = True  # Only set after successful reservation
 
     try:
         file_bytes = await file.read()
@@ -903,12 +910,14 @@ async def generate_quiz_from_fileid(
         logger.error(f"Error reading file {file_id}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error reading file: {str(e)}")
 
+    # Track whether we need to refund credits on failure
+    # Initialize BEFORE reservation attempt to avoid uninitialized variable in finally
+    credits_reserved = False
+    
     # ATOMIC CREDIT RESERVATION: Reserve credits BEFORE generation
     # This prevents TOCTOU race conditions where concurrent requests bypass limits
     await reserve_credits_atomic(current_user_id, data.mode)
-    
-    # Track whether we need to refund credits on failure
-    credits_reserved = True
+    credits_reserved = True  # Only set after successful reservation
 
     try:
         logger.info(f"Generating quiz questions from file content (length: {len(file_content)})")
@@ -991,12 +1000,14 @@ async def generate_quiz_from_text(
                 detail=f"Text content is too large. Maximum allowed size is 10MB ({MAX_FILE_SIZE} bytes). Your text is {text_size} bytes."
             )
         
+        # Track whether we need to refund credits on failure
+        # Initialize BEFORE reservation attempt to avoid uninitialized variable in finally
+        credits_reserved = False
+        
         # ATOMIC CREDIT RESERVATION: Reserve credits BEFORE expensive operations
         # This prevents TOCTOU race conditions where concurrent requests bypass limits
         await reserve_credits_atomic(current_user_id, data.mode)
-        
-        # Track whether we need to refund credits on failure
-        credits_reserved = True
+        credits_reserved = True  # Only set after successful reservation
         
         # Save text content as a file in Supabase Storage (same as file uploads)
         # This ensures text input is stored for reference and consistency with file/URL sources
@@ -1307,35 +1318,41 @@ async def generate_quiz_from_url(
 ):
     """Generate quiz from web URL (available for all tiers with quota limits)."""
     
+    # Track whether we need to refund credits on failure
+    # Initialize BEFORE reservation attempt to avoid uninitialized variable in finally
+    credits_reserved = False
+    
     # ATOMIC CREDIT RESERVATION: Reserve credits BEFORE scraping (expensive operation)
     # This prevents TOCTOU race conditions where concurrent requests bypass limits
     await reserve_credits_atomic(current_user_id, data.mode)
-    
-    # Track whether we need to refund credits on failure
-    credits_reserved = True
+    credits_reserved = True  # Only set after successful reservation
     
     try:
         # Get user tier info for logging (cached for performance)
         tier_info = await get_user_tier_info_cached(current_user_id)
         
+        # SECURITY: Redact URL early to prevent any accidental logging or storage of secrets
+        redacted_url = redact_url_for_storage(str(data.url))
+        
         # Scrape content with user ID for resource tracking
         # Enable PDF saving to user_files if URL is a PDF
-        # NOTE: URL is logged here - will be redacted in Issue #3
-        logger.info(f"User {current_user_id[:8]}... ({tier_info['account_tier']} tier) generating quiz from URL")
+        # NOTE: We log redacted URL only to prevent secret leakage
+        logger.info(f"User {current_user_id[:8]}... ({tier_info['account_tier']} tier) generating quiz from URL: {redacted_url}")
         content, file_info = await scrape_content(
-            url=str(data.url), 
+            url=str(data.url),  # Pass full URL for scraping (validated internally)
             user_id=current_user_id,
             user_token=user_token,
             save_pdf=True  # Save PDFs to user_files
         )
         
         # Determine content source reference
-        # If PDF was saved, use file_id; otherwise use URL
+        # SECURITY: Always use redacted URL or file_id - never raw URL
         if file_info and file_info.get('file_id'):
             content_source_reference = file_info['file_id']
             logger.info(f"PDF from URL saved as file_id: {content_source_reference}")
         else:
-            content_source_reference = str(data.url)
+            # Use redacted URL (no query params/credentials) for storage
+            content_source_reference = redacted_url
         
         # Generate quiz using unified function that handles both modes
         total_questions = data.num_questions if data.num_questions is not None else 10
@@ -1352,18 +1369,12 @@ async def generate_quiz_from_url(
             current_user_id, 
             user_token,
             content_source_type="url",
-            content_source_reference=content_source_reference
+            content_source_reference=content_source_reference  # Already redacted or file_id
         )
         
         # Save metadata for URL-based quiz
-        # SECURITY: Redact URL to remove query params (may contain tokens/PII)
-        redacted_url = redact_url_for_storage(str(data.url))
-        
-        # If content_source_reference is a file_id, it's already safe
-        # If it's a URL, use redacted version
+        # content_source_reference is already safe (redacted URL or file_id)
         safe_content_ref = content_source_reference
-        if content_source_reference == str(data.url):
-            safe_content_ref = redacted_url
         
         metadata = {
             "quiz_id": result.quiz_id,
@@ -1417,11 +1428,14 @@ async def generate_quiz_rag_async(
     """
     Generate a quiz with support for both standard and enhanced (RAG) modes.
     
-    IMPORTANT: Callers MUST validate credits before calling this function.
+    NOTE: Credit consumption is handled by the calling handlers (generate_quiz_from_text,
+    generate_quiz_from_file_openai, generate_quiz_from_url) using the atomic reservation
+    pattern. Credits are reserved BEFORE calling this function, and refunded on failure.
+    
     This function handles:
     - Content length validation
     - Quiz generation (standard or enhanced mode)
-    - Credit consumption AFTER successful generation
+    - Saving quiz to database with proper content source tracking
     
     Modes:
     - standard: Fast generation using direct LLM calls
@@ -1432,7 +1446,7 @@ async def generate_quiz_rag_async(
         user_id: UUID of the user
         user_token: JWT token for RLS enforcement
         content_source_type: "text", "file", or "url"
-        content_source_reference: file_id or URL for tracking the source
+        content_source_reference: file_id or redacted URL for tracking the source
         
     Returns:
         EnhancedQuizGenerationResponse with generated questions

@@ -7,7 +7,7 @@ import ipaddress
 import socket
 import os
 import httpx
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeout
 import trafilatura
 from fastapi import HTTPException
@@ -16,6 +16,38 @@ from config import config as app_config
 from services.ai_services.doc_service import extract_text_from_pdf
 from services.db_services.supabase_file import save_file_to_supabase_async
 from services.redis.browser_slots import browser_slot_manager
+
+
+def _redact_url_for_logging(url: str) -> str:
+    """
+    Redact sensitive information from URL for safe logging.
+    
+    Removes query parameters, fragments, and credentials to prevent
+    leaking secrets (API tokens, session IDs, passwords) to log files.
+    
+    Args:
+        url: The full URL to redact
+        
+    Returns:
+        URL with only scheme, host, and path (truncated if long)
+    """
+    try:
+        parsed = urlparse(url)
+        # Strip credentials from netloc
+        safe_netloc = parsed.hostname or ''
+        if parsed.port:
+            safe_netloc = f"{safe_netloc}:{parsed.port}"
+        
+        redacted = urlunparse((
+            parsed.scheme,
+            safe_netloc,
+            parsed.path[:100] if len(parsed.path) > 100 else parsed.path,  # Truncate long paths
+            '', '', ''  # No params, query, fragment
+        ))
+        return redacted
+    except Exception:
+        return url.split('?')[0][:80] if url else "unknown"
+
 
 # Constants
 MAX_CONTENT_SIZE = 500 * 1024  # 500KB for HTML content
@@ -187,7 +219,7 @@ async def download_and_extract_pdf(url: str, user_id: str = None, user_token: st
         The user_id and user_token parameters are not used by this function.
     """
     
-    logger.info(f"Downloading PDF from URL: {url}")
+    logger.info(f"Downloading PDF from URL: {_redact_url_for_logging(url)}")
     
     try:
         # Download PDF with timeout, size limits, and SSRF-safe redirect handling
@@ -264,7 +296,7 @@ async def download_and_extract_pdf(url: str, user_id: str = None, user_token: st
             detail=f"Failed to download PDF: HTTP {e.response.status_code}. The URL might be invalid or require authentication."
         )
     except httpx.TimeoutException:
-        logger.error(f"Timeout downloading PDF from {url}")
+        logger.error(f"Timeout downloading PDF from {_redact_url_for_logging(url)}")
         raise HTTPException(
             status_code=408,
             detail=f"PDF download timed out after {PDF_DOWNLOAD_TIMEOUT} seconds. The file might be too large or the server is slow."
@@ -405,7 +437,7 @@ def _validate_redirect_url(url: str) -> None:
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error validating redirect URL {url}: {str(e)}")
+        logger.error(f"Error validating redirect URL {_redact_url_for_logging(url)}: {str(e)}")
         raise HTTPException(
             status_code=400,
             detail=f"Redirect validation failed: {str(e)}"
@@ -609,7 +641,7 @@ async def scrape_content(url: str, user_id: str = "anonymous", user_token: str =
     
     # Check if URL points to a PDF file - handle automatically
     if is_pdf_url(url):
-        logger.info(f"PDF URL detected - downloading and extracting text: {url}")
+        logger.info(f"PDF URL detected - downloading and extracting text: {_redact_url_for_logging(url)}")
         # PDF download doesn't need browser slot - URL already validated
         text, pdf_bytes = await download_and_extract_pdf(url, user_id, user_token)
         
@@ -630,7 +662,7 @@ async def scrape_content(url: str, user_id: str = "anonymous", user_token: str =
         parsed_url = urlparse(url)
         original_hostname = parsed_url.hostname
         
-        logger.info(f"Starting web scraping for URL: {url} (user: {user_id})")
+        logger.info(f"Starting web scraping for URL: {_redact_url_for_logging(url)} (user: {user_id[:8]}...)")
         
         # Try with longer timeout first, then fallback to shorter timeout with different strategy
         timeouts_and_strategies = [
@@ -716,7 +748,7 @@ async def scrape_content(url: str, user_id: str = "anonymous", user_token: str =
                     
                     # Navigate with current timeout strategy
                     try:
-                        logger.info(f"Navigating to URL: {url}")
+                        logger.info(f"Navigating to URL: {_redact_url_for_logging(url)}")
                         await page.goto(url, timeout=timeout, wait_until=wait_strategy)
                         
                         # Check if SSRF was blocked during navigation
@@ -728,7 +760,7 @@ async def scrape_content(url: str, user_id: str = "anonymous", user_token: str =
                             )
                     except PlaywrightTimeout:
                         await browser.close()
-                        error_msg = f"Timeout while loading URL: {url} (strategy: {wait_strategy}, timeout: {timeout/1000}s)"
+                        error_msg = f"Timeout while loading URL (strategy: {wait_strategy}, timeout: {timeout/1000}s)"
                         logger.warning(error_msg)
                         last_error = HTTPException(
                             status_code=408,
@@ -737,9 +769,9 @@ async def scrape_content(url: str, user_id: str = "anonymous", user_token: str =
                         continue  # Try next strategy
                     except Exception as e:
                         await browser.close()
-                        logger.error(f"Error navigating to URL {url}: {str(e)}")
-                        # Check for common HTTP errors
                         error_str = str(e).lower()
+                        logger.error(f"Error navigating to URL {_redact_url_for_logging(url)}: {error_str}")
+                        # Check for common HTTP errors
                         if '404' in error_str or 'not found' in error_str:
                             raise HTTPException(
                                 status_code=404,
@@ -757,7 +789,7 @@ async def scrape_content(url: str, user_id: str = "anonymous", user_token: str =
                         continue  # Try next strategy
                     
                     # Get page HTML
-                    logger.info(f"Extracting HTML content from: {url}")
+                    logger.info(f"Extracting HTML content from: {_redact_url_for_logging(url)}")
                     html = await page.content()
                     await browser.close()
                     
@@ -771,7 +803,7 @@ async def scrape_content(url: str, user_id: str = "anonymous", user_token: str =
                     )
                     
                     if not extracted:
-                        logger.error(f"Could not extract content from URL: {url}")
+                        logger.error(f"Could not extract content from URL: {_redact_url_for_logging(url)}")
                         last_error = HTTPException(
                             status_code=422,
                             detail="Could not extract meaningful content from the page."
@@ -780,7 +812,7 @@ async def scrape_content(url: str, user_id: str = "anonymous", user_token: str =
                     
                     # Validate content size
                     if len(extracted) < MIN_CONTENT_SIZE:
-                        logger.error(f"Extracted content too short from URL {url}: {len(extracted)} characters")
+                        logger.error(f"Extracted content too short from URL {_redact_url_for_logging(url)}: {len(extracted)} characters")
                         last_error = HTTPException(
                             status_code=422,
                             detail=f"Extracted content too short (minimum {MIN_CONTENT_SIZE} characters)."
@@ -792,7 +824,7 @@ async def scrape_content(url: str, user_id: str = "anonymous", user_token: str =
                         # Truncate to max size
                         extracted = extracted[:MAX_CONTENT_SIZE]
                     
-                    logger.info(f"Successfully extracted {len(extracted)} characters from URL: {url} using strategy: {wait_strategy}")
+                    logger.info(f"Successfully extracted {len(extracted)} characters from URL: {_redact_url_for_logging(url)} using strategy: {wait_strategy}")
                     # HTML scraping doesn't save files, so return None for file_info
                     return extracted, None
                     
@@ -803,7 +835,7 @@ async def scrape_content(url: str, user_id: str = "anonymous", user_token: str =
                 last_error = he
                 continue
             except Exception as e:
-                logger.error(f"Unexpected error scraping URL {url} with strategy {wait_strategy}: {str(e)}")
+                logger.error(f"Unexpected error scraping URL {_redact_url_for_logging(url)} with strategy {wait_strategy}: {str(e)}")
                 last_error = HTTPException(
                     status_code=500,
                     detail=f"Error scraping URL: {str(e)}"
@@ -811,7 +843,7 @@ async def scrape_content(url: str, user_id: str = "anonymous", user_token: str =
                 continue
         
         # If we get here, all strategies failed
-        logger.error(f"All scraping strategies failed for URL: {url}")
+        logger.error(f"All scraping strategies failed for URL: {_redact_url_for_logging(url)}")
         if last_error:
             raise last_error
         else:

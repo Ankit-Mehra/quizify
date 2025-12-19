@@ -154,9 +154,9 @@ def mock_quiz_generation_success(mock_question, tier_info, quiz_id="quiz-123"):
     with patch('handlers.quiz_handlers.get_user_tier_info_cached') as mock_tier, \
          patch('handlers.quiz_handlers.generate_quizzes_single_async') as mock_generate, \
          patch('handlers.quiz_handlers.save_quiz_to_database') as mock_save_quiz, \
-         patch('handlers.quiz_handlers.save_file_to_supabase') as mock_save_file, \
+         patch('handlers.quiz_handlers.save_file_to_supabase_async') as mock_save_file, \
          patch('handlers.quiz_handlers.save_metadata') as mock_save_metadata, \
-         patch('handlers.quiz_handlers.validate_credits_available') as mock_validate:
+         patch('handlers.quiz_handlers.reserve_credits_atomic') as mock_validate:
         
         # Setup all mocks
         mock_tier.return_value = tier_info
@@ -186,8 +186,8 @@ def mock_file_extraction_and_generation(mock_question, tier_info, quiz_id="quiz-
          patch('handlers.quiz_handlers.generate_quizzes_single_async') as mock_generate, \
          patch('handlers.quiz_handlers.save_quiz_to_database') as mock_save_quiz, \
          patch('handlers.quiz_handlers.save_metadata') as mock_save_metadata, \
-         patch('handlers.quiz_handlers.save_file_to_supabase') as mock_save_file, \
-         patch('handlers.quiz_handlers.validate_credits_available') as mock_validate:
+         patch('handlers.quiz_handlers.save_file_to_supabase_async') as mock_save_file, \
+         patch('handlers.quiz_handlers.reserve_credits_atomic') as mock_validate:
         
         # Setup all mocks
         mock_tier.return_value = tier_info
@@ -220,7 +220,7 @@ def mock_file_id_generation(mock_question, mock_file_record, tier_info, quiz_id=
          patch('handlers.quiz_handlers.generate_quizzes_single_async') as mock_generate, \
          patch('handlers.quiz_handlers.save_quiz_to_database') as mock_save_quiz, \
          patch('handlers.quiz_handlers.save_metadata') as mock_save_metadata, \
-         patch('handlers.quiz_handlers.validate_credits_available') as mock_validate:
+         patch('handlers.quiz_handlers.reserve_credits_atomic') as mock_validate:
         
         # Setup all mocks
         mock_tier.return_value = tier_info
@@ -246,7 +246,7 @@ def mock_file_id_generation(mock_question, mock_file_record, tier_info, quiz_id=
 def mock_quota_exceeded(tier_info):
     """Context manager to mock quota exceeded scenario (no generation)."""
     with patch('handlers.quiz_handlers.get_user_tier_info_cached') as mock_tier, \
-         patch('handlers.quiz_handlers.validate_credits_available') as mock_validate, \
+         patch('handlers.quiz_handlers.reserve_credits_atomic') as mock_validate, \
          patch('handlers.quiz_handlers.get_file_record') as mock_get_record, \
          patch('handlers.quiz_handlers.parse_file_from_supabase') as mock_parse:
         

@@ -344,12 +344,12 @@ def mock_supabase_client(mock_supabase, mocker, mock_redis_client):
     mocker.patch("services.billing_service.get_billing_state", side_effect=mock_get_billing_state)
     
     # Keep function-level mocks
-    mocker.patch("handlers.file_handlers.save_file_to_supabase", side_effect=mock_save_file_to_supabase)
+    mocker.patch("handlers.file_handlers.save_file_to_supabase_async", side_effect=mock_save_file_to_supabase)
     mocker.patch("handlers.file_handlers.delete_file_from_supabase", side_effect=mock_delete_file_from_supabase)
     mocker.patch("handlers.quiz_handlers.generate_quizzes_single_async", side_effect=mock_generate_quizzes_single_async)
     mocker.patch("handlers.quiz_handlers.save_quiz_to_database", side_effect=mock_save_quiz_to_database)
     mocker.patch("handlers.quiz_handlers.save_metadata", side_effect=mock_save_metadata)
-    mocker.patch("handlers.quiz_handlers.save_file_to_supabase", side_effect=mock_save_file_to_supabase)
+    mocker.patch("handlers.quiz_handlers.save_file_to_supabase_async", side_effect=mock_save_file_to_supabase)
     
     yield mock_supabase
     

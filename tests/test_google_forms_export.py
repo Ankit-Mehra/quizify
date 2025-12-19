@@ -17,11 +17,9 @@ from datetime import datetime, timezone
 from schemas.export import ExportFormat
 from services.exporters.tier_validator import (
     validate_export_tier_access,
-    TierInsufficientError,
     is_format_available_for_tier,
     get_available_formats_for_tier,
-    PRO_ONLY_FORMATS,
-    PAID_TIER_FORMATS
+    PRO_ONLY_FORMATS
 )
 
 
@@ -940,7 +938,7 @@ class TestGoogleFormsDescriptionAPI:
     async def test_set_form_description_correct_api_structure(self):
         """_set_form_description should use correct batchUpdate structure."""
         from services.exporters.google_forms_exporter import GoogleFormsExporter
-        from unittest.mock import MagicMock, AsyncMock, patch
+        from unittest.mock import MagicMock, patch
         
         exporter = GoogleFormsExporter(user_id="test-user")
         
