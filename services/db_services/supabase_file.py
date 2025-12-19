@@ -53,26 +53,31 @@ SUPABASE_URL = app_config.SUPABASE_URL
 def save_file_to_supabase(user_id: str, file_bytes: bytes, original_filename: str, token: str, file_type: str):
     """
     Synchronous wrapper for async file save operation.
-    Maintained for backward compatibility with sync callers.
+    
+    DEPRECATED: This wrapper exists for backward compatibility with sync callers.
+    Prefer using save_file_to_supabase_async directly in async contexts.
+    
+    NOTE: When called from an async context (loop.is_running()), this runs the
+    async function in a ThreadPoolExecutor which creates a new event loop per call.
+    This is inefficient but safe for occasional use.
     """
     import asyncio
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            # If we're already in an async context, we need to run in thread pool
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(
-                    asyncio.run,
-                    save_file_to_supabase_async(user_id, file_bytes, original_filename, token, file_type)
-                )
-                return future.result()
-        else:
-            return loop.run_until_complete(
+        asyncio.get_running_loop()  # Check if loop is running (we're in async context)
+        # We're in an async context - warn and use thread pool workaround
+        logger.warning(
+            "save_file_to_supabase called from async context. "
+            "Prefer save_file_to_supabase_async for better performance."
+        )
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(
+                asyncio.run,
                 save_file_to_supabase_async(user_id, file_bytes, original_filename, token, file_type)
             )
+            return future.result()
     except RuntimeError:
-        # No event loop exists, create one
+        # No running event loop - safe to create one
         return asyncio.run(
             save_file_to_supabase_async(user_id, file_bytes, original_filename, token, file_type)
         )
@@ -320,21 +325,29 @@ async def read_file_content_async(path: str, token: str) -> bytes:
 def read_file_content(path: str, token: str) -> bytes:
     """
     Synchronous wrapper for backward compatibility.
+    
+    DEPRECATED: Prefer read_file_content_async in async contexts.
+    
+    NOTE: When called from an async context (loop.is_running()), this runs the
+    async function in a ThreadPoolExecutor which creates a new event loop per call.
     """
     import asyncio
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(
-                    asyncio.run,
-                    read_file_content_async(path, token)
-                )
-                return future.result()
-        else:
-            return loop.run_until_complete(read_file_content_async(path, token))
+        asyncio.get_running_loop()  # Check if loop is running (we're in async context)
+        # We're in an async context - warn and use thread pool workaround
+        logger.warning(
+            "read_file_content called from async context. "
+            "Prefer read_file_content_async for better performance."
+        )
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(
+                asyncio.run,
+                read_file_content_async(path, token)
+            )
+            return future.result()
     except RuntimeError:
+        # No running event loop - safe to create one
         return asyncio.run(read_file_content_async(path, token))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

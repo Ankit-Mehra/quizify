@@ -1,6 +1,6 @@
 -- Migration: 038 - Add Refund Credit Units Function
 -- Description: RPC function for refunding credits on failed quiz generation
--- Date: 2024-12-18
+-- Date: 2025-12-19
 -- 
 -- SECURITY: This function is restricted to service_role only.
 -- It should only be called from the backend with the service role key.

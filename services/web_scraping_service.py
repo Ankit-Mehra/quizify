@@ -233,8 +233,8 @@ async def download_and_extract_pdf(url: str, user_id: str = None, user_token: st
                         )
                     logger.info(f"PDF size: {size / (1024*1024):.2f}MB")
                 
-                # Download PDF content using bytearray for O(n) performance
-                # (avoids quadratic copy overhead from repeated bytes concatenation)
+                # Download PDF content using a bytearray for efficient incremental buffering
+                # (streaming-friendly and avoids creating many intermediate temporary objects)
                 pdf_buffer = bytearray()
                 downloaded_size = 0
                 
@@ -431,17 +431,26 @@ class SSRFSafeTransport(httpx.AsyncHTTPTransport):
     Custom HTTP transport that validates each redirect hop to prevent SSRF attacks.
     
     This intercepts redirect responses and validates the Location header
-    before allowing the redirect to proceed.
+    BEFORE allowing the redirect to proceed.
+    
+    SECURITY: Validation flow:
+    1. handle_async_request() validates request URL BEFORE making request
+    2. If response is a redirect, Location header is validated BEFORE httpx follows it
+    3. When httpx follows redirect, it calls handle_async_request() again for the new URL
+    4. This ensures every hop is validated before any connection to that URL is made
     """
     
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-        # Validate the request URL (includes redirects)
+        # SECURITY: Validate the request URL BEFORE making the request
+        # This is called for every request, including redirect follow-ups
         _validate_redirect_url(str(request.url))
         
         # Proceed with the request using the base transport
         response = await super().handle_async_request(request)
         
-        # If there's a redirect, validate the target before httpx follows it
+        # SECURITY: If there's a redirect, validate the target BEFORE httpx follows it
+        # When httpx follows this redirect, it will call handle_async_request again
+        # with the new URL, providing double validation
         if response.is_redirect:
             location = response.headers.get('location')
             if location:
