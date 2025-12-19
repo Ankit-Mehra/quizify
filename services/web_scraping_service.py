@@ -34,7 +34,12 @@ def _redact_url_for_logging(url: str) -> str:
     try:
         parsed = urlparse(url)
         # Strip credentials from netloc
-        safe_netloc = parsed.hostname or ''
+        # Note: parsed.hostname strips brackets from IPv6, so we need to re-add them
+        hostname = parsed.hostname or ''
+        # Check if this is an IPv6 address (contains colons)
+        if hostname and ':' in hostname:
+            hostname = f'[{hostname}]'
+        safe_netloc = hostname
         if parsed.port:
             safe_netloc = f"{safe_netloc}:{parsed.port}"
         
@@ -735,8 +740,9 @@ async def scrape_content(url: str, user_id: str = "anonymous", user_token: str =
                             await route.continue_()
                         except HTTPException:
                             ssrf_blocked["blocked"] = True
-                            ssrf_blocked["url"] = request_url
-                            logger.warning(f"Playwright SSRF blocked: {request_url}")
+                            ssrf_blocked["url"] = request_url  # Keep raw URL for internal error handling
+                            # SECURITY: Log redacted URL to prevent leaking tokens/secrets
+                            logger.warning(f"Playwright SSRF blocked: {_redact_url_for_logging(request_url)}")
                             await route.abort("accessdenied")
                     
                     # Intercept ALL requests (including navigations and subresources)

@@ -18,7 +18,7 @@ from services.db_services.supabase_quiz import (  # noqa: F401
     get_authed_supabase_client, invalidate_user_tier_cache)
 from services.db_services.supabase_file import ( 
     get_file_record, save_file_to_supabase_async,
-    parse_file_from_supabase)
+    parse_file_from_supabase, delete_file_from_supabase)
 from services.billing_service import consume_units, get_billing_state, refund_units
 from dependencies.auth_dependencies import get_current_user_id, get_current_user_token
 from schemas.quiz import (
@@ -65,7 +65,12 @@ def redact_url_for_storage(url: str) -> str:
         parsed = urlparse(url)
         # Strip username:password from netloc by using only hostname (and port if present)
         # parsed.netloc may contain user:pass@host:port, but parsed.hostname is just the host
-        safe_netloc = parsed.hostname or ''
+        # Note: parsed.hostname strips brackets from IPv6 addresses, so we need to re-add them
+        hostname = parsed.hostname or ''
+        # Check if this is an IPv6 address (contains colons)
+        if hostname and ':' in hostname:
+            hostname = f'[{hostname}]'
+        safe_netloc = hostname
         if parsed.port:
             safe_netloc = f"{safe_netloc}:{parsed.port}"
         
@@ -757,6 +762,8 @@ async def generate_quiz_from_file_openai(
     # Track whether we need to refund credits on failure
     # Initialize BEFORE reservation attempt to avoid uninitialized variable in finally
     credits_reserved = False
+    file_id = None  # Track uploaded file for cleanup on failure
+    original_filename = None  # Track filename for cleanup
     
     # ATOMIC CREDIT RESERVATION: Reserve credits BEFORE any expensive operations
     # This prevents TOCTOU race conditions where concurrent requests bypass limits
@@ -854,6 +861,14 @@ async def generate_quiz_from_file_openai(
         # Refund credits if reserved but generation failed
         if credits_reserved:
             await refund_credits_on_failure(current_user_id, mode)
+            # Clean up orphaned file if it was saved but generation failed
+            if file_id and original_filename:
+                try:
+                    delete_file_from_supabase(file_id, user_token, current_user_id, original_filename)
+                    logger.info(f"Cleaned up orphaned file after generation failure (file_id: {file_id})")
+                except Exception as cleanup_err:
+                    # Log but don't re-raise - cleanup failure shouldn't mask the original error
+                    logger.warning(f"Failed to cleanup orphaned file {file_id}: {cleanup_err}")
 
 # === Generate quiz from file ID ===
 async def generate_quiz_from_fileid(
@@ -981,6 +996,12 @@ async def generate_quiz_from_text(
     user_token: str = Depends(get_current_user_token)
 ):
     """Generate a quiz from text content provided directly by the user."""
+    # Track whether we need to refund credits on failure
+    # Initialize BEFORE try block to avoid UnboundLocalError if early validation fails
+    credits_reserved = False
+    file_id = None  # Track uploaded file for cleanup on failure
+    original_filename = None  # Track filename for cleanup
+    
     try:
         # Validate the user ID
         if not current_user_id or current_user_id == "undefined":
@@ -999,10 +1020,6 @@ async def generate_quiz_from_text(
                 status_code=413,
                 detail=f"Text content is too large. Maximum allowed size is 10MB ({MAX_FILE_SIZE} bytes). Your text is {text_size} bytes."
             )
-        
-        # Track whether we need to refund credits on failure
-        # Initialize BEFORE reservation attempt to avoid uninitialized variable in finally
-        credits_reserved = False
         
         # ATOMIC CREDIT RESERVATION: Reserve credits BEFORE expensive operations
         # This prevents TOCTOU race conditions where concurrent requests bypass limits
@@ -1106,6 +1123,14 @@ async def generate_quiz_from_text(
         # Refund credits if reserved but generation failed
         if credits_reserved:
             await refund_credits_on_failure(current_user_id, data.mode)
+            # Clean up orphaned file if it was saved but generation failed
+            if file_id and original_filename:
+                try:
+                    delete_file_from_supabase(file_id, user_token, current_user_id, original_filename)
+                    logger.info(f"Cleaned up orphaned file after generation failure (file_id: {file_id})")
+                except Exception as cleanup_err:
+                    # Log but don't re-raise - cleanup failure shouldn't mask the original error
+                    logger.warning(f"Failed to cleanup orphaned file {file_id}: {cleanup_err}")
 
 # === Get user quizzes ===
 async def get_user_quizzes_handler(
