@@ -3,7 +3,8 @@ from fastapi.security import HTTPBearer
 from fastapi.openapi.utils import get_openapi
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from fastapi.exceptions import HTTPException
+from fastapi.exceptions import HTTPException, RequestValidationError
+from pydantic import ValidationError
 from contextlib import asynccontextmanager
 import os
 import json
@@ -206,6 +207,64 @@ async def http_exception_handler(request: Request, exc: HTTPException):
     return JSONResponse(
         status_code=exc.status_code,
         content={"detail": exc.detail},
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_exception_handler(request: Request, exc: RequestValidationError):
+    """
+    Handle FastAPI RequestValidationError (Pydantic validation errors for request bodies).
+    
+    Returns 422 Unprocessable Entity with detailed validation error messages.
+    This ensures validation errors are returned as 422 instead of being caught
+    by the global exception handler and returned as 500.
+    """
+    # Extract user-friendly error messages
+    errors = []
+    for error in exc.errors():
+        # Build a user-friendly message
+        loc = " -> ".join(str(x) for x in error.get("loc", []))
+        msg = error.get("msg", "Invalid value")
+        errors.append({"location": loc, "message": msg})
+    
+    logger.warning(
+        f"Request validation error on {request.method} {request.url.path}: {errors}"
+    )
+    
+    return JSONResponse(
+        status_code=422,
+        content={
+            "detail": "Request validation failed",
+            "errors": errors
+        }
+    )
+
+
+@app.exception_handler(ValidationError)
+async def pydantic_validation_exception_handler(request: Request, exc: ValidationError):
+    """
+    Handle Pydantic ValidationError (validation errors from internal Pydantic models).
+    
+    This catches validation errors that occur during internal processing
+    (not from request body validation which is handled by RequestValidationError).
+    Returns 422 for consistency.
+    """
+    errors = []
+    for error in exc.errors():
+        loc = " -> ".join(str(x) for x in error.get("loc", []))
+        msg = error.get("msg", "Invalid value")
+        errors.append({"location": loc, "message": msg})
+    
+    logger.warning(
+        f"Pydantic validation error on {request.method} {request.url.path}: {errors}"
+    )
+    
+    return JSONResponse(
+        status_code=422,
+        content={
+            "detail": "Data validation failed",
+            "errors": errors
+        }
     )
 
 

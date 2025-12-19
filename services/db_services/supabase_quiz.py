@@ -515,7 +515,7 @@ def get_metadata(user_id: str, user_token: str = None):
         logger.error(f"Error retrieving metadata: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
-def delete_quiz_from_database(quiz_id: str, user_token: str = None):
+def delete_quiz_from_database(quiz_id: str, user_token: str = None) -> bool:
     """
     Delete a quiz from the database.
     
@@ -523,6 +523,12 @@ def delete_quiz_from_database(quiz_id: str, user_token: str = None):
         quiz_id: The quiz ID to delete
         user_token: User's authentication token for RLS enforcement (recommended)
                     If None, uses service role (bypasses RLS - use with caution)
+    
+    Returns:
+        bool: True if quiz was deleted, False if quiz was not found
+        
+    Raises:
+        HTTPException: 500 if database error occurs
     """
     try:
         # Use authenticated client if token provided (enforces RLS)
@@ -533,8 +539,20 @@ def delete_quiz_from_database(quiz_id: str, user_token: str = None):
         
         logger.debug(f"Deleting quiz with ID: {quiz_id}")
 
-        supabase.table("quizzes").delete().eq("id", quiz_id).execute()
-        logger.debug(f"Quiz deleted successfully: {quiz_id}")
+        # Execute delete and check result
+        response = supabase.table("quizzes").delete().eq("id", quiz_id).execute()
+        
+        # Check if any rows were deleted
+        # Supabase returns the deleted rows in response.data
+        if response.data and len(response.data) > 0:
+            logger.info(f"Quiz deleted successfully: {quiz_id[:8]}...")
+            return True
+        else:
+            logger.warning(f"Quiz not found for deletion: {quiz_id[:8]}...")
+            return False
+    except Exception as e:
+        logger.error(f"Error deleting quiz: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to delete quiz")
     except Exception as e:
         logger.error(f"Error deleting quiz: {str(e)}", exc_info=True)
 

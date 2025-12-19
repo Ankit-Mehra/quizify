@@ -3,7 +3,7 @@ import uuid
 from fastapi import HTTPException, Depends
 from datetime import datetime
 from dependencies.auth_dependencies import get_current_user_id, get_current_user_token
-from services.ai_services.doc_service import extract_text_from_pdf, is_pdf
+from services.ai_services.doc_service import extract_text_from_pdf, is_pdf, extract_text_from_docx
 import logging
 from config import config as app_config
 
@@ -19,6 +19,38 @@ STORAGE_NAME = app_config.STORAGE_NAME
 SUPABASE_URL = app_config.SUPABASE_URL
 
 def save_file_to_supabase(user_id: str, file_bytes: bytes, original_filename: str, token: str, file_type: str):
+    """
+    Synchronous wrapper for async file save operation.
+    Maintained for backward compatibility with sync callers.
+    """
+    import asyncio
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # If we're already in an async context, we need to run in thread pool
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(
+                    asyncio.run,
+                    save_file_to_supabase_async(user_id, file_bytes, original_filename, token, file_type)
+                )
+                return future.result()
+        else:
+            return loop.run_until_complete(
+                save_file_to_supabase_async(user_id, file_bytes, original_filename, token, file_type)
+            )
+    except RuntimeError:
+        # No event loop exists, create one
+        return asyncio.run(
+            save_file_to_supabase_async(user_id, file_bytes, original_filename, token, file_type)
+        )
+
+
+async def save_file_to_supabase_async(user_id: str, file_bytes: bytes, original_filename: str, token: str, file_type: str):
+    """
+    Async version of file save to Supabase.
+    Prefer this function in async contexts.
+    """
     try:
         # Use authenticated client for RLS enforcement on database operations
         supabase = app_config.get_authenticated_supabase_client(token)
@@ -29,8 +61,7 @@ def save_file_to_supabase(user_id: str, file_bytes: bytes, original_filename: st
         file_name = f"{unique_id}_{original_filename}"
         path = f"{user_id}/{file_name}"
 
-        # Upload to storage using httpx with explicit auth header
-        # This ensures the user token is sent for storage bucket RLS policies
+        # Upload to storage using async httpx
         try:
             upload_url = f"{SUPABASE_URL}/storage/v1/object/{STORAGE_NAME}/{path}"
             headers = {
@@ -39,7 +70,8 @@ def save_file_to_supabase(user_id: str, file_bytes: bytes, original_filename: st
             }
             
             logger.debug(f"Uploading file to storage: {upload_url}")
-            response = httpx.post(upload_url, headers=headers, content=file_bytes)
+            async with httpx.AsyncClient() as client:
+                response = await client.post(upload_url, headers=headers, content=file_bytes)
             
             if response.status_code != 200:
                 logger.error(f"Storage upload failed with status {response.status_code}: {response.text}")
@@ -206,7 +238,10 @@ def create_presigned_url(file_id: str, user_id: str = Depends(get_current_user_i
             logger.error(f"Error details: {e.__dict__}")
         raise HTTPException(status_code=500, detail=str(e))
     
-def read_file_content(path: str, token: str):
+async def read_file_content_async(path: str, token: str) -> bytes:
+    """
+    Async version of file content reading from Supabase storage.
+    """
     try:
         url = f"{SUPABASE_URL}/storage/v1/object/{STORAGE_NAME}/{path}"
         headers = {
@@ -214,7 +249,8 @@ def read_file_content(path: str, token: str):
             "Content-Type": "application/octet-stream"
         }
 
-        response = httpx.get(url, headers=headers)
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, headers=headers)
         
         if response.status_code == 404:
             raise HTTPException(
@@ -224,10 +260,10 @@ def read_file_content(path: str, token: str):
             
         response.raise_for_status()
         
-        # Successful retrieval
-
         return response.content
     
+    except HTTPException:
+        raise
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
             raise HTTPException(
@@ -239,39 +275,111 @@ def read_file_content(path: str, token: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def read_file_content(path: str, token: str) -> bytes:
+    """
+    Synchronous wrapper for backward compatibility.
+    """
+    import asyncio
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(
+                    asyncio.run,
+                    read_file_content_async(path, token)
+                )
+                return future.result()
+        else:
+            return loop.run_until_complete(read_file_content_async(path, token))
+    except RuntimeError:
+        return asyncio.run(read_file_content_async(path, token))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 def parse_file_from_supabase(file_record: dict, user_token: str) -> str:
     """
-    Returns the text from either a PDF or text file stored in supabase
-    based on the file's content type or extension.
+    Returns the text from a file stored in Supabase based on the file's content type.
+    
+    Supported formats:
+    - PDF: application/pdf
+    - DOCX: application/vnd.openxmlformats-officedocument.wordprocessingml.document
+    - Text files: text/*
+    
+    Args:
+        file_record: Dictionary containing file metadata including storage_path and file_type
+        user_token: User's authentication token for storage access
+        
+    Returns:
+        str: Extracted text content from the file
+        
+    Raises:
+        HTTPException: 404 if file not found, 400 if unsupported format, 500 for other errors
     """
     try:
         if not file_record or not isinstance(file_record, dict):
-            raise Exception("Invalid or missing file record")
+            raise HTTPException(status_code=400, detail="Invalid or missing file record")
             
         if "storage_path" not in file_record:
-            raise Exception("File record is missing storage_path")
+            raise HTTPException(status_code=400, detail="File record is missing storage_path")
             
         file_path = file_record["storage_path"]
-        file_type = file_record.get("file_type", "")  # e.g. 'application/pdf'
+        file_type = file_record.get("file_type", "").lower()  # e.g. 'application/pdf'
+        file_name = file_record.get("original_filename", "").lower()
         
         try:
             file_bytes = read_file_content(file_path, user_token)
             
             if not file_bytes:
-                raise Exception("Could not read file content from storage")
+                raise HTTPException(status_code=404, detail="Could not read file content from storage")
     
-            # Approach A: Use stored mime-type or extension
+            # Handle by MIME type first
             if file_type == "application/pdf":
+                logger.debug(f"Parsing PDF file: {file_name}")
                 return extract_text_from_pdf(file_bytes)
+            
+            elif file_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+                logger.debug(f"Parsing DOCX file: {file_name}")
+                return extract_text_from_docx(file_bytes)
+            
             elif file_type.startswith("text/"):
+                logger.debug(f"Parsing text file: {file_name}")
                 return file_bytes.decode("utf-8", errors="ignore")
+            
             else:
-                # fallback: check the raw bytes
-                if is_pdf(file_bytes):
+                # Fallback: check file extension and raw bytes
+                if file_name.endswith('.pdf') or is_pdf(file_bytes):
+                    logger.debug(f"Parsing PDF file (fallback detection): {file_name}")
                     return extract_text_from_pdf(file_bytes)
-                else:
-                    # assume text or handle docx, etc.
+                
+                elif file_name.endswith('.docx'):
+                    logger.debug(f"Parsing DOCX file (fallback detection): {file_name}")
+                    return extract_text_from_docx(file_bytes)
+                
+                elif file_name.endswith('.doc'):
+                    # Legacy .doc format not supported
+                    logger.warning(f"Legacy .doc format not supported: {file_name}")
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Legacy .doc format is not supported. Please convert to .docx or PDF."
+                    )
+                
+                elif file_name.endswith(('.txt', '.md', '.csv', '.json', '.xml', '.html')):
+                    logger.debug(f"Parsing text file (fallback detection): {file_name}")
                     return file_bytes.decode("utf-8", errors="ignore")
+                
+                else:
+                    # Unknown format - try to decode as text
+                    logger.warning(f"Unknown file type '{file_type}' for file '{file_name}', attempting text decode")
+                    try:
+                        return file_bytes.decode("utf-8", errors="ignore")
+                    except Exception:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"Unsupported file format: {file_type or 'unknown'}. Supported formats: PDF, DOCX, TXT."
+                        )
+                        
         except HTTPException as he:
             if he.status_code == 404:
                 # File not found in storage - provide a clear error

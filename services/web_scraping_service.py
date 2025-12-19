@@ -14,7 +14,7 @@ from fastapi import HTTPException
 from services.logger import app_logger as logger
 from config import config as app_config
 from services.ai_services.doc_service import extract_text_from_pdf
-from services.db_services.supabase_file import save_file_to_supabase
+from services.db_services.supabase_file import save_file_to_supabase_async
 from services.redis.browser_slots import browser_slot_manager
 
 # Constants
@@ -190,11 +190,14 @@ async def download_and_extract_pdf(url: str, user_id: str = None, user_token: st
     logger.info(f"Downloading PDF from URL: {url}")
     
     try:
-        # Download PDF with timeout and size limits
+        # Download PDF with timeout, size limits, and SSRF-safe redirect handling
+        # Use custom transport that validates each redirect hop
+        transport = SSRFSafeTransport()
         async with httpx.AsyncClient(
             timeout=PDF_DOWNLOAD_TIMEOUT,
             follow_redirects=True,
-            limits=httpx.Limits(max_connections=5)
+            limits=httpx.Limits(max_connections=5),
+            transport=transport
         ) as client:
             
             # Stream download to check size before downloading entire file
@@ -217,8 +220,9 @@ async def download_and_extract_pdf(url: str, user_id: str = None, user_token: st
                         )
                     logger.info(f"PDF size: {size / (1024*1024):.2f}MB")
                 
-                # Download PDF content
-                pdf_bytes = b''
+                # Download PDF content using bytearray for O(n) performance
+                # (avoids quadratic copy overhead from repeated bytes concatenation)
+                pdf_buffer = bytearray()
                 downloaded_size = 0
                 
                 async for chunk in response.aiter_bytes(chunk_size=8192):
@@ -232,8 +236,9 @@ async def download_and_extract_pdf(url: str, user_id: str = None, user_token: st
                             detail=f"PDF file is too large (>{MAX_PDF_SIZE / (1024*1024)}MB). Maximum size is {MAX_PDF_SIZE / (1024*1024)}MB."
                         )
                     
-                    pdf_bytes += chunk
+                    pdf_buffer.extend(chunk)
                 
+                pdf_bytes = bytes(pdf_buffer)
                 logger.info(f"PDF downloaded successfully: {len(pdf_bytes) / (1024*1024):.2f}MB")
         
         # Extract text from PDF
@@ -292,7 +297,7 @@ async def save_pdf_to_user_files(url: str, pdf_bytes: bytes, user_id: str, user_
         Returns None on failure (does not raise exception).
     
     Note:
-        This function calls save_file_to_supabase() which only returns file_id and storage_path.
+        This function calls save_file_to_supabase_async() which only returns file_id and storage_path.
         For complete file metadata including filename, file_size_bytes, mime_type, and uploaded_at,
         use the GET /files/metadata endpoint after file is saved.
     """
@@ -304,7 +309,7 @@ async def save_pdf_to_user_files(url: str, pdf_bytes: bytes, user_id: str, user_
             filename += '.pdf'
         
         logger.info(f"Saving PDF file to user_files for user {user_id}: {filename}")
-        file_info = save_file_to_supabase(
+        file_info = await save_file_to_supabase_async(
             user_id=user_id,
             file_bytes=pdf_bytes,
             original_filename=filename,
@@ -339,6 +344,100 @@ def is_private_ip(ip: str) -> bool:
     except ValueError:
         # Invalid IP format
         return False
+
+
+def _validate_redirect_url(url: str) -> None:
+    """
+    Validate a redirect URL to prevent SSRF via redirects.
+    
+    This function is called for each redirect hop to ensure the target
+    doesn't resolve to a private/internal IP address.
+    
+    Args:
+        url: The redirect target URL
+        
+    Raises:
+        HTTPException: If the redirect target is a private IP or blocked hostname
+    """
+    try:
+        parsed = urlparse(url)
+        hostname = parsed.hostname
+        
+        if not hostname:
+            raise HTTPException(
+                status_code=400,
+                detail="Redirect blocked: Invalid URL with no hostname"
+            )
+        
+        hostname = hostname.lower()
+        
+        # Check for localhost variants
+        localhost_variants = [
+            'localhost', '0.0.0.0', '127.0.0.1',
+            '::1', '0:0:0:0:0:0:0:1', '::ffff:127.0.0.1'
+        ]
+        if hostname in localhost_variants:
+            logger.warning(f"SSRF attempt blocked: Redirect to localhost ({hostname})")
+            raise HTTPException(
+                status_code=400,
+                detail="Redirect blocked: Cannot redirect to localhost"
+            )
+        
+        # Check if it's a direct IP address
+        try:
+            ipaddress.ip_address(hostname)
+            if is_private_ip(hostname):
+                logger.warning(f"SSRF attempt blocked: Redirect to private IP ({hostname})")
+                raise HTTPException(
+                    status_code=400,
+                    detail="Redirect blocked: Cannot redirect to private/reserved IP address"
+                )
+        except ValueError:
+            # It's a hostname - resolve and check
+            resolved_ips = resolve_hostname_to_ips(hostname)
+            for ip in resolved_ips:
+                if is_private_ip(ip):
+                    logger.warning(f"SSRF attempt blocked: Redirect hostname {hostname} resolves to private IP ({ip})")
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Redirect blocked: Hostname resolves to private/reserved IP address"
+                    )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error validating redirect URL {url}: {str(e)}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Redirect validation failed: {str(e)}"
+        )
+
+
+class SSRFSafeTransport(httpx.AsyncHTTPTransport):
+    """
+    Custom HTTP transport that validates each redirect hop to prevent SSRF attacks.
+    
+    This intercepts redirect responses and validates the Location header
+    before allowing the redirect to proceed.
+    """
+    
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        # Validate the request URL (includes redirects)
+        _validate_redirect_url(str(request.url))
+        
+        # Proceed with the request using the base transport
+        response = await super().handle_async_request(request)
+        
+        # If there's a redirect, validate the target before httpx follows it
+        if response.is_redirect:
+            location = response.headers.get('location')
+            if location:
+                # Handle relative redirects
+                redirect_url = httpx.URL(location)
+                if not redirect_url.is_absolute_url:
+                    redirect_url = request.url.join(location)
+                _validate_redirect_url(str(redirect_url))
+        
+        return response
 
 
 def resolve_hostname_to_ips(hostname: str) -> list:
@@ -592,6 +691,25 @@ async def scrape_content(url: str, user_id: str = "anonymous", user_token: str =
                     
                     page = await context.new_page()
                     
+                    # SECURITY: Set up request interception to prevent SSRF via redirects
+                    # This validates every request URL (including redirects) before allowing it
+                    ssrf_blocked = {"blocked": False, "url": None}
+                    
+                    async def intercept_request(route, request):
+                        """Intercept all requests and validate against SSRF."""
+                        request_url = request.url
+                        try:
+                            _validate_redirect_url(request_url)
+                            await route.continue_()
+                        except HTTPException:
+                            ssrf_blocked["blocked"] = True
+                            ssrf_blocked["url"] = request_url
+                            logger.warning(f"Playwright SSRF blocked: {request_url}")
+                            await route.abort("accessdenied")
+                    
+                    # Intercept ALL requests (including navigations and subresources)
+                    await page.route("**/*", intercept_request)
+                    
                     # Set page timeouts for resource control
                     page.set_default_navigation_timeout(timeout)
                     page.set_default_timeout(JS_EXECUTION_TIMEOUT)
@@ -600,6 +718,14 @@ async def scrape_content(url: str, user_id: str = "anonymous", user_token: str =
                     try:
                         logger.info(f"Navigating to URL: {url}")
                         await page.goto(url, timeout=timeout, wait_until=wait_strategy)
+                        
+                        # Check if SSRF was blocked during navigation
+                        if ssrf_blocked["blocked"]:
+                            await browser.close()
+                            raise HTTPException(
+                                status_code=400,
+                                detail="Request blocked: URL redirected to private/internal address"
+                            )
                     except PlaywrightTimeout:
                         await browser.close()
                         error_msg = f"Timeout while loading URL: {url} (strategy: {wait_strategy}, timeout: {timeout/1000}s)"

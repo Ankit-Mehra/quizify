@@ -3,6 +3,7 @@ import asyncio
 import random
 import re
 import time
+from urllib.parse import urlparse, urlunparse
 from uuid import uuid4
 from services.ai_services.doc_service import ( 
     extract_text_from_pdf,
@@ -16,9 +17,9 @@ from services.db_services.supabase_quiz import (  # noqa: F401
     get_user_tier_info_cached, get_quiz_metadata_cached,
     get_authed_supabase_client, invalidate_user_tier_cache)
 from services.db_services.supabase_file import ( 
-    get_file_record, save_file_to_supabase,
+    get_file_record, save_file_to_supabase_async,
     parse_file_from_supabase)
-from services.billing_service import consume_units, get_billing_state
+from services.billing_service import consume_units, get_billing_state, refund_units
 from dependencies.auth_dependencies import get_current_user_id, get_current_user_token
 from schemas.quiz import (
     TextQuizRequest, FileQuizRequest, WebQuizRequest,
@@ -39,6 +40,45 @@ from services.web_scraping_service import scrape_content
 MIN_CONTENT_LENGTH = 50  # Minimum characters required for quiz generation from uploaded files
 MIN_STORED_CONTENT_LENGTH = 10  # Minimum characters required for stored file content validation
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB = 10,485,760 bytes
+
+
+def redact_url_for_storage(url: str) -> str:
+    """
+    Redact sensitive information from URL for safe storage and logging.
+    
+    Removes query parameters and fragments to prevent leaking:
+    - API tokens/keys in query strings
+    - Session IDs
+    - User identifiers
+    - PII in URL parameters
+    
+    Args:
+        url: The full URL to redact
+        
+    Returns:
+        URL with only scheme, host, and path (no query/fragment)
+        
+    Example:
+        Input:  https://example.com/doc.pdf?token=secret&user=123
+        Output: https://example.com/doc.pdf
+    """
+    try:
+        parsed = urlparse(url)
+        # Keep only scheme, netloc (host), and path
+        # Drop query string, fragment, params, username, and password
+        redacted = urlunparse((
+            parsed.scheme,
+            parsed.netloc,
+            parsed.path,
+            '',  # params
+            '',  # query (removed)
+            ''   # fragment (removed)
+        ))
+        return redacted
+    except Exception:
+        # If parsing fails, return a truncated version
+        # Truncate to hostname + first 50 chars of path
+        return url.split('?')[0][:100] if url else "unknown"
 
 
 # =============================================================================
@@ -143,8 +183,8 @@ async def _generate_standard_mode(
         )
         final_questions.append(eq)
     
-    # Consume credits AFTER successful generation
-    await consume_credits_after_success(user_id, request.mode)
+    # NOTE: Credits are now consumed by caller (atomic reservation pattern)
+    # No credit consumption here - this function may be called after credits are reserved
     
     return EnhancedQuizGenerationResponse(
         quiz_id=quiz_id,
@@ -183,7 +223,7 @@ async def _ingest_and_extract_concepts(
         user_token=user_token,
         content=request.content,
         title=request.title,
-        source_type="text",
+        source_type=content_source_type,  # Pass through actual source type
         trace_id=trace_id
     )
     t1 = time.time()
@@ -606,24 +646,34 @@ def sanitize_filename(filename: str) -> str:
     return sanitized
 
 
-async def validate_credits_available(user_id: str, quiz_type: str) -> None:
+async def reserve_credits_atomic(user_id: str, quiz_type: str) -> None:
     """
-    Validate user has sufficient credits for quiz generation WITHOUT consuming them.
+    Atomically reserve credits for quiz generation (consume BEFORE generation).
     
-    This should be called BEFORE generation starts to fail fast without wasting resources.
-    Credits are consumed only after successful generation via consume_credits_after_success().
+    This prevents TOCTOU race conditions where concurrent requests could bypass
+    credit limits by checking availability at the same time before consumption.
+    
+    Pattern:
+    1. This function consumes credits atomically (with row locking)
+    2. If quiz generation fails, caller must call refund_credits_on_failure()
+    3. If quiz generation succeeds, credits are already consumed (no further action)
     
     Args:
         user_id: UUID of the user
-        quiz_type: "standard" (0.5 credits) or "enhanced" (1.0 credits)
+        quiz_type: "standard" (0.5 credits / 1 unit) or "enhanced" (1.0 credits / 2 units)
         
     Raises:
-        HTTPException 402 if insufficient credits
+        HTTPException 402 if insufficient credits (atomic check + consume failed)
     """
-    state = await get_billing_state(user_id)
-    required = 0.5 if quiz_type == "standard" else 1.0
+    # Attempt atomic consumption (checks availability AND consumes in one operation)
+    success = await consume_units(user_id, quiz_type)
     
-    if state.available_credits < required:
+    if not success:
+        # Failed to consume - either insufficient credits or error
+        # Get current state to provide informative error message
+        state = await get_billing_state(user_id)
+        required = 0.5 if quiz_type == "standard" else 1.0
+        
         if state.plan == "pro":
             message = "Not enough credits. Purchase additional credits to continue."
         else:
@@ -639,37 +689,51 @@ async def validate_credits_available(user_id: str, quiz_type: str) -> None:
                 "plan": state.plan
             }
         )
-
-
-async def consume_credits_after_success(user_id: str, quiz_type: str) -> bool:
-    """
-    Consume credits after successful quiz generation.
     
-    This should be called AFTER generation succeeds. If this fails (rare), 
-    the quiz was still generated - log the error but don't fail the request.
+    logger.info(f"Credits reserved for user {user_id[:8]}... ({quiz_type} quiz)")
+
+
+async def refund_credits_on_failure(user_id: str, quiz_type: str) -> None:
+    """
+    Refund credits after failed quiz generation.
+    
+    This should be called when quiz generation fails AFTER credits were reserved
+    via reserve_credits_atomic(). This is best-effort - if refund fails, it's logged
+    but doesn't raise an exception (user can contact support).
     
     Args:
         user_id: UUID of the user
         quiz_type: "standard" (1 unit) or "enhanced" (2 units)
-        
-    Returns:
-        True if credits consumed successfully, False if failed (logged)
     """
-    success = await consume_units(user_id, quiz_type)
-    if not success:
-        # This should rarely happen since we validated before generation
-        # Log for investigation but don't fail - quiz was already generated
-        logger.error(
-            f"Failed to consume credits for user {user_id[:8]}... after successful "
-            f"{quiz_type} quiz generation. Credits may not have been deducted."
-        )
+    success = await refund_units(user_id, quiz_type)
+    if success:
+        logger.info(f"Credits refunded for user {user_id[:8]}... after failed {quiz_type} quiz generation")
     else:
-        logger.info(f"Credits consumed for user {user_id[:8]}... ({quiz_type} quiz)")
+        # Log error but don't raise - this is a compensation action
+        logger.error(
+            f"CRITICAL: Failed to refund credits for user {user_id[:8]}... after failed "
+            f"{quiz_type} quiz generation. Manual intervention may be required."
+        )
     
     # Invalidate cache so next request sees updated balance
     await invalidate_user_tier_cache(user_id)
+
+
+async def finalize_credits_after_success(user_id: str, quiz_type: str) -> None:
+    """
+    Finalize credit consumption after successful quiz generation.
     
-    return success
+    With the atomic reservation pattern, credits are already consumed before
+    generation starts. This function just invalidates the cache and logs success.
+    
+    Args:
+        user_id: UUID of the user  
+        quiz_type: "standard" or "enhanced"
+    """
+    logger.info(f"Quiz generated successfully for user {user_id[:8]}... ({quiz_type} quiz, credits already reserved)")
+    
+    # Invalidate cache so next request sees updated balance
+    await invalidate_user_tier_cache(user_id)
 
 
 # === Generate quiz from file ===
@@ -685,9 +749,12 @@ async def generate_quiz_from_file_openai(
     if file.content_type not in ["application/pdf", "text/plain", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]:
         raise HTTPException(status_code=400, detail="Only PDF, DOCX, or TXT files are supported.")
 
-    # Validate credits BEFORE file processing (don't waste resources on users without credits)
-    # Credits will be consumed AFTER successful generation in generate_quiz_rag_async
-    await validate_credits_available(current_user_id, mode)
+    # ATOMIC CREDIT RESERVATION: Reserve credits BEFORE any expensive operations
+    # This prevents TOCTOU race conditions where concurrent requests bypass limits
+    await reserve_credits_atomic(current_user_id, mode)
+    
+    # Track whether we need to refund credits on failure
+    credits_reserved = True
 
     try:
         file_bytes = await file.read()
@@ -728,7 +795,7 @@ async def generate_quiz_from_file_openai(
 
         # Save file to supabase storage FIRST to get file_id (reuse already-read bytes)
         original_filename = file.filename or f"uploaded_{datetime.now().strftime('%Y%m%d%H%M%S')}"
-        file_result = save_file_to_supabase(current_user_id, file_bytes, original_filename, user_token, file.content_type)
+        file_result = await save_file_to_supabase_async(current_user_id, file_bytes, original_filename, user_token, file.content_type)
         file_id = file_result.get('file_id')
         
         # Use unified generation function that handles both modes
@@ -762,16 +829,24 @@ async def generate_quiz_from_file_openai(
         }
         save_metadata(metadata, user_token=user_token)
         
+        # SUCCESS: Credits were already reserved, finalize consumption
+        credits_reserved = False  # Don't refund
+        await finalize_credits_after_success(current_user_id, mode)
+        
         # Update message and return EnhancedQuizGenerationResponse directly
         result.message = f"Quiz generated successfully from file ({mode} mode)"
         result.file_id = file_id
         return result
     
     except HTTPException:
-        # Re-raise HTTP exceptions as-is
+        # Re-raise HTTP exceptions as-is (refund handled in finally)
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")
+    finally:
+        # Refund credits if reserved but generation failed
+        if credits_reserved:
+            await refund_credits_on_failure(current_user_id, mode)
 
 # === Generate quiz from file ID ===
 async def generate_quiz_from_fileid(
@@ -828,9 +903,12 @@ async def generate_quiz_from_fileid(
         logger.error(f"Error reading file {file_id}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error reading file: {str(e)}")
 
-    # Validate credits BEFORE generation (don't waste AI calls on users without credits)
-    # Credits will be consumed AFTER successful generation in generate_quiz_rag_async
-    await validate_credits_available(current_user_id, data.mode)
+    # ATOMIC CREDIT RESERVATION: Reserve credits BEFORE generation
+    # This prevents TOCTOU race conditions where concurrent requests bypass limits
+    await reserve_credits_atomic(current_user_id, data.mode)
+    
+    # Track whether we need to refund credits on failure
+    credits_reserved = True
 
     try:
         logger.info(f"Generating quiz questions from file content (length: {len(file_content)})")
@@ -868,16 +946,24 @@ async def generate_quiz_from_fileid(
         save_metadata(metadata, user_token=user_token)
         logger.info(f"Saved quiz with ID: {result.quiz_id}")
 
+        # SUCCESS: Credits were already reserved, finalize consumption
+        credits_reserved = False  # Don't refund
+        await finalize_credits_after_success(current_user_id, data.mode)
+
         # Update message and return EnhancedQuizGenerationResponse
         result.message = f"Quiz generated successfully from file ({data.mode} mode)"
         result.file_id = file_id
         return result
     except HTTPException as he:
-        # Re-raise HTTP exceptions
+        # Re-raise HTTP exceptions (refund handled in finally)
         raise he
     except Exception as e:
         logger.error(f"Error generating quiz from file {file_id}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error generating quiz: {str(e)}")
+    finally:
+        # Refund credits if reserved but generation failed
+        if credits_reserved:
+            await refund_credits_on_failure(current_user_id, data.mode)
 
 # === Generate quiz from text ===
 async def generate_quiz_from_text(
@@ -894,11 +980,7 @@ async def generate_quiz_from_text(
                 detail="Authentication required to generate quiz"
             )
         
-        # Validate credits BEFORE generation
-        await validate_credits_available(current_user_id, data.mode)
-        
-        # Save text content as a file in Supabase Storage (same as file uploads)
-        # This ensures text input is stored for reference and consistency with file/URL sources
+        # Pre-validation BEFORE credit reservation (fast-fail on obvious issues)
         text_bytes = data.content.encode('utf-8')
         text_size = len(text_bytes)
         
@@ -909,6 +991,16 @@ async def generate_quiz_from_text(
                 detail=f"Text content is too large. Maximum allowed size is 10MB ({MAX_FILE_SIZE} bytes). Your text is {text_size} bytes."
             )
         
+        # ATOMIC CREDIT RESERVATION: Reserve credits BEFORE expensive operations
+        # This prevents TOCTOU race conditions where concurrent requests bypass limits
+        await reserve_credits_atomic(current_user_id, data.mode)
+        
+        # Track whether we need to refund credits on failure
+        credits_reserved = True
+        
+        # Save text content as a file in Supabase Storage (same as file uploads)
+        # This ensures text input is stored for reference and consistency with file/URL sources
+        
         # Generate filename based on title or timestamp using shared sanitization logic
         safe_title = sanitize_filename(data.title or 'text_input')
         original_filename = f"{safe_title}_{datetime.now().strftime('%Y%m%d%H%M%S')}.txt"
@@ -916,7 +1008,7 @@ async def generate_quiz_from_text(
         # Save the text input as a file in Supabase Storage
         # Add localized error handling so storage failures surface clear messages
         try:
-            file_result = save_file_to_supabase(
+            file_result = await save_file_to_supabase_async(
                 current_user_id,
                 text_bytes,
                 original_filename,
@@ -981,13 +1073,17 @@ async def generate_quiz_from_text(
         }
         save_metadata(metadata, user_token=user_token)
         
+        # SUCCESS: Credits were already reserved, finalize consumption
+        credits_reserved = False  # Don't refund
+        await finalize_credits_after_success(current_user_id, data.mode)
+        
         # Update message and return EnhancedQuizGenerationResponse directly
         result.message = f"Quiz generated successfully from text ({data.mode} mode)"
         result.file_id = file_id  # Include file_id in response for consistency
         return result
     
     except HTTPException as he:
-        # Re-raise HTTP exceptions as-is
+        # Re-raise HTTP exceptions as-is (refund handled in finally)
         raise he
     except ValueError as ve:
         # Handle validation errors
@@ -995,6 +1091,10 @@ async def generate_quiz_from_text(
     except Exception as e:
         # Handle all other errors
         raise HTTPException(status_code=500, detail=f"Error generating quiz: {str(e)}")
+    finally:
+        # Refund credits if reserved but generation failed
+        if credits_reserved:
+            await refund_credits_on_failure(current_user_id, data.mode)
 
 # === Get user quizzes ===
 async def get_user_quizzes_handler(
@@ -1165,10 +1265,18 @@ async def delete_quiz_by_id_handler(
 ):
     """Delete a quiz by ID."""
     try:
-        delete_quiz_from_database(quiz_id, user_token)
-        return {"message": "Quiz deleted successfully"}
+        deleted = delete_quiz_from_database(quiz_id, user_token)
+        if deleted:
+            return {"message": "Quiz deleted successfully"}
+        else:
+            # Quiz not found - could be already deleted or doesn't exist
+            # Return 404 since the resource wasn't found
+            raise HTTPException(status_code=404, detail="Quiz not found")
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error deleting quiz: {str(e)}")
+        logger.error(f"Error deleting quiz {quiz_id[:8]}...: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to delete quiz")
 
 # === Get metadata ===
 async def get_metadata_handler(
@@ -1183,32 +1291,12 @@ async def get_metadata_handler(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# === Submit quiz answers ===
-async def submit_quiz_answers(
-    quiz_id: str,
-    answers: Dict[str, Any],
-    current_user_id: str = Depends(get_current_user_id)
-):
-    """Submit answers for a quiz and get score"""
-    try:
-        # For now, just return the submitted data and a mock score
-        # In a real implementation, you would validate answers against correct ones
-        correct_count = len(answers.get("answers", [])) // 2  # Mock calculation
-        total_count = len(answers.get("answers", []))
-        
-        return {
-            "quiz_id": quiz_id,
-            "user_id": current_user_id,
-            "score": {
-                "correct": correct_count,
-                "total": total_count,
-                "percentage": int((correct_count / total_count) * 100) if total_count > 0 else 0
-            },
-            "submitted_at": datetime.now().isoformat(),
-            "status": "completed"
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+# NOTE: Quiz submission is handled by handlers/submission_handler.py
+# The submit_quiz function there has proper:
+# - Quiz ownership validation via RLS
+# - Answer validation against correct answers
+# - Detailed scoring and results
+# See api/submission_routes.py for the actual endpoint
 
 
 # === Generate quiz from URL ===
@@ -1219,9 +1307,12 @@ async def generate_quiz_from_url(
 ):
     """Generate quiz from web URL (available for all tiers with quota limits)."""
     
-    # Validate credits BEFORE scraping (expensive operation)
-    # Credits will be consumed AFTER successful generation in generate_quiz_rag_async
-    await validate_credits_available(current_user_id, data.mode)
+    # ATOMIC CREDIT RESERVATION: Reserve credits BEFORE scraping (expensive operation)
+    # This prevents TOCTOU race conditions where concurrent requests bypass limits
+    await reserve_credits_atomic(current_user_id, data.mode)
+    
+    # Track whether we need to refund credits on failure
+    credits_reserved = True
     
     try:
         # Get user tier info for logging (cached for performance)
@@ -1229,7 +1320,8 @@ async def generate_quiz_from_url(
         
         # Scrape content with user ID for resource tracking
         # Enable PDF saving to user_files if URL is a PDF
-        logger.info(f"User {current_user_id} ({tier_info['account_tier']} tier) generating quiz from URL: {data.url}")
+        # NOTE: URL is logged here - will be redacted in Issue #3
+        logger.info(f"User {current_user_id[:8]}... ({tier_info['account_tier']} tier) generating quiz from URL")
         content, file_info = await scrape_content(
             url=str(data.url), 
             user_id=current_user_id,
@@ -1264,12 +1356,21 @@ async def generate_quiz_from_url(
         )
         
         # Save metadata for URL-based quiz
+        # SECURITY: Redact URL to remove query params (may contain tokens/PII)
+        redacted_url = redact_url_for_storage(str(data.url))
+        
+        # If content_source_reference is a file_id, it's already safe
+        # If it's a URL, use redacted version
+        safe_content_ref = content_source_reference
+        if content_source_reference == str(data.url):
+            safe_content_ref = redacted_url
+        
         metadata = {
             "quiz_id": result.quiz_id,
             "content_type": "url",
             "content_source_type": "url",
-            "content_source_reference": content_source_reference,
-            "file_name": str(data.url),
+            "content_source_reference": safe_content_ref,
+            "file_name": redacted_url,  # Store redacted URL
             "file_type": "application/pdf" if file_info else "text/html",
             "word_count": len(content.split()),
             "created_by": current_user_id,
@@ -1278,6 +1379,10 @@ async def generate_quiz_from_url(
         }
         save_metadata(metadata, user_token=user_token)
         logger.info(f"Saved quiz from URL with ID: {result.quiz_id}")
+        
+        # SUCCESS: Credits were already reserved, finalize consumption
+        credits_reserved = False  # Don't refund
+        await finalize_credits_after_success(current_user_id, data.mode)
         
         # Update result with URL-specific info and return directly
         result.source_url = str(data.url)
@@ -1292,11 +1397,15 @@ async def generate_quiz_from_url(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error generating quiz from URL {data.url}: {str(e)}", exc_info=True)
+        logger.error(f"Error generating quiz from URL: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail=f"Error generating quiz from URL: {str(e)}"
         )
+    finally:
+        # Refund credits if reserved but generation failed
+        if credits_reserved:
+            await refund_credits_on_failure(current_user_id, data.mode)
 
 async def generate_quiz_rag_async(
     request: EnhancedTextQuizRequest,
@@ -1450,10 +1559,10 @@ async def _generate_enhanced_mode(
         
         logger.info(f"[TIMING] TOTAL PIPELINE took {time.time()-pipeline_start:.2f}s")
         
-        # Step 6: Consume credits AFTER successful generation
-        await consume_credits_after_success(user_id, request.mode)
+        # NOTE: Credits are now consumed by caller (atomic reservation pattern)
+        # No credit consumption here - this function may be called after credits are reserved
         
-        # Step 7: Build response
+        # Step 6: Build response
         return EnhancedQuizGenerationResponse(
             quiz_id=quiz_id,
             title=request.title,
