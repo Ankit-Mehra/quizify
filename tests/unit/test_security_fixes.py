@@ -85,7 +85,7 @@ class TestURLRedaction:
     
     def test_redact_url_removes_query_params(self):
         """Test that query parameters are removed."""
-        from handlers.quiz_handlers import redact_url_for_storage
+        from services.url_utils import redact_url_for_storage
         
         url = "https://example.com/doc.pdf?token=secret123&auth=abc"
         redacted = redact_url_for_storage(url)
@@ -97,7 +97,7 @@ class TestURLRedaction:
     
     def test_redact_url_removes_fragment(self):
         """Test that URL fragments are removed."""
-        from handlers.quiz_handlers import redact_url_for_storage
+        from services.url_utils import redact_url_for_storage
         
         url = "https://example.com/page#section-with-sensitive-data"
         redacted = redact_url_for_storage(url)
@@ -108,7 +108,7 @@ class TestURLRedaction:
     
     def test_redact_url_preserves_path(self):
         """Test that URL path is preserved."""
-        from handlers.quiz_handlers import redact_url_for_storage
+        from services.url_utils import redact_url_for_storage
         
         url = "https://example.com/path/to/document.pdf?secret=123"
         redacted = redact_url_for_storage(url)
@@ -118,7 +118,7 @@ class TestURLRedaction:
     
     def test_redact_url_preserves_domain(self):
         """Test that domain is preserved."""
-        from handlers.quiz_handlers import redact_url_for_storage
+        from services.url_utils import redact_url_for_storage
         
         url = "https://subdomain.example.com/doc?token=xyz"
         redacted = redact_url_for_storage(url)
@@ -128,7 +128,7 @@ class TestURLRedaction:
     
     def test_redact_url_handles_url_without_params(self):
         """Test that URLs without params are unchanged."""
-        from handlers.quiz_handlers import redact_url_for_storage
+        from services.url_utils import redact_url_for_storage
         
         url = "https://example.com/clean/path"
         redacted = redact_url_for_storage(url)
@@ -136,15 +136,16 @@ class TestURLRedaction:
         assert redacted == url
     
     def test_redact_url_handles_empty_string(self):
-        """Test handling of empty string."""
-        from handlers.quiz_handlers import redact_url_for_storage
+        """Test handling of empty string returns empty (valid but empty URL)."""
+        from services.url_utils import redact_url_for_storage
         
         redacted = redact_url_for_storage("")
+        # Empty string parses successfully (just empty), so returns empty
         assert redacted == ""
     
     def test_redact_url_handles_invalid_url(self):
         """Test handling of malformed URL."""
-        from handlers.quiz_handlers import redact_url_for_storage
+        from services.url_utils import redact_url_for_storage
         
         # Should not raise, but return something reasonable
         url = "not-a-valid-url"

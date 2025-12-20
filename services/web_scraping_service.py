@@ -213,9 +213,12 @@ async def download_and_extract_pdf(url: str, user_id: str = None, user_token: st
     
     try:
         # Download PDF with timeout, size limits, and SSRF-safe redirect handling
-        # Use custom transport that validates each redirect hop
         # SECURITY: Use follow_redirects=False and handle redirects manually to prevent
-        # SSRF TOCTOU (Time-of-Check-Time-of-Use) attacks.
+        # SSRF TOCTOU (Time-of-Check-Time-of-Use) attacks. The manual redirect loop
+        # validates each URL BEFORE making the request.
+        # NOTE: SSRFSafeTransport is included for defense-in-depth, but since
+        # follow_redirects=False, the primary SSRF protection comes from the
+        # explicit _validate_redirect_url() calls in the manual redirect loop below.
         transport = SSRFSafeTransport()
         async with httpx.AsyncClient(
             timeout=PDF_DOWNLOAD_TIMEOUT,
@@ -291,6 +294,10 @@ async def download_and_extract_pdf(url: str, user_id: str = None, user_token: st
                         
                         pdf_buffer.extend(chunk)
                     
+                    # NOTE: This conversion creates a copy of the bytearray data.
+                    # For large PDFs near 10MB limit, peak memory usage is ~20MB
+                    # (10MB bytearray + 10MB bytes copy). This is acceptable for
+                    # our use case as it's bounded by MAX_PDF_SIZE.
                     pdf_bytes = bytes(pdf_buffer)
                     logger.info(f"PDF downloaded successfully: {len(pdf_bytes) / (1024*1024):.2f}MB")
                     
@@ -532,14 +539,16 @@ def resolve_hostname_to_ips(hostname: str, use_cache: bool = False) -> list:
     # Check cache first (if enabled) - thread-safe access
     if use_cache:
         with _dns_cache_lock:
-            if hostname in _dns_cache:
-                cached_ips, expiry = _dns_cache[hostname]
+            # Use .get() to avoid race condition between check and access
+            entry = _dns_cache.get(hostname)
+            if entry is not None:
+                cached_ips, expiry = entry
                 if current_time < expiry:
                     logger.debug(f"DNS cache hit for {hostname}: {cached_ips}")
                     return cached_ips
                 else:
-                    # Cache expired - remove stale entry
-                    del _dns_cache[hostname]
+                    # Cache expired - remove stale entry (safe even if already removed)
+                    _dns_cache.pop(hostname, None)
                     logger.debug(f"DNS cache expired for {hostname}")
     
     try:

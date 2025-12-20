@@ -102,6 +102,12 @@ class TestReserveCreditsAtomic:
         detail = exc_info.value.detail
         assert detail['error'] == 'insufficient_credits'
         assert 'Upgrade' in detail['message']  # Free users should see upgrade prompt
+        # Verify error detail contains required fields for frontend
+        # Note: credits = units/2, so enhanced (4 units) = 2 credits shown as 1.0 in API
+        assert 'required_credits' in detail
+        assert 'available_credits' in detail
+        assert detail['required_credits'] == 1.0  # Enhanced mode
+        assert detail['available_credits'] == 0
     
     @patch('handlers.quiz_handlers.get_billing_state', new_callable=AsyncMock)
     @patch('handlers.quiz_handlers.consume_units', new_callable=AsyncMock)
@@ -125,6 +131,12 @@ class TestReserveCreditsAtomic:
         detail = exc_info.value.detail
         assert detail['error'] == 'insufficient_credits'
         assert 'Purchase' in detail['message']  # Pro users should see purchase prompt
+        # Verify error detail contains required fields for frontend
+        # Note: credits = units/2, so standard (2 units) = 1 credit shown as 0.5 in API
+        assert 'required_credits' in detail
+        assert 'available_credits' in detail
+        assert detail['required_credits'] == 0.5  # Standard mode
+        assert detail['available_credits'] == 0
 
 
 class TestRefundCreditsOnFailure:
