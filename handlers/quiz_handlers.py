@@ -1399,6 +1399,19 @@ async def generate_quiz_from_url(
         # Refund credits if reserved but generation failed
         if credits_reserved:
             await refund_credits_on_failure(current_user_id, data.mode)
+            
+            # Clean up orphaned file if generation failed
+            if file_info and file_info.get('file_id'):
+                try:
+                    logger.info(f"Cleaning up orphaned file {file_info['file_id']} after failed generation")
+                    await delete_file_from_supabase_async(
+                        file_id=file_info['file_id'],
+                        token=user_token,
+                        user_id=current_user_id,
+                        original_filename=file_info.get('original_filename', 'unknown.pdf')
+                    )
+                except Exception as cleanup_error:
+                    logger.error(f"Failed to cleanup orphaned file: {str(cleanup_error)}")
 
 async def generate_quiz_rag_async(
     request: EnhancedTextQuizRequest,

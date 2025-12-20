@@ -40,6 +40,15 @@ BEGIN
         RAISE EXCEPTION 'Refund amount too large: %. Max allowed is 1,000,000 units.', p_units;
     END IF;
 
+    -- Check current balance to prevent overflow (max 10 million units)
+    IF EXISTS (
+        SELECT 1 FROM public.profiles 
+        WHERE id = p_user_id 
+        AND (COALESCE(free_credit_units_remaining, 0) + p_units) > 10000000
+    ) THEN
+        RAISE EXCEPTION 'Refund would exceed maximum credit balance limit (10,000,000 units).';
+    END IF;
+
     -- ========================================================================
     -- SECURITY CHECK: Verify caller is service_role (backend only)
     -- ========================================================================
