@@ -65,14 +65,21 @@ BEGIN
     END IF;
 
     -- ========================================================================
-    -- ATOMIC INCREMENT: Add units back to free bucket
+    -- ATOMIC INCREMENT: Add units back to free bucket with overflow protection
     -- ========================================================================
     -- Note: We always refund to free_credit_units_remaining for simplicity.
     -- This is slightly favorable to users (they get free credits back even if
     -- they originally paid), but it's fair given they didn't get a quiz.
+    -- 
+    -- SECURITY: Cap refunds to prevent integer overflow or abuse.
+    -- Max free_credit_units_remaining is capped at monthly allocation (6 for free, 80 for pro)
+    -- plus a reasonable buffer. 100 units should cover any legitimate case.
     UPDATE public.profiles
     SET 
-        free_credit_units_remaining = COALESCE(free_credit_units_remaining, 0) + p_units,
+        free_credit_units_remaining = LEAST(
+            COALESCE(free_credit_units_remaining, 0) + p_units,
+            100  -- Cap at 100 units to prevent overflow/abuse
+        ),
         updated_at = now()
     WHERE id = p_user_id;
     

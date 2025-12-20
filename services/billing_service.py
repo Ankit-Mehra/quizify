@@ -295,11 +295,20 @@ async def refund_units(user_id: str, quiz_type: str) -> bool:
         data = result.data
         # Handle different PostgreSQL RPC return formats:
         # - Direct boolean: True
-        # - List result: [True] or [{"refund_credit_units": True}]
-        # We check for truthiness of data (if bool) or first element (if list)
-        if data is True or (isinstance(data, list) and data and data[0]):
+        # - List with boolean: [True]
+        # - List with dict: [{"refund_credit_units": True}]
+        # We check each format explicitly for clarity and correctness
+        if data is True:
             logger.info(f"Refunded {units} units ({units/2} credits) to user {user_id[:8]} after failed generation")
             return True
+        if isinstance(data, list) and len(data) > 0:
+            first_item = data[0]
+            if first_item is True:
+                logger.info(f"Refunded {units} units ({units/2} credits) to user {user_id[:8]} after failed generation")
+                return True
+            if isinstance(first_item, dict) and first_item.get('refund_credit_units'):
+                logger.info(f"Refunded {units} units ({units/2} credits) to user {user_id[:8]} after failed generation")
+                return True
         
         logger.warning(f"Refund returned unexpected result for user {user_id[:8]}: {data}")
         return False

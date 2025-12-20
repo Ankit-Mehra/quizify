@@ -820,6 +820,12 @@ async def generate_quiz_from_file_openai(
                 try:
                     await delete_file_from_supabase_async(file_id, user_token, current_user_id, original_filename)
                     logger.info(f"Cleaned up orphaned file after generation failure (file_id: {file_id})")
+                except HTTPException as cleanup_err:
+                    if cleanup_err.status_code == 404:
+                        # Expected in cases where the storage object was never created or already removed
+                        logger.info(f"Orphaned file missing from storage during cleanup (file_id: {file_id})")
+                    else:
+                        logger.warning(f"Unexpected failure while cleaning up orphaned file {file_id}: {cleanup_err}")
                 except Exception as cleanup_err:
                     # Log but don't re-raise - cleanup failure shouldn't mask the original error
                     logger.warning(f"Failed to cleanup orphaned file {file_id}: {cleanup_err}")
@@ -1082,6 +1088,12 @@ async def generate_quiz_from_text(
                 try:
                     await delete_file_from_supabase_async(file_id, user_token, current_user_id, original_filename)
                     logger.info(f"Cleaned up orphaned file after generation failure (file_id: {file_id})")
+                except HTTPException as cleanup_err:
+                    if cleanup_err.status_code == 404:
+                        # Expected in cases where the storage object was never created or already removed
+                        logger.info(f"Orphaned file missing from storage during cleanup (file_id: {file_id})")
+                    else:
+                        logger.warning(f"Unexpected failure while cleaning up orphaned file {file_id}: {cleanup_err}")
                 except Exception as cleanup_err:
                     # Log but don't re-raise - cleanup failure shouldn't mask the original error
                     logger.warning(f"Failed to cleanup orphaned file {file_id}: {cleanup_err}")
@@ -1410,6 +1422,12 @@ async def generate_quiz_from_url(
                         user_id=current_user_id,
                         original_filename=file_info.get('original_filename', 'unknown.pdf')
                     )
+                except HTTPException as cleanup_err:
+                    if cleanup_err.status_code == 404:
+                        # Expected in cases where the storage object was never created or already removed
+                        logger.info(f"Orphaned file missing from storage during cleanup (file_id: {file_info['file_id']})")
+                    else:
+                        logger.warning(f"Unexpected failure while cleaning up orphaned file {file_info['file_id']}: {cleanup_err}")
                 except Exception as cleanup_error:
                     logger.error(f"Failed to cleanup orphaned file: {str(cleanup_error)}")
 

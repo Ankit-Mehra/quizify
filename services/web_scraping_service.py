@@ -71,8 +71,9 @@ def _is_running_in_container() -> bool:
             with open('/proc/1/cgroup', 'r') as f:
                 if 'docker' in f.read():
                     container_indicators.append(True)
-        except (IOError, OSError):
-            pass
+        except (IOError, OSError) as exc:
+            # Non-critical: if we can't read cgroup info, we just skip this indicator
+            logger.debug("Failed to read /proc/1/cgroup for container detection: %s", exc)
     
     return any(container_indicators)
 

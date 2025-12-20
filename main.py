@@ -218,6 +218,11 @@ async def request_validation_exception_handler(request: Request, exc: RequestVal
     Returns 422 Unprocessable Entity with detailed validation error messages.
     This ensures validation errors are returned as 422 instead of being caught
     by the global exception handler and returned as 500.
+    
+    NOTE: This custom format differs from FastAPI's default validation error format.
+    The response includes 'detail' (string) and 'errors' (list of {location, message}).
+    API clients should handle this format rather than the standard FastAPI format
+    which includes 'type', 'loc', 'msg', 'input', 'ctx' fields.
     """
     # Extract user-friendly error messages
     errors = []

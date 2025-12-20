@@ -57,24 +57,23 @@ def save_file_to_supabase(user_id: str, file_bytes: bytes, original_filename: st
     DEPRECATED: This wrapper exists for backward compatibility with sync callers.
     Prefer using save_file_to_supabase_async directly in async contexts.
     
-    NOTE: When called from an async context (loop.is_running()), this runs the
-    async function in a ThreadPoolExecutor which creates a new event loop per call.
-    This is inefficient but safe for occasional use.
+    NOTE: When called from an async context (loop.is_running()), this will raise
+    a RuntimeError to force callers to use the async variant instead.
     """
     try:
-        # If this succeeds, we're in an async context with a running loop.
+        # Check if we're in an async context with a running loop.
         asyncio.get_running_loop()
-        
+    except RuntimeError:
+        # No running event loop: safe to create one and run the async function.
+        return asyncio.run(
+            save_file_to_supabase_async(user_id, file_bytes, original_filename, token, file_type)
+        )
+    else:
         # A running event loop exists: refuse to run to avoid creating
         # nested event loops in threads, which can cause resource leaks.
         raise RuntimeError(
             "save_file_to_supabase cannot be called from async context; "
             "use save_file_to_supabase_async instead."
-        )
-    except RuntimeError:
-        # No running event loop: safe to create one.
-        return asyncio.run(
-            save_file_to_supabase_async(user_id, file_bytes, original_filename, token, file_type)
         )
 
 
@@ -323,24 +322,29 @@ def read_file_content(path: str, token: str) -> bytes:
     
     DEPRECATED: Prefer read_file_content_async in async contexts.
     
-    NOTE: When called from an async context (loop.is_running()), this runs the
-    async function in a ThreadPoolExecutor which creates a new event loop per call.
+    NOTE: This function must NOT be called from an async context.
+    If you already have an event loop running, use read_file_content_async instead.
     """
     try:
-        # If this succeeds, we're in an async context with a running loop.
+        # Check if we're in an async context with a running loop.
         asyncio.get_running_loop()
-        
+    except RuntimeError:
+        # No running event loop: safe to create one and run the async function.
+        try:
+            return asyncio.run(read_file_content_async(path, token))
+        except HTTPException:
+            # Preserve HTTPExceptions raised by the async function.
+            raise
+        except Exception as e:
+            # Wrap unexpected errors in an HTTPException for consistency.
+            raise HTTPException(status_code=500, detail=str(e))
+    else:
         # A running event loop exists: refuse to run to avoid creating
-        # nested event loops in threads, which can cause resource leaks.
+        # nested event loops or misusing the sync wrapper in async code.
         raise RuntimeError(
             "read_file_content cannot be called from async context; "
             "use read_file_content_async instead."
         )
-    except RuntimeError:
-        # No running event loop: safe to create one.
-        return asyncio.run(read_file_content_async(path, token))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 def parse_file_from_supabase(file_record: dict, user_token: str) -> str:
