@@ -295,8 +295,8 @@ class TestCreditRefundMechanism:
     """Tests for credit refund mechanism on failure."""
     
     @pytest.mark.asyncio
-    @patch('handlers.quiz_handlers.refund_units')
-    @patch('handlers.quiz_handlers.invalidate_user_tier_cache')
+    @patch('handlers.quiz_handlers.refund_units', new_callable=AsyncMock)
+    @patch('handlers.quiz_handlers.invalidate_user_tier_cache', new_callable=AsyncMock)
     async def test_refund_on_failure_calls_refund_units(self, mock_invalidate, mock_refund):
         """Test that refund_credits_on_failure calls the refund service."""
         from handlers.quiz_handlers import refund_credits_on_failure
@@ -310,8 +310,8 @@ class TestCreditRefundMechanism:
         mock_invalidate.assert_called_once_with("user-123")
     
     @pytest.mark.asyncio
-    @patch('handlers.quiz_handlers.refund_units')
-    @patch('handlers.quiz_handlers.invalidate_user_tier_cache')
+    @patch('handlers.quiz_handlers.refund_units', new_callable=AsyncMock)
+    @patch('handlers.quiz_handlers.invalidate_user_tier_cache', new_callable=AsyncMock)
     async def test_refund_on_failure_handles_refund_error(self, mock_invalidate, mock_refund):
         """Test that refund failure is logged but doesn't raise."""
         from handlers.quiz_handlers import refund_credits_on_failure
@@ -380,14 +380,39 @@ class TestAsyncFileOperations:
 class TestSourceTypePassthrough:
     """Tests for content source type passthrough in ingestion."""
     
-    def test_ingest_content_receives_source_type(self):
+    @pytest.mark.asyncio
+    async def test_ingest_content_receives_source_type(self):
         """Test that source_type is properly passed to ingestion service."""
-        # This is more of an integration test, but we can verify the function signature
-        from services.ai_services.ingestion_service import IngestionService
+        from handlers.quiz_handlers import _ingest_and_extract_concepts
+        from schemas.quiz import EnhancedTextQuizRequest
         
-        # Verify the method accepts source_type parameter
-        import inspect
-        sig = inspect.signature(IngestionService.ingest_content)
-        params = list(sig.parameters.keys())
+        # Mock dependencies
+        mock_ingestion = AsyncMock()
+        mock_ingestion.ingest_content.return_value = {"document_id": "doc-123", "chunks": []}
         
-        assert "source_type" in params
+        mock_concept = AsyncMock()
+        mock_concept.extract_concepts.return_value = [{"concept": "test"}]
+        
+        request = EnhancedTextQuizRequest(
+            title="Test Quiz",
+            content="Test content",
+            question_type="mixed",
+            num_questions=5,
+            mode="enhanced"
+        )
+        
+        # Call with specific source type
+        await _ingest_and_extract_concepts(
+            request=request,
+            user_id="user-123",
+            user_token="token",
+            trace_id="trace-123",
+            ingestion_service=mock_ingestion,
+            concept_service=mock_concept,
+            content_source_type="url"  # Specific source type
+        )
+        
+        # Verify source_type was passed correctly
+        mock_ingestion.ingest_content.assert_called_once()
+        call_kwargs = mock_ingestion.ingest_content.call_args.kwargs
+        assert call_kwargs["source_type"] == "url"

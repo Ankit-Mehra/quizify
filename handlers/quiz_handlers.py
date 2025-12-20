@@ -712,7 +712,9 @@ async def generate_quiz_from_file_openai(
         raise HTTPException(status_code=400, detail="Only PDF, DOCX, or TXT files are supported.")
 
     # Track whether we need to refund credits on failure
-    # Initialize BEFORE reservation attempt to avoid uninitialized variable in finally
+    # Initialize BEFORE reservation attempt so these are always defined for the finally block.
+    # `file_id` and `original_filename` are populated later in the try-block after a successful
+    # upload/save, and are only used in finally to clean up an orphaned file if generation fails.
     credits_reserved = False
     file_id = None  # Track uploaded file for cleanup on failure
     original_filename = None  # Track filename for cleanup
@@ -1296,8 +1298,11 @@ async def generate_quiz_from_url(
     """Generate quiz from web URL (available for all tiers with quota limits)."""
     
     # Track whether we need to refund credits on failure
-    # Initialize BEFORE reservation attempt to avoid uninitialized variable in finally
+    # Initialize BEFORE reservation attempt so these are always defined for the finally block.
+    # `file_info` is populated later in the try-block after a successful
+    # upload/save, and is used in finally to clean up an orphaned file if generation fails.
     credits_reserved = False
+    file_info = None
     
     # ATOMIC CREDIT RESERVATION: Reserve credits BEFORE scraping (expensive operation)
     # This prevents TOCTOU race conditions where concurrent requests bypass limits

@@ -80,9 +80,13 @@ def redact_url(url: str, max_path_length: int = None) -> str:
         ))
         return redacted
     except Exception:
-        # If parsing fails, return a truncated version
-        # Strip query params and truncate
-        return url.split('?')[0][:100] if url else "unknown"
+        # If parsing fails, fall back to a conservative, purely string-based redaction.
+        # Remove query and fragment components, then truncate to a safe maximum length.
+        if not url:
+            return "unknown"
+        base = url.split('?', 1)[0]
+        base = base.split('#', 1)[0]
+        return base[:100]
 
 
 def redact_url_for_storage(url: str) -> str:

@@ -213,54 +213,88 @@ async def download_and_extract_pdf(url: str, user_id: str = None, user_token: st
     try:
         # Download PDF with timeout, size limits, and SSRF-safe redirect handling
         # Use custom transport that validates each redirect hop
+        # SECURITY: Use follow_redirects=False and handle redirects manually to prevent
+        # SSRF TOCTOU (Time-of-Check-Time-of-Use) attacks.
         transport = SSRFSafeTransport()
         async with httpx.AsyncClient(
             timeout=PDF_DOWNLOAD_TIMEOUT,
-            follow_redirects=True,
+            follow_redirects=False,
             limits=httpx.Limits(max_connections=5),
             transport=transport
         ) as client:
             
-            # Stream download to check size before downloading entire file
-            async with client.stream('GET', url) as response:
-                response.raise_for_status()
-                
-                # Check Content-Type header (optional validation)
-                content_type = response.headers.get('content-type', '').lower()
-                logger.debug(f"PDF URL Content-Type: {content_type}")
-                
-                # Check content length if available
-                content_length = response.headers.get('content-length')
-                if content_length:
-                    size = int(content_length)
-                    if size > MAX_PDF_SIZE:
-                        logger.error(f"PDF too large: {size} bytes (max: {MAX_PDF_SIZE})")
-                        raise HTTPException(
-                            status_code=400,
-                            detail=f"PDF file is too large ({size / (1024*1024):.1f}MB). Maximum size is {MAX_PDF_SIZE / (1024*1024)}MB."
-                        )
-                    logger.info(f"PDF size: {size / (1024*1024):.2f}MB")
-                
-                # Download PDF content using a bytearray for efficient incremental buffering
-                # (streaming-friendly and avoids creating many intermediate temporary objects)
-                pdf_buffer = bytearray()
-                downloaded_size = 0
-                
-                async for chunk in response.aiter_bytes(chunk_size=8192):
-                    downloaded_size += len(chunk)
+            current_url = url
+            redirect_count = 0
+            MAX_REDIRECTS = 10
+            
+            while True:
+                # Stream download to check size before downloading entire file
+                async with client.stream('GET', current_url) as response:
+                    # Handle redirects manually to ensure validation happens before following
+                    if response.is_redirect:
+                        redirect_count += 1
+                        if redirect_count > MAX_REDIRECTS:
+                            raise HTTPException(status_code=400, detail="Too many redirects")
+                            
+                        location = response.headers.get('location')
+                        if not location:
+                            raise HTTPException(status_code=400, detail="Redirect with no Location header")
+                            
+                        # Resolve relative URL
+                        redirect_url = httpx.URL(location)
+                        if not redirect_url.is_absolute_url:
+                            redirect_url = httpx.URL(current_url).join(location)
+                        
+                        current_url = str(redirect_url)
+                        logger.debug(f"Following redirect to: {_redact_url_for_logging(current_url)}")
+                        
+                        # Validate redirect URL (SSRFSafeTransport also does this, but explicit check here is good)
+                        _validate_redirect_url(current_url)
+                        
+                        # Continue to next iteration (response is closed by context manager exit)
+                        continue
+
+                    response.raise_for_status()
                     
-                    # Check size limit during download
-                    if downloaded_size > MAX_PDF_SIZE:
-                        logger.error(f"PDF download exceeded size limit: {downloaded_size} bytes")
-                        raise HTTPException(
-                            status_code=400,
-                            detail=f"PDF file is too large (>{MAX_PDF_SIZE / (1024*1024)}MB). Maximum size is {MAX_PDF_SIZE / (1024*1024)}MB."
-                        )
+                    # Check Content-Type header (optional validation)
+                    content_type = response.headers.get('content-type', '').lower()
+                    logger.debug(f"PDF URL Content-Type: {content_type}")
                     
-                    pdf_buffer.extend(chunk)
-                
-                pdf_bytes = bytes(pdf_buffer)
-                logger.info(f"PDF downloaded successfully: {len(pdf_bytes) / (1024*1024):.2f}MB")
+                    # Check content length if available
+                    content_length = response.headers.get('content-length')
+                    if content_length:
+                        size = int(content_length)
+                        if size > MAX_PDF_SIZE:
+                            logger.error(f"PDF too large: {size} bytes (max: {MAX_PDF_SIZE})")
+                            raise HTTPException(
+                                status_code=400,
+                                detail=f"PDF file is too large ({size / (1024*1024):.1f}MB). Maximum size is {MAX_PDF_SIZE / (1024*1024)}MB."
+                            )
+                        logger.info(f"PDF size: {size / (1024*1024):.2f}MB")
+                    
+                    # Download PDF content using bytearray to avoid O(n) allocations per chunk
+                    # from repeated bytes concatenation while supporting streaming-friendly buffering
+                    pdf_buffer = bytearray()
+                    downloaded_size = 0
+                    
+                    async for chunk in response.aiter_bytes(chunk_size=8192):
+                        downloaded_size += len(chunk)
+                        
+                        # Check size limit during download
+                        if downloaded_size > MAX_PDF_SIZE:
+                            logger.error(f"PDF download exceeded size limit: {downloaded_size} bytes")
+                            raise HTTPException(
+                                status_code=400,
+                                detail=f"PDF file is too large (>{MAX_PDF_SIZE / (1024*1024)}MB). Maximum size is {MAX_PDF_SIZE / (1024*1024)}MB."
+                            )
+                        
+                        pdf_buffer.extend(chunk)
+                    
+                    pdf_bytes = bytes(pdf_buffer)
+                    logger.info(f"PDF downloaded successfully: {len(pdf_bytes) / (1024*1024):.2f}MB")
+                    
+                    # Break the loop as we have the file
+                    break
         
         # Extract text from PDF
         logger.info("Extracting text from downloaded PDF...")
@@ -385,9 +419,10 @@ def _validate_redirect_url(url: str) -> None:
         hostname = parsed.hostname
         
         if not hostname:
+            # If it's a relative URL, it should have been resolved to absolute before calling this
             raise HTTPException(
                 status_code=400,
-                detail="Redirect blocked: Invalid URL with no hostname"
+                detail="Redirect blocked: Invalid URL with no hostname (relative URLs must be resolved first)"
             )
         
         hostname = hostname.lower()

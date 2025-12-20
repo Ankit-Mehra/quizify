@@ -1,7 +1,6 @@
 import httpx
 import uuid
 import asyncio
-import concurrent.futures
 from functools import partial
 from concurrent.futures import ThreadPoolExecutor
 from fastapi import HTTPException, Depends
@@ -63,20 +62,17 @@ def save_file_to_supabase(user_id: str, file_bytes: bytes, original_filename: st
     This is inefficient but safe for occasional use.
     """
     try:
-        asyncio.get_running_loop()  # Check if loop is running (we're in async context)
-        # We're in an async context - warn and use thread pool workaround
-        logger.warning(
-            "save_file_to_supabase called from async context. "
-            "Prefer save_file_to_supabase_async for better performance."
+        # If this succeeds, we're in an async context with a running loop.
+        asyncio.get_running_loop()
+        
+        # A running event loop exists: refuse to run to avoid creating
+        # nested event loops in threads, which can cause resource leaks.
+        raise RuntimeError(
+            "save_file_to_supabase cannot be called from async context; "
+            "use save_file_to_supabase_async instead."
         )
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            future = executor.submit(
-                asyncio.run,
-                save_file_to_supabase_async(user_id, file_bytes, original_filename, token, file_type)
-            )
-            return future.result()
     except RuntimeError:
-        # No running event loop - safe to create one
+        # No running event loop: safe to create one.
         return asyncio.run(
             save_file_to_supabase_async(user_id, file_bytes, original_filename, token, file_type)
         )
@@ -93,7 +89,7 @@ async def save_file_to_supabase_async(user_id: str, file_bytes: bytes, original_
     try:
         logger.debug(f"Saving file for user {user_id}")
         
-        #genereate a unique ID
+        # generate a unique ID
         unique_id = str(uuid.uuid4())
         file_name = f"{unique_id}_{original_filename}"
         path = f"{user_id}/{file_name}"
@@ -331,20 +327,17 @@ def read_file_content(path: str, token: str) -> bytes:
     async function in a ThreadPoolExecutor which creates a new event loop per call.
     """
     try:
-        asyncio.get_running_loop()  # Check if loop is running (we're in async context)
-        # We're in an async context - warn and use thread pool workaround
-        logger.warning(
-            "read_file_content called from async context. "
-            "Prefer read_file_content_async for better performance."
+        # If this succeeds, we're in an async context with a running loop.
+        asyncio.get_running_loop()
+        
+        # A running event loop exists: refuse to run to avoid creating
+        # nested event loops in threads, which can cause resource leaks.
+        raise RuntimeError(
+            "read_file_content cannot be called from async context; "
+            "use read_file_content_async instead."
         )
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            future = executor.submit(
-                asyncio.run,
-                read_file_content_async(path, token)
-            )
-            return future.result()
     except RuntimeError:
-        # No running event loop - safe to create one
+        # No running event loop: safe to create one.
         return asyncio.run(read_file_content_async(path, token))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

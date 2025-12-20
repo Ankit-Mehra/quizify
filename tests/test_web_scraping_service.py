@@ -284,16 +284,23 @@ class TestDNSCacheSecurityRegression:
     """
     Regression tests for DNS cache security.
     
-    These tests ensure the DNS cache cannot be exploited to bypass SSRF protections
-    via DNS rebinding attacks. Critical security tests - do not remove.
+    These tests ensure that DNS caching is NOT used for security-critical SSRF
+    validation paths. In particular, they verify that validate_url always
+    performs a fresh DNS lookup (use_cache=False) when resolving hostnames,
+    so cached DNS results cannot be reused to bypass SSRF protections.
     
-    Attack scenario prevented:
+    Attack scenario these tests guard against:
     1. Attacker controls dns.attacker.com
     2. First DNS query returns legitimate public IP (e.g., 93.184.216.34)
-    3. Cache stores this public IP for the hostname
+    3. A DNS cache stores this public IP for the hostname
     4. TTL passes, attacker changes DNS to private IP (e.g., 127.0.0.1)
-    5. Without fresh DNS lookup, SSRF check would use cached public IP
-    6. Browser connects to new (private) IP = SSRF bypass
+    5. If SSRF validation reused cached results instead of doing a fresh lookup,
+       it would still see the old public IP and allow the request
+    6. Browser would then connect to the new (private) IP = SSRF bypass
+    
+    By asserting that validate_url resolves hostnames with use_cache=False,
+    these tests confirm that a fresh DNS lookup is always performed for SSRF
+    validation and thus the above DNS rebinding attack cannot occur.
     """
 
     @patch('services.web_scraping_service.resolve_hostname_to_ips')

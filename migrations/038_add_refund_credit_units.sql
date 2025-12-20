@@ -34,6 +34,11 @@ BEGIN
     IF p_units <= 0 THEN
         RAISE EXCEPTION 'Invalid refund amount: %. Units must be positive.', p_units;
     END IF;
+    
+    -- Prevent integer overflow/abuse (max 1 million units = 500k credits)
+    IF p_units > 1000000 THEN
+        RAISE EXCEPTION 'Refund amount too large: %. Max allowed is 1,000,000 units.', p_units;
+    END IF;
 
     -- ========================================================================
     -- SECURITY CHECK: Verify caller is service_role (backend only)
