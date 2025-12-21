@@ -66,13 +66,16 @@ class QuizOrchestrationService:
         max_words: int = 100,
         head_words: int | None = None,
         tail_words: int | None = None,
-        separator: str = "..."
+        separator: str = " [......] "
     ) -> str:
         """Return a compact snippet that includes both start and end of context.
 
         Uses word boundaries (not raw characters) so the snippet reads naturally.
         For long contexts, returns: <start words><separator><end words>.
         For short contexts, returns the context as-is.
+        
+        The default separator "[...]" is a standard editorial convention indicating
+        omitted text, making it clearly visible that content has been truncated.
         """
         if not context:
             return ""
