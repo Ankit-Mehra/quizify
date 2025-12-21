@@ -416,21 +416,39 @@ def _validate_redirect_url(url: str) -> None:
     This function is called for each redirect hop to ensure the target
     doesn't resolve to a private/internal IP address.
     
+    IMPORTANT: This function expects absolute URLs. Relative URLs should be
+    resolved to absolute URLs before calling this function.
+    
     Args:
-        url: The redirect target URL
+        url: The redirect target URL (must be absolute)
         
     Raises:
-        HTTPException: If the redirect target is a private IP or blocked hostname
+        HTTPException: If the redirect target is a private IP, blocked hostname,
+                      or is not an absolute URL
     """
     try:
+        # Check for empty/invalid URLs first
+        if not url or not url.strip():
+            raise HTTPException(
+                status_code=400,
+                detail="Redirect blocked: Empty URL"
+            )
+        
         parsed = urlparse(url)
+        
+        # Check if it's a relative URL (missing scheme or netloc)
+        if not parsed.scheme or not parsed.netloc:
+            raise HTTPException(
+                status_code=400,
+                detail="Redirect blocked: Relative URLs must be resolved to absolute URLs before validation"
+            )
+        
         hostname = parsed.hostname
         
         if not hostname:
-            # If it's a relative URL, it should have been resolved to absolute before calling this
             raise HTTPException(
                 status_code=400,
-                detail="Redirect blocked: Invalid URL with no hostname (relative URLs must be resolved first)"
+                detail="Redirect blocked: Invalid URL with no hostname"
             )
         
         hostname = hostname.lower()
@@ -479,16 +497,20 @@ def _validate_redirect_url(url: str) -> None:
 
 class SSRFSafeTransport(httpx.AsyncHTTPTransport):
     """
-    Custom HTTP transport that validates each redirect hop to prevent SSRF attacks.
+    Custom HTTP transport that validates URLs before making requests.
     
-    This intercepts redirect responses and validates the Location header
-    BEFORE allowing the redirect to proceed.
+    SECURITY NOTE: When used with follow_redirects=False (our default configuration),
+    this transport provides defense-in-depth validation. The primary SSRF protection
+    comes from the manual redirect loop with explicit _validate_redirect_url() calls
+    BEFORE each request. This transport adds a secondary validation layer.
     
-    SECURITY: Validation flow:
-    1. handle_async_request() validates request URL BEFORE making request
-    2. If response is a redirect, Location header is validated BEFORE httpx follows it
-    3. When httpx follows redirect, it calls handle_async_request() again for the new URL
-    4. This ensures every hop is validated before any connection to that URL is made
+    When used with follow_redirects=True, this transport would be the primary protection,
+    validating each redirect hop before httpx follows it.
+    
+    Validation flow:
+    1. handle_async_request() validates request URL BEFORE making the request
+    2. If response is a redirect, Location header is validated (for logging/metrics)
+    3. With follow_redirects=False, caller handles redirects manually with validation
     """
     
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
@@ -825,11 +847,20 @@ async def scrape_content(url: str, user_id: str = "anonymous", user_token: str =
                         try:
                             _validate_redirect_url(request_url)
                             await route.continue_()
-                        except HTTPException:
+                        except HTTPException as http_err:
+                            # SECURITY: Catch validation failure and block the request
                             ssrf_blocked["blocked"] = True
                             ssrf_blocked["url"] = request_url  # Keep raw URL for internal error handling
+                            ssrf_blocked["reason"] = http_err.detail  # Store reason for error message
                             # SECURITY: Log redacted URL to prevent leaking tokens/secrets
                             logger.warning(f"Playwright SSRF blocked: {_redact_url_for_logging(request_url)}")
+                            await route.abort("accessdenied")
+                        except Exception as e:
+                            # Catch any other validation errors and block defensively
+                            ssrf_blocked["blocked"] = True
+                            ssrf_blocked["url"] = request_url
+                            ssrf_blocked["reason"] = str(e)
+                            logger.warning(f"Playwright request blocked due to validation error: {_redact_url_for_logging(request_url)} - {e}")
                             await route.abort("accessdenied")
                     
                     # Intercept ALL requests (including navigations and subresources)
