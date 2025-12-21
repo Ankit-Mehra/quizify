@@ -708,16 +708,18 @@ async def generate_quiz_from_file_openai(
     current_user_id: str = Depends(get_current_user_id),
     user_token: str = Depends(get_current_user_token)
 ):
-    if file.content_type not in ["application/pdf", "text/plain", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]:
-        raise HTTPException(status_code=400, detail="Only PDF, DOCX, or TXT files are supported.")
-
     # Track whether we need to refund credits on failure
-    # Initialize BEFORE reservation attempt so these are always defined for the finally block.
+    # Initialize BEFORE any validation or try-block so these are always defined for the finally block.
+    # This prevents UnboundLocalError if early validation fails before credit reservation.
     # `file_id` and `original_filename` are populated later in the try-block after a successful
     # upload/save, and are only used in finally to clean up an orphaned file if generation fails.
     credits_reserved = False
     file_id = None  # Track uploaded file for cleanup on failure
     original_filename = None  # Track filename for cleanup
+    
+    # Validate file type BEFORE reserving credits (fast-fail on invalid input)
+    if file.content_type not in ["application/pdf", "text/plain", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]:
+        raise HTTPException(status_code=400, detail="Only PDF, DOCX, or TXT files are supported.")
     
     # ATOMIC CREDIT RESERVATION: Reserve credits BEFORE any expensive operations
     # This prevents TOCTOU race conditions where concurrent requests bypass limits

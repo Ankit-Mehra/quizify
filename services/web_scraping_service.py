@@ -499,31 +499,36 @@ class SSRFSafeTransport(httpx.AsyncHTTPTransport):
     """
     Custom HTTP transport that validates URLs before making requests.
     
-    SECURITY NOTE: When used with follow_redirects=False (our default configuration),
-    this transport provides defense-in-depth validation. The primary SSRF protection
-    comes from the manual redirect loop with explicit _validate_redirect_url() calls
-    BEFORE each request. This transport adds a secondary validation layer.
+    SECURITY ARCHITECTURE NOTE:
+    This transport provides defense-in-depth URL validation. With our default
+    configuration (follow_redirects=False), the primary SSRF protection comes
+    from the manual redirect handling loop in download_pdf_content() which calls
+    _validate_redirect_url() BEFORE each request is made.
     
-    When used with follow_redirects=True, this transport would be the primary protection,
-    validating each redirect hop before httpx follows it.
+    This transport acts as a secondary safety net:
+    - Validates every URL before the request is sent (line-of-defense if caller forgets)
+    - Validates redirect Location headers (for logging/metrics purposes)
+    - Would become primary protection if follow_redirects=True were used
     
-    Validation flow:
-    1. handle_async_request() validates request URL BEFORE making the request
-    2. If response is a redirect, Location header is validated (for logging/metrics)
-    3. With follow_redirects=False, caller handles redirects manually with validation
+    With follow_redirects=False (current config):
+    - Caller's manual loop: Primary protection (validates before requesting)
+    - This transport: Secondary/redundant protection (defense-in-depth)
+    
+    Keeping this transport ensures that any future code paths that might not
+    implement manual redirect handling still get SSRF protection.
     """
     
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         # SECURITY: Validate the request URL BEFORE making the request
-        # This is called for every request, including redirect follow-ups
+        # This provides defense-in-depth even when callers do manual validation
         _validate_redirect_url(str(request.url))
         
         # Proceed with the request using the base transport
         response = await super().handle_async_request(request)
         
-        # SECURITY: If there's a redirect, validate the target BEFORE httpx follows it
-        # When httpx follows this redirect, it will call handle_async_request again
-        # with the new URL, providing double validation
+        # SECURITY: If there's a redirect, validate the Location header
+        # With follow_redirects=False, this is informational (logged for metrics)
+        # The caller's manual loop will validate again before following
         if response.is_redirect:
             location = response.headers.get('location')
             if location:
