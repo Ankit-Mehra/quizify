@@ -10,8 +10,7 @@ Tests cover:
 """
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
+from unittest.mock import MagicMock, patch
 
 from services.ai_services.concept_extraction_service import (
     ConceptExtractionService,

@@ -9,8 +9,17 @@ from fastapi import HTTPException
 from services.web_scraping_service import (
     validate_url,
     is_private_ip,
-    resolve_hostname_to_ips
+    resolve_hostname_to_ips,
+    clear_dns_cache
 )
+
+
+@pytest.fixture(autouse=True)
+def clear_cache_between_tests():
+    """Clear DNS cache before and after each test to ensure isolation."""
+    clear_dns_cache()
+    yield
+    clear_dns_cache()
 
 
 class TestIsPrivateIP:

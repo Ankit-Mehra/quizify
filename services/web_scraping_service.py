@@ -6,16 +6,20 @@ Supports automatic PDF download and text extraction from PDF URLs.
 import ipaddress
 import socket
 import os
+import time
+import threading
 import httpx
 from urllib.parse import urlparse
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeout
 import trafilatura
 from fastapi import HTTPException
 from services.logger import app_logger as logger
+from services.url_utils import redact_url_for_logging as _redact_url_for_logging  # Centralized URL redaction
 from config import config as app_config
 from services.ai_services.doc_service import extract_text_from_pdf
-from services.db_services.supabase_file import save_file_to_supabase
+from services.db_services.supabase_file import save_file_to_supabase_async
 from services.redis.browser_slots import browser_slot_manager
+
 
 # Constants
 MAX_CONTENT_SIZE = 500 * 1024  # 500KB for HTML content
@@ -30,6 +34,15 @@ MAX_MEMORY_MB = 256  # Maximum memory per browser instance
 MAX_CONCURRENT_BROWSERS = 3  # Maximum concurrent browsers per user
 JS_EXECUTION_TIMEOUT = 10000  # JavaScript execution timeout (10s)
 PAGE_LOAD_TIMEOUT = 5000  # Additional page load timeout (5s)
+
+# DNS cache configuration
+# NOTE: DNS caching is DISABLED for security-critical SSRF validation paths.
+# The cache is only used for non-security paths like logging/metrics.
+# All calls to resolve_hostname_to_ips in validate_url and _validate_redirect_url
+# MUST use use_cache=False to prevent DNS rebinding attacks.
+DNS_CACHE_TTL = 30  # Cache DNS results for 30 seconds (for non-security paths only)
+_dns_cache: dict = {}  # {hostname: (ips, expiry_time)}
+_dns_cache_lock = threading.Lock()  # Thread-safe cache access
 
 # Security Note: We avoid --single-process and --no-sandbox flags when possible
 # as they disable Chrome's security sandbox. These flags should only be used
@@ -46,12 +59,21 @@ def _is_running_in_container() -> bool:
     # Check for common container indicators
     container_indicators = [
         os.path.exists('/.dockerenv'),  # Docker
-        os.path.exists('/proc/1/cgroup') and 'docker' in open('/proc/1/cgroup', 'r').read(),
         os.environ.get('RAILWAY_ENVIRONMENT') is not None,  # Railway
         os.environ.get('HEROKU_DYNO_ID') is not None,  # Heroku
         os.environ.get('KUBERNETES_SERVICE_HOST') is not None,  # Kubernetes
         os.environ.get('CONTAINER') == 'true',  # Generic container flag
     ]
+    
+    # Check cgroup safely
+    if os.path.exists('/proc/1/cgroup'):
+        try:
+            with open('/proc/1/cgroup', 'r') as f:
+                if 'docker' in f.read():
+                    container_indicators.append(True)
+        except (IOError, OSError) as exc:
+            # Non-critical: if we can't read cgroup info, we just skip this indicator
+            logger.debug("Failed to read /proc/1/cgroup for container detection: %s", exc)
     
     return any(container_indicators)
 
@@ -187,54 +209,100 @@ async def download_and_extract_pdf(url: str, user_id: str = None, user_token: st
         The user_id and user_token parameters are not used by this function.
     """
     
-    logger.info(f"Downloading PDF from URL: {url}")
+    logger.info(f"Downloading PDF from URL: {_redact_url_for_logging(url)}")
     
     try:
-        # Download PDF with timeout and size limits
+        # Download PDF with timeout, size limits, and SSRF-safe redirect handling
+        # SECURITY: Use follow_redirects=False and handle redirects manually to prevent
+        # SSRF TOCTOU (Time-of-Check-Time-of-Use) attacks. The manual redirect loop
+        # validates each URL BEFORE making the request.
+        # NOTE: SSRFSafeTransport is included for defense-in-depth, but since
+        # follow_redirects=False, the primary SSRF protection comes from the
+        # explicit _validate_redirect_url() calls in the manual redirect loop below.
+        transport = SSRFSafeTransport()
         async with httpx.AsyncClient(
             timeout=PDF_DOWNLOAD_TIMEOUT,
-            follow_redirects=True,
-            limits=httpx.Limits(max_connections=5)
+            follow_redirects=False,
+            limits=httpx.Limits(max_connections=5),
+            transport=transport
         ) as client:
             
-            # Stream download to check size before downloading entire file
-            async with client.stream('GET', url) as response:
-                response.raise_for_status()
-                
-                # Check Content-Type header (optional validation)
-                content_type = response.headers.get('content-type', '').lower()
-                logger.debug(f"PDF URL Content-Type: {content_type}")
-                
-                # Check content length if available
-                content_length = response.headers.get('content-length')
-                if content_length:
-                    size = int(content_length)
-                    if size > MAX_PDF_SIZE:
-                        logger.error(f"PDF too large: {size} bytes (max: {MAX_PDF_SIZE})")
-                        raise HTTPException(
-                            status_code=400,
-                            detail=f"PDF file is too large ({size / (1024*1024):.1f}MB). Maximum size is {MAX_PDF_SIZE / (1024*1024)}MB."
-                        )
-                    logger.info(f"PDF size: {size / (1024*1024):.2f}MB")
-                
-                # Download PDF content
-                pdf_bytes = b''
-                downloaded_size = 0
-                
-                async for chunk in response.aiter_bytes(chunk_size=8192):
-                    downloaded_size += len(chunk)
+            current_url = url
+            redirect_count = 0
+            MAX_REDIRECTS = 10
+            
+            while True:
+                # Stream download to check size before downloading entire file
+                async with client.stream('GET', current_url) as response:
+                    # Handle redirects manually to ensure validation happens before following
+                    if response.is_redirect:
+                        redirect_count += 1
+                        if redirect_count > MAX_REDIRECTS:
+                            raise HTTPException(status_code=400, detail="Too many redirects")
+                            
+                        location = response.headers.get('location')
+                        if not location:
+                            raise HTTPException(status_code=400, detail="Redirect with no Location header")
+                            
+                        # Resolve relative URL
+                        redirect_url = httpx.URL(location)
+                        if not redirect_url.is_absolute_url:
+                            redirect_url = httpx.URL(current_url).join(location)
+                        
+                        current_url = str(redirect_url)
+                        logger.debug(f"Following redirect to: {_redact_url_for_logging(current_url)}")
+                        
+                        # Validate redirect URL (SSRFSafeTransport also does this, but explicit check here is good)
+                        _validate_redirect_url(current_url)
+                        
+                        # Continue to next iteration (response is closed by context manager exit)
+                        continue
+
+                    response.raise_for_status()
                     
-                    # Check size limit during download
-                    if downloaded_size > MAX_PDF_SIZE:
-                        logger.error(f"PDF download exceeded size limit: {downloaded_size} bytes")
-                        raise HTTPException(
-                            status_code=400,
-                            detail=f"PDF file is too large (>{MAX_PDF_SIZE / (1024*1024)}MB). Maximum size is {MAX_PDF_SIZE / (1024*1024)}MB."
-                        )
+                    # Check Content-Type header (optional validation)
+                    content_type = response.headers.get('content-type', '').lower()
+                    logger.debug(f"PDF URL Content-Type: {content_type}")
                     
-                    pdf_bytes += chunk
-                
-                logger.info(f"PDF downloaded successfully: {len(pdf_bytes) / (1024*1024):.2f}MB")
+                    # Check content length if available
+                    content_length = response.headers.get('content-length')
+                    if content_length:
+                        size = int(content_length)
+                        if size > MAX_PDF_SIZE:
+                            logger.error(f"PDF too large: {size} bytes (max: {MAX_PDF_SIZE})")
+                            raise HTTPException(
+                                status_code=400,
+                                detail=f"PDF file is too large ({size / (1024*1024):.1f}MB). Maximum size is {MAX_PDF_SIZE / (1024*1024)}MB."
+                            )
+                        logger.info(f"PDF size: {size / (1024*1024):.2f}MB")
+                    
+                    # Download PDF content using bytearray to avoid O(n) allocations per chunk
+                    # from repeated bytes concatenation while supporting streaming-friendly buffering
+                    pdf_buffer = bytearray()
+                    downloaded_size = 0
+                    
+                    async for chunk in response.aiter_bytes(chunk_size=8192):
+                        downloaded_size += len(chunk)
+                        
+                        # Check size limit during download
+                        if downloaded_size > MAX_PDF_SIZE:
+                            logger.error(f"PDF download exceeded size limit: {downloaded_size} bytes")
+                            raise HTTPException(
+                                status_code=400,
+                                detail=f"PDF file is too large (>{MAX_PDF_SIZE / (1024*1024)}MB). Maximum size is {MAX_PDF_SIZE / (1024*1024)}MB."
+                            )
+                        
+                        pdf_buffer.extend(chunk)
+                    
+                    # NOTE: This conversion creates a copy of the bytearray data.
+                    # For large PDFs near 10MB limit, peak memory usage is ~20MB
+                    # (10MB bytearray + 10MB bytes copy). This is acceptable for
+                    # our use case as it's bounded by MAX_PDF_SIZE.
+                    pdf_bytes = bytes(pdf_buffer)
+                    logger.info(f"PDF downloaded successfully: {len(pdf_bytes) / (1024*1024):.2f}MB")
+                    
+                    # Break the loop as we have the file
+                    break
         
         # Extract text from PDF
         logger.info("Extracting text from downloaded PDF...")
@@ -259,7 +327,7 @@ async def download_and_extract_pdf(url: str, user_id: str = None, user_token: st
             detail=f"Failed to download PDF: HTTP {e.response.status_code}. The URL might be invalid or require authentication."
         )
     except httpx.TimeoutException:
-        logger.error(f"Timeout downloading PDF from {url}")
+        logger.error(f"Timeout downloading PDF from {_redact_url_for_logging(url)}")
         raise HTTPException(
             status_code=408,
             detail=f"PDF download timed out after {PDF_DOWNLOAD_TIMEOUT} seconds. The file might be too large or the server is slow."
@@ -292,7 +360,7 @@ async def save_pdf_to_user_files(url: str, pdf_bytes: bytes, user_id: str, user_
         Returns None on failure (does not raise exception).
     
     Note:
-        This function calls save_file_to_supabase() which only returns file_id and storage_path.
+        This function calls save_file_to_supabase_async() which only returns file_id and storage_path.
         For complete file metadata including filename, file_size_bytes, mime_type, and uploaded_at,
         use the GET /files/metadata endpoint after file is saved.
     """
@@ -304,7 +372,7 @@ async def save_pdf_to_user_files(url: str, pdf_bytes: bytes, user_id: str, user_
             filename += '.pdf'
         
         logger.info(f"Saving PDF file to user_files for user {user_id}: {filename}")
-        file_info = save_file_to_supabase(
+        file_info = await save_file_to_supabase_async(
             user_id=user_id,
             file_bytes=pdf_bytes,
             original_filename=filename,
@@ -341,12 +409,150 @@ def is_private_ip(ip: str) -> bool:
         return False
 
 
-def resolve_hostname_to_ips(hostname: str) -> list:
+def _validate_redirect_url(url: str) -> None:
+    """
+    Validate a redirect URL to prevent SSRF via redirects.
+    
+    This function is called for each redirect hop to ensure the target
+    doesn't resolve to a private/internal IP address.
+    
+    IMPORTANT: This function expects absolute URLs. Relative URLs should be
+    resolved to absolute URLs before calling this function.
+    
+    Args:
+        url: The redirect target URL (must be absolute)
+        
+    Raises:
+        HTTPException: If the redirect target is a private IP, blocked hostname,
+                      or is not an absolute URL
+    """
+    try:
+        # Check for empty/invalid URLs first
+        if not url or not url.strip():
+            raise HTTPException(
+                status_code=400,
+                detail="Redirect blocked: Empty URL"
+            )
+        
+        parsed = urlparse(url)
+        
+        # Check if it's a relative URL (missing scheme or netloc)
+        if not parsed.scheme or not parsed.netloc:
+            raise HTTPException(
+                status_code=400,
+                detail="Redirect blocked: Relative URLs must be resolved to absolute URLs before validation"
+            )
+        
+        hostname = parsed.hostname
+        
+        if not hostname:
+            raise HTTPException(
+                status_code=400,
+                detail="Redirect blocked: Invalid URL with no hostname"
+            )
+        
+        hostname = hostname.lower()
+        
+        # Check for localhost variants
+        localhost_variants = [
+            'localhost', '0.0.0.0', '127.0.0.1',
+            '::1', '0:0:0:0:0:0:0:1', '::ffff:127.0.0.1'
+        ]
+        if hostname in localhost_variants:
+            logger.warning(f"SSRF attempt blocked: Redirect to localhost ({hostname})")
+            raise HTTPException(
+                status_code=400,
+                detail="Redirect blocked: Cannot redirect to localhost"
+            )
+        
+        # Check if it's a direct IP address
+        try:
+            ipaddress.ip_address(hostname)
+            if is_private_ip(hostname):
+                logger.warning(f"SSRF attempt blocked: Redirect to private IP ({hostname})")
+                raise HTTPException(
+                    status_code=400,
+                    detail="Redirect blocked: Cannot redirect to private/reserved IP address"
+                )
+        except ValueError:
+            # It's a hostname - resolve and check
+            # SECURITY: Always use fresh DNS lookup (use_cache=False) to prevent DNS rebinding attacks
+            resolved_ips = resolve_hostname_to_ips(hostname, use_cache=False)
+            for ip in resolved_ips:
+                if is_private_ip(ip):
+                    logger.warning(f"SSRF attempt blocked: Redirect hostname {hostname} resolves to private IP ({ip})")
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Redirect blocked: Hostname resolves to private/reserved IP address"
+                    )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error validating redirect URL {_redact_url_for_logging(url)}: {str(e)}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Redirect validation failed: {str(e)}"
+        )
+
+
+class SSRFSafeTransport(httpx.AsyncHTTPTransport):
+    """
+    Custom HTTP transport that validates URLs before making requests.
+    
+    SECURITY ARCHITECTURE NOTE:
+    This transport provides defense-in-depth URL validation. With our default
+    configuration (follow_redirects=False), the primary SSRF protection comes
+    from the manual redirect handling loop in download_pdf_content() which calls
+    _validate_redirect_url() BEFORE each request is made.
+    
+    This transport acts as a secondary safety net:
+    - Validates every URL before the request is sent (line-of-defense if caller forgets)
+    - Validates redirect Location headers (for logging/metrics purposes)
+    - Would become primary protection if follow_redirects=True were used
+    
+    With follow_redirects=False (current config):
+    - Caller's manual loop: Primary protection (validates before requesting)
+    - This transport: Secondary/redundant protection (defense-in-depth)
+    
+    Keeping this transport ensures that any future code paths that might not
+    implement manual redirect handling still get SSRF protection.
+    """
+    
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        # SECURITY: Validate the request URL BEFORE making the request
+        # This provides defense-in-depth even when callers do manual validation
+        _validate_redirect_url(str(request.url))
+        
+        # Proceed with the request using the base transport
+        response = await super().handle_async_request(request)
+        
+        # SECURITY: If there's a redirect, validate the Location header
+        # With follow_redirects=False, this is informational (logged for metrics)
+        # The caller's manual loop will validate again before following
+        if response.is_redirect:
+            location = response.headers.get('location')
+            if location:
+                # Handle relative redirects
+                redirect_url = httpx.URL(location)
+                if not redirect_url.is_absolute_url:
+                    redirect_url = request.url.join(location)
+                _validate_redirect_url(str(redirect_url))
+        
+        return response
+
+
+def resolve_hostname_to_ips(hostname: str, use_cache: bool = False) -> list:
     """
     Resolve hostname to IP addresses (IPv4 and IPv6) to prevent DNS rebinding.
     
+    SECURITY NOTE: Default is use_cache=False to prevent DNS rebinding attacks.
+    Caching should ONLY be enabled for non-security paths (e.g., logging/metrics).
+    All SSRF validation paths MUST use use_cache=False.
+    
     Args:
         hostname: The hostname to resolve
+        use_cache: Whether to use the DNS cache (default False for security).
+                  Only set to True for non-security-critical paths.
         
     Returns:
         List of IP addresses (both IPv4 and IPv6)
@@ -354,11 +560,35 @@ def resolve_hostname_to_ips(hostname: str) -> list:
     Raises:
         HTTPException: If hostname cannot be resolved
     """
+    global _dns_cache
+    current_time = time.time()
+    
+    # Check cache first (if enabled) - thread-safe access
+    if use_cache:
+        with _dns_cache_lock:
+            # Use .get() to avoid race condition between check and access
+            entry = _dns_cache.get(hostname)
+            if entry is not None:
+                cached_ips, expiry = entry
+                if current_time < expiry:
+                    logger.debug(f"DNS cache hit for {hostname}: {cached_ips}")
+                    return cached_ips
+                else:
+                    # Cache expired - remove stale entry (safe even if already removed)
+                    _dns_cache.pop(hostname, None)
+                    logger.debug(f"DNS cache expired for {hostname}")
+    
     try:
         # Get all IP addresses for the hostname (both IPv4 and IPv6)
         addr_info = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
         ips = list(set([str(addr[4][0]) for addr in addr_info]))
         logger.debug(f"Resolved {hostname} to IPs: {ips}")
+        
+        # Cache the result with TTL (thread-safe) - only if caching enabled
+        if use_cache:
+            with _dns_cache_lock:
+                _dns_cache[hostname] = (ips, current_time + DNS_CACHE_TTL)
+        
         return ips
     except socket.gaierror as e:
         logger.error(f"Failed to resolve hostname {hostname}: {str(e)}")
@@ -372,6 +602,14 @@ def resolve_hostname_to_ips(hostname: str) -> list:
             status_code=400,
             detail=f"Error resolving hostname: {str(e)}"
         )
+
+
+def clear_dns_cache() -> None:
+    """Clear the DNS cache. Useful for testing or forcing fresh lookups."""
+    global _dns_cache
+    with _dns_cache_lock:
+        _dns_cache = {}
+    logger.debug("DNS cache cleared")
 
 
 def validate_url(url: str) -> None:
@@ -441,8 +679,9 @@ def validate_url(url: str) -> None:
     except ValueError:
         # Not an IP address - it's a hostname
         # Resolve hostname to IP addresses to prevent DNS rebinding attacks
+        # SECURITY: Always use fresh DNS lookup (use_cache=False) for initial validation
         try:
-            resolved_ips = resolve_hostname_to_ips(hostname)
+            resolved_ips = resolve_hostname_to_ips(hostname, use_cache=False)
             
             # Check if ANY resolved IP is private/reserved
             for ip in resolved_ips:
@@ -510,7 +749,7 @@ async def scrape_content(url: str, user_id: str = "anonymous", user_token: str =
     
     # Check if URL points to a PDF file - handle automatically
     if is_pdf_url(url):
-        logger.info(f"PDF URL detected - downloading and extracting text: {url}")
+        logger.info(f"PDF URL detected - downloading and extracting text: {_redact_url_for_logging(url)}")
         # PDF download doesn't need browser slot - URL already validated
         text, pdf_bytes = await download_and_extract_pdf(url, user_id, user_token)
         
@@ -531,7 +770,7 @@ async def scrape_content(url: str, user_id: str = "anonymous", user_token: str =
         parsed_url = urlparse(url)
         original_hostname = parsed_url.hostname
         
-        logger.info(f"Starting web scraping for URL: {url} (user: {user_id})")
+        logger.info(f"Starting web scraping for URL: {_redact_url_for_logging(url)} (user: {user_id[:8]}...)")
         
         # Try with longer timeout first, then fallback to shorter timeout with different strategy
         timeouts_and_strategies = [
@@ -546,10 +785,21 @@ async def scrape_content(url: str, user_id: str = "anonymous", user_token: str =
                 logger.info(f"Attempting scrape: {description} (timeout: {timeout/1000}s)")
                 
                 # SECURITY: Re-validate hostname resolution before connection to prevent DNS rebinding attacks
-                if original_hostname and not original_hostname.replace('.', '').isdigit():  # Only for hostnames, not IPs
+                # Use use_cache=False to force fresh DNS lookup for this security-critical check
+                
+                # Check if hostname is an IP literal
+                is_ip_literal = False
+                if original_hostname:
+                    try:
+                        ipaddress.ip_address(original_hostname)
+                        is_ip_literal = True
+                    except ValueError:
+                        is_ip_literal = False
+                
+                if original_hostname and not is_ip_literal:  # Only for hostnames, not IPs
                     try:
                         logger.debug(f"Re-validating hostname resolution for: {original_hostname}")
-                        current_ips = resolve_hostname_to_ips(original_hostname)
+                        current_ips = resolve_hostname_to_ips(original_hostname, use_cache=False)
                         
                         # Check if ANY current resolved IP is private/reserved
                         for ip in current_ips:
@@ -592,17 +842,54 @@ async def scrape_content(url: str, user_id: str = "anonymous", user_token: str =
                     
                     page = await context.new_page()
                     
+                    # SECURITY: Set up request interception to prevent SSRF via redirects
+                    # This validates every request URL (including redirects) before allowing it
+                    ssrf_blocked = {"blocked": False, "url": None}
+                    
+                    async def intercept_request(route, request):
+                        """Intercept all requests and validate against SSRF."""
+                        request_url = request.url
+                        try:
+                            _validate_redirect_url(request_url)
+                            await route.continue_()
+                        except HTTPException as http_err:
+                            # SECURITY: Catch validation failure and block the request
+                            ssrf_blocked["blocked"] = True
+                            ssrf_blocked["url"] = request_url  # Keep raw URL for internal error handling
+                            ssrf_blocked["reason"] = http_err.detail  # Store reason for error message
+                            # SECURITY: Log redacted URL to prevent leaking tokens/secrets
+                            logger.warning(f"Playwright SSRF blocked: {_redact_url_for_logging(request_url)}")
+                            await route.abort("accessdenied")
+                        except Exception as e:
+                            # Catch any other validation errors and block defensively
+                            ssrf_blocked["blocked"] = True
+                            ssrf_blocked["url"] = request_url
+                            ssrf_blocked["reason"] = str(e)
+                            logger.warning(f"Playwright request blocked due to validation error: {_redact_url_for_logging(request_url)} - {e}")
+                            await route.abort("accessdenied")
+                    
+                    # Intercept ALL requests (including navigations and subresources)
+                    await page.route("**/*", intercept_request)
+                    
                     # Set page timeouts for resource control
                     page.set_default_navigation_timeout(timeout)
                     page.set_default_timeout(JS_EXECUTION_TIMEOUT)
                     
                     # Navigate with current timeout strategy
                     try:
-                        logger.info(f"Navigating to URL: {url}")
+                        logger.info(f"Navigating to URL: {_redact_url_for_logging(url)}")
                         await page.goto(url, timeout=timeout, wait_until=wait_strategy)
+                        
+                        # Check if SSRF was blocked during navigation
+                        if ssrf_blocked["blocked"]:
+                            await browser.close()
+                            raise HTTPException(
+                                status_code=400,
+                                detail="Request blocked: URL redirected to private/internal address"
+                            )
                     except PlaywrightTimeout:
                         await browser.close()
-                        error_msg = f"Timeout while loading URL: {url} (strategy: {wait_strategy}, timeout: {timeout/1000}s)"
+                        error_msg = f"Timeout while loading URL (strategy: {wait_strategy}, timeout: {timeout/1000}s)"
                         logger.warning(error_msg)
                         last_error = HTTPException(
                             status_code=408,
@@ -611,9 +898,9 @@ async def scrape_content(url: str, user_id: str = "anonymous", user_token: str =
                         continue  # Try next strategy
                     except Exception as e:
                         await browser.close()
-                        logger.error(f"Error navigating to URL {url}: {str(e)}")
-                        # Check for common HTTP errors
                         error_str = str(e).lower()
+                        logger.error(f"Error navigating to URL {_redact_url_for_logging(url)}: {error_str}")
+                        # Check for common HTTP errors
                         if '404' in error_str or 'not found' in error_str:
                             raise HTTPException(
                                 status_code=404,
@@ -631,7 +918,7 @@ async def scrape_content(url: str, user_id: str = "anonymous", user_token: str =
                         continue  # Try next strategy
                     
                     # Get page HTML
-                    logger.info(f"Extracting HTML content from: {url}")
+                    logger.info(f"Extracting HTML content from: {_redact_url_for_logging(url)}")
                     html = await page.content()
                     await browser.close()
                     
@@ -645,7 +932,7 @@ async def scrape_content(url: str, user_id: str = "anonymous", user_token: str =
                     )
                     
                     if not extracted:
-                        logger.error(f"Could not extract content from URL: {url}")
+                        logger.error(f"Could not extract content from URL: {_redact_url_for_logging(url)}")
                         last_error = HTTPException(
                             status_code=422,
                             detail="Could not extract meaningful content from the page."
@@ -654,7 +941,7 @@ async def scrape_content(url: str, user_id: str = "anonymous", user_token: str =
                     
                     # Validate content size
                     if len(extracted) < MIN_CONTENT_SIZE:
-                        logger.error(f"Extracted content too short from URL {url}: {len(extracted)} characters")
+                        logger.error(f"Extracted content too short from URL {_redact_url_for_logging(url)}: {len(extracted)} characters")
                         last_error = HTTPException(
                             status_code=422,
                             detail=f"Extracted content too short (minimum {MIN_CONTENT_SIZE} characters)."
@@ -666,7 +953,7 @@ async def scrape_content(url: str, user_id: str = "anonymous", user_token: str =
                         # Truncate to max size
                         extracted = extracted[:MAX_CONTENT_SIZE]
                     
-                    logger.info(f"Successfully extracted {len(extracted)} characters from URL: {url} using strategy: {wait_strategy}")
+                    logger.info(f"Successfully extracted {len(extracted)} characters from URL: {_redact_url_for_logging(url)} using strategy: {wait_strategy}")
                     # HTML scraping doesn't save files, so return None for file_info
                     return extracted, None
                     
@@ -677,7 +964,7 @@ async def scrape_content(url: str, user_id: str = "anonymous", user_token: str =
                 last_error = he
                 continue
             except Exception as e:
-                logger.error(f"Unexpected error scraping URL {url} with strategy {wait_strategy}: {str(e)}")
+                logger.error(f"Unexpected error scraping URL {_redact_url_for_logging(url)} with strategy {wait_strategy}: {str(e)}")
                 last_error = HTTPException(
                     status_code=500,
                     detail=f"Error scraping URL: {str(e)}"
@@ -685,7 +972,7 @@ async def scrape_content(url: str, user_id: str = "anonymous", user_token: str =
                 continue
         
         # If we get here, all strategies failed
-        logger.error(f"All scraping strategies failed for URL: {url}")
+        logger.error(f"All scraping strategies failed for URL: {_redact_url_for_logging(url)}")
         if last_error:
             raise last_error
         else:

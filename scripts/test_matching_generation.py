@@ -64,8 +64,8 @@ def test_matching_generation(api_url: str, token: str):
     print("Testing Matching Question Generation (Enhanced/RAG Mode)")
     print("=" * 60)
     print(f"API URL: {api_url}")
-    print(f"Question Type: matching")
-    print(f"Mode: enhanced")
+    print("Question Type: matching")
+    print("Mode: enhanced")
     print(f"Num Questions: {request_data['num_questions']}")
     print("=" * 60)
     
@@ -97,7 +97,7 @@ def test_matching_generation(api_url: str, token: str):
                     qtype = q.get('type', 'unknown')
                     other_types[qtype] = other_types.get(qtype, 0) + 1
                 
-                print(f"\nQuestion Type Distribution:")
+                print("\nQuestion Type Distribution:")
                 for qtype, count in other_types.items():
                     print(f"  - {qtype}: {count}")
                 
@@ -124,20 +124,20 @@ def test_matching_generation(api_url: str, token: str):
                 if matching_count > 0:
                     print(f"✅ SUCCESS: Generated {matching_count} matching question(s)")
                 else:
-                    print(f"❌ FAILURE: No matching questions generated")
+                    print("❌ FAILURE: No matching questions generated")
                     print(f"   All questions were: {list(other_types.keys())}")
                 
                 # Generation stats
                 stats = data.get('generation_stats', {})
                 if stats:
-                    print(f"\nGeneration Stats:")
+                    print("\nGeneration Stats:")
                     for key, value in stats.items():
                         print(f"  - {key}: {value}")
                 
                 return matching_count > 0
                 
             else:
-                print(f"\nError Response:")
+                print("\nError Response:")
                 print(json.dumps(response.json(), indent=2))
                 return False
                 
@@ -206,7 +206,7 @@ def test_mixed_mode(api_url: str, token: str):
                     type_counts[qtype] = type_counts.get(qtype, 0) + 1
                 
                 print(f"\nTotal Questions: {len(questions)}")
-                print(f"Type Distribution:")
+                print("Type Distribution:")
                 for qtype, count in type_counts.items():
                     print(f"  - {qtype}: {count}")
                 
@@ -214,7 +214,7 @@ def test_mixed_mode(api_url: str, token: str):
                 if matching_count > 0:
                     print(f"\n✅ Mixed mode generated {matching_count} matching question(s)")
                 else:
-                    print(f"\n⚠️  No matching questions in mixed mode")
+                    print("\n⚠️  No matching questions in mixed mode")
                 
                 return True
             else:

@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 from fastapi import HTTPException
 from schemas.quiz import EnhancedTextQuizRequest
-from handlers.quiz_handlers import generate_quiz_rag_async, validate_credits_available
+from handlers.quiz_handlers import generate_quiz_rag_async, reserve_credits_atomic
 
 @pytest.mark.asyncio
 async def test_rag_pipeline_flow():
@@ -28,12 +28,12 @@ async def test_rag_pipeline_flow():
          patch("handlers.quiz_handlers.ConceptExtractionService") as MockExtraction, \
          patch("handlers.quiz_handlers.QuizOrchestrationService") as MockOrchestration, \
          patch("handlers.quiz_handlers.save_quiz_to_database") as mock_save, \
-         patch("handlers.quiz_handlers.validate_credits_available") as mock_validate_credits, \
-         patch("handlers.quiz_handlers.consume_credits_after_success") as mock_consume_credits:
+         patch("handlers.quiz_handlers.reserve_credits_atomic") as mock_reserve_credits, \
+         patch("handlers.quiz_handlers.finalize_credits_after_success") as mock_finalize_credits:
         
-        # Setup Quota Validation Mock (user has quota)
-        mock_validate_credits.return_value = None  # No exception = credits available
-        mock_consume_credits.return_value = True  # Credits consumed successfully after generation
+        # Setup Credit Reservation Mock (atomic reservation succeeds)
+        mock_reserve_credits.return_value = None  # No exception = credits reserved atomically
+        mock_finalize_credits.return_value = None  # Credits finalized after successful generation
         
         # Setup Ingestion Mock
         ingestion_instance = MockIngestion.return_value
@@ -120,13 +120,16 @@ async def test_rag_pipeline_flow():
 # === Error Scenario Tests ===
 
 @pytest.mark.asyncio
-async def test_validate_credits_available_raises_402():
-    """Test that validate_credits_available raises 402 when insufficient credits."""
+async def test_reserve_credits_atomic_raises_402():
+    """Test that reserve_credits_atomic raises 402 when insufficient credits."""
     user_id = str(uuid4())
     
-    with patch("handlers.quiz_handlers.get_billing_state") as mock_get_state:
+    with patch("handlers.quiz_handlers.consume_units") as mock_consume, \
+         patch("handlers.quiz_handlers.get_billing_state") as mock_get_state:
         from schemas.billing import UserBillingState
-        # Mock billing state with insufficient credits
+        # Mock atomic consume failing (insufficient credits)
+        mock_consume.return_value = False
+        # Mock billing state for error message
         mock_get_state.return_value = UserBillingState(
             user_id=user_id,
             plan='free',
@@ -134,11 +137,11 @@ async def test_validate_credits_available_raises_402():
             credit_units_remaining=0,
             credit_units_purchased=0,
             free_credit_units_monthly=6,
-            free_credit_units_remaining=1  # 1 unit = 0.5 credits, need 2 units (1.0 credits) for enhanced
+            free_credit_units_remaining=0
         )
         
         with pytest.raises(HTTPException) as exc_info:
-            await validate_credits_available(user_id, "enhanced")
+            await reserve_credits_atomic(user_id, "enhanced")
         
         assert exc_info.value.status_code == 402
         assert exc_info.value.detail["error"] == "insufficient_credits"
@@ -161,9 +164,11 @@ async def test_rag_pipeline_concept_extraction_failure():
     
     with patch("handlers.quiz_handlers.IngestionService") as MockIngestion, \
          patch("handlers.quiz_handlers.ConceptExtractionService") as MockExtraction, \
-         patch("handlers.quiz_handlers.validate_credits_available") as mock_validate_credits:
+         patch("handlers.quiz_handlers.reserve_credits_atomic") as mock_reserve_credits, \
+         patch("handlers.quiz_handlers.refund_credits_on_failure") as mock_refund_credits:
         
-        mock_validate_credits.return_value = None
+        mock_reserve_credits.return_value = None  # Reservation succeeds
+        mock_refund_credits.return_value = None  # Refund on failure
         
         # Setup Ingestion Mock
         ingestion_instance = MockIngestion.return_value
@@ -200,11 +205,11 @@ async def test_rag_pipeline_all_questions_fail():
     with patch("handlers.quiz_handlers.IngestionService") as MockIngestion, \
          patch("handlers.quiz_handlers.ConceptExtractionService") as MockExtraction, \
          patch("handlers.quiz_handlers.QuizOrchestrationService") as MockOrchestration, \
-         patch("handlers.quiz_handlers.validate_credits_available") as mock_validate_credits, \
-         patch("handlers.quiz_handlers.consume_credits_after_success") as mock_consume_credits:
+         patch("handlers.quiz_handlers.reserve_credits_atomic") as mock_reserve_credits, \
+         patch("handlers.quiz_handlers.refund_credits_on_failure") as mock_refund_credits:
         
-        mock_validate_credits.return_value = None
-        mock_consume_credits.return_value = True  # Credits consumed after generation
+        mock_reserve_credits.return_value = None  # Credits reserved atomically
+        mock_refund_credits.return_value = None  # Refund on failure
         
         # Setup Ingestion Mock
         ingestion_instance = MockIngestion.return_value
@@ -253,8 +258,8 @@ async def test_rag_pipeline_content_too_short():
         question_type="mixed"
     )
     
-    with patch("handlers.quiz_handlers.validate_credits_available") as mock_validate_credits:
-        mock_validate_credits.return_value = None
+    with patch("handlers.quiz_handlers.reserve_credits_atomic") as mock_reserve_credits:
+        mock_reserve_credits.return_value = None  # Credits reserved atomically
         
         with pytest.raises(HTTPException) as exc_info:
             await generate_quiz_rag_async(request, user_id, user_token)

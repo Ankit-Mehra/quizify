@@ -257,6 +257,68 @@ async def add_purchased_units(user_id: str, units: int) -> bool:
         return False
 
 
+async def refund_units(user_id: str, quiz_type: str) -> bool:
+    """
+    Refund credit units after failed quiz generation.
+    
+    This is part of the atomic credit reservation pattern to prevent TOCTOU race conditions:
+    1. consume_units() is called BEFORE quiz generation starts (reserves credits)
+    2. If generation fails, this function refunds the credits
+    
+    Database RPC: refund_credit_units (migration 038)
+    -------------------------------------------------
+    The underlying PostgreSQL function:
+    - Atomically adds units back to free_credit_units_remaining
+    - Service role only (backend) - not callable by authenticated users
+    
+    Note: Credits are refunded to free bucket for simplicity. This is slightly
+    favorable to users but fair since they didn't receive a quiz.
+    
+    Args:
+        user_id: UUID of the user
+        quiz_type: "standard" (1 unit) or "enhanced" (2 units)
+        
+    Returns:
+        True if refund successful, False on error
+    """
+    units = quiz_unit_cost(quiz_type)
+    
+    from config import config as app_config
+    supabase = app_config.get_service_role_client()
+    
+    try:
+        result = supabase.rpc("refund_credit_units", {
+            "p_user_id": user_id,
+            "p_units": units
+        }).execute()
+        
+        data = result.data
+        # Handle different PostgreSQL RPC return formats:
+        # - Direct boolean: True
+        # - List with boolean: [True]
+        # - List with dict: [{"refund_credit_units": True}]
+        # We check each format explicitly for clarity and correctness
+        if data is True:
+            logger.info(f"Refunded {units} units ({units/2} credits) to user {user_id[:8]} after failed generation")
+            return True
+        if isinstance(data, list) and len(data) > 0:
+            first_item = data[0]
+            if first_item is True:
+                logger.info(f"Refunded {units} units ({units/2} credits) to user {user_id[:8]} after failed generation")
+                return True
+            if isinstance(first_item, dict) and first_item.get('refund_credit_units'):
+                logger.info(f"Refunded {units} units ({units/2} credits) to user {user_id[:8]} after failed generation")
+                return True
+        
+        logger.warning(f"Refund returned unexpected result for user {user_id[:8]}: {data}")
+        return False
+        
+    except Exception as e:
+        # Log but don't raise - this is best-effort cleanup
+        logger.error(f"Failed to refund units for user {user_id[:8]}: {e}")
+        return False
+
+
 async def reset_monthly_credits_for_user(user_id: str) -> bool:
     """
     Reset monthly free credits for a single user.

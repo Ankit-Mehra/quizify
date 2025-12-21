@@ -1,5 +1,5 @@
 from fastapi import HTTPException, Depends, Path, Body
-from services.db_services.supabase_file import save_file_to_supabase, delete_file_from_supabase
+from services.db_services.supabase_file import save_file_to_supabase_async, delete_file_from_supabase
 from dependencies.auth_dependencies import get_current_user_id, get_current_user_token
 from fastapi import UploadFile, File
 from services.logger import app_logger as logger
@@ -127,7 +127,7 @@ async def upload_file(
         )
         
         # Use validated content type (may be inferred from extension)
-        save_file_to_supabase(user_id, file_bytes, file.filename, user_token, validated_content_type)
+        await save_file_to_supabase_async(user_id, file_bytes, file.filename, user_token, validated_content_type)
         logger.info(f"File successfully uploaded to Supabase: {file.filename}")
         
         return {

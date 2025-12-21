@@ -1,11 +1,13 @@
 """
-Unit tests for credit validation logic.
-Tests the validate_credits_available and consume_credits_after_success functions.
+Unit tests for credit reservation/refund logic.
+Tests the reserve_credits_atomic, refund_credits_on_failure, and finalize_credits_after_success functions.
+
+Updated to use the atomic credit reservation pattern that prevents TOCTOU race conditions.
 """
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
 from fastapi import HTTPException
-from handlers.quiz_handlers import validate_credits_available, consume_credits_after_success
+from handlers.quiz_handlers import reserve_credits_atomic, refund_credits_on_failure, finalize_credits_after_success
 from services.db_services.supabase_quiz import get_user_tier_info
 from schemas.billing import UserBillingState
 
@@ -63,80 +65,122 @@ class TestGetUserTierInfo:
         assert "User not found" in str(exc_info.value.detail)
 
 
-class TestValidateCreditsAvailable:
-    """Tests for validate_credits_available function (validates without consuming)."""
+class TestReserveCreditsAtomic:
+    """Tests for reserve_credits_atomic function (atomic consume before generation)."""
     pytestmark = pytest.mark.asyncio
     
-    @patch('handlers.quiz_handlers.get_billing_state', new_callable=AsyncMock)
-    async def test_validate_credits_available_sufficient(self, mock_get_state):
-        """Test credit validation passes when user has sufficient credits."""
-        # Mock billing state with sufficient credits
-        mock_get_state.return_value = UserBillingState(
-            user_id='test-user-id',
-            plan='free',
-            credit_units_monthly=6,
-            credit_units_remaining=4,
-            credit_units_purchased=0
-        )
-
+    @patch('handlers.quiz_handlers.consume_units', new_callable=AsyncMock)
+    async def test_reserve_credits_success(self, mock_consume):
+        """Test credit reservation succeeds when user has sufficient credits."""
+        mock_consume.return_value = True
+        
         # Should not raise exception
-        await validate_credits_available('test-user-id', quiz_type='enhanced')
+        await reserve_credits_atomic('test-user-id', quiz_type='enhanced')
         
-        # Verify get_billing_state was called
-        mock_get_state.assert_called_once_with('test-user-id')
-        
+        # Verify consume_units was called atomically
+        mock_consume.assert_called_once_with('test-user-id', 'enhanced')
+    
     @patch('handlers.quiz_handlers.get_billing_state', new_callable=AsyncMock)
-    async def test_validate_credits_available_insufficient(self, mock_get_state):
-        """Test credit validation fails when user has insufficient credits."""
-        # Mock billing state with insufficient credits (only 1 unit = 0.5 credits, need 2 units = 1.0 for enhanced)
+    @patch('handlers.quiz_handlers.consume_units', new_callable=AsyncMock)
+    async def test_reserve_credits_insufficient_free_user(self, mock_consume, mock_get_state):
+        """Test credit reservation fails with 402 for free user with insufficient credits."""
+        mock_consume.return_value = False  # Atomic consume failed
         mock_get_state.return_value = UserBillingState(
             user_id='test-user-id',
             plan='free',
             credit_units_monthly=6,
-            credit_units_remaining=1,  # 1 unit = 0.5 credits
+            credit_units_remaining=0,
             credit_units_purchased=0,
             free_credit_units_monthly=6,
-            free_credit_units_remaining=0  # No free credits left
+            free_credit_units_remaining=0
         )
-
-        # Should raise 402 exception
+        
         with pytest.raises(HTTPException) as exc_info:
-            await validate_credits_available('test-user-id', quiz_type='enhanced')
+            await reserve_credits_atomic('test-user-id', quiz_type='enhanced')
         
         assert exc_info.value.status_code == 402
         detail = exc_info.value.detail
         assert detail['error'] == 'insufficient_credits'
-        assert detail['required_credits'] == 1.0
-        assert detail['available_credits'] == 0.5  # 1 unit = 0.5 credits
+        assert 'Upgrade' in detail['message']  # Free users should see upgrade prompt
+        # Verify error detail contains required fields for frontend
+        # Note: credits = units/2, so enhanced (4 units) = 2 credits shown as 1.0 in API
+        assert 'required_credits' in detail
+        assert 'available_credits' in detail
+        assert detail['required_credits'] == 1.0  # Enhanced mode
+        assert detail['available_credits'] == 0
+    
+    @patch('handlers.quiz_handlers.get_billing_state', new_callable=AsyncMock)
+    @patch('handlers.quiz_handlers.consume_units', new_callable=AsyncMock)
+    async def test_reserve_credits_insufficient_pro_user(self, mock_consume, mock_get_state):
+        """Test credit reservation fails with 402 for pro user with insufficient credits."""
+        mock_consume.return_value = False  # Atomic consume failed
+        mock_get_state.return_value = UserBillingState(
+            user_id='test-user-id',
+            plan='pro',
+            credit_units_monthly=80,
+            credit_units_remaining=0,
+            credit_units_purchased=0,
+            free_credit_units_monthly=6,
+            free_credit_units_remaining=0
+        )
+        
+        with pytest.raises(HTTPException) as exc_info:
+            await reserve_credits_atomic('test-user-id', quiz_type='standard')
+        
+        assert exc_info.value.status_code == 402
+        detail = exc_info.value.detail
+        assert detail['error'] == 'insufficient_credits'
+        assert 'Purchase' in detail['message']  # Pro users should see purchase prompt
+        # Verify error detail contains required fields for frontend
+        # Note: credits = units/2, so standard (2 units) = 1 credit shown as 0.5 in API
+        assert 'required_credits' in detail
+        assert 'available_credits' in detail
+        assert detail['required_credits'] == 0.5  # Standard mode
+        assert detail['available_credits'] == 0
 
 
-class TestConsumeCreditsAfterSuccess:
-    """Tests for consume_credits_after_success function (consumes after generation)."""
+class TestRefundCreditsOnFailure:
+    """Tests for refund_credits_on_failure function (refund after failed generation)."""
     pytestmark = pytest.mark.asyncio
     
     @patch('handlers.quiz_handlers.invalidate_user_tier_cache', new_callable=AsyncMock)
-    @patch('handlers.quiz_handlers.consume_units', new_callable=AsyncMock)
-    async def test_consume_credits_success(self, mock_consume, mock_invalidate):
-        """Test credit consumption succeeds after generation."""
-        mock_consume.return_value = True
-
-        # Should return True
-        result = await consume_credits_after_success('test-user-id', quiz_type='enhanced')
+    @patch('handlers.quiz_handlers.refund_units', new_callable=AsyncMock)
+    async def test_refund_credits_success(self, mock_refund, mock_invalidate):
+        """Test credit refund succeeds after failed generation."""
+        mock_refund.return_value = True
+        mock_invalidate.return_value = None
         
-        assert result is True
-        mock_consume.assert_called_once_with('test-user-id', 'enhanced')
+        # Should not raise
+        await refund_credits_on_failure('test-user-id', quiz_type='enhanced')
+        
+        mock_refund.assert_called_once_with('test-user-id', 'enhanced')
         mock_invalidate.assert_called_once_with('test-user-id')
-        
+    
     @patch('handlers.quiz_handlers.invalidate_user_tier_cache', new_callable=AsyncMock)
-    @patch('handlers.quiz_handlers.consume_units', new_callable=AsyncMock)
-    async def test_consume_credits_failure_returns_false(self, mock_consume, mock_invalidate):
-        """Test credit consumption failure returns False (doesn't raise)."""
-        mock_consume.return_value = False
-
-        # Should return False, not raise
-        result = await consume_credits_after_success('test-user-id', quiz_type='enhanced')
+    @patch('handlers.quiz_handlers.refund_units', new_callable=AsyncMock)
+    async def test_refund_credits_handles_failure_gracefully(self, mock_refund, mock_invalidate):
+        """Test credit refund failure is logged but doesn't raise."""
+        mock_refund.return_value = False  # Refund failed
+        mock_invalidate.return_value = None
         
-        assert result is False
-        mock_consume.assert_called_once_with('test-user-id', 'enhanced')
+        # Should not raise even if refund fails (best-effort)
+        await refund_credits_on_failure('test-user-id', quiz_type='standard')
+        
+        mock_refund.assert_called_once_with('test-user-id', 'standard')
         # Cache should still be invalidated
+        mock_invalidate.assert_called_once_with('test-user-id')
+
+
+class TestFinalizeCreditsAfterSuccess:
+    """Tests for finalize_credits_after_success function."""
+    pytestmark = pytest.mark.asyncio
+    
+    @patch('handlers.quiz_handlers.invalidate_user_tier_cache', new_callable=AsyncMock)
+    async def test_finalize_credits_invalidates_cache(self, mock_invalidate):
+        """Test finalize_credits_after_success invalidates the cache."""
+        mock_invalidate.return_value = None
+        
+        # Should not raise
+        await finalize_credits_after_success('test-user-id', quiz_type='enhanced')
+        
         mock_invalidate.assert_called_once_with('test-user-id')
