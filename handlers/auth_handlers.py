@@ -1411,6 +1411,12 @@ async def google_signin_callback(
     # Get state from cookie (contains CSRF + redirect URL)
     state_cookie = request.cookies.get(OAUTH_STATE_COOKIE_NAME) if request else None
     
+    # Debug logging for OAuth callback troubleshooting
+    logger.info(f"OAuth callback - code present: {bool(code)}, state_cookie present: {bool(state_cookie)}")
+    if not state_cookie:
+        all_cookies = list(request.cookies.keys()) if request else []
+        logger.warning(f"OAuth state cookie missing. Available cookies: {all_cookies}")
+    
     # Helper to clear the state cookie on any response
     def clear_oauth_state_cookie(resp):
         cookie_settings = _get_cookie_settings()
@@ -1452,9 +1458,10 @@ async def google_signin_callback(
     # ===== CSRF + PKCE VALIDATION (Critical Security Check) =====
     # Validate state from cookie to prevent login CSRF attacks and retrieve PKCE verifier
     is_valid, redirect_path, code_verifier = _verify_oauth_state_from_cookie(state_cookie)
+    logger.info(f"OAuth state validation result: valid={is_valid}, redirect_path={redirect_path}, has_verifier={bool(code_verifier)}")
     
     if not is_valid:
-        logger.warning("OAuth state validation failed - possible CSRF attack")
+        logger.warning("OAuth state validation failed - possible CSRF attack or cookie not received")
         redirect_resp = RedirectResponse(
             url=f"{app_config.FRONTEND_URL}/login?error=csrf_failed&message=Security%20validation%20failed.%20Please%20try%20again."
         )
