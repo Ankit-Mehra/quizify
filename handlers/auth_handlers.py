@@ -1557,6 +1557,11 @@ async def google_signin_callback(
         # Set auth cookies using helper for consistency
         _set_auth_cookies(final_redirect, session.access_token, session.refresh_token)
         
+        # Debug: Log cookie settings being used
+        cookie_settings = _get_cookie_settings()
+        logger.info(f"OAuth success - setting cookies with domain={cookie_settings.get('domain')}, samesite={cookie_settings.get('samesite')}, secure={cookie_settings.get('secure')}")
+        logger.info(f"OAuth success - redirecting to: {base_redirect_url}{redirect_params}")
+        
         # Invalidate cache to ensure fresh profile data (including avatar)
         await _invalidate_oauth_user_cache(user_id)
         
