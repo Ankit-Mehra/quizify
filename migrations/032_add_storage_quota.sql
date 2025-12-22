@@ -309,11 +309,13 @@ BEGIN
   )
   ON CONFLICT (id) DO UPDATE
   SET
+    -- OAuth fields: prefer new values from OAuth provider (updates profile if user changes their OAuth name/avatar)
     display_name = COALESCE(EXCLUDED.display_name, public.profiles.display_name),
     avatar_url = COALESCE(EXCLUDED.avatar_url, public.profiles.avatar_url),
+    -- Billing period fields: preserve existing values (prevents overwriting admin-set or Stripe-synced periods)
     current_period_start = COALESCE(public.profiles.current_period_start, EXCLUDED.current_period_start),
     current_period_end = COALESCE(public.profiles.current_period_end, EXCLUDED.current_period_end),
-    -- Set storage_quota_bytes only if not already set (preserve upgrades)
+    -- Storage quota: preserve existing (prevents downgrade on re-login after upgrade)
     storage_quota_bytes = COALESCE(public.profiles.storage_quota_bytes, EXCLUDED.storage_quota_bytes),
     updated_at = now();
 
