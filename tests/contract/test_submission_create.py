@@ -108,9 +108,10 @@ class TestSubmissionCreate:
         
         data = response.json()
         assert "detail" in data, f"Error response missing detail: {data}"
-        # Pydantic returns a list of validation errors
-        assert isinstance(data["detail"], list), f"Expected list of validation errors: {data}"
-        assert any("total_questions" in str(err.get("loc", [])) for err in data["detail"]), \
+        # Custom validation handler returns {"detail": string, "errors": [...]}
+        errors = data.get("errors", [])
+        assert isinstance(errors, list), f"Expected errors list in response: {data}"
+        assert any("total_questions" in str(err.get("location", "")) for err in errors), \
             f"Error should reference total_questions field: {data}"
     
     def test_submit_with_negative_total_questions_returns_400(self, mock_supabase_client, auth_bypass, auth_headers):
@@ -136,9 +137,10 @@ class TestSubmissionCreate:
         
         data = response.json()
         assert "detail" in data, f"Error response missing detail: {data}"
-        # Pydantic returns a list of validation errors
-        assert isinstance(data["detail"], list), f"Expected list of validation errors: {data}"
-        assert any("total_questions" in str(err.get("loc", [])) for err in data["detail"]), \
+        # Custom validation handler returns {"detail": string, "errors": [...]}
+        errors = data.get("errors", [])
+        assert isinstance(errors, list), f"Expected errors list in response: {data}"
+        assert any("total_questions" in str(err.get("location", "")) for err in errors), \
             f"Error should reference total_questions field: {data}"
     
     def test_submit_with_mismatched_quiz_id_returns_400(self, mock_supabase_client, auth_bypass, auth_headers):
