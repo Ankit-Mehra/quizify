@@ -4,14 +4,42 @@ from fastapi.responses import JSONResponse
 from starlette.status import HTTP_401_UNAUTHORIZED
 from starlette.datastructures import MutableHeaders
 import os
-import requests
+import httpx
 from services.logger import app_logger as logger
+from services.cookie_utils import (
+    delete_auth_cookie as _delete_auth_cookie,
+    ACCESS_TOKEN_EXPIRE,
+    REFRESH_TOKEN_EXPIRE,
+)
+from services.redis.sessions import SessionService
 from config import config as app_config
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-ACCESS_TOKEN_EXPIRE = 3600  # 1 hour
-REFRESH_TOKEN_EXPIRE = 60 * 60 * 24 * 30  # 30 days, mirror auth handler
+
+# Module-level async HTTP client for connection reuse
+_http_client: httpx.AsyncClient | None = None
+
+
+def _get_http_client() -> httpx.AsyncClient:
+    """Get or create the shared async HTTP client."""
+    global _http_client
+    if _http_client is None:
+        _http_client = httpx.AsyncClient(timeout=10.0)
+    return _http_client
+
+
+async def close_http_client() -> None:
+    """
+    Close the shared HTTP client gracefully.
+    
+    Should be called during application shutdown to prevent resource leaks.
+    """
+    global _http_client
+    if _http_client is not None:
+        await _http_client.aclose()
+        _http_client = None
+        logger.debug("Auto-refresh HTTP client closed")
 
 
 def _extract_refresh_token(request: Request) -> str | None:
@@ -58,7 +86,8 @@ class SupabaseAutoRefreshMiddleware(BaseHTTPMiddleware):
             }
 
             try:
-                user_resp = requests.get(f"{SUPABASE_URL}/auth/v1/user", headers=headers)
+                client = _get_http_client()
+                user_resp = await client.get(f"{SUPABASE_URL}/auth/v1/user", headers=headers)
                 if user_resp.status_code == 200:
                     return await call_next(request)
                 logger.info("Access token invalid, attempting refresh", extra={"status": user_resp.status_code})
@@ -69,7 +98,8 @@ class SupabaseAutoRefreshMiddleware(BaseHTTPMiddleware):
         if refresh_token:
             try:
                 logger.debug("Attempting token refresh via Supabase")
-                refresh_resp = requests.post(
+                client = _get_http_client()
+                refresh_resp = await client.post(
                     f"{SUPABASE_URL}/auth/v1/token?grant_type=refresh_token",
                     headers={
                         "apikey": SUPABASE_KEY,
@@ -120,40 +150,50 @@ class SupabaseAutoRefreshMiddleware(BaseHTTPMiddleware):
                         "Refresh token invalid - clearing cookies",
                         extra={"status": refresh_resp.status_code, "response": refresh_resp.text}
                     )
+                    
+                    # Cleanup Redis session before returning 401
+                    redis_client = getattr(request.app.state, "redis", None)
+                    if redis_client and refresh_token:
+                        try:
+                            session_service = SessionService(redis_client)
+                            session_id = await session_service.find_session_by_refresh_token(refresh_token)
+                            if session_id:
+                                await session_service.logout(session_id)
+                                logger.info(f"Cleaned up expired session {session_id[:12]}... on auto-logout (refresh failed)")
+                        except Exception as cleanup_error:
+                            logger.warning(f"Failed to cleanup session on auto-logout: {cleanup_error}")
+                    
                     # Don't call the next handler - return 401 directly and clear cookies
                     response = JSONResponse(
                         status_code=HTTP_401_UNAUTHORIZED,
                         content={"detail": "Session expired. Please log in again."}
                     )
                     # Clear both tokens so frontend knows user is logged out
-                    response.delete_cookie(
-                        key="refresh_token",
-                        domain=app_config.COOKIE_DOMAIN if not app_config.is_testing() else None,
-                        path="/"
-                    )
-                    response.delete_cookie(
-                        key="access_token",
-                        domain=app_config.COOKIE_DOMAIN if not app_config.is_testing() else None,
-                        path="/"
-                    )
+                    _delete_auth_cookie(response, "refresh_token")
+                    _delete_auth_cookie(response, "access_token")
                     return response
-            except Exception as e:
+            except Exception:
                 logger.exception("Token refresh failed - clearing cookies")
+                
+                # Cleanup Redis session before returning 401
+                redis_client = getattr(request.app.state, "redis", None)
+                if redis_client and refresh_token:
+                    try:
+                        session_service = SessionService(redis_client)
+                        session_id = await session_service.find_session_by_refresh_token(refresh_token)
+                        if session_id:
+                            await session_service.logout(session_id)
+                            logger.info(f"Cleaned up expired session {session_id[:12]}... on auto-logout (refresh exception)")
+                    except Exception as cleanup_error:
+                        logger.warning(f"Failed to cleanup session on auto-logout: {cleanup_error}")
+                
                 response = JSONResponse(
                     status_code=HTTP_401_UNAUTHORIZED,
                     content={"detail": "Session expired. Please log in again."}
                 )
                 # Clear both tokens
-                response.delete_cookie(
-                    key="refresh_token",
-                    domain=app_config.COOKIE_DOMAIN if not app_config.is_testing() else None,
-                    path="/"
-                )
-                response.delete_cookie(
-                    key="access_token",
-                    domain=app_config.COOKIE_DOMAIN if not app_config.is_testing() else None,
-                    path="/"
-                )
+                _delete_auth_cookie(response, "refresh_token")
+                _delete_auth_cookie(response, "access_token")
                 return response
 
         # No access and no refresh token — let route-level auth handle it

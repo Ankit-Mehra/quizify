@@ -29,7 +29,8 @@ class UpdateEmailRequest(BaseModel):
 
 class ChangePasswordRequest(BaseModel):
     """Request model for changing user password - user identified by JWT token"""
-    new_password: str = Field(..., min_length=8, description="Password must be at least 8 characters")
+    current_password: str = Field(..., description="Current password for verification")
+    new_password: str = Field(..., min_length=8, description="New password must be at least 8 characters")
 
 
 class ForgotPasswordRequest(BaseModel):
@@ -70,6 +71,7 @@ class UserInfoResponse(BaseModel):
     user_id: str
     email: str
     display_name: Optional[str] = None
+    avatar_url: Optional[str] = None  # User's avatar URL from OAuth providers (Google, etc.)
     account_tier: ACCOUNT_TIERS
     role: USER_ROLES
     current_quiz_count: int  # Number of quizzes created
@@ -77,6 +79,13 @@ class UserInfoResponse(BaseModel):
     quota_limit: int
     quota_exceeded: bool
     created_at: Optional[str] = None
+    
+    # New credit fields (Epic 6.3)
+    available_credits: Optional[float] = None
+    monthly_credits: Optional[float] = None
+    purchased_credits: Optional[float] = None
+    plan: Optional[str] = None
+    period_end: Optional[str] = None
 
 
 class AdminUpdateResponse(BaseModel):
@@ -85,3 +94,27 @@ class AdminUpdateResponse(BaseModel):
     user_id: str
     updated_field: str  # "tier" or "role"
     new_value: str  # New tier or role value
+
+
+# === Google OAuth Sign-In Schemas (for Supabase Auth) ===
+
+class GoogleSignInRequest(BaseModel):
+    """Request model for Google Sign-In using ID token from Google Sign-In button"""
+    id_token: str = Field(..., description="Google ID token (JWT credential) from Google Sign-In")
+    nonce: Optional[str] = Field(None, description="Optional nonce for extra security (must match the one used in Google Sign-In)")
+
+
+class GoogleOAuthUrlResponse(BaseModel):
+    """Response containing Google OAuth URL for PKCE flow"""
+    auth_url: str = Field(..., description="URL to redirect user to for Google Sign-In")
+    message: str = "Redirect to auth_url to complete Google Sign-In"
+
+
+class OAuthCallbackResponse(BaseModel):
+    """Response for OAuth callback - contains session tokens"""
+    message: str
+    user_id: str
+    email: str
+    access_token: Optional[str] = None  # Only in dev mode or via cookies
+    refresh_token: Optional[str] = None  # Only in dev mode or via cookies
+    is_new_user: bool = False  # True if this is the user's first login

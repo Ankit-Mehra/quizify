@@ -5,8 +5,10 @@ import httpx
 from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from config import config
 from services.logger import app_logger as logger
 from services.redis.sessions import SessionService
+from services.db_services.supabase_quiz import get_user_tier_info_cached
 
 security = HTTPBearer(auto_error=False)
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -74,19 +76,25 @@ async def _validate_request_session(request: Request, user_id: str) -> Optional[
             detail="Session management service temporarily unavailable. Please try again."
         )
 
-    # Check session_id: state → refresh_token cookie (XSS-safe)
-    session_id = getattr(request.state, "session_id", None)
-    
-    if not session_id:
+    # Lookup session_id via refresh_token (header in dev mode, cookie in production)
+    if config.is_development():
+        refresh_token_header = request.headers.get("X-Refresh-Token")
+        refresh_token = refresh_token_header or request.cookies.get("refresh_token")
+        token_source = "header" if refresh_token_header else "cookie"
+    else:
         refresh_token = request.cookies.get("refresh_token")
-        if refresh_token:
-            session_service = SessionService(redis_client)
-            session_id = await session_service.find_session_by_refresh_token(refresh_token)
-            if session_id:
-                logger.debug(
-                    "Session lookup via refresh_token cookie for user %s",
-                    _short_id(user_id, length=8)
-                )
+        token_source = "cookie"
+    
+    session_id = None
+    if refresh_token:
+        session_service = SessionService(redis_client)
+        session_id = await session_service.find_session_by_refresh_token(refresh_token)
+        if session_id:
+            logger.debug(
+                "Session lookup via refresh_token %s for user %s",
+                token_source,
+                _short_id(user_id, length=8)
+            )
 
     if not session_id:
         # SECURITY: Session ID is required for session management to work
@@ -106,7 +114,9 @@ async def _validate_request_session(request: Request, user_id: str) -> Optional[
     session_service = SessionService(redis_client)
     session_info = await session_service.validate_session(session_id)
     if not session_info:
-        logger.warning("Session %s not found for user %s", _short_id(session_id), _short_id(user_id, 8))
+        logger.warning("Session %s not found or expired for user %s", _short_id(session_id), _short_id(user_id, 8))
+        # Note: validate_session() calls logout() if the session is expired, or session may not exist at all
+        # This 401 is returned if the session was expired and cleaned up, or if it never existed (no cleanup needed)
         raise HTTPException(status_code=401, detail="Session expired or invalid")
 
     if session_info.user_id != user_id:
@@ -166,21 +176,35 @@ async def _authenticate_request(
             raise HTTPException(status_code=401, detail="Invalid or expired token")
 
         user_info = response.json()
-        logger.debug("Full user info: %s", user_info)
+        # Log only non-sensitive fields for debugging (avoid PII leakage)
+        user_id_preview = user_info.get("id", "")[:8] if user_info.get("id") else "N/A"
+        logger.debug("User auth successful for id=%s...", user_id_preview)
 
         user_id = user_info.get("id") or user_info.get("email")
+        email = user_info.get("email")
         if not user_id:
             logger.error("No valid user identifier found in token payload")
             raise HTTPException(status_code=401, detail="Invalid user token - no identifier found")
 
         await _validate_request_session(request, user_id)
 
+        # Fetch user plan/tier for error tracking context (uses Redis cache, ~1-5ms)
+        # This is non-blocking on cache hit and gracefully degrades on failure
+        try:
+            tier_info = await get_user_tier_info_cached(user_id)
+            request.state.auth_plan = tier_info.get("account_tier", "free")
+        except Exception as tier_error:
+            # Don't fail auth if tier lookup fails - just set default
+            logger.warning(f"Failed to fetch user tier for context: {tier_error}")
+            request.state.auth_plan = "unknown"
+
         request.state.auth_cached = True
         request.state.access_token = token
         request.state.auth_user_id = user_id
+        request.state.auth_email = email
         request.state.auth_token = token
 
-        logger.debug("Authenticated user %s", _short_id(user_id, 8))
+        logger.debug("Authenticated user %s (plan: %s)", _short_id(user_id, 8), request.state.auth_plan)
         return user_id, token
 
     except HTTPException:
@@ -205,3 +229,11 @@ async def get_current_user_token(
     _, token = await _authenticate_request(request, credentials)
     logger.debug("Retrieved user token for request")
     return token
+
+
+async def get_current_user_email(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+) -> str:
+    await _authenticate_request(request, credentials)
+    return request.state.auth_email

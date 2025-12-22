@@ -240,7 +240,7 @@ class CacheService(RedisServiceBase, RedisMetricsMixin):
         # Try to cache result for next time, but don't fail the request if caching fails
         try:
             await self.set(key, value, ttl)
-        except Exception as e:
+        except Exception:
             # Cache set failure is non-critical, already logged in _redis_set
             pass
         

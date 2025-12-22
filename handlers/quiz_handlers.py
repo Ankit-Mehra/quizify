@@ -1,30 +1,585 @@
-from fastapi import HTTPException, Depends, Path, Body, UploadFile, File, Form
+from fastapi import HTTPException, Depends, Path, Body, UploadFile, File, Form, Query
+import asyncio
+import random
 import re
+import time
+from uuid import uuid4
 from services.ai_services.doc_service import ( 
     extract_text_from_pdf,
     extract_text_from_plain_text,
     extract_text_from_docx
 )
-from services.db_services.supabase_quiz import ( 
+from services.db_services.supabase_quiz import (  # noqa: F401
     save_quiz_to_database, get_user_quizzes,
     get_quiz_from_database, save_metadata, 
     get_metadata, delete_quiz_from_database,
     get_user_tier_info_cached, get_quiz_metadata_cached,
-    get_authed_supabase_client)
+    get_authed_supabase_client, invalidate_user_tier_cache)
 from services.db_services.supabase_file import ( 
-    get_file_record, save_file_to_supabase,
-    parse_file_from_supabase)
+    get_file_record, save_file_to_supabase_async,
+    parse_file_from_supabase_async, delete_file_from_supabase_async)
+from services.billing_service import consume_units, get_billing_state, refund_units
+from services.url_utils import redact_url_for_storage  # Centralized URL redaction
 from dependencies.auth_dependencies import get_current_user_id, get_current_user_token
-from schemas.quiz import TextQuizRequest, FileQuizRequest, WebQuizRequest
-from typing import Dict, Any, List
-from datetime import datetime
+from schemas.quiz import (
+    TextQuizRequest, FileQuizRequest, WebQuizRequest,
+    EnhancedTextQuizRequest, EnhancedQuizGenerationResponse, EnhancedQuestion,
+    BloomLevel, Difficulty, ALL_QUESTION_TYPES
+)
+from typing import Dict, Any, List, Optional
+from services.ai_services.ingestion_service import IngestionService
+from services.ai_services.concept_extraction_service import ConceptExtractionService
+from services.ai_services.orchestration_service import QuizOrchestrationService
+from datetime import datetime, date
 from services.ai_services.chunking_service import generate_quizzes_single_async
+from services.ai_services.openai_service import QuizParseError
 from services.logger import app_logger as logger
 from services.web_scraping_service import scrape_content
 
 # Content validation constants
 MIN_CONTENT_LENGTH = 50  # Minimum characters required for quiz generation from uploaded files
 MIN_STORED_CONTENT_LENGTH = 10  # Minimum characters required for stored file content validation
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB = 10,485,760 bytes
+
+
+# =============================================================================
+# Helper Functions for generate_quiz_rag_async (Refactored for SRP)
+# =============================================================================
+
+def _validate_content_length(content: str) -> None:
+    """
+    Validate content meets minimum length requirement for quiz generation.
+    
+    This is a pure validation function - no async, no side effects.
+    Credit validation is handled by the calling handlers (e.g., generate_quiz_from_text,
+    generate_quiz_from_file_openai) before generate_quiz_rag_async is invoked.
+    
+    Raises:
+        HTTPException: 400 if content too short
+    """
+    if len(content) < MIN_CONTENT_LENGTH:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Content too short. Minimum {MIN_CONTENT_LENGTH} characters required, got {len(content)}."
+        )
+
+
+async def _generate_standard_mode(
+    request: EnhancedTextQuizRequest,
+    user_id: str,
+    user_token: str,
+    trace_id: str,
+    content_source_type: str,
+    content_source_reference: str
+) -> EnhancedQuizGenerationResponse:
+    """
+    Generate quiz using standard (fast) mode with direct LLM calls.
+    
+    Returns:
+        EnhancedQuizGenerationResponse with generated questions
+    """
+    total_questions = request.num_questions
+    
+    # Normalize question_type to list
+    if request.question_type == "mixed":
+        question_types = ["mixed"]
+    elif isinstance(request.question_type, list):
+        question_types = list(request.question_type)
+    else:
+        question_types = [request.question_type]
+    
+    try:
+        quizzes = await generate_quizzes_single_async(
+            request.content,
+            total_questions,
+            question_types=question_types,
+            user_id=user_id,
+            trace_id=trace_id,
+            generation_mode="standard",
+            content_source_type=content_source_type
+        )
+    except QuizParseError as e:
+        logger.error(f"Quiz parse error for user {user_id[:8]}...: {e.message}")
+        raise HTTPException(
+            status_code=500,
+            detail=e.message
+        )
+    
+    # Save to database with proper content source tracking
+    quiz_id, saved_questions = save_quiz_to_database(
+        title=request.title,
+        quizzes=quizzes,
+        created_by=user_id,
+        content_source_type=content_source_type,
+        content_source_reference=content_source_reference,
+        user_token=user_token,
+        generation_mode="standard"
+    )
+    
+    # Convert to EnhancedQuestion format (with defaults for enhanced fields)
+    final_questions = []
+    for q in saved_questions:
+        # Handle both dict and Pydantic model
+        q_dict = q if isinstance(q, dict) else q.model_dump() if hasattr(q, 'model_dump') else vars(q)
+        eq = EnhancedQuestion(
+            id=q_dict.get("id"),
+            quiz_id=q_dict.get("quiz_id"),
+            type=q_dict.get("type"),
+            question=q_dict.get("question"),
+            options=q_dict.get("options"),
+            left=q_dict.get("left"),
+            right=q_dict.get("right"),
+            correct_answer=q_dict.get("correct_answer"),
+            explanation=q_dict.get("explanation", ""),
+            source=q_dict.get("source", ""),
+            # Distractor explanations - retrieved from database (may be NULL for older questions)
+            distractor_explanations=q_dict.get("distractor_explanations"),
+            # Standard mode doesn't have these - leave as None
+            bloom_level=None,
+            difficulty=None,
+            concept_id=None,
+            concept_name=None,
+            chunk_id=None,
+            confidence_score=None
+        )
+        final_questions.append(eq)
+    
+    # NOTE: Credits are now consumed by caller (atomic reservation pattern)
+    # No credit consumption here - this function may be called after credits are reserved
+    
+    return EnhancedQuizGenerationResponse(
+        quiz_id=quiz_id,
+        title=request.title,
+        message="Quiz generated successfully (standard mode)",
+        questions=final_questions,
+        generation_stats={
+            "mode": "standard",
+            "questions_generated": len(final_questions)
+        }
+    )
+
+
+async def _ingest_and_extract_concepts(
+    request: EnhancedTextQuizRequest,
+    user_id: str,
+    user_token: str,
+    trace_id: str,
+    ingestion_service: IngestionService,
+    concept_service: ConceptExtractionService,
+    content_source_type: str = "text"
+) -> tuple[str, List[Dict], List[Dict]]:
+    """
+    Ingest content and extract concepts for enhanced mode.
+    
+    Returns:
+        Tuple of (document_id, chunks, concepts)
+        
+    Raises:
+        ValueError: If no concepts could be extracted
+    """
+    # Ingest Content (with user_token for RLS)
+    t0 = time.time()
+    ingestion_result = await ingestion_service.ingest_content(
+        user_id=user_id,
+        user_token=user_token,
+        content=request.content,
+        title=request.title,
+        source_type=content_source_type,  # Pass through actual source type
+        trace_id=trace_id
+    )
+    t1 = time.time()
+    logger.info(f"[TIMING] Ingestion took {t1-t0:.2f}s")
+    
+    document_id = ingestion_result["document_id"]
+    chunks = ingestion_result.get("chunks", [])
+    
+    # Extract Concepts (with user_token for RLS)
+    t2 = time.time()
+    concepts = await concept_service.extract_concepts(
+        chunks=chunks,
+        user_id=user_id,
+        user_token=user_token,
+        document_id=document_id,
+        trace_id=trace_id,
+        content_source_type=content_source_type
+    )
+    t3 = time.time()
+    logger.info(f"[TIMING] Concept extraction took {t3-t2:.2f}s for {len(chunks)} chunks -> {len(concepts)} concepts")
+    
+    if not concepts:
+        raise ValueError(
+            f"No concepts could be extracted from the content. "
+            f"Please ensure your content is at least {MIN_CONTENT_LENGTH} characters long and contains "
+            f"sufficient educational detail. Try providing more specific terminology, definitions, or examples."
+        )
+    
+    return document_id, chunks, concepts
+
+
+def _select_and_assign_concepts(
+    concepts: List[Dict],
+    num_questions: int,
+    question_type: Any,
+    orchestration_service: QuizOrchestrationService
+) -> tuple[List[tuple], List[tuple]]:
+    """
+    Select top concepts and assign question types, Bloom levels, and difficulties.
+    
+    Returns:
+        Tuple of (concept_type_pairs, bloom_difficulty_pairs)
+    """
+    # Sort by relevance and select top N
+    concepts.sort(key=lambda x: x.get("relevance_score", 0), reverse=True)
+    selected_concepts = concepts[:num_questions]
+    
+    # If not enough concepts, pad with cycling through existing ones
+    if len(selected_concepts) < num_questions:
+        original_count = len(selected_concepts)
+        while len(selected_concepts) < num_questions:
+            idx = len(selected_concepts) % original_count
+            selected_concepts.append(selected_concepts[idx])
+    
+    # Assign Question Types
+    concept_type_pairs = []
+    
+    if question_type == "mixed":
+        # Balanced distribution of all types with randomized order
+        # This ensures each type gets roughly equal representation
+        # while still providing variety through shuffled order
+        shuffled_types = ALL_QUESTION_TYPES.copy()
+        random.shuffle(shuffled_types)
+        for i, c in enumerate(selected_concepts):
+            t = shuffled_types[i % len(shuffled_types)]
+            concept_type_pairs.append((c, t))
+    elif isinstance(question_type, list):
+        # Round robin through specified types
+        for i, c in enumerate(selected_concepts):
+            t = question_type[i % len(question_type)]
+            concept_type_pairs.append((c, t))
+    else:
+        # Single type for all
+        for c in selected_concepts:
+            concept_type_pairs.append((c, question_type))
+    
+    # Assign Bloom Levels and Difficulty (balanced distribution)
+    bloom_difficulty_pairs = orchestration_service.assign_bloom_and_difficulty(
+        num_questions=len(concept_type_pairs)
+    )
+    
+    return concept_type_pairs, bloom_difficulty_pairs
+
+
+async def _generate_questions_parallel(
+    concept_type_pairs: List[tuple],
+    bloom_difficulty_pairs: List[tuple],
+    user_id: str,
+    user_token: str,
+    trace_id: str,
+    orchestration_service: QuizOrchestrationService,
+    all_concepts: List[Dict] = None,
+    content_source_type: str = "text"
+) -> List[Dict]:
+    """
+    Generate questions in parallel with retry logic for failures.
+    
+    Matching questions are handled specially - they aggregate 4 concepts
+    to provide enough context for creating 4 matching pairs.
+    
+    Args:
+        concept_type_pairs: List of (concept, question_type) tuples.
+        bloom_difficulty_pairs: List of (bloom_level, difficulty) tuples.
+        user_id: ID of the user generating the quiz.
+        user_token: Authentication token for the user.
+        trace_id: Request trace ID for logging.
+        orchestration_service: Service for orchestrating question generation.
+        all_concepts: Optional full list of extracted concepts for matching question diversity.
+            If None, falls back to concepts assigned to matching slots only.
+        content_source_type: Source type for analytics (text, file, url).
+    
+    Returns:
+        List of valid generated question dictionaries.
+        
+    Raises:
+        ValueError: If no valid questions could be generated.
+    """
+    # Separate matching from non-matching questions
+    t_start = time.time()
+    matching_indices = []
+    non_matching_pairs = []
+    non_matching_bloom_diff = []
+    
+    logger.info(f"[TIMING] _generate_questions_parallel START (received {len(concept_type_pairs)} concept pairs)")
+    for i, (concept, q_type) in enumerate(concept_type_pairs):
+        if q_type == "matching":
+            matching_indices.append(i)
+        else:
+            non_matching_pairs.append((concept, q_type, i))
+            non_matching_bloom_diff.append(bloom_difficulty_pairs[i])
+    
+    valid_questions = []
+    
+    # Generate non-matching questions in parallel
+    if non_matching_pairs:
+        async def generate_one(concept: Dict, q_type: str, orig_idx: int):
+            bloom_level, difficulty = bloom_difficulty_pairs[orig_idx]
+            return await orchestration_service.generate_question_for_concept(
+                concept=concept,
+                question_type=q_type,
+                user_id=user_id,
+                user_token=user_token,
+                trace_id=trace_id,
+                bloom_level=bloom_level,
+                difficulty=difficulty,
+                content_source_type=content_source_type
+            )
+        
+        tasks = [generate_one(c, t, idx) for c, t, idx in non_matching_pairs]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        failed_items = []
+        for (concept, q_type, orig_idx), res in zip(non_matching_pairs, results):
+            if isinstance(res, dict):
+                valid_questions.append(res)
+            else:
+                logger.error(f"Question generation failed for index {orig_idx}: {res}")
+                failed_items.append((concept, q_type, orig_idx))
+        
+        # Retry failed non-matching questions with fallback to MCQ
+        if failed_items:
+            logger.info(f"Retrying {len(failed_items)} failed non-matching questions...")
+            retry_tasks = []
+            for concept, q_type, orig_idx in failed_items:
+                # First retry with same type
+                retry_tasks.append(generate_one(concept, q_type, orig_idx))
+            
+            retry_results = await asyncio.gather(*retry_tasks, return_exceptions=True)
+            
+            fallback_items = []
+            for (concept, q_type, orig_idx), res in zip(failed_items, retry_results):
+                if isinstance(res, dict):
+                    valid_questions.append(res)
+                else:
+                    logger.error(f"Retry failed for index {orig_idx}, will try MCQ fallback")
+                    fallback_items.append((concept, orig_idx))
+            
+            # Fallback to MCQ
+            if fallback_items:
+                logger.info(f"Fallback: {len(fallback_items)} questions switching to multiple_choice")
+                fallback_tasks = [generate_one(c, "multiple_choice", idx) for c, idx in fallback_items]
+                fallback_results = await asyncio.gather(*fallback_tasks, return_exceptions=True)
+                
+                for res in fallback_results:
+                    if isinstance(res, dict):
+                        valid_questions.append(res)
+                    else:
+                        logger.error(f"Fallback also failed: {res}")
+    
+    # Generate matching questions - aggregate 4 concepts per matching question
+    if matching_indices:
+        t_matching_start = time.time()
+        logger.info(f"[TIMING] Starting matching question generation at +{time.time()-t_start:.2f}s")
+        logger.info(f"Generating {len(matching_indices)} matching question(s) using aggregated concepts")
+        
+        # Use ALL available concepts for matching (not just those assigned to matching slots)
+        # This ensures diverse matching questions with unique concept sets
+        if all_concepts:
+            # Concepts are already deduplicated in concept extraction, skip redundant dedup
+            # Just sort by relevance to prioritize important concepts
+            available_concepts = sorted(all_concepts, key=lambda x: x.get("relevance_score", 0), reverse=True)
+            logger.info(f"[TIMING] Concept sort took {time.time()-t_matching_start:.2f}s")
+            logger.info(f"Using {len(available_concepts)} concepts for {len(matching_indices)} matching questions")
+        else:
+            # Fallback to concepts assigned to matching slots
+            available_concepts = [concept_type_pairs[i][0] for i in matching_indices]
+        
+        # Early check: if no concepts available, fall back to MCQ for all matching questions
+        if not available_concepts:
+            logger.warning("No concepts available for matching questions, falling back to MCQ")
+            for idx in matching_indices:
+                concept = concept_type_pairs[idx][0]
+                bloom_level, difficulty = bloom_difficulty_pairs[idx]
+                try:
+                    fallback_result = await orchestration_service.generate_question_for_concept(
+                        concept=concept,
+                        question_type="multiple_choice",
+                        user_id=user_id,
+                        user_token=user_token,
+                        trace_id=trace_id,
+                        bloom_level=bloom_level,
+                        difficulty=difficulty,
+                        content_source_type=content_source_type
+                    )
+                    valid_questions.append(fallback_result)
+                except Exception as e:
+                    logger.error(f"MCQ fallback for empty matching concepts failed: {e}")
+        else:
+            # For each matching question, we need 4 UNIQUE concepts
+            # Ensure each matching question uses different concepts
+            matching_tasks = []
+            matching_concepts_map = {}  # Store concepts used for each question index for retry
+            used_concept_indices = set()
+            concept_pool_idx = 0  # Track position across all matching questions
+            
+            for i, idx in enumerate(matching_indices):
+                bloom_level, difficulty = bloom_difficulty_pairs[idx]
+                
+                # Get 4 unique concepts for this matching question
+                concepts_for_matching = []
+                checked_indices = set()  # Track which indices we've checked this iteration
+                max_checks = len(available_concepts)  # Stop after checking all concepts once
+                
+                while len(concepts_for_matching) < 4 and len(checked_indices) < max_checks:
+                    concept_idx = concept_pool_idx % len(available_concepts)
+                    
+                    # Track that we've checked this index
+                    if concept_idx not in checked_indices:
+                        checked_indices.add(concept_idx)
+                    
+                    # Only use concepts not already used in previous matching questions
+                    # (if we have enough concepts for full uniqueness)
+                    if len(available_concepts) > len(matching_indices) * 4:
+                        if concept_idx not in used_concept_indices:
+                            concepts_for_matching.append(available_concepts[concept_idx])
+                            used_concept_indices.add(concept_idx)
+                    else:
+                        # Not enough concepts for full uniqueness, allow reuse
+                        concepts_for_matching.append(available_concepts[concept_idx])
+                    
+                    concept_pool_idx += 1
+                
+                # Safety check: if we still don't have enough concepts, skip this question
+                if len(concepts_for_matching) < 4:
+                    if available_concepts:
+                        # Fill with remaining concepts
+                        while len(concepts_for_matching) < 4:
+                            fill_idx = len(concepts_for_matching) % len(available_concepts)
+                            concepts_for_matching.append(available_concepts[fill_idx])
+                    else:
+                        logger.error(f"No available concepts for matching question {i}, skipping")
+                        continue
+            
+                # Store concepts for potential retry
+                matching_concepts_map[i] = concepts_for_matching
+            
+                matching_tasks.append(
+                    orchestration_service.generate_matching_question(
+                        concepts=concepts_for_matching,
+                        user_id=user_id,
+                        user_token=user_token,
+                        trace_id=trace_id,
+                        bloom_level=bloom_level,
+                        difficulty=difficulty,
+                        content_source_type=content_source_type
+                    )
+                )
+            
+            matching_results = await asyncio.gather(*matching_tasks, return_exceptions=True)
+            
+            # Track failed matching questions for retry
+            failed_matching_items = []
+            for i, res in enumerate(matching_results):
+                if isinstance(res, dict):
+                    valid_questions.append(res)
+                else:
+                    logger.error(f"Matching question {i} failed: {res}")
+                    failed_matching_items.append((i, matching_indices[i]))
+            
+            # Retry failed matching questions using the SAME concepts as original attempt
+            if failed_matching_items:
+                logger.info(f"Retrying {len(failed_matching_items)} failed matching questions...")
+                retry_tasks = []
+                for orig_i, idx in failed_matching_items:
+                    bloom_level, difficulty = bloom_difficulty_pairs[idx]
+                    # Get the exact same 4 concepts used in the original attempt
+                    concepts_for_retry = matching_concepts_map.get(orig_i, [])
+                    if not concepts_for_retry:
+                        logger.error(f"Cannot retry matching question {orig_i}: original concepts not found")
+                        continue
+                    retry_tasks.append(
+                        orchestration_service.generate_matching_question(
+                            concepts=concepts_for_retry,
+                            user_id=user_id,
+                            user_token=user_token,
+                            trace_id=trace_id,
+                            bloom_level=bloom_level,
+                            difficulty=difficulty,
+                            content_source_type=content_source_type
+                        )
+                    )
+                
+                retry_results = await asyncio.gather(*retry_tasks, return_exceptions=True)
+                
+                # Track items that still failed after retry for MCQ fallback
+                fallback_items = []
+                for (orig_i, idx), res in zip(failed_matching_items, retry_results):
+                    if isinstance(res, dict):
+                        valid_questions.append(res)
+                    else:
+                        logger.error(f"Retry failed for matching question {orig_i}, will try MCQ fallback")
+                        fallback_items.append(idx)
+                
+                # Fallback to MCQ for items that failed retry
+                if fallback_items:
+                    logger.info(f"Fallback: {len(fallback_items)} matching questions switching to multiple_choice")
+                    for idx in fallback_items:
+                        try:
+                            concept = concept_type_pairs[idx][0]
+                            bloom_level, difficulty = bloom_difficulty_pairs[idx]
+                            fallback_result = await orchestration_service.generate_question_for_concept(
+                                concept=concept,
+                                question_type="multiple_choice",
+                                user_id=user_id,
+                                user_token=user_token,
+                                trace_id=trace_id,
+                                bloom_level=bloom_level,
+                                difficulty=difficulty,
+                                content_source_type=content_source_type
+                            )
+                            valid_questions.append(fallback_result)
+                        except Exception as e:
+                            logger.error(f"Matching fallback to MCQ also failed: {e}")
+    
+    if not valid_questions:
+        raise ValueError(
+            "Failed to generate any valid questions after multiple attempts. "
+            "This may happen when content is too vague, lacks educational structure, or contains mostly lists/tables. "
+            "Try providing narrative text with clear concepts, definitions, and explanations."
+        )
+    
+    return valid_questions
+
+
+def _build_enhanced_questions(valid_questions: List[Dict]) -> List[EnhancedQuestion]:
+    """
+    Convert raw question dictionaries to EnhancedQuestion Pydantic models.
+    
+    Returns:
+        List of EnhancedQuestion objects
+    """
+    final_questions = []
+    for q in valid_questions:
+        eq = EnhancedQuestion(
+            # Required fields - use direct indexing
+            type=q["type"],
+            question=q["question"],
+            correct_answer=q["correct_answer"],
+            explanation=q["explanation"],
+            source=q["source"],
+            bloom_level=BloomLevel(q["bloom_level"]),
+            difficulty=Difficulty(q["difficulty"]),
+            # Optional fields - use .get() for safe access
+            options=q.get("options"),
+            left=q.get("left"),
+            right=q.get("right"),
+            concept_id=q.get("concept_id"),
+            concept_name=q.get("concept_name"),
+            chunk_id=q.get("chunk_id"),
+            confidence_score=q.get("confidence_score"),
+            # Distractor explanations - populated for MCQ and fill_blank
+            distractor_explanations=q.get("distractor_explanations")
+        )
+        final_questions.append(eq)
+    return final_questions
 
 def sanitize_filename(filename: str) -> str:
     """
@@ -51,53 +606,96 @@ def sanitize_filename(filename: str) -> str:
     
     return sanitized
 
-async def validate_user_quota(user_id: str, user_token: str = None):
+
+async def reserve_credits_atomic(user_id: str, quiz_type: str) -> None:
     """
-    Validate if user has available quota for quiz generation.
+    Atomically reserve credits for quiz generation (consume BEFORE generation).
     
-    Uses Redis caching for 50x performance improvement.
+    This prevents TOCTOU race conditions where concurrent requests could bypass
+    credit limits by checking availability at the same time before consumption.
+    
+    Pattern:
+    1. This function consumes credits atomically (with row locking)
+    2. If quiz generation fails, caller must call refund_credits_on_failure()
+    3. If quiz generation succeeds, credits are already consumed (no further action)
     
     Args:
-        user_id: The UUID of the user
-        user_token: User's authentication token for RLS enforcement (optional)
+        user_id: UUID of the user
+        quiz_type: "standard" (0.5 credits / 1 unit) or "enhanced" (1.0 credits / 2 units)
         
     Raises:
-        HTTPException: 403 Forbidden if quota is exceeded with detailed error message
+        HTTPException 402 if insufficient credits (atomic check + consume failed)
     """
-    tier_info = await get_user_tier_info_cached(user_id)
+    # Attempt atomic consumption (checks availability AND consumes in one operation)
+    success = await consume_units(user_id, quiz_type)
     
-    if tier_info["quota_exceeded"]:
-        current_count = tier_info["current_quiz_count"]
-        quota_limit = tier_info["quota_limit"]
-        user_tier = tier_info["account_tier"]
+    if not success:
+        # Failed to consume - either insufficient credits or error
+        # Get current state to provide informative error message
+        state = await get_billing_state(user_id)
+        required = 0.5 if quiz_type == "standard" else 1.0
         
-        # Create upgrade suggestion based on current tier
-        upgrade_suggestion = ""
-        if user_tier == "free":
-            upgrade_suggestion = "Upgrade to basic for 100 quizzes."
-        elif user_tier == "basic":
-            upgrade_suggestion = "Upgrade to educator for 500 quizzes."
-        
-        detail_message = f"Quiz quota exceeded for {user_tier} tier ({current_count}/{quota_limit}). {upgrade_suggestion}".strip()
-        
-        # Log with truncated user ID for security (server-side only)
-        user_id_truncated = user_id[:8] + "..." if len(user_id) > 8 else user_id
-        logger.warning(f"Quota exceeded for user {user_id_truncated}: {detail_message}")
+        if state.plan == "pro":
+            message = "Not enough credits. Purchase additional credits to continue."
+        else:
+            message = "Not enough credits. Upgrade to Pro or purchase credits."
         
         raise HTTPException(
-            status_code=403,
+            status_code=402,
             detail={
-                "detail": detail_message,
-                "current_count": current_count,
-                "quota_limit": quota_limit,
-                "user_tier": user_tier
+                "error": "insufficient_credits",
+                "message": message,
+                "available_credits": state.available_credits,
+                "required_credits": required,
+                "plan": state.plan
             }
         )
     
-    # Log successful quota check with truncated user ID (server-side only)
-    user_id_truncated = user_id[:8] + "..." if len(user_id) > 8 else user_id
-    logger.info(f"Quota check passed for user {user_id_truncated}: "
-               f"{tier_info['current_quiz_count']}/{tier_info['quota_limit']}")
+    logger.info(f"Credits reserved for user {user_id[:8]}... ({quiz_type} quiz)")
+
+
+async def refund_credits_on_failure(user_id: str, quiz_type: str) -> None:
+    """
+    Refund credits after failed quiz generation.
+    
+    This should be called when quiz generation fails AFTER credits were reserved
+    via reserve_credits_atomic(). This is best-effort - if refund fails, it's logged
+    but doesn't raise an exception (user can contact support).
+    
+    Args:
+        user_id: UUID of the user
+        quiz_type: "standard" (1 unit) or "enhanced" (2 units)
+    """
+    success = await refund_units(user_id, quiz_type)
+    if success:
+        logger.info(f"Credits refunded for user {user_id[:8]}... after failed {quiz_type} quiz generation")
+    else:
+        # Log error but don't raise - this is a compensation action
+        logger.error(
+            f"CRITICAL: Failed to refund credits for user {user_id[:8]}... after failed "
+            f"{quiz_type} quiz generation. Manual intervention may be required."
+        )
+    
+    # Invalidate cache so next request sees updated balance
+    await invalidate_user_tier_cache(user_id)
+
+
+async def finalize_credits_after_success(user_id: str, quiz_type: str) -> None:
+    """
+    Finalize credit consumption after successful quiz generation.
+    
+    With the atomic reservation pattern, credits are already consumed before
+    generation starts. This function just invalidates the cache and logs success.
+    
+    Args:
+        user_id: UUID of the user  
+        quiz_type: "standard" or "enhanced"
+    """
+    logger.info(f"Quiz generated successfully for user {user_id[:8]}... ({quiz_type} quiz, credits already reserved)")
+    
+    # Invalidate cache so next request sees updated balance
+    await invalidate_user_tier_cache(user_id)
+
 
 
 # === Generate quiz from file ===
@@ -106,26 +704,47 @@ async def generate_quiz_from_file_openai(
     title: str = Form(...),
     num_questions: int = Form(10),
     question_type: List[str] = Form(["mixed"]),
+    mode: str = Form("standard"),  # "standard" or "enhanced"
     current_user_id: str = Depends(get_current_user_id),
     user_token: str = Depends(get_current_user_token)
 ):
+    # Track whether we need to refund credits on failure
+    # Initialize BEFORE any validation or try-block so these are always defined for the finally block.
+    # This prevents UnboundLocalError if early validation fails before credit reservation.
+    # `file_id` and `original_filename` are populated later in the try-block after a successful
+    # upload/save, and are only used in finally to clean up an orphaned file if generation fails.
+    credits_reserved = False
+    file_id = None  # Track uploaded file for cleanup on failure
+    original_filename = None  # Track filename for cleanup
+    
+    # Validate file type BEFORE reserving credits (fast-fail on invalid input)
     if file.content_type not in ["application/pdf", "text/plain", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]:
         raise HTTPException(status_code=400, detail="Only PDF, DOCX, or TXT files are supported.")
-
-    # Validate quota BEFORE file processing and generation (don't waste AI API calls)
-    await validate_user_quota(current_user_id, user_token)
+    
+    # ATOMIC CREDIT RESERVATION: Reserve credits BEFORE any expensive operations
+    # This prevents TOCTOU race conditions where concurrent requests bypass limits
+    await reserve_credits_atomic(current_user_id, mode)
+    credits_reserved = True  # Only set after successful reservation
 
     try:
-        text = await file.read()
+        file_bytes = await file.read()
+        file_size = len(file_bytes)
+        
+        # Validate file size (10MB limit, inclusive - files up to 10MB accepted)
+        if file_size > MAX_FILE_SIZE:
+            raise HTTPException(
+                status_code=413,
+                detail=f"File too large. Maximum file size is 10MB ({MAX_FILE_SIZE} bytes). Your file is {file_size} bytes."
+            )
         
         # Choose the appropriate extractor based on file type
         try:
             if file.content_type == "application/pdf":
-                parsed_text = extract_text_from_pdf(text)
+                parsed_text = extract_text_from_pdf(file_bytes)
             elif file.content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-                parsed_text = extract_text_from_docx(text)
+                parsed_text = extract_text_from_docx(file_bytes)
             else:  # text/plain
-                parsed_text = extract_text_from_plain_text(text)
+                parsed_text = extract_text_from_plain_text(file_bytes)
         except Exception as extraction_error:
             # Extraction errors (corrupted files, invalid format, etc.)
             error_msg = str(extraction_error)
@@ -144,56 +763,74 @@ async def generate_quiz_from_file_openai(
                 detail=f"Insufficient content in file. Please provide a document with at least {MIN_CONTENT_LENGTH} characters of text."
             )
 
-        # Save file to supabase storage FIRST to get file_id
-        await file.seek(0)  # Reset file pointer after reading
-        file_bytes = await file.read()
+        # Save file to supabase storage FIRST to get file_id (reuse already-read bytes)
         original_filename = file.filename or f"uploaded_{datetime.now().strftime('%Y%m%d%H%M%S')}"
-        file_result = save_file_to_supabase(current_user_id, file_bytes, original_filename, user_token, file.content_type)
+        file_result = await save_file_to_supabase_async(current_user_id, file_bytes, original_filename, user_token, file.content_type)
         file_id = file_result.get('file_id')
         
-        # Generate quiz questions
-        quizzes = await generate_quizzes_single_async(
-            parsed_text, 
-            num_questions,
-            question_types=question_type
+        # Use unified generation function that handles both modes
+        enhanced_request = EnhancedTextQuizRequest(
+            title=title,
+            content=parsed_text,
+            question_type="mixed" if "mixed" in question_type else question_type,
+            num_questions=num_questions,
+            mode=mode  # Pass mode from request (standard or enhanced)
+        )
+        result = await generate_quiz_rag_async(
+            enhanced_request, 
+            current_user_id, 
+            user_token,
+            content_source_type="file",
+            content_source_reference=file_id
         )
         
-        # Save quiz to database with file reference
-        quiz_id, saved_questions = save_quiz_to_database(
-            title, 
-            quizzes, 
-            current_user_id,
-            content_source_type="file",
-            content_source_reference=file_id,
-            user_token=user_token
-        )
-
+        # Save metadata for file-based quiz
         metadata = {
-            "quiz_id": quiz_id,
+            "quiz_id": result.quiz_id,
             "content_type": "file",
+            "content_source_type": "file",
+            "content_source_reference": file_id,
             "file_name": file.filename,
             "file_type": file.content_type,
             "word_count": len(parsed_text.split()),
             "created_by": current_user_id,
             "created_at": datetime.now().isoformat(),
-            "question_count": num_questions
+            "question_count": len(result.questions)
         }
-
-        #save metadata to database
         save_metadata(metadata, user_token=user_token)
-
-        return {
-            "quiz_id": quiz_id, 
-            "title": title,
-            "message": "Quiz generated successfully from file",
-            "questions": saved_questions  # Return saved questions with IDs
-        }
+        
+        # SUCCESS: Credits were already reserved, finalize consumption
+        credits_reserved = False  # Don't refund
+        await finalize_credits_after_success(current_user_id, mode)
+        
+        # Update message and return EnhancedQuizGenerationResponse directly
+        result.message = f"Quiz generated successfully from file ({mode} mode)"
+        result.file_id = file_id
+        return result
     
     except HTTPException:
-        # Re-raise HTTP exceptions as-is
+        # Re-raise HTTP exceptions as-is (refund handled in finally)
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")
+    finally:
+        # Refund credits if reserved but generation failed
+        if credits_reserved:
+            await refund_credits_on_failure(current_user_id, mode)
+            # Clean up orphaned file if it was saved but generation failed
+            if file_id and original_filename:
+                try:
+                    await delete_file_from_supabase_async(file_id, user_token, current_user_id, original_filename)
+                    logger.info(f"Cleaned up orphaned file after generation failure (file_id: {file_id})")
+                except HTTPException as cleanup_err:
+                    if cleanup_err.status_code == 404:
+                        # Expected in cases where the storage object was never created or already removed
+                        logger.info(f"Orphaned file missing from storage during cleanup (file_id: {file_id})")
+                    else:
+                        logger.warning(f"Unexpected failure while cleaning up orphaned file {file_id}: {cleanup_err}")
+                except Exception as cleanup_err:
+                    # Log but don't re-raise - cleanup failure shouldn't mask the original error
+                    logger.warning(f"Failed to cleanup orphaned file {file_id}: {cleanup_err}")
 
 # === Generate quiz from file ID ===
 async def generate_quiz_from_fileid(
@@ -223,10 +860,10 @@ async def generate_quiz_from_fileid(
         storage_path = file_record.get("storage_path")
         logger.info(f"File storage path: {storage_path}")
         
-        # Try to get content from storage
+        # Try to get content from storage (async to avoid blocking event loop)
         try:
             logger.info("Attempting to get file content...")
-            file_content = parse_file_from_supabase(file_record, user_token)
+            file_content = await parse_file_from_supabase_async(file_record, user_token)
             logger.info(f"Successfully retrieved file content: {len(file_content)} characters")
         except HTTPException as he:
             if he.status_code == 404:
@@ -250,61 +887,69 @@ async def generate_quiz_from_fileid(
         logger.error(f"Error reading file {file_id}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error reading file: {str(e)}")
 
-    # Validate quota BEFORE generation (don't waste AI API calls)
-    await validate_user_quota(current_user_id, user_token)
+    # Track whether we need to refund credits on failure
+    # Initialize BEFORE reservation attempt to avoid uninitialized variable in finally
+    credits_reserved = False
+    
+    # ATOMIC CREDIT RESERVATION: Reserve credits BEFORE generation
+    # This prevents TOCTOU race conditions where concurrent requests bypass limits
+    await reserve_credits_atomic(current_user_id, data.mode)
+    credits_reserved = True  # Only set after successful reservation
 
     try:
         logger.info(f"Generating quiz questions from file content (length: {len(file_content)})")
         total_questions = data.num_questions if data.num_questions is not None else 10
-        quizzes = await generate_quizzes_single_async(
-            file_content, 
-            total_questions,
-            question_types=list(data.question_type)
+        
+        # Use unified generation function that handles both modes
+        enhanced_request = EnhancedTextQuizRequest(
+            title=data.title,
+            content=file_content,
+            question_type="mixed" if "mixed" in data.question_type else data.question_type,
+            num_questions=total_questions,
+            mode=data.mode  # Pass mode from request (standard or enhanced)
         )
-        
-        if not quizzes or len(quizzes) == 0:
-            logger.error(f"No questions were generated for file {file_id}")
-            raise HTTPException(status_code=500, detail="No questions were generated. The AI service may have failed.")
-        
-        logger.info(f"Generated {len(quizzes)} questions")
-        for i, q in enumerate(quizzes):
-            logger.info(f"Question {i+1}: type={q.type}, correct_answer={q.correct_answer}")
-        
-        quiz_id, saved_questions = save_quiz_to_database(
-            data.title, 
-            quizzes, 
-            current_user_id,
+        result = await generate_quiz_rag_async(
+            enhanced_request, 
+            current_user_id, 
+            user_token,
             content_source_type="file",
-            content_source_reference=file_id,
-            user_token=user_token
+            content_source_reference=file_id
         )
-        logger.info(f"Saved quiz with ID: {quiz_id}")
-
+        
+        # Save metadata for file-based quiz
         metadata = {
-            "quiz_id": quiz_id,
+            "quiz_id": result.quiz_id,
             "content_type": file_record["file_type"],
+            "content_source_type": "file",
+            "content_source_reference": file_id,
             "file_name": file_record["original_filename"],
             "file_type": file_record["file_type"],
             "word_count": len(file_content.split()),
             "created_by": current_user_id,
             "created_at": datetime.now().isoformat(),
-            "question_count": len(quizzes)
+            "question_count": len(result.questions)
         }
         save_metadata(metadata, user_token=user_token)
-        logger.info(f"Saved metadata for quiz {quiz_id}")
+        logger.info(f"Saved quiz with ID: {result.quiz_id}")
 
-        return {
-            "quiz_id": quiz_id, 
-            "title": data.title,
-            "message": "Quiz generated successfully from file",
-            "questions": saved_questions  # Return saved questions with IDs
-        }
+        # SUCCESS: Credits were already reserved, finalize consumption
+        credits_reserved = False  # Don't refund
+        await finalize_credits_after_success(current_user_id, data.mode)
+
+        # Update message and return EnhancedQuizGenerationResponse
+        result.message = f"Quiz generated successfully from file ({data.mode} mode)"
+        result.file_id = file_id
+        return result
     except HTTPException as he:
-        # Re-raise HTTP exceptions
+        # Re-raise HTTP exceptions (refund handled in finally)
         raise he
     except Exception as e:
         logger.error(f"Error generating quiz from file {file_id}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error generating quiz: {str(e)}")
+    finally:
+        # Refund credits if reserved but generation failed
+        if credits_reserved:
+            await refund_credits_on_failure(current_user_id, data.mode)
 
 # === Generate quiz from text ===
 async def generate_quiz_from_text(
@@ -313,6 +958,12 @@ async def generate_quiz_from_text(
     user_token: str = Depends(get_current_user_token)
 ):
     """Generate a quiz from text content provided directly by the user."""
+    # Track whether we need to refund credits on failure
+    # Initialize BEFORE try block to avoid UnboundLocalError if early validation fails
+    credits_reserved = False
+    file_id = None  # Track uploaded file for cleanup on failure
+    original_filename = None  # Track filename for cleanup
+    
     try:
         # Validate the user ID
         if not current_user_id or current_user_id == "undefined":
@@ -321,93 +972,194 @@ async def generate_quiz_from_text(
                 detail="Authentication required to generate quiz"
             )
         
-        # Validate quota BEFORE generation (don't waste AI API calls)
-        await validate_user_quota(current_user_id, user_token)
-        # Generate quiz questions
-        total_questions = data.num_questions if data.num_questions is not None else 10
-        quizzes = await generate_quizzes_single_async(
-            data.content, 
-            total_questions,
-            question_types=list(data.question_type)
-        )
-        
-        # Save text as a file in Supabase Storage FIRST (for consistent user experience)
-        # This allows users to access their text content later, same as uploaded files
+        # Pre-validation BEFORE credit reservation (fast-fail on obvious issues)
         text_bytes = data.content.encode('utf-8')
-        file_size = len(text_bytes)
+        text_size = len(text_bytes)
         
-        # Validate text size (same 10MB limit as file uploads)
-        MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
-        if file_size > MAX_FILE_SIZE:
+        # Enforce the same maximum size limit as file uploads (10MB)
+        if text_size > MAX_FILE_SIZE:
             raise HTTPException(
                 status_code=413,
-                detail=f"Text content too large. Maximum size is 10MB ({MAX_FILE_SIZE} bytes). Your text is {file_size} bytes."
+                detail=f"Text content is too large. Maximum allowed size is 10MB ({MAX_FILE_SIZE} bytes). Your text is {text_size} bytes."
             )
         
-        # Create safe filename (remove spaces and special characters)
-        safe_title = sanitize_filename(data.title)
-        filename = f"{safe_title}.txt"
+        # ATOMIC CREDIT RESERVATION: Reserve credits BEFORE expensive operations
+        # This prevents TOCTOU race conditions where concurrent requests bypass limits
+        await reserve_credits_atomic(current_user_id, data.mode)
+        credits_reserved = True  # Only set after successful reservation
         
-        file_result = save_file_to_supabase(
-            current_user_id, 
-            text_bytes, 
-            filename, 
-            user_token, 
-            "text/plain"
-        )
+        # Save text content as a file in Supabase Storage (same as file uploads)
+        # This ensures text input is stored for reference and consistency with file/URL sources
+        
+        # Generate filename based on title or timestamp using shared sanitization logic
+        safe_title = sanitize_filename(data.title or 'text_input')
+        original_filename = f"{safe_title}_{datetime.now().strftime('%Y%m%d%H%M%S')}.txt"
+        
+        # Save the text input as a file in Supabase Storage
+        # Add localized error handling so storage failures surface clear messages
+        try:
+            file_result = await save_file_to_supabase_async(
+                current_user_id,
+                text_bytes,
+                original_filename,
+                user_token,
+                "text/plain",
+            )
+        except HTTPException as storage_exc:
+            # Truncate filename in logs to prevent potential PII exposure
+            truncated_filename = original_filename[:20] + '...' if len(original_filename) > 20 else original_filename
+            logger.error(
+                f"Failed to save text input as file to Supabase Storage "
+                f"(filename='{truncated_filename}', status_code={storage_exc.status_code}): "
+                f"{storage_exc.detail}"
+            )
+            # Re-raise with context-specific error message
+            if storage_exc.status_code == 413:
+                detail = (
+                    "Unable to save your text input to storage because it is too large. "
+                    "Please try again with a smaller input."
+                )
+            else:
+                detail = (
+                    "Unable to save your text input to storage due to a temporary issue. "
+                    "Please try again later."
+                )
+            raise HTTPException(
+                status_code=storage_exc.status_code,
+                detail=detail,
+            ) from storage_exc
+        
         file_id = file_result.get('file_id')
-            
-        # Save quiz to database with file reference
-        quiz_id, saved_questions = save_quiz_to_database(
+        logger.info(f"Saved text input as file: {original_filename} (file_id: {file_id})")
+        
+        # Use unified generation function that handles both modes
+        enhanced_request = EnhancedTextQuizRequest(
             title=data.title,
-            quizzes=quizzes,
-            created_by=current_user_id,
-            content_source_type="text",
-            content_source_reference=file_id,  # Link to the saved text file
-            user_token=user_token
+            content=data.content,
+            question_type="mixed" if "mixed" in data.question_type else data.question_type,
+            num_questions=data.num_questions or 10,
+            mode=data.mode  # Pass mode from request (standard or enhanced)
         )
-
-        # Save metadata for analytics/tracking
-        metedata = {
-            "quiz_id": quiz_id,
+        result = await generate_quiz_rag_async(
+            enhanced_request, 
+            current_user_id, 
+            user_token,
+            content_source_type="text",
+            content_source_reference=file_id  # Now references the saved file
+        )
+        
+        # Save metadata for text-based quiz (now with file reference)
+        metadata = {
+            "quiz_id": result.quiz_id,
             "content_type": "text",
-            "file_name": filename,
+            "content_source_type": "text",
+            "content_source_reference": file_id,
+            "file_name": original_filename,
             "file_type": "text/plain",
             "word_count": len(data.content.split()),
             "created_by": current_user_id,
             "created_at": datetime.now().isoformat(),
-            "question_count": total_questions
+            "question_count": len(result.questions)
         }
-        save_metadata(metedata, user_token=user_token)
+        save_metadata(metadata, user_token=user_token)
         
-        # Return response with questions for immediate display
-        return {
-            "quiz_id": quiz_id, 
-            "title": data.title,
-            "message": "Quiz generated successfully from text",
-            "questions": saved_questions  # Return saved questions with IDs
-        }
+        # SUCCESS: Credits were already reserved, finalize consumption
+        credits_reserved = False  # Don't refund
+        await finalize_credits_after_success(current_user_id, data.mode)
+        
+        # Update message and return EnhancedQuizGenerationResponse directly
+        result.message = f"Quiz generated successfully from text ({data.mode} mode)"
+        result.file_id = file_id  # Include file_id in response for consistency
+        return result
     
     except HTTPException as he:
-        # Re-raise HTTP exceptions as-is
+        # Re-raise HTTP exceptions as-is (refund handled in finally)
         raise he
     except ValueError as ve:
         # Handle validation errors
-
         raise HTTPException(status_code=422, detail=str(ve))
     except Exception as e:
         # Handle all other errors
         raise HTTPException(status_code=500, detail=f"Error generating quiz: {str(e)}")
+    finally:
+        # Refund credits if reserved but generation failed
+        if credits_reserved:
+            await refund_credits_on_failure(current_user_id, data.mode)
+            # Clean up orphaned file if it was saved but generation failed
+            if file_id and original_filename:
+                try:
+                    await delete_file_from_supabase_async(file_id, user_token, current_user_id, original_filename)
+                    logger.info(f"Cleaned up orphaned file after generation failure (file_id: {file_id})")
+                except HTTPException as cleanup_err:
+                    if cleanup_err.status_code == 404:
+                        # Expected in cases where the storage object was never created or already removed
+                        logger.info(f"Orphaned file missing from storage during cleanup (file_id: {file_id})")
+                    else:
+                        logger.warning(f"Unexpected failure while cleaning up orphaned file {file_id}: {cleanup_err}")
+                except Exception as cleanup_err:
+                    # Log but don't re-raise - cleanup failure shouldn't mask the original error
+                    logger.warning(f"Failed to cleanup orphaned file {file_id}: {cleanup_err}")
 
 # === Get user quizzes ===
 async def get_user_quizzes_handler(
     current_user_id: str = Depends(get_current_user_id),
-    user_token: str = Depends(get_current_user_token)
+    user_token: str = Depends(get_current_user_token),
+    title: Optional[str] = Query(None, description="Search quizzes by title (case-insensitive, partial match)"),
+    start_date: Optional[date] = Query(None, description="Filter quizzes created on or after this date (YYYY-MM-DD)"),
+    end_date: Optional[date] = Query(None, description="Filter quizzes created on or before this date (YYYY-MM-DD)"),
+    source_type: Optional[str] = Query(None, description="Filter by content source type: file, url, or text"),
+    mode: Optional[str] = Query(None, description="Filter by generation mode: standard or enhanced"),
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    limit: int = Query(20, ge=1, le=100, description="Number of quizzes per page (max 100)")
 ):
-    """Get all quizzes created by the current user."""
+    """
+    Get all quizzes created by the current user with optional filtering and pagination.
+    
+    Supports filtering by:
+    - title: Case-insensitive partial match
+    - start_date/end_date: Date range filter (inclusive)
+    - source_type: Content source (file, url, text)
+    - mode: Generation mode (standard, enhanced)
+    
+    Returns paginated results with metadata for building pagination UI.
+    """
     try:
-        quizzes = get_user_quizzes(current_user_id, user_token)
-        return quizzes
+        # Validate date range
+        if start_date and end_date and start_date > end_date:
+            raise HTTPException(
+                status_code=400,
+                detail="start_date must be less than or equal to end_date"
+            )
+        
+        # Validate source_type if provided
+        if source_type and source_type not in ("file", "url", "text"):
+            raise HTTPException(
+                status_code=400,
+                detail="source_type must be one of: file, url, text"
+            )
+        
+        # Validate mode if provided
+        if mode and mode not in ("standard", "enhanced"):
+            raise HTTPException(
+                status_code=400,
+                detail="mode must be one of: standard, enhanced"
+            )
+        
+        result = get_user_quizzes(
+            current_user_id,
+            user_token=user_token,
+            title=title,
+            start_date=start_date,
+            end_date=end_date,
+            source_type=source_type,
+            mode=mode,
+            page=page,
+            limit=limit
+        )
+        return result
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -465,7 +1217,7 @@ async def get_quiz_by_id_handler(
         # Defense-in-depth: Explicitly verify ownership after fetching metadata
         # Protects against cache poisoning attacks
         if metadata["created_by"] != current_user_id:
-            logger.warning(f"Access denied - User attempting to access quiz they don't own")
+            logger.warning("Access denied - User attempting to access quiz they don't own")
             raise HTTPException(status_code=403, detail="Access denied")
         
         # Log quiz access (without exposing full quiz IDs)
@@ -496,6 +1248,7 @@ async def get_quiz_by_id_handler(
             "created_at": metadata["created_at"],
             "content_source_type": metadata.get("content_source_type"),
             "content_source_reference": metadata.get("content_source_reference"),
+            "generation_mode": metadata.get("generation_mode", "standard"),
             "question_count": question_count,
             "questions": questions_response.data
         }
@@ -516,10 +1269,18 @@ async def delete_quiz_by_id_handler(
 ):
     """Delete a quiz by ID."""
     try:
-        delete_quiz_from_database(quiz_id, user_token)
-        return {"message": "Quiz deleted successfully"}
+        deleted = delete_quiz_from_database(quiz_id, user_token)
+        if deleted:
+            return {"message": "Quiz deleted successfully"}
+        else:
+            # Quiz not found - could be already deleted or doesn't exist
+            # Return 404 since the resource wasn't found
+            raise HTTPException(status_code=404, detail="Quiz not found")
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error deleting quiz: {str(e)}")
+        logger.error(f"Error deleting quiz {quiz_id[:8]}...: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to delete quiz")
 
 # === Get metadata ===
 async def get_metadata_handler(
@@ -534,32 +1295,12 @@ async def get_metadata_handler(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# === Submit quiz answers ===
-async def submit_quiz_answers(
-    quiz_id: str,
-    answers: Dict[str, Any],
-    current_user_id: str = Depends(get_current_user_id)
-):
-    """Submit answers for a quiz and get score"""
-    try:
-        # For now, just return the submitted data and a mock score
-        # In a real implementation, you would validate answers against correct ones
-        correct_count = len(answers.get("answers", [])) // 2  # Mock calculation
-        total_count = len(answers.get("answers", []))
-        
-        return {
-            "quiz_id": quiz_id,
-            "user_id": current_user_id,
-            "score": {
-                "correct": correct_count,
-                "total": total_count,
-                "percentage": int((correct_count / total_count) * 100) if total_count > 0 else 0
-            },
-            "submitted_at": datetime.now().isoformat(),
-            "status": "completed"
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+# NOTE: Quiz submission is handled by handlers/submission_handler.py
+# The submit_quiz function there has proper:
+# - Quiz ownership validation via RLS
+# - Answer validation against correct answers
+# - Detailed scoring and results
+# See api/submission_routes.py for the actual endpoint
 
 
 # === Generate quiz from URL ===
@@ -570,86 +1311,308 @@ async def generate_quiz_from_url(
 ):
     """Generate quiz from web URL (available for all tiers with quota limits)."""
     
-    # Validate quota BEFORE scraping and generation (don't waste resources)
-    await validate_user_quota(current_user_id, user_token)
+    # Track whether we need to refund credits on failure
+    # Initialize BEFORE reservation attempt so these are always defined for the finally block.
+    # `file_info` is populated later in the try-block after a successful
+    # upload/save, and is used in finally to clean up an orphaned file if generation fails.
+    credits_reserved = False
+    file_info = None
+    
+    # ATOMIC CREDIT RESERVATION: Reserve credits BEFORE scraping (expensive operation)
+    # This prevents TOCTOU race conditions where concurrent requests bypass limits
+    await reserve_credits_atomic(current_user_id, data.mode)
+    credits_reserved = True  # Only set after successful reservation
     
     try:
         # Get user tier info for logging (cached for performance)
         tier_info = await get_user_tier_info_cached(current_user_id)
         
+        # SECURITY: Redact URL early to prevent any accidental logging or storage of secrets
+        redacted_url = redact_url_for_storage(str(data.url))
+        
         # Scrape content with user ID for resource tracking
         # Enable PDF saving to user_files if URL is a PDF
-        logger.info(f"User {current_user_id} ({tier_info['account_tier']} tier) generating quiz from URL: {data.url}")
+        # NOTE: We log redacted URL only to prevent secret leakage
+        logger.info(f"User {current_user_id[:8]}... ({tier_info['account_tier']} tier) generating quiz from URL: {redacted_url}")
         content, file_info = await scrape_content(
-            url=str(data.url), 
+            url=str(data.url),  # Pass full URL for scraping (validated internally)
             user_id=current_user_id,
             user_token=user_token,
             save_pdf=True  # Save PDFs to user_files
         )
         
         # Determine content source reference
-        # If PDF was saved, use file_id; otherwise use URL
+        # SECURITY: Always use redacted URL or file_id - never raw URL
         if file_info and file_info.get('file_id'):
             content_source_reference = file_info['file_id']
             logger.info(f"PDF from URL saved as file_id: {content_source_reference}")
         else:
-            content_source_reference = str(data.url)
+            # Use redacted URL (no query params/credentials) for storage
+            content_source_reference = redacted_url
         
-        # Generate quiz
+        # Generate quiz using unified function that handles both modes
         total_questions = data.num_questions if data.num_questions is not None else 10
-        quizzes = await generate_quizzes_single_async(
-            content,
-            total_questions,
-            question_types=list(data.question_type)
-        )
         
-        # Save to database
-        quiz_id, saved_questions = save_quiz_to_database(
-            data.title, 
-            quizzes, 
-            current_user_id,
+        enhanced_request = EnhancedTextQuizRequest(
+            title=data.title,
+            content=content,
+            question_type="mixed" if "mixed" in data.question_type else data.question_type,
+            num_questions=total_questions,
+            mode=data.mode  # Pass mode from request (standard or enhanced)
+        )
+        result = await generate_quiz_rag_async(
+            enhanced_request, 
+            current_user_id, 
+            user_token,
             content_source_type="url",
-            content_source_reference=content_source_reference,  # file_id if PDF, URL otherwise
-            user_token=user_token
+            content_source_reference=content_source_reference  # Already redacted or file_id
         )
-        logger.info(f"Saved quiz from URL with ID: {quiz_id}")
         
-        # Save metadata
+        # Save metadata for URL-based quiz
+        # content_source_reference is already safe (redacted URL or file_id)
+        safe_content_ref = content_source_reference
+        
         metadata = {
-            "quiz_id": quiz_id,
+            "quiz_id": result.quiz_id,
             "content_type": "url",
-            "file_name": str(data.url),
+            "content_source_type": "url",
+            "content_source_reference": safe_content_ref,
+            "file_name": redacted_url,  # Store redacted URL
             "file_type": "application/pdf" if file_info else "text/html",
             "word_count": len(content.split()),
             "created_by": current_user_id,
             "created_at": datetime.now().isoformat(),
-            "question_count": len(quizzes)
+            "question_count": len(result.questions)
         }
         save_metadata(metadata, user_token=user_token)
-        logger.info(f"Saved metadata for URL quiz {quiz_id}")
+        logger.info(f"Saved quiz from URL with ID: {result.quiz_id}")
         
-        # Build response
-        response = {
-            "quiz_id": quiz_id,
-            "title": data.title,
-            "message": "Quiz generated successfully from URL",
-            "questions": saved_questions,  # Return saved questions with IDs
-            "source_url": str(data.url)
-        }
+        # SUCCESS: Credits were already reserved, finalize consumption
+        credits_reserved = False  # Don't refund
+        await finalize_credits_after_success(current_user_id, data.mode)
         
-        # If PDF was saved, include file info
+        # Update result with URL-specific info and return directly
+        result.source_url = str(data.url)
         if file_info:
-            response["file_id"] = file_info.get('file_id')
-            response["message"] = "Quiz generated successfully from PDF URL (PDF saved to your files)"
+            result.file_id = file_info.get('file_id')
+            result.message = f"Quiz generated successfully from PDF URL ({data.mode} mode, PDF saved to your files)"
+        else:
+            result.message = f"Quiz generated successfully from URL ({data.mode} mode)"
         
-        return response
+        return result
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error generating quiz from URL {data.url}: {str(e)}", exc_info=True)
+        logger.error(f"Error generating quiz from URL: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail=f"Error generating quiz from URL: {str(e)}"
         )
+    finally:
+        # Refund credits if reserved but generation failed
+        if credits_reserved:
+            await refund_credits_on_failure(current_user_id, data.mode)
+            
+            # Clean up orphaned file if generation failed
+            if file_info and file_info.get('file_id'):
+                try:
+                    logger.info(f"Cleaning up orphaned file {file_info['file_id']} after failed generation")
+                    await delete_file_from_supabase_async(
+                        file_id=file_info['file_id'],
+                        token=user_token,
+                        user_id=current_user_id,
+                        original_filename=file_info.get('original_filename', 'unknown.pdf')
+                    )
+                except HTTPException as cleanup_err:
+                    if cleanup_err.status_code == 404:
+                        # Expected in cases where the storage object was never created or already removed
+                        logger.info(f"Orphaned file missing from storage during cleanup (file_id: {file_info['file_id']})")
+                    else:
+                        logger.warning(f"Unexpected failure while cleaning up orphaned file {file_info['file_id']}: {cleanup_err}")
+                except Exception as cleanup_error:
+                    logger.error(f"Failed to cleanup orphaned file: {str(cleanup_error)}")
 
+async def generate_quiz_rag_async(
+    request: EnhancedTextQuizRequest,
+    user_id: str,
+    user_token: str,
+    content_source_type: str = "text",
+    content_source_reference: str = None
+) -> EnhancedQuizGenerationResponse:
+    """
+    Generate a quiz with support for both standard and enhanced (RAG) modes.
+    
+    NOTE: Credit consumption is handled by the calling handlers (generate_quiz_from_text,
+    generate_quiz_from_file_openai, generate_quiz_from_url) using the atomic reservation
+    pattern. Credits are reserved BEFORE calling this function, and refunded on failure.
+    
+    This function handles:
+    - Content length validation
+    - Quiz generation (standard or enhanced mode)
+    - Saving quiz to database with proper content source tracking
+    
+    Modes:
+    - standard: Fast generation using direct LLM calls
+    - enhanced: Full RAG pipeline with concept extraction, Bloom's taxonomy, etc.
+    
+    Args:
+        request: Enhanced quiz request with content, title, options, and mode
+        user_id: UUID of the user
+        user_token: JWT token for RLS enforcement
+        content_source_type: "text", "file", or "url"
+        content_source_reference: file_id or redacted URL for tracking the source
+        
+    Returns:
+        EnhancedQuizGenerationResponse with generated questions
+        
+    Raises:
+        HTTPException: 400 if content too short, 500 on generation error
+    """
+    trace_id = str(uuid4())
+    
+    # Validate content length (credit validation done by caller)
+    _validate_content_length(request.content)
+    
+    # Route to appropriate generation mode
+    if request.mode == "standard":
+        try:
+            return await _generate_standard_mode(
+                request=request,
+                user_id=user_id,
+                user_token=user_token,
+                trace_id=trace_id,
+                content_source_type=content_source_type,
+                content_source_reference=content_source_reference
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Standard Quiz Generation failed: {str(e)}")
+            raise HTTPException(status_code=500, detail="Quiz generation failed. Please try again.")
+    
+    # Step 3: Enhanced mode - Full RAG pipeline
+    return await _generate_enhanced_mode(
+        request=request,
+        user_id=user_id,
+        user_token=user_token,
+        trace_id=trace_id,
+        content_source_type=content_source_type,
+        content_source_reference=content_source_reference
+    )
+
+
+async def _generate_enhanced_mode(
+    request: EnhancedTextQuizRequest,
+    user_id: str,
+    user_token: str,
+    trace_id: str,
+    content_source_type: str,
+    content_source_reference: str
+) -> EnhancedQuizGenerationResponse:
+    """
+    Generate quiz using enhanced (RAG) mode with full pipeline.
+    
+    Pipeline:
+    1. Ingest content and extract concepts
+    2. Select concepts and assign question types
+    3. Generate questions in parallel
+    4. Build and save response
+    
+    Returns:
+        EnhancedQuizGenerationResponse with generated questions
+    """
+    pipeline_start = time.time()
+    
+    # Initialize services
+    ingestion_service = IngestionService()
+    concept_service = ConceptExtractionService()
+    orchestration_service = QuizOrchestrationService()
+    
+    try:
+        # Step 1: Ingest content and extract concepts
+        t1 = time.time()
+        document_id, chunks, concepts = await _ingest_and_extract_concepts(
+            request=request,
+            user_id=user_id,
+            user_token=user_token,
+            trace_id=trace_id,
+            ingestion_service=ingestion_service,
+            concept_service=concept_service,
+            content_source_type=content_source_type
+        )
+        logger.info(f"[TIMING] Step 1 (ingest+extract) took {time.time()-t1:.2f}s")
+        
+        # Step 2: Select concepts and assign types/bloom/difficulty
+        t2 = time.time()
+        concept_type_pairs, bloom_difficulty_pairs = _select_and_assign_concepts(
+            concepts=concepts,
+            num_questions=request.num_questions,
+            question_type=request.question_type,
+            orchestration_service=orchestration_service
+        )
+        logger.info(f"[TIMING] Step 2 (select concepts) took {time.time()-t2:.2f}s")
+        
+        # Step 3: Generate questions in parallel
+        t3 = time.time()
+        logger.info(f"[TIMING] Starting Step 3 question generation at +{time.time()-t1:.2f}s from start")
+        valid_questions = await _generate_questions_parallel(
+            concept_type_pairs=concept_type_pairs,
+            bloom_difficulty_pairs=bloom_difficulty_pairs,
+            user_id=user_id,
+            user_token=user_token,
+            trace_id=trace_id,
+            orchestration_service=orchestration_service,
+            all_concepts=concepts,  # Pass all concepts for matching question diversity
+            content_source_type=content_source_type
+        )
+        logger.info(f"[TIMING] Step 3 (generate questions) took {time.time()-t3:.2f}s")
+        
+        # Step 4: Convert to Pydantic models
+        t4 = time.time()
+        final_questions = _build_enhanced_questions(valid_questions)
+        logger.info(f"[TIMING] Step 4 (build models) took {time.time()-t4:.2f}s")
+        
+        # Step 5: Save to Database
+        t5 = time.time()
+        quiz_id, _ = save_quiz_to_database(
+            title=request.title,
+            quizzes=final_questions,
+            created_by=user_id,
+            content_source_type=content_source_type,
+            content_source_reference=content_source_reference or document_id,
+            user_token=user_token,
+            generation_mode="enhanced"
+        )
+        logger.info(f"[TIMING] Step 5 (save quiz) took {time.time()-t5:.2f}s")
+        
+        logger.info(f"[TIMING] TOTAL PIPELINE took {time.time()-pipeline_start:.2f}s")
+        
+        # NOTE: Credits are now consumed by caller (atomic reservation pattern)
+        # No credit consumption here - this function may be called after credits are reserved
+        
+        # Step 6: Build response
+        return EnhancedQuizGenerationResponse(
+            quiz_id=quiz_id,
+            title=request.title,
+            message="Quiz generated successfully using RAG pipeline (enhanced mode)",
+            questions=final_questions,
+            generation_stats={
+                "mode": "enhanced",
+                "document_id": document_id,
+                "chunks_count": len(chunks),
+                "concepts_extracted": len(concepts),
+                "concepts_used": len(concept_type_pairs),
+                "questions_generated": len(final_questions),
+                "total_time_seconds": round(time.time()-pipeline_start, 2)
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except ValueError as e:
+        logger.warning(f"RAG Quiz Generation validation error: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"RAG Quiz Generation failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Quiz generation failed. Please try again.")

@@ -13,7 +13,15 @@ from handlers.auth_handlers import (
     resend_verification_email,
     logout_all_devices,
     get_active_sessions,
-    revoke_session
+    revoke_session,
+    google_connect,
+    google_callback,
+    google_disconnect,
+    google_status,
+    # Google Sign-In (Authentication)
+    google_signin_initiate,
+    google_signin_callback,
+    google_signin_token
 )
 from schemas.auth import AuthMessageResponse, UserInfoResponse
 from typing import Dict, Any, List
@@ -70,7 +78,7 @@ router.add_api_route(
 router.add_api_route(
     "/me",
     get_user_info,
-    methods=["GET"],
+    methods=["GET", "OPTIONS"],  # OPTIONS required for CORS preflight when X-Refresh-Token header is sent
     response_model=UserInfoResponse,
     summary="Get Current User Info",
     description="Get authenticated user's profile, tier, role, and quota information",
@@ -148,4 +156,83 @@ router.add_api_route(
     summary="Revoke Session",
     description="Revoke a specific session by ID. User can only revoke their own sessions. Useful for removing suspicious or lost devices.",
     tags=["Auth", "Session Management"]
+)
+
+# ============================================================================
+# GOOGLE OAUTH ENDPOINTS (Epic QUIZ-002 - Google Forms Export)
+# ============================================================================
+
+router.add_api_route(
+    "/google/connect",
+    google_connect,
+    methods=["GET"],
+    response_model=Dict[str, Any],
+    summary="Connect Google Account",
+    description="Initiate Google OAuth flow to connect user's Google account for Google Forms export.",
+    tags=["Auth", "Google OAuth"]
+)
+
+router.add_api_route(
+    "/google/callback",
+    google_callback,
+    methods=["GET"],
+    summary="Google OAuth Callback",
+    description="Handle OAuth callback from Google. Exchanges code for tokens and stores refresh token.",
+    tags=["Auth", "Google OAuth"]
+)
+
+router.add_api_route(
+    "/google/disconnect",
+    google_disconnect,
+    methods=["POST"],
+    response_model=Dict[str, Any],
+    summary="Disconnect Google Account",
+    description="Remove Google OAuth tokens. User will need to re-authorize to use Google Forms export.",
+    tags=["Auth", "Google OAuth"]
+)
+
+router.add_api_route(
+    "/google/status",
+    google_status,
+    methods=["GET"],
+    response_model=Dict[str, Any],
+    summary="Google Connection Status",
+    description="Check if user has connected their Google account and can export to Google Forms.",
+    tags=["Auth", "Google OAuth"]
+)
+
+# ============================================================================
+# GOOGLE SIGN-IN AUTHENTICATION ENDPOINTS (OAuth Login via Supabase)
+# ============================================================================
+# These endpoints handle user authentication via Google Sign-In.
+# Different from Google Forms export OAuth above.
+# ============================================================================
+
+router.add_api_route(
+    "/google/signin",
+    google_signin_initiate,
+    methods=["GET"],
+    response_model=Dict[str, Any],
+    summary="Initiate Google Sign-In",
+    description="Get OAuth URL for Google Sign-In. Frontend should redirect user to this URL. After authentication, user is redirected back to /google/signin/callback.",
+    tags=["Auth", "Google Sign-In"]
+)
+
+router.add_api_route(
+    "/google/signin/callback",
+    google_signin_callback,
+    methods=["GET"],
+    summary="Google Sign-In Callback",
+    description="Handle OAuth callback from Google Sign-In. Exchanges authorization code for session tokens and sets HttpOnly cookies.",
+    tags=["Auth", "Google Sign-In"]
+)
+
+router.add_api_route(
+    "/google/signin/token",
+    google_signin_token,
+    methods=["POST"],
+    response_model=Dict[str, Any],
+    summary="Google Sign-In with ID Token",
+    description="Sign in using Google ID token (JWT credential) from Google Sign-In button. Use this if frontend handles Google Sign-In UI and receives ID token directly.",
+    tags=["Auth", "Google Sign-In"]
 )

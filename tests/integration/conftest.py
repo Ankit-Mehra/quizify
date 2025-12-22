@@ -167,6 +167,11 @@ class MockSupabaseTable:
         self._query["filter"] = {column: value}  # type: ignore
         return self
     
+    def single(self):
+        """Mock single query."""
+        self._query["single"] = True
+        return self
+    
     def execute(self):
         """Mock execute query."""
         # Special handling for questions table - fetch from quiz storage
@@ -191,6 +196,15 @@ class MockSupabaseTable:
         if not result_data and self.table_name not in ["user_tier_info", "questions"]:
             result_data = [{"id": "mock_123"}]
 
+        # Handle single()
+        if self._query.get("single"):
+            data = result_data[0] if result_data else None
+            return Mock(
+                data=data,
+                error=None,
+                count=1 if data else 0
+            )
+
         return Mock(
             data=result_data,
             error=None,
@@ -212,6 +226,10 @@ class MockSupabaseClient:
         if table_name not in self._tables:
             self._tables[table_name] = MockSupabaseTable(table_name, self._quiz_storage)
         return self._tables[table_name]
+    
+    def rpc(self, function, params=None):
+        """Mock RPC call."""
+        return Mock(execute=lambda: Mock(data=True, error=None))
     
     def add_user_tier_info(self, user_id, email):
         """Add user tier info when user signs up."""
@@ -376,9 +394,9 @@ def create_mock_quiz_response(num_questions, question_types=None, text="sample t
 
 
 # Mock AI services
-async def mock_generate_quizzes_single_async(text, num_questions, question_types=None):
+async def mock_generate_quizzes_single_async(text, num_questions, question_types=None, user_id=None, trace_id=None, generation_mode=None, content_source_type=None):
     """
-    Mock OpenAI quiz generation.
+    Mock OpenAI quiz generation with PostHog analytics support.
     
     Default behavior: Returns exactly min(num_questions, 10) questions for predictable tests.
     
@@ -437,7 +455,7 @@ async def mock_generate_quizzes_single_async(text, num_questions, question_types
     return questions
 
 
-def mock_save_quiz_to_database(title, quizzes, created_by, content_source_type=None, content_source_reference=None, user_token=None):
+def mock_save_quiz_to_database(title, quizzes, created_by, content_source_type=None, content_source_reference=None, user_token=None, generation_mode=None):
     """Mock saving quiz to database - returns (quiz_id, saved_questions) tuple."""
     return _quiz_storage.save_quiz(title, quizzes, created_by, content_source_type, content_source_reference)
 
@@ -508,9 +526,21 @@ class MockSupabaseAsyncClient:
         return mock_requests_get(url, headers=headers)
 
 
-def mock_get_user_quizzes(user_id, user_token=None):
-    """Mock getting user quizzes."""
-    return _quiz_storage.get_user_quizzes(user_id)
+def mock_get_user_quizzes(user_id, user_token=None, title=None, start_date=None, end_date=None, source_type=None, mode=None, page=1, limit=20):
+    """Mock getting user quizzes with optional filtering and pagination."""
+    quizzes = _quiz_storage.get_user_quizzes(user_id)
+    # Note: Filtering not implemented in mock - returns all quizzes with pagination wrapper
+    total = len(quizzes)
+    total_pages = (total + limit - 1) // limit if total > 0 else 0
+    return {
+        "quizzes": quizzes,
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "total_pages": total_pages,
+        "has_next": page < total_pages,
+        "has_previous": page > 1
+    }
 
 
 def mock_get_quiz_from_database(quiz_id, user_id=None):
@@ -642,7 +672,7 @@ async def mock_validate_request_session_integration(request, user_id: str):
     Mock session validation for integration tests.
     Works around TestClient cookie propagation limitations.
     """
-    from services.redis.sessions import SessionService, SessionInfo
+    from services.redis.sessions import SessionService
     
     # Get Redis client
     redis_client = getattr(request.app.state, "redis", None)
@@ -662,7 +692,6 @@ async def mock_validate_request_session_integration(request, user_id: str):
             return
     
     # Create a new test session for this user
-    from datetime import datetime
     refresh_token = f"test_refresh_{user_id}"
     client_token = await session_service.create_session(
         user_id=user_id,
@@ -699,6 +728,7 @@ def setup_integration_mocks():
         # Patch the lazy loading functions for all modules that use Supabase
         stack.enter_context(patch("handlers.auth_handlers.get_supabase", return_value=mock_supabase))
         stack.enter_context(patch("services.db_services.supabase_quiz.get_supabase", return_value=mock_supabase))
+        stack.enter_context(patch("services.storage_service.get_supabase", return_value=mock_supabase))
         stack.enter_context(patch("services.db_services.supabase_quiz.get_authed_supabase_client", return_value=mock_supabase))
         stack.enter_context(patch("services.db_services.supabase_file.get_supabase", return_value=mock_supabase))
         stack.enter_context(patch("services.db_services.supabase_submission.get_supabase", return_value=mock_supabase))
@@ -717,9 +747,9 @@ def setup_integration_mocks():
         stack.enter_context(patch("handlers.quiz_handlers.save_quiz_to_database", side_effect=mock_save_quiz_to_database))
         stack.enter_context(patch("handlers.quiz_handlers.get_user_quizzes", side_effect=mock_get_user_quizzes))
         stack.enter_context(patch("handlers.quiz_handlers.get_quiz_from_database", side_effect=mock_get_quiz_from_database))
-        stack.enter_context(patch("handlers.quiz_handlers.save_file_to_supabase", side_effect=mock_save_file_to_supabase))
+        stack.enter_context(patch("handlers.quiz_handlers.save_file_to_supabase_async", side_effect=mock_save_file_to_supabase))
         stack.enter_context(patch("handlers.quiz_handlers.save_metadata", side_effect=mock_save_metadata))
-        stack.enter_context(patch("handlers.file_handlers.save_file_to_supabase", side_effect=mock_save_file_to_supabase))
+        stack.enter_context(patch("handlers.file_handlers.save_file_to_supabase_async", side_effect=mock_save_file_to_supabase))
         
         yield mock_supabase
     

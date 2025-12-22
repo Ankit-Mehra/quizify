@@ -9,7 +9,6 @@ Tests file deletion functionality including:
 import pytest
 from fastapi.testclient import TestClient
 from main import app
-from dependencies.auth_dependencies import get_current_user_id
 
 client = TestClient(app)
 

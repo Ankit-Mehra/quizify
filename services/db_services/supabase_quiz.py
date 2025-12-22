@@ -1,6 +1,7 @@
 from fastapi import HTTPException
 from schemas.quiz import Question
 from typing import List, Optional
+from datetime import date, datetime, time
 from services.logger import db_logger as logger
 from config import config as app_config
 from pydantic import BaseModel
@@ -17,6 +18,7 @@ class QuizMetadata(BaseModel):
     question_count: int
     content_source_type: Optional[str] = None
     content_source_reference: Optional[str] = None
+    generation_mode: Optional[str] = "standard"
 
 
 class UserTierInfo(BaseModel):
@@ -24,12 +26,20 @@ class UserTierInfo(BaseModel):
     id: str
     email: str
     display_name: Optional[str] = None  # FIXED: Was 'name', should be 'display_name'
+    avatar_url: Optional[str] = None  # Avatar URL from OAuth providers (Google, etc.)
     account_tier: str
     role: str = "user"  # ADDED: Missing role field
     current_quiz_count: int
     quizzes_attempted: int
     quota_limit: int
     quota_exceeded: bool
+    # Credit fields (Epic 6.3 - Hybrid billing)
+    available_credits: Optional[float] = None
+    monthly_credits: Optional[float] = None
+    purchased_credits: Optional[float] = None
+    billing_plan: Optional[str] = None
+    period_end: Optional[str] = None
+    created_at: Optional[str] = None
 
 # Lazy load Supabase client to avoid initialization issues in tests
 def get_supabase():
@@ -45,7 +55,7 @@ else:
     logger.debug("Supabase client initialized")
 
 def get_authed_supabase_client(user_token: str):
-    logger.debug(f"Creating authenticated Supabase client with token: {user_token[:10]}...")
+    logger.debug("Creating authenticated Supabase client")
     return app_config.get_authenticated_supabase_client(user_token)
 
 def save_quiz_to_database(
@@ -54,14 +64,14 @@ def save_quiz_to_database(
     created_by: str,
     content_source_type: Optional[str] = None,
     content_source_reference: Optional[str] = None,
-    user_token: Optional[str] = None
+    user_token: Optional[str] = None,
+    generation_mode: Optional[str] = None
 ):
     try:
         # Use authenticated client if token provided, otherwise use service role
         if user_token:
             supabase = get_authed_supabase_client(user_token)
-            logger.debug(f"Using authenticated client for user {created_by}")
-            logger.debug(f"Token being used: {user_token[:20]}...")
+            logger.debug(f"Using authenticated client for user {created_by[:8]}...")
         else:
             supabase = get_supabase()
             logger.debug("Using service role client")
@@ -89,6 +99,8 @@ def save_quiz_to_database(
             quiz_data["content_source_type"] = content_source_type
         if content_source_reference:
             quiz_data["content_source_reference"] = content_source_reference
+        if generation_mode:
+            quiz_data["generation_mode"] = generation_mode
         
         quiz_response = supabase.table("quizzes").insert(quiz_data).execute()
         quiz_id = quiz_response.data[0]["id"]
@@ -105,6 +117,25 @@ def save_quiz_to_database(
                 "explanation": q.explanation,
                 "source": q.source
             }
+            
+            # Add enhanced metadata if present
+            if hasattr(q, "bloom_level") and q.bloom_level:
+                base["bloom_level"] = q.bloom_level
+            if hasattr(q, "difficulty") and q.difficulty:
+                base["difficulty"] = q.difficulty
+            if hasattr(q, "concept_id") and q.concept_id:
+                base["concept_id"] = str(q.concept_id)
+            if hasattr(q, "concept_name") and q.concept_name:
+                base["concept_name"] = q.concept_name
+            if hasattr(q, "chunk_id") and q.chunk_id:
+                base["chunk_id"] = str(q.chunk_id)
+            if hasattr(q, "confidence_score") and q.confidence_score is not None:
+                base["confidence_score"] = q.confidence_score
+            
+            # Add distractor_explanations for MCQ and fill_blank questions
+            # This is a JSONB field - None will be stored as NULL
+            if hasattr(q, "distractor_explanations") and q.distractor_explanations:
+                base["distractor_explanations"] = q.distractor_explanations
 
             if q.type == "multiple_choice":
                 base["options"] = q.options
@@ -164,6 +195,9 @@ def get_quiz_from_database(quiz_id: str, user_token: str):
             "title": quiz_data["title"],
             "created_by": quiz_data["created_by"],
             "created_at": quiz_data["created_at"],
+            "generation_mode": quiz_data.get("generation_mode", "standard"),
+            "content_source_type": quiz_data.get("content_source_type"),
+            "content_source_reference": quiz_data.get("content_source_reference"),
             "questions": questions_data
         }
     except HTTPException as http_exc:
@@ -256,7 +290,8 @@ async def get_quiz_metadata_cached(quiz_id: str, user_id: str, user_token: Optio
             created_at=quiz_data["created_at"],
             question_count=question_count,
             content_source_type=quiz_data.get("content_source_type"),
-            content_source_reference=quiz_data.get("content_source_reference")
+            content_source_reference=quiz_data.get("content_source_reference"),
+            generation_mode=quiz_data.get("generation_mode", "standard")
         )
     
     # Cache key: "quiz_metadata:{quiz_id}:{user_id}"
@@ -307,7 +342,37 @@ async def invalidate_quiz_cache(quiz_id: str, user_id: Optional[str] = None) -> 
             logger.info(f"Invalidated {deleted_count} quiz caches for quiz {quiz_preview}...")
 
 
-def get_user_quizzes(user_id: str, user_token: Optional[str] = None):
+def get_user_quizzes(
+    user_id: str,
+    user_token: Optional[str] = None,
+    title: Optional[str] = None,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    source_type: Optional[str] = None,
+    mode: Optional[str] = None,
+    page: int = 1,
+    limit: int = 20
+):
+    """
+    Get paginated quizzes for a user with question counts and optional filtering.
+    
+    PERFORMANCE: Uses a single query with embedded count to avoid N+1 issue.
+    Previously made one query per quiz to count questions.
+    
+    Args:
+        user_id: UUID of the user
+        user_token: Optional JWT token for authenticated queries (recommended for RLS)
+        title: Optional title filter (case-insensitive partial match)
+        start_date: Optional start date filter (inclusive)
+        end_date: Optional end date filter (inclusive, end of day)
+        source_type: Optional content source type filter (file, url, text)
+        mode: Optional generation mode filter (standard, enhanced)
+        page: Page number (1-indexed, default 1)
+        limit: Number of items per page (default 20, max 100)
+    
+    Returns:
+        PaginatedQuizzesResponse with quizzes and pagination metadata
+    """
     try:
         # Use authenticated client if token provided, otherwise use service role
         if user_token:
@@ -317,28 +382,76 @@ def get_user_quizzes(user_id: str, user_token: Optional[str] = None):
             supabase = get_supabase()
             logger.debug(f"Using service role to fetch quizzes for user: {user_id}")
         
-        # Get all quizzes for a user
-        quizzes_data = supabase.table("quizzes").select("*").eq("created_by", user_id).execute()
+        logger.info(f"Fetching quizzes for user: {user_id} (title={title}, start_date={start_date}, end_date={end_date}, source_type={source_type}, mode={mode}, page={page}, limit={limit})")
         
-        if not quizzes_data.data:
-            logger.debug(f"No quizzes found for user: {user_id}")
-            return []
+        # Build base query for counting total matches
+        count_query = supabase.table("quizzes").select("id", count="exact").eq("created_by", user_id)
         
-        # Process the results and add question_count
+        # Build data query with embedded question count
+        data_query = supabase.table("quizzes").select(
+            "id, title, created_at, created_by, generation_mode, content_source_type, questions(count)"
+        ).eq("created_by", user_id)
+        
+        # Apply filters to both queries
+        if title:
+            count_query = count_query.ilike("title", f"%{title}%")
+            data_query = data_query.ilike("title", f"%{title}%")
+        
+        if start_date:
+            count_query = count_query.gte("created_at", start_date.isoformat())
+            data_query = data_query.gte("created_at", start_date.isoformat())
+        
+        if end_date:
+            end_datetime = datetime.combine(end_date, time.max)
+            count_query = count_query.lte("created_at", end_datetime.isoformat())
+            data_query = data_query.lte("created_at", end_datetime.isoformat())
+        
+        if source_type:
+            count_query = count_query.eq("content_source_type", source_type)
+            data_query = data_query.eq("content_source_type", source_type)
+        
+        if mode:
+            count_query = count_query.eq("generation_mode", mode)
+            data_query = data_query.eq("generation_mode", mode)
+        
+        # Get total count
+        count_result = count_query.execute()
+        total = count_result.count if count_result.count is not None else 0
+        
+        # Calculate pagination values
+        total_pages = (total + limit - 1) // limit if total > 0 else 0
+        offset = (page - 1) * limit
+        
+        # Apply pagination and ordering to data query
+        quizzes_data = data_query.order("created_at", desc=True).range(offset, offset + limit - 1).execute()
+        
+        # Process the results - extract count from embedded relation
         quizzes = []
-        for quiz in quizzes_data.data:
-            questions = supabase.table("questions").select("id", count="exact").eq("quiz_id", quiz["id"]).execute()  # type: ignore
-
+        for quiz in quizzes_data.data or []:
+            questions_data = quiz.get("questions", [])
+            question_count = questions_data[0].get("count", 0) if questions_data else 0
+            
             quizzes.append({
                 "id": quiz["id"],
                 "title": quiz["title"],
                 "created_at": quiz["created_at"],
                 "created_by": quiz["created_by"],
-                "question_count": questions.count or 0
+                "generation_mode": quiz.get("generation_mode", "standard"),
+                "content_source_type": quiz.get("content_source_type"),
+                "question_count": question_count
             })
 
-        logger.debug(f"Found {len(quizzes)} quizzes for user: {user_id}")
-        return quizzes
+        logger.debug(f"Found {len(quizzes)} quizzes (page {page}/{total_pages}, total: {total}) for user: {user_id}")
+        
+        return {
+            "quizzes": quizzes,
+            "total": total,
+            "page": page,
+            "limit": limit,
+            "total_pages": total_pages,
+            "has_next": page < total_pages,
+            "has_previous": page > 1
+        }
     except Exception as e:
         logger.error(f"Error retrieving user quizzes: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
@@ -402,7 +515,7 @@ def get_metadata(user_id: str, user_token: str = None):
         logger.error(f"Error retrieving metadata: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
-def delete_quiz_from_database(quiz_id: str, user_token: str = None):
+def delete_quiz_from_database(quiz_id: str, user_token: str = None) -> bool:
     """
     Delete a quiz from the database.
     
@@ -410,6 +523,12 @@ def delete_quiz_from_database(quiz_id: str, user_token: str = None):
         quiz_id: The quiz ID to delete
         user_token: User's authentication token for RLS enforcement (recommended)
                     If None, uses service role (bypasses RLS - use with caution)
+    
+    Returns:
+        bool: True if quiz was deleted, False if quiz was not found
+        
+    Raises:
+        HTTPException: 500 if database error occurs
     """
     try:
         # Use authenticated client if token provided (enforces RLS)
@@ -420,10 +539,20 @@ def delete_quiz_from_database(quiz_id: str, user_token: str = None):
         
         logger.debug(f"Deleting quiz with ID: {quiz_id}")
 
-        supabase.table("quizzes").delete().eq("id", quiz_id).execute()
-        logger.debug(f"Quiz deleted successfully: {quiz_id}")
+        # Execute delete and check result
+        response = supabase.table("quizzes").delete().eq("id", quiz_id).execute()
+        
+        # Check if any rows were deleted
+        # Supabase returns the deleted rows in response.data
+        if response.data and len(response.data) > 0:
+            logger.info(f"Quiz deleted successfully: {quiz_id[:8]}...")
+            return True
+        else:
+            logger.warning(f"Quiz not found for deletion: {quiz_id[:8]}...")
+            return False
     except Exception as e:
         logger.error(f"Error deleting quiz: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to delete quiz")
 
 def get_user_tier_info(user_id: str):
     """
@@ -445,7 +574,7 @@ def get_user_tier_info(user_id: str):
         dict: User tier information with keys:
             - id: User UUID
             - email: User email
-            - account_tier: 'free', 'basic', or 'educator'
+            - account_tier: 'free', 'premium', or 'pro'
             - current_quiz_count: Number of quizzes created
             - quizzes_attempted: Number of quizzes attempted (submissions)
             - quota_limit: Max quizzes allowed for tier
@@ -460,7 +589,19 @@ def get_user_tier_info(user_id: str):
         # Security is maintained by:
         # 1. user_id comes from authenticated JWT (validated by FastAPI dependency)
         # 2. We only return data for the specific user_id (no risk of data leakage)
-        supabase = get_supabase()
+        
+        # Use the explicit service role client for this privileged operation
+        supabase = app_config.get_service_role_client()
+        
+        # Debug: Verify we got a client and check the key being used
+        if supabase is None:
+            logger.error("get_service_role_client() returned None!")
+            raise HTTPException(status_code=500, detail="Service role client not available")
+        
+        # Log the key prefix to verify correct key is being used
+        # Service role keys start with 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9' (JWT header)
+        # and have role: "service_role" in payload
+        logger.info(f"Using service role client for user_tier_info query (user: {user_id[:8]}...)")
         
         logger.debug(f"Fetching tier info for user: {user_id}")
         

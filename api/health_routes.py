@@ -4,14 +4,17 @@ Health check routes for monitoring application and service status.
 Provides endpoints for:
 - Basic application health check
 - Redis connectivity health check
+- Redis comprehensive monitoring (with cache metrics)
 - Future: Database health, external service checks, etc.
 """
 
 import time
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import JSONResponse
-from services.redis.client import check_redis_health, get_redis_client
+from services.redis.client import get_redis_client
+from services.redis.cache import get_cache_service
 from dependencies.auth_dependencies import get_current_user_id
+from handlers.admin_handlers import is_admin
 from services.logger import app_logger as logger
 
 router = APIRouter(tags=["Health"])
@@ -39,33 +42,135 @@ async def health_check():
 
 
 # ============================================================================
-# SERVICE HEALTH CHECKS
+# SERVICE HEALTH CHECKS (ADMIN ONLY)
 # ============================================================================
 
-@router.get("/health/redis")
-async def redis_health_check():
+@router.get(
+    "/health/redis",
+    dependencies=[Depends(get_current_user_id)],
+    openapi_extra={"security": [{"BearerAuth": []}]}
+)
+async def redis_health_check(current_user_id: str = Depends(get_current_user_id)):
     """
-    Redis connection health check.
+    Comprehensive Redis health check with cache metrics (ADMIN ONLY).
     
-    Verifies Redis connectivity and measures latency.
-    Returns HTTP 200 if connected, 503 if unavailable.
+    **SECURITY**: Requires admin role. Exposes sensitive Redis metrics and cache statistics.
+    
+    Verifies Redis connectivity, measures latency, and provides cache statistics
+    including hit rates, memory usage, and operation counts.
     
     Returns:
-        JSONResponse: 
-            - 200 OK: {"connected": true, "latency_ms": X.XX}
-            - 503 Service Unavailable: {"connected": false, "error": "..."}
+        JSONResponse with detailed Redis health information:
+            - status: "healthy" | "unhealthy" | "degraded"
+            - connected: true | false
+            - fallback_mode: true | false
+            - latency_ms: Connection latency
+            - memory: Memory usage metrics
+            - cache_stats: Hit/miss rates and operation counts
+            - performance: Operations per second
             
     Status Codes:
         200: Redis connected and healthy
+        401: Unauthorized (no valid token)
+        403: Forbidden (not admin)
         503: Redis unavailable (app using memory fallback)
     """
-    health = await check_redis_health()
-    status_code = 200 if health.get("connected") else 503
+    # Check admin authorization
+    if not is_admin(current_user_id):
+        logger.warning(f"Non-admin user {current_user_id[:8]}... attempted to access Redis health metrics")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required"
+        )
     
-    return JSONResponse(
-        status_code=status_code,
-        content=health
-    )
+    redis_client = get_redis_client()
+    
+    # Check if Redis is available
+    if not redis_client:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "degraded",
+                "connected": False,
+                "fallback_mode": True,
+                "message": "Redis unavailable - using memory fallback"
+            }
+        )
+    
+    try:
+        # Measure PING latency
+        start = time.time()
+        await redis_client.ping()
+        latency_ms = round((time.time() - start) * 1000, 2)
+        
+        # Get Redis memory info
+        info = await redis_client.info("memory")
+        used_mb = info.get("used_memory", 0) / 1024 / 1024
+        maxmemory = info.get("maxmemory", 0)
+        maxmemory_mb = maxmemory / 1024 / 1024 if maxmemory > 0 else 256
+        memory_percent = round((used_mb / maxmemory_mb) * 100, 2)
+        
+        # Get Redis stats (keyspace hits/misses)
+        stats_info = await redis_client.info("stats")
+        keyspace_hits = stats_info.get("keyspace_hits", 0)
+        keyspace_misses = stats_info.get("keyspace_misses", 0)
+        total_ops = keyspace_hits + keyspace_misses
+        redis_hit_rate = round((keyspace_hits / total_ops * 100) if total_ops > 0 else 0, 2)
+        
+        # Get application cache service stats
+        cache_service = get_cache_service(prefix="cache")
+        app_stats = cache_service.get_stats()
+        
+        # Calculate overall application cache hit rate
+        app_cache_hits = app_stats.get("redis_cache_hits", 0)
+        app_cache_misses = app_stats.get("redis_cache_misses", 0)
+        app_total = app_cache_hits + app_cache_misses
+        app_hit_rate = round((app_cache_hits / app_total * 100) if app_total > 0 else 0, 2)
+        
+        # Get performance metrics
+        perf_info = await redis_client.info("stats")
+        ops_per_sec = perf_info.get("instantaneous_ops_per_sec", 0)
+        
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "healthy",
+                "connected": True,
+                "fallback_mode": False,
+                "latency_ms": latency_ms,
+                "memory": {
+                    "used_mb": round(used_mb, 2),
+                    "max_mb": round(maxmemory_mb, 2),
+                    "used_percent": memory_percent
+                },
+                "cache_stats": {
+                    "redis_keyspace_hits": keyspace_hits,
+                    "redis_keyspace_misses": keyspace_misses,
+                    "redis_hit_rate_percent": redis_hit_rate,
+                    "app_cache_hits": app_cache_hits,
+                    "app_cache_misses": app_cache_misses,
+                    "app_hit_rate_percent": app_hit_rate,
+                    "total_app_operations": app_total
+                },
+                "performance": {
+                    "ops_per_sec": ops_per_sec,
+                    "total_commands_processed": perf_info.get("total_commands_processed", 0)
+                }
+            }
+        )
+        
+    except Exception as e:
+        # Log full error internally, return generic message to client
+        logger.error(f"Failed to get Redis health metrics: {str(e)}", exc_info=True)
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "unhealthy",
+                "connected": False,
+                "fallback_mode": True,
+                "error": "Failed to retrieve Redis health metrics"
+            }
+        )
 
 
 # ============================================================================
@@ -94,6 +199,15 @@ async def redis_detailed_info(current_user_id: str = Depends(get_current_user_id
         401: Unauthorized (no valid token)
         503: Redis unavailable
     """
+
+    # Check admin authorization
+    if not is_admin(current_user_id):
+        logger.warning(f"Non-admin user {current_user_id[:8]}... attempted to access Redis health metrics")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required"
+        )
+
     redis_client = get_redis_client()
     
     if not redis_client:

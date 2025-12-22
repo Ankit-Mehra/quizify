@@ -1,6 +1,6 @@
 import math
 import asyncio
-from typing import List
+from typing import List, Optional
 import tiktoken
 from services.ai_services.openai_service import (
     generate_quiz_for_type,
@@ -16,11 +16,24 @@ async def smart_chunk_text(
     text: str,
     num_questions: int,
     model_token_limit: int = 8000,
-    small_text_threshold: int = 3000
+    small_text_threshold: int = 500
 ) -> List[str]:
     """
-    Splits text into a certain number of chunks based on both
-    text size and # questions, with safeguards against context limit.
+    Splits text into chunks for parallel LLM processing.
+    
+    Chunks are sized based on both text length and number of questions requested,
+    with safeguards to stay within model context limits.
+    
+    Args:
+        text: The input text to chunk
+        num_questions: Number of questions to generate (influences chunk count)
+        model_token_limit: Maximum tokens per chunk (default: 8000)
+        small_text_threshold: Minimum tokens to trigger chunking (default: 500).
+            Text below this threshold returns as a single chunk (no parallelism).
+            Set to 500 tokens (~2KB) to enable parallel LLM calls for most content.
+            
+    Returns:
+        List of text chunks for parallel processing
     """
     logger.debug("Smart chunking text")
     enc = tiktoken.get_encoding("cl100k_base")
@@ -55,11 +68,29 @@ async def generate_quizzes_async(
     text: str,
     total_questions: int,
     question_types: List[str],
-    model_token_limit: int = 8000
+    model_token_limit: int = 8000,
+    user_id: Optional[str] = None,
+    trace_id: Optional[str] = None,
+    generation_mode: str = "standard",
+    content_source_type: Optional[str] = None,
 ) -> List[Question]:
-    logger.debug("Generating questions asynchronously")
-
+    """
+    Generate quiz questions asynchronously with parallel LLM calls per question type.
     
+    Args:
+        text: Source text to generate questions from
+        total_questions: Total number of questions to generate
+        question_types: List of question types to include
+        model_token_limit: Maximum tokens per chunk
+        user_id: Optional user ID for PostHog analytics
+        trace_id: Optional trace ID for correlating related LLM calls
+        generation_mode: "standard" or "enhanced" for analytics tracking
+        content_source_type: "text", "file", or "url" for analytics tracking
+        
+    Returns:
+        List of generated Question objects
+    """
+    logger.debug("Generating questions asynchronously")
 
     # 1. Chunk once up front
     chunks = await smart_chunk_text(text, total_questions, model_token_limit=model_token_limit)
@@ -82,7 +113,12 @@ async def generate_quizzes_async(
     tasks = []
     for qtype in question_types:
         merged_text = "\n\n".join(chunks)
-        tasks.append(generate_quiz_for_type(qtype, merged_text, q_counts[qtype]))
+        tasks.append(generate_quiz_for_type(
+            qtype, merged_text, q_counts[qtype],
+            user_id=user_id, trace_id=trace_id,
+            generation_mode=generation_mode,
+            content_source_type=content_source_type
+        ))
 
     results = await asyncio.gather(*tasks)
 
@@ -95,15 +131,36 @@ async def generate_quizzes_single_async(
     text: str,
     total_questions: int,
     question_types: List[str],
-    model_token_limit: int = 8000
+    model_token_limit: int = 8000,
+    user_id: Optional[str] = None,
+    trace_id: Optional[str] = None,
+    generation_mode: str = "standard",
+    content_source_type: Optional[str] = None,
 ) -> List[Question]:
     """
     Asynchronously chunkifies text + calls LLM to generate questions concurrently.
+    
+    This is the primary quiz generation entry point used by handlers.
+    
+    Args:
+        text: Source text to generate questions from
+        total_questions: Total number of questions to generate
+        question_types: List of question types to include
+        model_token_limit: Maximum tokens per chunk
+        user_id: Optional user ID for PostHog analytics
+        trace_id: Optional trace ID for correlating related LLM calls
+        generation_mode: "standard" or "enhanced" for analytics tracking
+        content_source_type: "text", "file", or "url" for analytics tracking
+        
+    Returns:
+        List of generated Question objects
     """
     logger.debug("Generating questions asynchronously")
     # 1. Chunk text
     chunks = await smart_chunk_text(text, total_questions, model_token_limit=model_token_limit)
     chunk_count = len(chunks)
+    parallel_note = f" ({chunk_count} parallel LLM calls)" if chunk_count > 1 else " (single LLM call)"
+    logger.info("Smart chunked text into %d segment(s) for %d questions%s", chunk_count, total_questions, parallel_note)
 
     # 2. Distribute total_questions among chunks
     base_q = total_questions // chunk_count
@@ -117,7 +174,12 @@ async def generate_quizzes_single_async(
         
         # Create async task for each chunk
         tasks.append(asyncio.create_task(
-            generate_quiz_async(chunk, q_for_this_chunk, question_types)
+            generate_quiz_async(
+                chunk, q_for_this_chunk, question_types,
+                user_id=user_id, trace_id=trace_id,
+                generation_mode=generation_mode,
+                content_source_type=content_source_type
+            )
         ))
 
     # 3. Run all chunk calls in parallel

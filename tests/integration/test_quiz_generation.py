@@ -35,7 +35,7 @@ def create_test_docx(content: str) -> bytes:
     return buffer.read()
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="function")
 def auth_token():
     """Create a test user and return auth token."""
     signup_payload = {
@@ -44,7 +44,10 @@ def auth_token():
         "name": "Quiz Flow Test User"
     }
     signup_response = client.post("/api/auth/signup", json=signup_payload)
-    assert signup_response.status_code == 201
+    # If user already exists (from previous test run), try login directly
+    if signup_response.status_code != 201:
+        # Ensure it's because user exists
+        assert signup_response.status_code == 400 or signup_response.status_code == 409
     
     login_payload = {
         "email": TEST_EMAIL,
@@ -55,9 +58,6 @@ def auth_token():
     
     data = login_response.json()
     token = data.get("access_token") or data.get("accessToken") or data.get("token")
-    
-    # Note: TestClient cookies are maintained automatically across requests
-    # The refresh_token cookie is set during login and should be available for subsequent requests
     
     return token
 
@@ -142,8 +142,10 @@ class TestQuizGenerationFlow:
         assert my_quizzes_response.status_code == 200, \
             f"Failed to retrieve user quizzes: {my_quizzes_response.text}"
         
-        my_quizzes = my_quizzes_response.json()
-        assert isinstance(my_quizzes, list), "User quizzes should be a list"
+        my_quizzes_data = my_quizzes_response.json()
+        assert isinstance(my_quizzes_data, dict), "User quizzes should be a paginated response"
+        assert "quizzes" in my_quizzes_data, "Response should contain quizzes key"
+        my_quizzes = my_quizzes_data["quizzes"]
         
         # Find our quiz in the list
         our_quiz = next((q for q in my_quizzes if q.get("id") == quiz_id or q.get("quiz_id") == quiz_id), None)
