@@ -146,10 +146,10 @@ This is a **security feature** to prevent open redirect attacks.
 
 ## Related Files
 
-- [/Users/ankitmehra/Projects/quizify/handlers/auth_handlers.py](../handlers/auth_handlers.py) - OAuth handlers
-- [/Users/ankitmehra/Projects/quizify/api/auth_routes.py](../api/auth_routes.py) - OAuth routes
-- [/Users/ankitmehra/Projects/quizify/docs/FRONTEND_GOOGLE_SIGNIN_INTEGRATION.md](FRONTEND_GOOGLE_SIGNIN_INTEGRATION.md) - Frontend integration guide
-- [/Users/ankitmehra/Projects/quizify/docs/BACKEND_OAUTH_REDIRECT_REQUIREMENTS.md](BACKEND_OAUTH_REDIRECT_REQUIREMENTS.md) - Redirect URL security requirements
+- [../handlers/auth_handlers.py](../handlers/auth_handlers.py) - OAuth handlers
+- [../api/auth_routes.py](../api/auth_routes.py) - OAuth routes
+- [FRONTEND_GOOGLE_SIGNIN_INTEGRATION.md](FRONTEND_GOOGLE_SIGNIN_INTEGRATION.md) - Frontend integration guide
+- [BACKEND_OAUTH_REDIRECT_REQUIREMENTS.md](BACKEND_OAUTH_REDIRECT_REQUIREMENTS.md) - Redirect URL security requirements
 
 ## Environment Variables to Check
 

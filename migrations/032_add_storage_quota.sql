@@ -8,9 +8,9 @@
 -- - Uses CREATE OR REPLACE for functions (safe, won't fail if exists)
 -- - Uses ADD COLUMN IF NOT EXISTS (safe, won't fail if exists)
 -- - Uses CREATE INDEX IF NOT EXISTS (safe)
--- - Does NOT replace user_tier_info view (would lose avatar_url, quizzes_attempted)
--- - Does NOT replace handle_new_user trigger (would lose OAuth metadata sync)
--- - Adds storage fields to view via ALTER (not DROP/RECREATE)
+-- - Recreates user_tier_info view (DROP + CREATE) preserving avatar_url, quizzes_attempted
+-- - Recreates handle_new_user trigger preserving OAuth metadata sync
+-- - NOTE: View/trigger definitions fully replaced; this version includes all required columns
 
 -- ============================================================================
 -- SECTION 1: Storage Quota Constants
