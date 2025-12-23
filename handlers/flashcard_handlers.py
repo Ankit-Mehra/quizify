@@ -76,12 +76,18 @@ async def generate_flashcards_from_text(
         user_id[:8], trace_id[:8]
     )
     
-    # 1. Validate credits/quota
-    billing_state = get_billing_state(user_id)
-    if billing_state.get("quota_exceeded", False):
+    # 1. Validate credits/quota (use "standard" type - 1 unit like standard quiz)
+    billing_state = await get_billing_state(user_id)
+    if billing_state.available_credits < 1:
         raise HTTPException(
             status_code=402,
-            detail="Credit quota exceeded. Please upgrade your plan."
+            detail={
+                "error": "insufficient_credits",
+                "message": "Not enough credits for flashcard generation.",
+                "available_credits": billing_state.available_credits,
+                "required_credits": 1,
+                "plan": billing_state.plan
+            }
         )
     
     # 2. Ingest content
@@ -94,12 +100,13 @@ async def generate_flashcards_from_text(
     except ContentValidationError as e:
         raise HTTPException(status_code=400, detail=e.message)
     
-    # 3. Consume credits (1 credit per flashcard generation)
-    try:
-        consume_units(user_id, units=1, description="Flashcard generation from text")
-    except Exception as e:
-        logger.error("Failed to consume credits: %s", str(e))
-        raise HTTPException(status_code=402, detail="Failed to process billing")
+    # 3. Consume credits (use "standard" - 1 unit for flashcard generation)
+    success = await consume_units(user_id, "standard")
+    if not success:
+        raise HTTPException(
+            status_code=402,
+            detail="Failed to consume credits for flashcard generation"
+        )
     
     # 4. Generate flashcards
     try:
@@ -112,7 +119,7 @@ async def generate_flashcards_from_text(
         )
     except (FlashcardGenerationError, FlashcardParseError) as e:
         # Refund credit on generation failure
-        refund_units(user_id, units=1, description="Flashcard generation failed")
+        await refund_units(user_id, "standard")
         logger.error("Flashcard generation failed: %s", e.message)
         raise HTTPException(status_code=500, detail=e.message)
     
@@ -197,11 +204,17 @@ async def generate_flashcards_from_file(
     )
     
     # 1. Validate credits
-    billing_state = get_billing_state(user_id)
-    if billing_state.get("quota_exceeded", False):
+    billing_state = await get_billing_state(user_id)
+    if billing_state.available_credits < 1:
         raise HTTPException(
             status_code=402,
-            detail="Credit quota exceeded. Please upgrade your plan."
+            detail={
+                "error": "insufficient_credits",
+                "message": "Not enough credits for flashcard generation.",
+                "available_credits": billing_state.available_credits,
+                "required_credits": 1,
+                "plan": billing_state.plan
+            }
         )
     
     # 2. Get file record and parse content
@@ -234,11 +247,12 @@ async def generate_flashcards_from_file(
         raise HTTPException(status_code=400, detail=e.message)
     
     # 4. Consume credits
-    try:
-        consume_units(user_id, units=1, description="Flashcard generation from file")
-    except Exception as e:
-        logger.error("Failed to consume credits: %s", str(e))
-        raise HTTPException(status_code=402, detail="Failed to process billing")
+    success = await consume_units(user_id, "standard")
+    if not success:
+        raise HTTPException(
+            status_code=402,
+            detail="Failed to consume credits for flashcard generation"
+        )
     
     # 5. Generate flashcards
     try:
@@ -250,7 +264,7 @@ async def generate_flashcards_from_file(
             trace_id=trace_id,
         )
     except (FlashcardGenerationError, FlashcardParseError) as e:
-        refund_units(user_id, units=1, description="Flashcard generation failed")
+        await refund_units(user_id, "standard")
         logger.error("Flashcard generation failed: %s", e.message)
         raise HTTPException(status_code=500, detail=e.message)
     
@@ -337,11 +351,17 @@ async def generate_flashcards_from_url(
     )
     
     # 1. Validate credits
-    billing_state = get_billing_state(user_id)
-    if billing_state.get("quota_exceeded", False):
+    billing_state = await get_billing_state(user_id)
+    if billing_state.available_credits < 1:
         raise HTTPException(
             status_code=402,
-            detail="Credit quota exceeded. Please upgrade your plan."
+            detail={
+                "error": "insufficient_credits",
+                "message": "Not enough credits for flashcard generation.",
+                "available_credits": billing_state.available_credits,
+                "required_credits": 1,
+                "plan": billing_state.plan
+            }
         )
     
     # 2. Ingest content from URL
@@ -360,11 +380,12 @@ async def generate_flashcards_from_url(
         raise  # Re-raise HTTP exceptions from scraping
     
     # 3. Consume credits
-    try:
-        consume_units(user_id, units=1, description="Flashcard generation from URL")
-    except Exception as e:
-        logger.error("Failed to consume credits: %s", str(e))
-        raise HTTPException(status_code=402, detail="Failed to process billing")
+    success = await consume_units(user_id, "standard")
+    if not success:
+        raise HTTPException(
+            status_code=402,
+            detail="Failed to consume credits for flashcard generation"
+        )
     
     # 4. Generate flashcards
     try:
@@ -376,7 +397,7 @@ async def generate_flashcards_from_url(
             trace_id=trace_id,
         )
     except (FlashcardGenerationError, FlashcardParseError) as e:
-        refund_units(user_id, units=1, description="Flashcard generation failed")
+        await refund_units(user_id, "standard")
         logger.error("Flashcard generation failed: %s", e.message)
         raise HTTPException(status_code=500, detail=e.message)
     
