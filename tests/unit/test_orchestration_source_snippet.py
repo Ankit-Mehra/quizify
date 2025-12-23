@@ -42,7 +42,7 @@ class TestOrchestrationSourceSnippet:
         context = " ".join(words)
         # max_words=10, head_words=5, tail_words=0
         snippet = service._format_source_snippet(context, max_words=10, head_words=5, tail_words=0)
-        # Implementation uses " [......] " separator and joins with spaces
+        # Implementation uses ' [......] ' separator (with spaces) and joins parts with spaces
         # Result: "w0 w1 w2 w3 w4" + " " + " [......] " = "w0 w1 w2 w3 w4  [......] "
         assert snippet == "w0 w1 w2 w3 w4  [......] "
 
@@ -51,8 +51,8 @@ class TestOrchestrationSourceSnippet:
         context = " ".join(words)
         # max_words=10, head_words=0, tail_words=5
         snippet = service._format_source_snippet(context, max_words=10, head_words=0, tail_words=5)
-        # Implementation uses " [......] " separator and joins with spaces
-        # Result: " [......] " + " " + "w15 w16..." = " [......]  w15 w16 w17 w18 w19"
+        # Implementation uses ' [......] ' separator (with spaces) and joins parts with spaces
+        # Result: " [......] " + " " + "w15 w16 w17 w18 w19" = " [......]  w15 w16 w17 w18 w19"
         assert snippet == " [......]  w15 w16 w17 w18 w19"
 
     def test_zero_or_negative_max_words_returns_separator_only(self, service):
