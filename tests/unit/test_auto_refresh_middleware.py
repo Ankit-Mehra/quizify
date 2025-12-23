@@ -149,3 +149,90 @@ class TestExtractRefreshToken:
         assert response.status_code == 200
         data = response.json()
         assert data["token"] == "target_token"
+
+
+class TestFunctionSync:
+    """
+    Verify the test copy of _extract_refresh_token matches production.
+    
+    This ensures the unit tests remain valid even though they use a local copy
+    of the function (to avoid heavy middleware dependencies).
+    """
+
+    def test_function_implementation_matches_production(self):
+        """
+        Verify that the test function implementation matches the production code.
+        
+        This test reads the actual source code from both files and compares the
+        function body to ensure they stay in sync. If this test fails, update
+        the local copy in this test file to match middleware/auto_refresh.py.
+        """
+        import inspect
+        import re
+        
+        # Get the source of our test copy
+        test_source = inspect.getsource(_extract_refresh_token)
+        
+        # Extract just the implementation (the actual logic lines)
+        # Skip docstring and get the functional code
+        test_lines = test_source.split('\n')
+        test_impl_lines = []
+        in_docstring = False
+        for line in test_lines:
+            stripped = line.strip()
+            if stripped.startswith('"""') or stripped.startswith("'''"):
+                if in_docstring:
+                    in_docstring = False
+                    continue
+                elif stripped.count('"""') == 2 or stripped.count("'''") == 2:
+                    continue  # Single-line docstring
+                else:
+                    in_docstring = True
+                    continue
+            if in_docstring:
+                continue
+            if stripped.startswith('def '):
+                continue
+            if stripped:
+                test_impl_lines.append(stripped)
+        
+        # Read production source directly from file to avoid import
+        import pathlib
+        middleware_path = pathlib.Path(__file__).parent.parent.parent / "middleware" / "auto_refresh.py"
+        middleware_source = middleware_path.read_text()
+        
+        # Extract _extract_refresh_token function from production code
+        # Find the function and extract its body
+        pattern = r'def _extract_refresh_token\(request: Request\) -> str \| None:.*?(?=\n(?:def |class |# |[A-Z_]+ = |\Z))'
+        match = re.search(pattern, middleware_source, re.DOTALL)
+        assert match, "Could not find _extract_refresh_token in middleware/auto_refresh.py"
+        
+        prod_source = match.group(0)
+        prod_lines = prod_source.split('\n')
+        prod_impl_lines = []
+        in_docstring = False
+        for line in prod_lines:
+            stripped = line.strip()
+            if stripped.startswith('"""') or stripped.startswith("'''"):
+                if in_docstring:
+                    in_docstring = False
+                    continue
+                elif stripped.count('"""') == 2 or stripped.count("'''") == 2:
+                    continue
+                else:
+                    in_docstring = True
+                    continue
+            if in_docstring:
+                continue
+            if stripped.startswith('def '):
+                continue
+            if stripped:
+                prod_impl_lines.append(stripped)
+        
+        # Compare the actual implementation
+        assert test_impl_lines == prod_impl_lines, (
+            f"Test function implementation differs from production!\n"
+            f"Test implementation: {test_impl_lines}\n"
+            f"Production implementation: {prod_impl_lines}\n"
+            f"Please update the test copy to match middleware/auto_refresh.py"
+        )
