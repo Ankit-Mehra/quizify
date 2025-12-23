@@ -43,21 +43,16 @@ async def close_http_client() -> None:
 
 
 def _extract_refresh_token(request: Request) -> str | None:
-    """Return the last refresh_token value from the Cookie header."""
-    cookie_header = request.headers.get("cookie")
-    if not cookie_header:
-        return request.cookies.get("refresh_token")
-
-    refresh_value = None
-    for part in cookie_header.split(";"):
-        name, _, value = part.strip().partition("=")
-        if name == "refresh_token" and value:
-            refresh_value = value
-
-    if refresh_value is None:
-        return request.cookies.get("refresh_token")
-
-    return refresh_value
+    """
+    Extract refresh_token from cookies.
+    
+    Starlette automatically returns the last value if duplicate cookies exist,
+    so we can use the simple request.cookies interface.
+    
+    Returns None if the cookie is missing or empty.
+    """
+    token = request.cookies.get("refresh_token")
+    return token if token else None
 
 # Public routes that should NOT trigger token logic
 EXCLUDE_PATHS = [
