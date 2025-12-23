@@ -63,7 +63,8 @@ _APP_LOGGER_NAMES = [
     "services.db_services.supabase_file",
     "services.redis.sessions",
     "services.share_service",
-    "services.ai_services.gemini_service",
+    "services.llm.gemini_provider",  # Replaced gemini_service
+    "services.llm.groq_provider",
     "services.exporters.csv_anki_exporter",
     "services.exporters.csv_quizify_exporter",
     "services.exporters.docx_exporter",
