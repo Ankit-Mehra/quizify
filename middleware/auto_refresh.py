@@ -8,6 +8,7 @@ import httpx
 from services.logger import app_logger as logger
 from services.cookie_utils import (
     delete_auth_cookie as _delete_auth_cookie,
+    set_auth_cookies as _set_auth_cookies,
     ACCESS_TOKEN_EXPIRE,
     REFRESH_TOKEN_EXPIRE,
 )
@@ -129,25 +130,9 @@ class SupabaseAutoRefreshMiddleware(BaseHTTPMiddleware):
                     logger.debug("Successfully refreshed access token")
 
                     response = await call_next(request)
-                    response.set_cookie(
-                        key="access_token",
-                        value=new_access_token,
-                        httponly=True,
-                        secure=True,
-                        samesite="lax",
-                        domain=app_config.COOKIE_DOMAIN if not app_config.is_testing() else None,
-                        max_age=ACCESS_TOKEN_EXPIRE
-                    )
-                    if new_refresh_token:
-                        response.set_cookie(
-                            key="refresh_token",
-                            value=new_refresh_token,
-                            httponly=True,
-                            secure=True,
-                            samesite="lax",
-                            domain=app_config.COOKIE_DOMAIN if not app_config.is_testing() else None,
-                            max_age=REFRESH_TOKEN_EXPIRE
-                        )
+                    # Use shared cookie utility to ensure consistent settings with login
+                    # This prevents duplicate cookies from mismatched SameSite attributes
+                    _set_auth_cookies(response, new_access_token, new_refresh_token or refresh_token)
                     return response
 
                 else:
