@@ -190,15 +190,20 @@ class LLMRateLimitError(LLMProviderError):
 # Provider Factory
 # =============================================================================
 
-_provider_instance: Optional[ILLMProvider] = None
+# Cache for provider instances (one per provider type)
+_provider_instances: Dict[str, ILLMProvider] = {}
 
 
 def get_llm_provider(provider_name: str = "openai") -> ILLMProvider:
     """
     Get an LLM provider instance.
     
-    Currently only OpenAI is implemented. Future providers can be
-    added by implementing the ILLMProvider interface.
+    Supports multiple providers:
+    - "openai" (default): OpenAI GPT models with PostHog analytics
+    - "gemini": Google Gemini models
+    - "groq": Fast inference with Llama/Mixtral models
+    
+    Provider instances are cached for reuse.
     
     Args:
         provider_name: Name of the provider (default: "openai")
@@ -209,31 +214,40 @@ def get_llm_provider(provider_name: str = "openai") -> ILLMProvider:
     Raises:
         ValueError: If the provider is not supported
     """
-    global _provider_instance
+    global _provider_instances
     
+    # Return cached instance if available
+    if provider_name in _provider_instances:
+        return _provider_instances[provider_name]
+    
+    # Create new instance based on provider name
     if provider_name == "openai":
-        if _provider_instance is None:
-            from services.llm.openai_provider import OpenAIProvider
-            _provider_instance = OpenAIProvider()
-        return _provider_instance
+        from services.llm.openai_provider import OpenAIProvider
+        _provider_instances[provider_name] = OpenAIProvider()
+    elif provider_name == "gemini":
+        from services.llm.gemini_provider import GeminiProvider
+        _provider_instances[provider_name] = GeminiProvider()
+    elif provider_name == "groq":
+        from services.llm.groq_provider import GroqProvider
+        _provider_instances[provider_name] = GroqProvider()
+    else:
+        raise ValueError(f"Unsupported LLM provider: {provider_name}. Supported: openai, gemini, groq")
     
-    # Future providers
-    # if provider_name == "gemini":
-    #     from services.llm.gemini_provider import GeminiProvider
-    #     return GeminiProvider()
-    # if provider_name == "groq":
-    #     from services.llm.groq_provider import GroqProvider
-    #     return GroqProvider()
-    
-    raise ValueError(f"Unsupported LLM provider: {provider_name}")
+    return _provider_instances[provider_name]
 
 
-def reset_provider_instance() -> None:
+def get_available_providers() -> list[str]:
+    """Return list of available provider names."""
+    return ["openai", "gemini", "groq"]
+
+
+def reset_provider_instances() -> None:
     """
-    Reset the cached provider instance.
+    Reset all cached provider instances.
     
     Useful for testing or when provider configuration changes.
     """
-    global _provider_instance
-    _provider_instance = None
+    global _provider_instances
+    _provider_instances.clear()
+    logger.info("LLM provider instances reset")
     logger.info("LLM provider instance reset")
