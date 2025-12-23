@@ -133,9 +133,9 @@ class TestExtractRefreshToken:
         
         assert response.status_code == 200
         data = response.json()
-        # Whitespace-only values are falsy strings, so our function converts them
-        # to None. Note: Cookie parsing behavior may vary - this test validates
-        # current Starlette behavior rather than a specification guarantee.
+        # Starlette normalizes whitespace-only cookie values to empty strings,
+        # which our function treats as falsy and converts to None.
+        # Verified empirically: request.cookies.get("refresh_token") returns ""
         assert data["token"] is None
         assert data["token_type"] == "NoneType"
 
@@ -159,75 +159,77 @@ class TestFunctionSync:
     of the function (to avoid heavy middleware dependencies).
     """
 
-    def test_function_implementation_matches_production(self):
+    @staticmethod
+    def _extract_impl_lines(source_lines: list[str]) -> list[str]:
         """
-        Verify that the test function implementation matches the production code.
+        Extract implementation lines from function source, skipping docstrings.
         
-        This test reads the actual source code from both files and compares the
-        function body to ensure they stay in sync. If this test fails, update
-        the local copy in this test file to match middleware/auto_refresh.py.
+        Args:
+            source_lines: Lines of source code for a function
+            
+        Returns:
+            List of stripped implementation lines (no docstrings, no def line)
         """
-        import inspect
-        import re
-        
-        # Get the source of our test copy
-        test_source = inspect.getsource(_extract_refresh_token)
-        
-        # Extract just the implementation (the actual logic lines)
-        # Skip docstring and get the functional code
-        test_lines = test_source.split('\n')
-        test_impl_lines = []
+        impl_lines = []
         in_docstring = False
-        for line in test_lines:
+        for line in source_lines:
             stripped = line.strip()
+            # Handle docstrings
             if stripped.startswith('"""') or stripped.startswith("'''"):
+                quote = '"""' if stripped.startswith('"""') else "'''"
                 if in_docstring:
                     in_docstring = False
                     continue
-                elif stripped.count('"""') == 2 or stripped.count("'''") == 2:
+                elif stripped.count(quote) >= 2:
                     continue  # Single-line docstring
                 else:
                     in_docstring = True
                     continue
             if in_docstring:
                 continue
+            # Skip function definition line
             if stripped.startswith('def '):
                 continue
+            # Keep non-empty implementation lines
             if stripped:
-                test_impl_lines.append(stripped)
+                impl_lines.append(stripped)
+        return impl_lines
+
+    def test_function_implementation_matches_production(self):
+        """
+        Verify that the test function implementation matches the production code.
         
-        # Read production source directly from file to avoid import
+        This test uses Python's AST module to reliably extract the function body,
+        avoiding brittle regex patterns. If this test fails, update the local copy
+        in this test file to match middleware/auto_refresh.py.
+        """
+        import ast
+        import inspect
         import pathlib
+        
+        # Get the source of our test copy
+        test_source = inspect.getsource(_extract_refresh_token)
+        test_impl_lines = self._extract_impl_lines(test_source.split('\n'))
+        
+        # Read production source and use AST to extract the function
         middleware_path = pathlib.Path(__file__).parent.parent.parent / "middleware" / "auto_refresh.py"
         middleware_source = middleware_path.read_text()
         
-        # Extract _extract_refresh_token function from production code
-        # Find the function and extract its body
-        pattern = r'def _extract_refresh_token\(request: Request\) -> str \| None:.*?(?=\n(?:def |class |# |[A-Z_]+ = |\Z))'
-        match = re.search(pattern, middleware_source, re.DOTALL)
-        assert match, "Could not find _extract_refresh_token in middleware/auto_refresh.py"
+        # Parse the module and find our target function
+        tree = ast.parse(middleware_source)
+        func_node = None
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == "_extract_refresh_token":
+                func_node = node
+                break
         
-        prod_source = match.group(0)
-        prod_lines = prod_source.split('\n')
-        prod_impl_lines = []
-        in_docstring = False
-        for line in prod_lines:
-            stripped = line.strip()
-            if stripped.startswith('"""') or stripped.startswith("'''"):
-                if in_docstring:
-                    in_docstring = False
-                    continue
-                elif stripped.count('"""') == 2 or stripped.count("'''") == 2:
-                    continue
-                else:
-                    in_docstring = True
-                    continue
-            if in_docstring:
-                continue
-            if stripped.startswith('def '):
-                continue
-            if stripped:
-                prod_impl_lines.append(stripped)
+        assert func_node is not None, "Could not find _extract_refresh_token in middleware/auto_refresh.py"
+        
+        # Extract the function source using line numbers from AST
+        source_lines = middleware_source.split('\n')
+        # node.lineno is 1-indexed, end_lineno is inclusive
+        func_lines = source_lines[func_node.lineno - 1:func_node.end_lineno]
+        prod_impl_lines = self._extract_impl_lines(func_lines)
         
         # Compare the actual implementation
         assert test_impl_lines == prod_impl_lines, (
