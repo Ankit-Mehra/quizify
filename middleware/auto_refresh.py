@@ -126,6 +126,34 @@ class SupabaseAutoRefreshMiddleware(BaseHTTPMiddleware):
                     headers = MutableHeaders(scope=request.scope)
                     headers["Authorization"] = f"Bearer {new_access_token}"
                     logger.debug("Successfully refreshed access token")
+                    
+                    # CRITICAL: Update Redis session mapping if refresh token changed
+                    # Supabase returns a NEW refresh token on refresh - we must update the mapping
+                    # or subsequent requests will fail to find the session
+                    if new_refresh_token and new_refresh_token != refresh_token:
+                        redis_client = getattr(request.app.state, "redis", None)
+                        if redis_client:
+                            try:
+                                session_service = SessionService(redis_client)
+                                session_id = await session_service.find_session_by_refresh_token(refresh_token)
+                                if session_id:
+                                    await session_service.update_refresh_token(
+                                        session_id=session_id,
+                                        old_refresh_token=refresh_token,
+                                        new_refresh_token=new_refresh_token
+                                    )
+                                    logger.info(
+                                        f"Updated Redis session {session_id[:12]}... with new refresh token"
+                                    )
+                                else:
+                                    logger.warning(
+                                        "Could not find session for old refresh token during refresh - "
+                                        "session mapping may be stale"
+                                    )
+                            except Exception as redis_error:
+                                # Log but don't fail - the request can still proceed
+                                # Next request will fail with 401 if session not found
+                                logger.error(f"Failed to update Redis session with new refresh token: {redis_error}")
 
                     response = await call_next(request)
                     # Use shared cookie utility to ensure consistent settings with login

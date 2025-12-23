@@ -1544,6 +1544,7 @@ async def google_signin_callback(
         # Return redirect with cookies set
         final_redirect = RedirectResponse(
             url=f"{base_redirect_url}{redirect_params}",
+            url=f"{base_redirect_url}{redirect_params}",
             status_code=302
         )
         
