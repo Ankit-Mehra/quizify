@@ -1,7 +1,7 @@
 """
 Anki CSV Exporter.
 
-Exports quizzes to Anki-compatible format for spaced repetition learning.
+Exports quizzes and flashcards to Anki-compatible format for spaced repetition learning.
 Creates flashcard-style exports with Front/Back columns.
 
 Format: Tab-separated values (TSV) or comma-separated
@@ -18,6 +18,8 @@ from schemas.export import (
     ExportQuestionTrueFalse,
     ExportQuestionFillBlank,
     ExportQuestionMatching,
+    FlashcardDeckExportData,
+    ExportFlashcard,
 )
 from services.exporters.base import BaseExporter
 from services.exporters.csv_utils import generate_tsv_bytes
@@ -29,12 +31,14 @@ class CsvAnkiExporter(BaseExporter):
     """
     Anki CSV Exporter.
     
-    Exports quiz as flashcards in Anki-compatible TSV format.
-    Each question becomes one or more flashcards.
+    Exports quizzes and flashcard decks in Anki-compatible TSV format.
+    
+    For quizzes: Each question becomes one or more flashcards.
+    For flashcard decks: Direct export of Front/Back cards.
     
     Card Format:
-    - Front: Question (with options for MCQ)
-    - Back: Answer with optional explanation
+    - Front: Question or prompt
+    - Back: Answer with optional explanation/hint
     """
 
     FORMAT_NAME = "csv_anki"
@@ -81,6 +85,76 @@ class CsvAnkiExporter(BaseExporter):
             content_type=self.CONTENT_TYPE,
             filename=filename
         )
+
+    async def export_flashcards(
+        self,
+        deck_data: FlashcardDeckExportData,
+        include_hints: bool = True
+    ) -> ExportResult:
+        """
+        Export flashcard deck to Anki TSV format.
+        
+        This method handles native flashcard exports directly.
+        Cards are exported as Front/Back pairs, with optional hints
+        appended to the back.
+        
+        Args:
+            deck_data: Flashcard deck data with cards
+            include_hints: Whether to include hints in the back
+            
+        Returns:
+            ExportResult with TSV bytes
+        """
+        logger.info(f"Exporting flashcard deck '{deck_data.title}' to Anki format with {deck_data.card_count} cards")
+        
+        # Build rows (no header - Anki doesn't need it)
+        rows = []
+        
+        for card in deck_data.cards:
+            card_row = self._flashcard_to_card(card, include_hints)
+            rows.append(card_row)
+        
+        # Generate TSV bytes (Anki prefers TSV)
+        tsv_bytes = generate_tsv_bytes(rows, include_bom=False)
+        
+        # Generate filename with .txt extension for Anki
+        filename = self._sanitize_filename(deck_data.title) + "-flashcards-anki.txt"
+        
+        logger.info(f"Anki flashcard export generated: {len(tsv_bytes)} bytes, {len(rows)} cards, filename: {filename}")
+        
+        return ExportResult(
+            content=tsv_bytes,
+            content_type=self.CONTENT_TYPE,
+            filename=filename
+        )
+
+    def _flashcard_to_card(
+        self,
+        card: ExportFlashcard,
+        include_hints: bool
+    ) -> List[str]:
+        """
+        Convert a native flashcard to Anki row (Front, Back).
+        
+        Args:
+            card: The flashcard to convert
+            include_hints: Whether to include the hint in the back
+            
+        Returns:
+            List of [front, back] strings
+        """
+        front = card.front
+        
+        # Build back with answer and optional hint
+        back_parts = [f"<b>{card.back}</b>"]
+        
+        if include_hints and card.hint:
+            back_parts.append("")
+            back_parts.append(f"<i>Hint: {card.hint}</i>")
+        
+        back = "<br>".join(back_parts)
+        
+        return [front, back]
 
     def _question_to_cards(
         self,

@@ -8,6 +8,7 @@ including generation, deck management, card CRUD, and study sessions.
 from typing import List
 from uuid import UUID
 from fastapi import APIRouter, Depends, Query, Path, Body
+from fastapi.responses import Response
 
 from dependencies.auth_dependencies import get_current_user_id, get_current_user_token
 from handlers.flashcard_handlers import (
@@ -22,6 +23,7 @@ from handlers.flashcard_handlers import (
     delete_single_flashcard,
     start_study_session,
     complete_flashcard_study_session,
+    export_flashcard_deck,
 )
 from schemas.flashcard import (
     TextFlashcardRequest,
@@ -38,6 +40,7 @@ from schemas.flashcard import (
     StudySessionComplete,
     StudySessionSummary,
 )
+from schemas.export import FlashcardExportRequest
 
 
 router = APIRouter(prefix="/api/flashcards", tags=["flashcards"])
@@ -227,3 +230,61 @@ def complete_session_endpoint(
 ):
     """Complete a study session with results."""
     return complete_flashcard_study_session(request, user_id, user_token)
+
+
+# =============================================================================
+# Export Endpoints
+# =============================================================================
+
+@router.post(
+    "/decks/{deck_id}/export",
+    summary="Export flashcard deck",
+    description="""
+Export a flashcard deck to the specified format.
+
+**Supported Formats:**
+- `csv_anki` - Anki-compatible TSV format for importing to Anki
+- `pdf` - Printable PDF flashcard sheets
+
+**Options:**
+- `include_hints` - Include hints in export (default: true)
+
+**Returns:**
+- Binary file download with appropriate Content-Type
+    """,
+    responses={
+        200: {
+            "description": "Export successful",
+            "content": {
+                "text/tab-separated-values": {},
+                "application/pdf": {},
+            }
+        },
+        401: {"description": "Authentication required"},
+        403: {"description": "Access denied (not owner)"},
+        404: {"description": "Deck not found"},
+        422: {"description": "Invalid format or empty deck"},
+    }
+)
+async def export_deck_endpoint(
+    request: FlashcardExportRequest,
+    deck_id: UUID = Path(..., description="UUID of the deck to export"),
+    user_id: str = Depends(get_current_user_id),
+    user_token: str = Depends(get_current_user_token),
+) -> Response:
+    """Export a flashcard deck to the specified format."""
+    result = await export_flashcard_deck(
+        deck_id=str(deck_id),
+        format=request.format,
+        include_hints=request.include_hints,
+        user_id=user_id,
+        user_token=user_token,
+    )
+    
+    return Response(
+        content=result.content,
+        media_type=result.content_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{result.filename}"'
+        }
+    )

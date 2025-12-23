@@ -755,3 +755,95 @@ def complete_flashcard_study_session(
         cards_learning=sum(1 for r in request.results if r.result in ("again", "hard")),
         streak_days=0,  # TODO: Calculate streak
     )
+
+
+# =============================================================================
+# Flashcard Export Handlers
+# =============================================================================
+
+async def export_flashcard_deck(
+    deck_id: str,
+    format: str,
+    include_hints: bool,
+    user_id: str,
+    user_token: str,
+):
+    """
+    Export a flashcard deck to the specified format.
+    
+    Args:
+        deck_id: UUID of the deck to export
+        format: Export format (csv_anki, pdf)
+        include_hints: Whether to include hints in export
+        user_id: ID of the requesting user
+        user_token: JWT token for RLS enforcement
+        
+    Returns:
+        ExportResult with file bytes and metadata
+    """
+    from uuid import UUID
+    from schemas.export import (
+        FlashcardDeckExportData,
+        ExportFlashcard,
+        FlashcardExportFormat,
+    )
+    from services.exporters.csv_anki_exporter import CsvAnkiExporter
+    
+    logger.info(f"Exporting flashcard deck {deck_id[:8]}... format={format} for user {user_id[:8]}...")
+    
+    # 1. Validate format
+    try:
+        export_format = FlashcardExportFormat(format)
+    except ValueError:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unsupported export format: {format}. Supported: csv_anki, pdf"
+        )
+    
+    # 2. Get deck with cards
+    deck = get_deck(deck_id, user_token)
+    if not deck:
+        raise HTTPException(status_code=404, detail="Deck not found")
+    
+    # 3. Get cards for the deck
+    cards = get_deck_cards(deck_id, user_token)
+    if not cards:
+        raise HTTPException(status_code=422, detail="Deck has no cards to export")
+    
+    # 4. Build export data model
+    deck_export_data = FlashcardDeckExportData(
+        deck_id=UUID(deck["id"]),
+        title=deck["title"],
+        description=deck.get("description"),
+        created_at=deck["created_at"],
+        content_source_type=deck.get("content_source_type"),
+        content_source_reference=deck.get("content_source_reference"),
+        cards=[
+            ExportFlashcard(
+                id=UUID(card["id"]),
+                front=card["front"],
+                back=card["back"],
+                hint=card.get("hint"),
+            )
+            for card in cards
+        ]
+    )
+    
+    # 5. Export based on format
+    if export_format == FlashcardExportFormat.CSV_ANKI:
+        exporter = CsvAnkiExporter()
+        result = await exporter.export_flashcards(deck_export_data, include_hints)
+    elif export_format == FlashcardExportFormat.PDF:
+        # PDF export - to be implemented in Epic 5.2
+        from services.exporters.pdf_flashcard_exporter import PdfFlashcardExporter
+        exporter = PdfFlashcardExporter()
+        result = await exporter.export_flashcards(deck_export_data, include_hints)
+    else:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Export format {format} not yet implemented"
+        )
+    
+    logger.info(f"Flashcard export complete: {result.filename}, {len(result.content)} bytes")
+    
+    return result
