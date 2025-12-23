@@ -11,13 +11,24 @@ Setup:
 import pytest
 import os
 import redis.asyncio as redis
+from redis.exceptions import ConnectionError
 
 
 @pytest.fixture
 async def redis_client():
-    """Create real Redis client for integration testing"""
+    """Create real Redis client for integration testing.
+    
+    Skips tests automatically if Redis is not available.
+    """
     redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
     client = redis.from_url(redis_url, decode_responses=True)
+    
+    # Try to connect - skip if Redis unavailable
+    try:
+        await client.ping()
+    except (ConnectionError, OSError) as e:
+        await client.aclose()
+        pytest.skip(f"Redis not available: {e}")
     
     # Clean up any existing test data
     await client.flushdb()
@@ -138,6 +149,13 @@ async def test_redis_connection_pool():
         max_connections=10,
         decode_responses=True
     )
+    
+    # Try to connect - skip if Redis unavailable
+    try:
+        await client.ping()
+    except (ConnectionError, OSError) as e:
+        await client.aclose()
+        pytest.skip(f"Redis not available: {e}")
     
     # Perform multiple operations
     for i in range(20):

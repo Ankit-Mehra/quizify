@@ -132,7 +132,11 @@ class TestAuthSignup:
         data = response.json()
         assert "detail" in data, f"Error response missing detail: {data}"
         # Verify Pydantic caught the password length issue
-        assert any("password" in str(err).lower() for err in data["detail"]), \
+        # Note: Custom validation handler returns {"detail": string, "errors": [...]}
+        errors = data.get("errors") or data.get("detail", [])
+        if isinstance(errors, str):
+            errors = [errors]
+        assert any("password" in str(err).lower() for err in errors), \
             f"Expected password validation error, got: {data}"
     
     def test_missing_required_fields_returns_422(self, mock_supabase_client):

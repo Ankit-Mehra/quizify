@@ -548,6 +548,48 @@ def mock_get_quiz_from_database(quiz_id, user_id=None):
     return _quiz_storage.get_quiz(quiz_id, user_id)
 
 
+# === Billing Service Mocks ===
+# These mock the credit/billing system for integration tests
+
+class MockUserBillingState:
+    """Mock billing state for integration tests."""
+    def __init__(self, plan="free", available_credits=5.0, free_remaining=10, subscription_remaining=0):
+        self.plan = plan
+        self.available_credits = available_credits
+        self.free_remaining = free_remaining
+        self.subscription_remaining = subscription_remaining
+
+
+async def mock_get_billing_state(user_id: str):
+    """Mock billing state - always returns sufficient credits for testing."""
+    return MockUserBillingState(
+        plan="free",
+        available_credits=5.0,  # Enough for testing
+        free_remaining=10,
+        subscription_remaining=0
+    )
+
+
+async def mock_consume_units(user_id: str, quiz_type: str) -> bool:
+    """Mock credit consumption - always succeeds for testing."""
+    return True
+
+
+async def mock_refund_units(user_id: str, quiz_type: str) -> bool:
+    """Mock credit refund - always succeeds for testing."""
+    return True
+
+
+async def mock_finalize_credits_after_success(user_id: str, quiz_type: str) -> None:
+    """Mock finalizing credits - no-op for testing."""
+    pass
+
+
+async def mock_invalidate_user_tier_cache(user_id: str) -> None:
+    """Mock cache invalidation - no-op for testing."""
+    pass
+
+
 async def mock_get_quiz_metadata_cached(quiz_id, user_id, user_token=None):
     """Mock cached metadata retrieval using in-memory quiz storage."""
     quiz = _quiz_storage.get_quiz(quiz_id, user_id)
@@ -750,6 +792,14 @@ def setup_integration_mocks():
         stack.enter_context(patch("handlers.quiz_handlers.save_file_to_supabase_async", side_effect=mock_save_file_to_supabase))
         stack.enter_context(patch("handlers.quiz_handlers.save_metadata", side_effect=mock_save_metadata))
         stack.enter_context(patch("handlers.file_handlers.save_file_to_supabase_async", side_effect=mock_save_file_to_supabase))
+        
+        # Patch billing service functions for quiz generation credits
+        # These are imported into quiz_handlers, so patch at the usage location
+        stack.enter_context(patch("handlers.quiz_handlers.get_billing_state", side_effect=mock_get_billing_state))
+        stack.enter_context(patch("handlers.quiz_handlers.consume_units", side_effect=mock_consume_units))
+        stack.enter_context(patch("handlers.quiz_handlers.refund_units", side_effect=mock_refund_units))
+        stack.enter_context(patch("handlers.quiz_handlers.finalize_credits_after_success", side_effect=mock_finalize_credits_after_success))
+        stack.enter_context(patch("handlers.quiz_handlers.invalidate_user_tier_cache", side_effect=mock_invalidate_user_tier_cache))
         
         yield mock_supabase
     
