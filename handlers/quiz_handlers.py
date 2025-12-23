@@ -27,7 +27,7 @@ from schemas.quiz import (
     BloomLevel, Difficulty, ALL_QUESTION_TYPES
 )
 from typing import Dict, Any, List, Optional
-from services.ai_services.ingestion_service import IngestionService
+from services.content.rag_ingestion_service import RAGIngestionService
 from services.ai_services.concept_extraction_service import ConceptExtractionService
 from services.ai_services.orchestration_service import QuizOrchestrationService
 from datetime import datetime, date
@@ -164,7 +164,7 @@ async def _ingest_and_extract_concepts(
     user_id: str,
     user_token: str,
     trace_id: str,
-    ingestion_service: IngestionService,
+    ingestion_service: RAGIngestionService,
     concept_service: ConceptExtractionService,
     content_source_type: str = "text"
 ) -> tuple[str, List[Dict], List[Dict]]:
@@ -1525,7 +1525,7 @@ async def _generate_enhanced_mode(
     pipeline_start = time.time()
     
     # Initialize services
-    ingestion_service = IngestionService()
+    ingestion_service = RAGIngestionService()
     concept_service = ConceptExtractionService()
     orchestration_service = QuizOrchestrationService()
     

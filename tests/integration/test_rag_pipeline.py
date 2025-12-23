@@ -24,7 +24,7 @@ async def test_rag_pipeline_flow():
     concept_id_2 = str(uuid4())
 
     # Mock Services
-    with patch("handlers.quiz_handlers.IngestionService") as MockIngestion, \
+    with patch("handlers.quiz_handlers.RAGIngestionService") as MockIngestion, \
          patch("handlers.quiz_handlers.ConceptExtractionService") as MockExtraction, \
          patch("handlers.quiz_handlers.QuizOrchestrationService") as MockOrchestration, \
          patch("handlers.quiz_handlers.save_quiz_to_database") as mock_save, \
@@ -162,7 +162,7 @@ async def test_rag_pipeline_concept_extraction_failure():
         mode="enhanced"  # Force enhanced mode to test concept extraction
     )
     
-    with patch("handlers.quiz_handlers.IngestionService") as MockIngestion, \
+    with patch("handlers.quiz_handlers.RAGIngestionService") as MockIngestion, \
          patch("handlers.quiz_handlers.ConceptExtractionService") as MockExtraction, \
          patch("handlers.quiz_handlers.reserve_credits_atomic") as mock_reserve_credits, \
          patch("handlers.quiz_handlers.refund_credits_on_failure") as mock_refund_credits:
@@ -202,7 +202,7 @@ async def test_rag_pipeline_all_questions_fail():
         mode="enhanced"
     )
     
-    with patch("handlers.quiz_handlers.IngestionService") as MockIngestion, \
+    with patch("handlers.quiz_handlers.RAGIngestionService") as MockIngestion, \
          patch("handlers.quiz_handlers.ConceptExtractionService") as MockExtraction, \
          patch("handlers.quiz_handlers.QuizOrchestrationService") as MockOrchestration, \
          patch("handlers.quiz_handlers.reserve_credits_atomic") as mock_reserve_credits, \
