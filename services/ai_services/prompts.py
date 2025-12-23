@@ -216,3 +216,204 @@ RAG_QUESTION_TYPE_PROMPTS = {
     "fill_blank": RAG_PROMPT_FILL_BLANK,
     "matching": RAG_PROMPT_MATCHING,
 }
+
+
+# =============================================================================
+# FLASHCARD GENERATION PROMPTS
+# =============================================================================
+
+def build_flashcard_prompt(
+    text: str, 
+    num_cards: int,
+    card_style: str = "mixed",
+    include_hints: bool = False,
+) -> str:
+    """
+    Build a prompt for generating flashcards from text.
+    
+    Based on best practices from research:
+    - Atomic: One fact per card
+    - Self-contained: No references to "the text" or "the article"
+    - Concise: Front/Back under 15 words each ideally
+    - Variety: Mix definitions, "why" questions, and cloze deletions
+    
+    Args:
+        text: Source text to generate flashcards from
+        num_cards: Number of flashcards to generate
+        card_style: Style of cards ("question_answer", "term_definition", "cloze", "mixed")
+        include_hints: Whether to include hints in the output
+        
+    Returns:
+        Formatted prompt string
+    """
+    logger.debug("Building flashcard prompt for %d cards, style: %s", num_cards, card_style)
+    
+    style_instructions = _get_card_style_instructions(card_style)
+    hint_instruction = _get_hint_instruction(include_hints)
+    
+    prompt = f"""You are an expert educational content creator specializing in flashcard generation for effective learning.
+
+Create exactly {num_cards} high-quality flashcards from the provided text.
+
+## OUTPUT FORMAT (STRICT JSON)
+Return ONLY valid JSON with this exact structure:
+{{
+  "cards": [
+    {{
+      "front": "Question or prompt text",
+      "back": "Answer or response text"{', "hint": "Optional hint"' if include_hints else ''}
+    }}
+  ]
+}}
+
+## FLASHCARD BEST PRACTICES (FOLLOW STRICTLY)
+
+1. **ATOMIC**: Each card tests ONE discrete fact or concept only.
+   - BAD: "What are the three main causes of WWI?" (multiple facts)
+   - GOOD: "What event triggered the start of WWI?" (single fact)
+
+2. **SELF-CONTAINED**: Cards must be understandable without the original text.
+   - BAD: "According to the text, what happened next?"
+   - BAD: "What does the author say about this?"
+   - GOOD: "What is the primary function of mitochondria?"
+
+3. **CONCISE**: Keep both sides brief (5-15 words ideal).
+   - Front: Clear, specific question or prompt
+   - Back: Direct answer without restating the question
+
+4. **NO REPETITION**: The answer should NOT restate the question.
+   - BAD: Front: "What is the capital of France?" Back: "The capital of France is Paris."
+   - GOOD: Front: "What is the capital of France?" Back: "Paris"
+
+{style_instructions}
+
+{hint_instruction}
+
+## IMPORTANT RULES
+- Generate EXACTLY {num_cards} cards, no more, no less.
+- Use ONLY information from the provided text.
+- Ensure factual accuracy - do not invent or assume facts.
+- Make questions clear and unambiguous.
+- Vary question types when using "mixed" style.
+- Do NOT include card numbers or prefixes in the text.
+
+## SOURCE TEXT
+\"\"\"
+{text}
+\"\"\"
+
+Generate the flashcards now as valid JSON:"""
+
+    return prompt.strip()
+
+
+def _get_card_style_instructions(card_style: str) -> str:
+    """Get style-specific instructions for flashcard generation."""
+    
+    style_map = {
+        "question_answer": """## CARD STYLE: Question & Answer
+Create cards where the front is a direct question and the back is the answer.
+Examples:
+- Front: "What year did World War II end?" → Back: "1945"
+- Front: "Who developed the theory of relativity?" → Back: "Albert Einstein"
+""",
+        "term_definition": """## CARD STYLE: Term & Definition
+Create cards where the front is a term/concept and the back is its definition.
+Examples:
+- Front: "Photosynthesis" → Back: "The process by which plants convert sunlight into energy"
+- Front: "Mitochondria" → Back: "Cell organelles that generate most of the cell's ATP energy"
+""",
+        "cloze": """## CARD STYLE: Cloze Deletion (Fill-in-the-blank)
+Create cards where the front is a sentence with a key term blanked out (use _____).
+Examples:
+- Front: "The _____ is the powerhouse of the cell." → Back: "mitochondria"
+- Front: "Einstein published his theory of relativity in _____." → Back: "1905"
+""",
+        "mixed": """## CARD STYLE: Mixed (Variety)
+Create a variety of card types for comprehensive learning:
+- Some question/answer cards (Who? What? When? Why? How?)
+- Some term/definition cards
+- Some cloze deletion cards (fill-in-blank with _____)
+- Include both factual recall and conceptual understanding questions
+Mix these types throughout the deck for engaging study sessions.
+""",
+    }
+    
+    return style_map.get(card_style, style_map["mixed"])
+
+
+def _get_hint_instruction(include_hints: bool) -> str:
+    """Get hint instruction based on configuration."""
+    if include_hints:
+        return """## HINTS (OPTIONAL)
+Include a brief hint for each card to help learners who are stuck.
+Hints should:
+- Give a clue without revealing the answer
+- Reference the topic area or first letter
+- Be shorter than the answer itself
+Example: For "What is the capital of France?" → Hint: "Starts with 'P', city of lights"
+"""
+    return ""
+
+
+# Prompt for generating flashcards with difficulty levels
+def build_flashcard_prompt_with_difficulty(
+    text: str,
+    num_cards: int,
+    difficulty: str = "mixed",
+    card_style: str = "mixed",
+    include_hints: bool = False,
+) -> str:
+    """
+    Build a flashcard prompt with difficulty level targeting.
+    
+    Args:
+        text: Source text
+        num_cards: Number of cards to generate
+        difficulty: "easy", "medium", "hard", or "mixed"
+        card_style: Style of cards
+        include_hints: Whether to include hints
+        
+    Returns:
+        Formatted prompt string
+    """
+    base_prompt = build_flashcard_prompt(text, num_cards, card_style, include_hints)
+    
+    difficulty_instructions = {
+        "easy": """
+## DIFFICULTY: EASY
+Focus on:
+- Basic definitions and terminology
+- Simple factual recall (names, dates, places)
+- Recognition-level questions
+""",
+        "medium": """
+## DIFFICULTY: MEDIUM  
+Focus on:
+- Understanding concepts and relationships
+- Cause and effect connections
+- Comparison questions
+""",
+        "hard": """
+## DIFFICULTY: HARD
+Focus on:
+- Application of concepts to new situations
+- Analysis and synthesis questions
+- "Why" and "How" questions requiring deeper understanding
+""",
+        "mixed": """
+## DIFFICULTY: MIXED
+Create a balanced mix of difficulty levels:
+- ~30% Easy (basic recall)
+- ~50% Medium (understanding)
+- ~20% Hard (application/analysis)
+"""
+    }
+    
+    difficulty_text = difficulty_instructions.get(difficulty, difficulty_instructions["mixed"])
+    
+    # Insert difficulty instructions before "## IMPORTANT RULES"
+    return base_prompt.replace(
+        "## IMPORTANT RULES",
+        f"{difficulty_text}\n## IMPORTANT RULES"
+    )
