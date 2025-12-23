@@ -9,8 +9,6 @@ from services.logger import app_logger as logger
 from services.cookie_utils import (
     delete_auth_cookie as _delete_auth_cookie,
     set_auth_cookies as _set_auth_cookies,
-    ACCESS_TOKEN_EXPIRE,
-    REFRESH_TOKEN_EXPIRE,
 )
 from services.redis.sessions import SessionService
 from config import config as app_config

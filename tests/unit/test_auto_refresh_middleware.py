@@ -6,6 +6,11 @@ These tests verify the cookie extraction behavior, particularly:
 2. Duplicate cookie handling (Starlette returns last value)
 3. Empty string cookie handling (returns None)
 4. Missing cookie handling (returns None)
+
+Note: We define a local copy of _extract_refresh_token to avoid importing the
+middleware module, which has heavy dependencies (Redis, httpx, etc.) that would
+complicate unit test isolation. The implementation is simple enough (~3 lines)
+that keeping this in sync is trivial, and integration tests cover the full flow.
 """
 
 import pytest
@@ -18,8 +23,9 @@ from starlette.requests import Request
 
 def _extract_refresh_token(request: Request) -> str | None:
     """
-    Extract refresh_token from cookies.
+    Extract refresh_token from cookies (local copy for test isolation).
     
+    This mirrors middleware.auto_refresh._extract_refresh_token exactly.
     Starlette automatically returns the last value if duplicate cookies exist,
     so we can use the simple request.cookies interface.
     
@@ -127,8 +133,9 @@ class TestExtractRefreshToken:
         
         assert response.status_code == 200
         data = response.json()
-        # Starlette strips whitespace, resulting in empty string which our function
-        # converts to None (falsy check)
+        # Whitespace-only values are falsy strings, so our function converts them
+        # to None. Note: Cookie parsing behavior may vary - this test validates
+        # current Starlette behavior rather than a specification guarantee.
         assert data["token"] is None
         assert data["token_type"] == "NoneType"
 
