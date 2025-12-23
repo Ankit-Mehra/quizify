@@ -64,8 +64,18 @@ EXCLUDE_PATHS = [
     "/docs",
     "/openapi.json",
     "/redoc",
+    "/health",  # Health check endpoint (public, no auth required)
+    "/api/contact",  # Contact form endpoints (public, no auth required)
+    "/api/share/public",  # Public quiz sharing (no auth required)
     "/api/auth/login",
-    "/api/auth/signup"
+    "/api/auth/signup",
+    "/api/auth/confirm",  # Email confirmation callback (no auth required)
+    "/api/auth/forgot-password",  # Password reset request (no auth required)
+    "/api/auth/reset-password",  # Password reset with token (no auth required)
+    "/api/auth/resend-verification",  # Resend verification email (no auth required)
+    "/api/auth/google/signin",  # Google OAuth initiate (no auth required)
+    "/api/auth/google/signin/callback",  # Google OAuth callback (no auth required)
+    "/api/auth/google/signin/token",  # Google ID token signin (no auth required)
 ]
 
 class SupabaseAutoRefreshMiddleware(BaseHTTPMiddleware):
