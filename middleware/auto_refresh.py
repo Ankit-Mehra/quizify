@@ -9,6 +9,8 @@ from services.logger import app_logger as logger
 from services.cookie_utils import (
     delete_auth_cookie as _delete_auth_cookie,
     set_auth_cookies as _set_auth_cookies,
+    ACCESS_TOKEN_COOKIE_NAME,
+    REFRESH_TOKEN_COOKIE_NAME,
 )
 from services.redis.sessions import SessionService
 from config import config as app_config
@@ -50,7 +52,7 @@ def _extract_refresh_token(request: Request) -> str | None:
     
     Returns None if the cookie is missing or empty.
     """
-    token = request.cookies.get("refresh_token")
+    token = request.cookies.get(REFRESH_TOKEN_COOKIE_NAME)
     return token if token else None
 
 # Public routes that should NOT trigger token logic
@@ -80,7 +82,7 @@ class SupabaseAutoRefreshMiddleware(BaseHTTPMiddleware):
         if any(path.startswith(p) for p in EXCLUDE_PATHS):
             return await call_next(request)
 
-        access_token = request.cookies.get("access_token")
+        access_token = request.cookies.get(ACCESS_TOKEN_COOKIE_NAME)
         refresh_token = _extract_refresh_token(request)
 
         if access_token:
@@ -185,8 +187,8 @@ class SupabaseAutoRefreshMiddleware(BaseHTTPMiddleware):
                         content={"detail": "Session expired. Please log in again."}
                     )
                     # Clear both tokens so frontend knows user is logged out
-                    _delete_auth_cookie(response, "refresh_token")
-                    _delete_auth_cookie(response, "access_token")
+                    _delete_auth_cookie(response, REFRESH_TOKEN_COOKIE_NAME)
+                    _delete_auth_cookie(response, ACCESS_TOKEN_COOKIE_NAME)
                     return response
             except Exception:
                 logger.exception("Token refresh failed - clearing cookies")
@@ -208,8 +210,8 @@ class SupabaseAutoRefreshMiddleware(BaseHTTPMiddleware):
                     content={"detail": "Session expired. Please log in again."}
                 )
                 # Clear both tokens
-                _delete_auth_cookie(response, "refresh_token")
-                _delete_auth_cookie(response, "access_token")
+                _delete_auth_cookie(response, REFRESH_TOKEN_COOKIE_NAME)
+                _delete_auth_cookie(response, ACCESS_TOKEN_COOKIE_NAME)
                 return response
 
         # No access and no refresh token — let route-level auth handle it

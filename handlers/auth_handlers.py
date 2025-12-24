@@ -22,6 +22,8 @@ from services.cookie_utils import (
     get_cookie_settings as _get_cookie_settings,
     delete_auth_cookie as _delete_auth_cookie,
     set_auth_cookies as _set_auth_cookies,
+    ACCESS_TOKEN_COOKIE_NAME,
+    REFRESH_TOKEN_COOKIE_NAME,
 )
 from services.redis.sessions import SessionInfo, SessionService, TooManySessionsError
 from services.oauth_utils import (
@@ -320,7 +322,7 @@ async def login(request_body: LoginRequest, response: Response, request: Request
 
 
 async def refresh_session(request: Request, response: Response):
-    refresh_token = request.cookies.get("refresh_token")
+    refresh_token = request.cookies.get(REFRESH_TOKEN_COOKIE_NAME)
     if not refresh_token:
         raise HTTPException(status_code=401, detail="Missing refresh token")
 
@@ -329,15 +331,24 @@ async def refresh_session(request: Request, response: Response):
         session = supabase.auth.refresh_session(refresh_token)
         if session.session is None or not hasattr(session.session, "access_token"):
             raise HTTPException(status_code=401, detail="Invalid refresh token or session expired")
+        
         new_access_token = session.session.access_token
-
-        # Use centralized cookie settings for consistency
-        cookie_settings = _get_cookie_settings()
-        response.set_cookie(
-            key="access_token",
-            value=new_access_token,
-            **cookie_settings
-        )
+        new_refresh_token = getattr(session.session, "refresh_token", None)
+        
+        # Use centralized cookie utility to set both tokens consistently
+        # This handles Supabase refresh token rotation - if Supabase returns a new
+        # refresh_token, we must update the cookie to prevent stale token issues
+        if new_refresh_token:
+            _set_auth_cookies(response, new_access_token, new_refresh_token)
+        else:
+            # Fallback: only update access token if no new refresh token provided
+            cookie_settings = _get_cookie_settings()
+            response.set_cookie(
+                key=ACCESS_TOKEN_COOKIE_NAME,
+                value=new_access_token,
+                **cookie_settings
+            )
+        
         return {"message": "Session refreshed"}
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid refresh token")
@@ -375,9 +386,9 @@ async def logout(
             # Match the same logic used in auth_dependencies.py
             if app_config.is_development():
                 refresh_token_header = request.headers.get("X-Refresh-Token")
-                refresh_token = refresh_token_header or request.cookies.get("refresh_token")
+                refresh_token = refresh_token_header or request.cookies.get(REFRESH_TOKEN_COOKIE_NAME)
             else:
-                refresh_token = request.cookies.get("refresh_token")
+                refresh_token = request.cookies.get(REFRESH_TOKEN_COOKIE_NAME)
             
             if refresh_token:
                 try:
@@ -417,8 +428,8 @@ async def logout(
             logger.warning(f"No session_id found for user {_short_user_id(user_id)} during logout - session may remain in Redis")
         
         # Delete cookies with same attributes used when setting them
-        _delete_auth_cookie(response, "access_token")
-        _delete_auth_cookie(response, "refresh_token")
+        _delete_auth_cookie(response, ACCESS_TOKEN_COOKIE_NAME)
+        _delete_auth_cookie(response, REFRESH_TOKEN_COOKIE_NAME)
         logger.info(f"User {_short_user_id(user_id)} logged out successfully")
         return {"message": "Successfully logged out"}
     except Exception as e:
@@ -899,8 +910,8 @@ async def logout_all_devices(
             logger.warning(f"Failed to delete Redis sessions (fallback mode): {redis_error}")
         
         # Delete cookies with same attributes used when setting them
-        _delete_auth_cookie(response, "access_token")
-        _delete_auth_cookie(response, "refresh_token")
+        _delete_auth_cookie(response, ACCESS_TOKEN_COOKIE_NAME)
+        _delete_auth_cookie(response, REFRESH_TOKEN_COOKIE_NAME)
         
         return {
             "message": f"Successfully logged out from {count} device(s)",
@@ -1364,6 +1375,18 @@ async def google_signin_initiate(
         # 3. SameSite=None + Secure=True allows the cookie to be set cross-site
         # 4. The cookie is then sent on the Google OAuth callback (same-site to backend)
         cookie_settings = _get_cookie_settings()
+        
+        # Clean up host-only cookie if domain is set to prevent duplicates
+        if cookie_settings.get("domain"):
+            json_response.delete_cookie(
+                key=OAUTH_STATE_COOKIE_NAME,
+                path="/",
+                domain=None,
+                secure=True,
+                samesite="none",
+                httponly=True
+            )
+            
         json_response.set_cookie(
             key=OAUTH_STATE_COOKIE_NAME,
             value=state_string,  # Store full state (includes CSRF + redirect URL + PKCE verifier)

@@ -20,6 +20,10 @@ if TYPE_CHECKING:
 ACCESS_TOKEN_EXPIRE = 3600  # 1 hour
 REFRESH_TOKEN_EXPIRE = 60 * 60 * 24 * 30  # 30 days
 
+# Cookie names (renamed to prevent collision with legacy host-only cookies)
+ACCESS_TOKEN_COOKIE_NAME = "quizify_access_token"
+REFRESH_TOKEN_COOKIE_NAME = "quizify_refresh_token"
+
 
 def get_cookie_settings() -> dict:
     """
@@ -62,7 +66,7 @@ def delete_auth_cookie(response: "Response", key: str) -> None:
     
     Args:
         response: FastAPI Response, JSONResponse, or RedirectResponse object
-        key: Cookie name to delete (e.g., "access_token", "refresh_token")
+        key: Cookie name to delete (e.g., "quizify_access_token", "quizify_refresh_token")
     """
     cookie_settings = get_cookie_settings()
     response.delete_cookie(
@@ -90,7 +94,7 @@ def set_auth_cookies(response: "Response", access_token: str, refresh_token: str
     cookie_settings = get_cookie_settings()
     
     response.set_cookie(
-        key="access_token",
+        key=ACCESS_TOKEN_COOKIE_NAME,
         value=access_token,
         **cookie_settings
     )
@@ -98,7 +102,7 @@ def set_auth_cookies(response: "Response", access_token: str, refresh_token: str
     # Refresh token uses longer expiration
     refresh_settings = {**cookie_settings, "max_age": REFRESH_TOKEN_EXPIRE}
     response.set_cookie(
-        key="refresh_token",
+        key=REFRESH_TOKEN_COOKIE_NAME,
         value=refresh_token,
         **refresh_settings
     )

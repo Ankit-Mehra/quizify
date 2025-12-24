@@ -122,18 +122,20 @@ class TestAuthLogoutRefreshTokenFallback:
                     )
                     mock_service.logout.return_value = True
                     
-                    # Include refresh_token header (dev mode)
-                    headers = {**auth_headers, "X-Refresh-Token": "test_refresh_token"}
-                    
-                    response = client.post("/api/auth/logout", headers=headers)
-                    
-                    assert response.status_code == 200
-                    data = response.json()
-                    assert data["message"] == "Successfully logged out"
-                    
-                    # Verify the fallback was used
-                    mock_service.find_session_by_refresh_token.assert_called_once_with("test_refresh_token")
-                    mock_service.logout.assert_called_once_with("sess_found_123")
+                    # Mock is_development to return True so X-Refresh-Token header is used
+                    with patch('handlers.auth_handlers.app_config.is_development', return_value=True):
+                        # Include refresh_token header (dev mode)
+                        headers = {**auth_headers, "X-Refresh-Token": "test_refresh_token"}
+                        
+                        response = client.post("/api/auth/logout", headers=headers)
+                        
+                        assert response.status_code == 200
+                        data = response.json()
+                        assert data["message"] == "Successfully logged out"
+                        
+                        # Verify the fallback was used
+                        mock_service.find_session_by_refresh_token.assert_called_once_with("test_refresh_token")
+                        mock_service.logout.assert_called_once_with("sess_found_123")
         finally:
             app.dependency_overrides.clear()
     
@@ -168,15 +170,17 @@ class TestAuthLogoutRefreshTokenFallback:
                         last_active="2025-01-01T00:00:00Z"
                     )
                     
-                    headers = {**auth_headers, "X-Refresh-Token": "stolen_refresh_token"}
-                    
-                    response = client.post("/api/auth/logout", headers=headers)
-                    
-                    # Should still return 200 (logout clears cookies regardless)
-                    assert response.status_code == 200
-                    
-                    # But should NOT have called logout on the session
-                    mock_service.logout.assert_not_called()
+                    # Mock is_development to return True so X-Refresh-Token header is used
+                    with patch('handlers.auth_handlers.app_config.is_development', return_value=True):
+                        headers = {**auth_headers, "X-Refresh-Token": "stolen_refresh_token"}
+                        
+                        response = client.post("/api/auth/logout", headers=headers)
+                        
+                        # Should still return 200 (logout clears cookies regardless)
+                        assert response.status_code == 200
+                        
+                        # But should NOT have called logout on the session
+                        mock_service.logout.assert_not_called()
         finally:
             app.dependency_overrides.clear()
     
@@ -203,15 +207,17 @@ class TestAuthLogoutRefreshTokenFallback:
                     mock_service.find_session_by_refresh_token.return_value = "sess_expired_123"
                     mock_service.validate_session.return_value = None  # Session expired
                     
-                    headers = {**auth_headers, "X-Refresh-Token": "expired_refresh_token"}
-                    
-                    response = client.post("/api/auth/logout", headers=headers)
-                    
-                    # Should still return 200 (cookies cleared)
-                    assert response.status_code == 200
-                    
-                    # Should NOT call logout since session is expired
-                    mock_service.logout.assert_not_called()
+                    # Mock is_development to return True so X-Refresh-Token header is used
+                    with patch('handlers.auth_handlers.app_config.is_development', return_value=True):
+                        headers = {**auth_headers, "X-Refresh-Token": "expired_refresh_token"}
+                        
+                        response = client.post("/api/auth/logout", headers=headers)
+                        
+                        # Should still return 200 (cookies cleared)
+                        assert response.status_code == 200
+                        
+                        # Should NOT call logout since session is expired
+                        mock_service.logout.assert_not_called()
         finally:
             app.dependency_overrides.clear()
     
