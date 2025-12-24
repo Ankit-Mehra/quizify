@@ -9,6 +9,7 @@ from config import config
 from services.logger import app_logger as logger
 from services.redis.sessions import SessionService
 from services.db_services.supabase_quiz import get_user_tier_info_cached
+from services.cookie_utils import ACCESS_TOKEN_COOKIE_NAME, REFRESH_TOKEN_COOKIE_NAME
 
 security = HTTPBearer(auto_error=False)
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -79,10 +80,10 @@ async def _validate_request_session(request: Request, user_id: str) -> Optional[
     # Lookup session_id via refresh_token (header in dev mode, cookie in production)
     if config.is_development():
         refresh_token_header = request.headers.get("X-Refresh-Token")
-        refresh_token = refresh_token_header or request.cookies.get("refresh_token")
+        refresh_token = refresh_token_header or request.cookies.get(REFRESH_TOKEN_COOKIE_NAME)
         token_source = "header" if refresh_token_header else "cookie"
     else:
-        refresh_token = request.cookies.get("refresh_token")
+        refresh_token = request.cookies.get(REFRESH_TOKEN_COOKIE_NAME)
         token_source = "cookie"
     
     session_id = None
@@ -148,7 +149,7 @@ async def _authenticate_request(
     if getattr(request.state, "auth_cached", False):
         return request.state.auth_user_id, request.state.auth_token
 
-    token = credentials.credentials if credentials else request.cookies.get("access_token")
+    token = credentials.credentials if credentials else request.cookies.get(ACCESS_TOKEN_COOKIE_NAME)
     if not token:
         token = getattr(request.state, "access_token", None)
 
