@@ -78,7 +78,7 @@ class FlashcardGenerationService:
     def __init__(self):
         """Initialize the flashcard generation service."""
         self.client = get_openai_client()
-        self.model = config.LLM_MODEL  # e.g., "gpt-4o-mini"
+        self.model = config.LLM_MODEL_MINI  # Use mini model for flashcard generation
     
     async def generate(
         self,
