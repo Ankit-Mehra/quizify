@@ -14,6 +14,8 @@ that keeping this in sync is trivial, and integration tests cover the full flow.
 """
 
 import pytest
+from unittest.mock import AsyncMock
+
 from starlette.testclient import TestClient
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse
@@ -269,10 +271,10 @@ class TestTokenRefreshRedisUpdate:
 
     def test_token_change_detection_none_new_token(self):
         """Should not trigger update when new token is None"""
-        old_token = "old_refresh_token"
         new_token = None
+        # old_token value doesn't matter when new_token is None (short-circuit)
         
-        should_update = new_token and new_token != old_token
+        should_update = new_token and new_token != "old_refresh_token"
         
         # None is falsy, so condition evaluates to falsy (None)
         assert not should_update
@@ -299,8 +301,6 @@ class TestMiddlewareRedisIntegration:
     @pytest.mark.asyncio
     async def test_update_refresh_token_called_on_rotation(self):
         """Should call SessionService.update_refresh_token when token rotates"""
-        from unittest.mock import AsyncMock
-        
         # Mock the SessionService
         mock_session_service = AsyncMock()
         mock_session_service.find_session_by_refresh_token = AsyncMock(return_value="sess_test123")
@@ -330,8 +330,6 @@ class TestMiddlewareRedisIntegration:
     @pytest.mark.asyncio
     async def test_update_skipped_when_session_not_found(self):
         """Should skip update when session lookup returns None"""
-        from unittest.mock import AsyncMock
-        
         mock_session_service = AsyncMock()
         mock_session_service.find_session_by_refresh_token = AsyncMock(return_value=None)
         mock_session_service.update_refresh_token = AsyncMock()
@@ -356,8 +354,6 @@ class TestMiddlewareRedisIntegration:
     @pytest.mark.asyncio
     async def test_redis_error_does_not_break_request(self):
         """Should gracefully handle Redis errors without failing the request"""
-        from unittest.mock import AsyncMock
-        
         mock_session_service = AsyncMock()
         mock_session_service.find_session_by_refresh_token = AsyncMock(
             side_effect=Exception("Redis connection failed")
@@ -390,14 +386,15 @@ class TestMiddlewareRedisIntegration:
         """Should skip Redis update when Redis client is not available"""
         redis_client = None  # Simulates request.app.state.redis being None
         
-        old_token = "old_refresh_token"
         new_token = "new_refresh_token"
+        old_token = "old_refresh_token"
         update_attempted = False
         
         # Simulate the middleware logic
         if new_token and new_token != old_token:
             if redis_client:
+                # This branch is intentionally unreachable in this test
+                # to verify that None redis_client skips the update
                 update_attempted = True
-                # Would call session_service here
         
         assert update_attempted is False

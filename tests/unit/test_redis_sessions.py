@@ -1142,13 +1142,12 @@ class TestUpdateRefreshToken:
         assert success is True
         
         # Verify old mapping is deleted
-        from services.redis.sessions import SessionService as SS
-        old_hash = SS._hash_refresh_token(old_refresh_token)
+        old_hash = SessionService._hash_refresh_token(old_refresh_token)
         old_key = f"refresh_token:{old_hash}"
         assert await redis_client.exists(old_key) == 0
         
         # Verify new mapping exists and points to correct session
-        new_hash = SS._hash_refresh_token(new_refresh_token)
+        new_hash = SessionService._hash_refresh_token(new_refresh_token)
         new_key = f"refresh_token:{new_hash}"
         stored_session_id = await redis_client.get(new_key)
         assert stored_session_id == session_id
@@ -1188,8 +1187,7 @@ class TestUpdateRefreshToken:
         assert success is True
         
         # Verify new mapping TTL is aligned with session TTL
-        from services.redis.sessions import SessionService as SS
-        new_hash = SS._hash_refresh_token(new_refresh_token)
+        new_hash = SessionService._hash_refresh_token(new_refresh_token)
         new_key = f"refresh_token:{new_hash}"
         actual_ttl = await redis_client.ttl(new_key)
         
@@ -1227,8 +1225,7 @@ class TestUpdateRefreshToken:
         assert success is True
         
         # Verify new mapping uses default TTL
-        from services.redis.sessions import SessionService as SS
-        new_hash = SS._hash_refresh_token(new_refresh_token)
+        new_hash = SessionService._hash_refresh_token(new_refresh_token)
         new_key = f"refresh_token:{new_hash}"
         actual_ttl = await redis_client.ttl(new_key)
         
@@ -1296,9 +1293,8 @@ class TestUpdateRefreshToken:
         session_id = await session_service.find_session_by_refresh_token(old_refresh_token)
         
         # Get initial state
-        from services.redis.sessions import SessionService as SS
-        old_hash = SS._hash_refresh_token(old_refresh_token)
-        new_hash = SS._hash_refresh_token(new_refresh_token)
+        old_hash = SessionService._hash_refresh_token(old_refresh_token)
+        new_hash = SessionService._hash_refresh_token(new_refresh_token)
         old_key = f"refresh_token:{old_hash}"
         new_key = f"refresh_token:{new_hash}"
         session_key = f"session:{session_id}"
