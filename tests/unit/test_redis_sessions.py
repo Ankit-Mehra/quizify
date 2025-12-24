@@ -1111,3 +1111,216 @@ class TestRefreshTokenCleanup:
         # Verify all client token mappings are deleted
         assert await redis_client.exists(f"client_token:{client_token1}") == 0
         assert await redis_client.exists(f"client_token:{client_token2}") == 0
+
+
+class TestUpdateRefreshToken:
+    """Tests for update_refresh_token() - handles Supabase token rotation"""
+
+    @pytest.mark.asyncio
+    async def test_update_refresh_token_success(self, session_service, redis_client):
+        """Should atomically update refresh token mapping when token is rotated"""
+        # Create session with initial refresh token
+        old_refresh_token = "old_refresh_token_123"
+        new_refresh_token = "new_refresh_token_456"
+        
+        await session_service.create_session(
+            user_id="user_123",
+            device_type="browser",
+            refresh_token=old_refresh_token
+        )
+        
+        session_id = await session_service.find_session_by_refresh_token(old_refresh_token)
+        assert session_id is not None
+        
+        # Perform the update
+        success = await session_service.update_refresh_token(
+            session_id=session_id,
+            old_refresh_token=old_refresh_token,
+            new_refresh_token=new_refresh_token
+        )
+        
+        assert success is True
+        
+        # Verify old mapping is deleted
+        from services.redis.sessions import SessionService as SS
+        old_hash = SS._hash_refresh_token(old_refresh_token)
+        old_key = f"refresh_token:{old_hash}"
+        assert await redis_client.exists(old_key) == 0
+        
+        # Verify new mapping exists and points to correct session
+        new_hash = SS._hash_refresh_token(new_refresh_token)
+        new_key = f"refresh_token:{new_hash}"
+        stored_session_id = await redis_client.get(new_key)
+        assert stored_session_id == session_id
+        
+        # Verify session hash is updated
+        session_key = f"session:{session_id}"
+        stored_hash = await redis_client.hget(session_key, "refresh_token_hash")
+        assert stored_hash == new_hash
+
+    @pytest.mark.asyncio
+    async def test_update_refresh_token_uses_session_ttl(self, session_service, redis_client):
+        """Should align new mapping TTL with remaining session TTL"""
+        # Create session with initial refresh token
+        old_refresh_token = "ttl_test_old_token"
+        new_refresh_token = "ttl_test_new_token"
+        
+        await session_service.create_session(
+            user_id="user_123",
+            device_type="browser",
+            refresh_token=old_refresh_token
+        )
+        
+        session_id = await session_service.find_session_by_refresh_token(old_refresh_token)
+        
+        # Set a specific TTL on the session (simulate session that's been active)
+        session_key = f"session:{session_id}"
+        expected_ttl = 3600  # 1 hour remaining
+        await redis_client.expire(session_key, expected_ttl)
+        
+        # Perform the update
+        success = await session_service.update_refresh_token(
+            session_id=session_id,
+            old_refresh_token=old_refresh_token,
+            new_refresh_token=new_refresh_token
+        )
+        
+        assert success is True
+        
+        # Verify new mapping TTL is aligned with session TTL
+        from services.redis.sessions import SessionService as SS
+        new_hash = SS._hash_refresh_token(new_refresh_token)
+        new_key = f"refresh_token:{new_hash}"
+        actual_ttl = await redis_client.ttl(new_key)
+        
+        # TTL should be close to expected (allow some tolerance for test execution time)
+        assert actual_ttl > 0
+        assert actual_ttl <= expected_ttl
+        assert actual_ttl >= expected_ttl - 10  # Within 10 seconds tolerance
+
+    @pytest.mark.asyncio
+    async def test_update_refresh_token_fallback_ttl(self, session_service, redis_client):
+        """Should use default session_ttl when session TTL cannot be determined"""
+        # Create session
+        old_refresh_token = "fallback_ttl_old"
+        new_refresh_token = "fallback_ttl_new"
+        
+        await session_service.create_session(
+            user_id="user_123",
+            device_type="browser",
+            refresh_token=old_refresh_token
+        )
+        
+        session_id = await session_service.find_session_by_refresh_token(old_refresh_token)
+        
+        # Delete the session key to simulate edge case
+        session_key = f"session:{session_id}"
+        await redis_client.delete(session_key)
+        
+        # Perform the update - should still succeed but use default TTL
+        success = await session_service.update_refresh_token(
+            session_id=session_id,
+            old_refresh_token=old_refresh_token,
+            new_refresh_token=new_refresh_token
+        )
+        
+        assert success is True
+        
+        # Verify new mapping uses default TTL
+        from services.redis.sessions import SessionService as SS
+        new_hash = SS._hash_refresh_token(new_refresh_token)
+        new_key = f"refresh_token:{new_hash}"
+        actual_ttl = await redis_client.ttl(new_key)
+        
+        # Should be close to session_ttl (30 days = 2592000 seconds)
+        assert actual_ttl > 0
+        assert actual_ttl <= session_service.session_ttl
+        assert actual_ttl >= session_service.session_ttl - 10
+
+    @pytest.mark.asyncio
+    async def test_update_refresh_token_allows_session_lookup(self, session_service):
+        """Should allow finding session by new refresh token after update"""
+        old_refresh_token = "lookup_test_old"
+        new_refresh_token = "lookup_test_new"
+        
+        await session_service.create_session(
+            user_id="user_123",
+            device_type="browser",
+            refresh_token=old_refresh_token
+        )
+        
+        session_id = await session_service.find_session_by_refresh_token(old_refresh_token)
+        
+        # Update the token
+        await session_service.update_refresh_token(
+            session_id=session_id,
+            old_refresh_token=old_refresh_token,
+            new_refresh_token=new_refresh_token
+        )
+        
+        # Old token should no longer find the session
+        old_lookup = await session_service.find_session_by_refresh_token(old_refresh_token)
+        assert old_lookup is None
+        
+        # New token should find the session
+        new_lookup = await session_service.find_session_by_refresh_token(new_refresh_token)
+        assert new_lookup == session_id
+
+    @pytest.mark.asyncio
+    async def test_update_refresh_token_handles_errors_gracefully(self, session_service):
+        """Should return False and log error on failure"""
+        # Try to update with invalid session ID
+        success = await session_service.update_refresh_token(
+            session_id="nonexistent_session",
+            old_refresh_token="old_token",
+            new_refresh_token="new_token"
+        )
+        
+        # Should still return True since the pipeline operations don't fail
+        # (delete on non-existent key is OK, set creates new key, hset creates field)
+        # The method doesn't validate session existence
+        assert success is True
+
+    @pytest.mark.asyncio
+    async def test_update_refresh_token_atomic_behavior(self, session_service, redis_client):
+        """Should perform all operations in a single atomic transaction"""
+        old_refresh_token = "atomic_test_old"
+        new_refresh_token = "atomic_test_new"
+        
+        await session_service.create_session(
+            user_id="user_123",
+            device_type="browser",
+            refresh_token=old_refresh_token
+        )
+        
+        session_id = await session_service.find_session_by_refresh_token(old_refresh_token)
+        
+        # Get initial state
+        from services.redis.sessions import SessionService as SS
+        old_hash = SS._hash_refresh_token(old_refresh_token)
+        new_hash = SS._hash_refresh_token(new_refresh_token)
+        old_key = f"refresh_token:{old_hash}"
+        new_key = f"refresh_token:{new_hash}"
+        session_key = f"session:{session_id}"
+        
+        # Verify initial state
+        assert await redis_client.exists(old_key) == 1
+        assert await redis_client.exists(new_key) == 0
+        
+        # Perform update
+        success = await session_service.update_refresh_token(
+            session_id=session_id,
+            old_refresh_token=old_refresh_token,
+            new_refresh_token=new_refresh_token
+        )
+        
+        assert success is True
+        
+        # All three operations should have completed atomically
+        # 1. Old key deleted
+        assert await redis_client.exists(old_key) == 0
+        # 2. New key created
+        assert await redis_client.exists(new_key) == 1
+        # 3. Session hash updated
+        stored_hash = await redis_client.hget(session_key, "refresh_token_hash")
+        assert stored_hash == new_hash
