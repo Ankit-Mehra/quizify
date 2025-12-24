@@ -66,9 +66,16 @@ class Config:
     # Primary model: Used for quiz generation (higher quality, slightly more expensive)
     # Mini model: Used for verification, explanation, concept extraction (cost-efficient)
     
+    # OpenAI Models
     LLM_MODEL_PRIMARY: str = os.getenv("LLM_MODEL_PRIMARY", "gpt-4.1")
     LLM_MODEL_MINI: str = os.getenv("LLM_MODEL_MINI", "gpt-4.1-mini")
     LLM_MODEL_NANO: str = os.getenv("LLM_MODEL_NANO", "gpt-4.1-nano")  # Fastest, for concept extraction
+    
+    # Gemini Models (Google)
+    GEMINI_MODEL_DEFAULT: str = os.getenv("GEMINI_MODEL_DEFAULT", "gemini-2.0-flash")
+    
+    # Groq Models (fast inference)
+    GROQ_MODEL_DEFAULT: str = os.getenv("GROQ_MODEL_DEFAULT", "llama-3.3-70b-versatile")
     
     # LlamaIndex & RAG Configuration
     EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")

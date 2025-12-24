@@ -32,7 +32,7 @@ from services.ai_services.concept_extraction_service import ConceptExtractionSer
 from services.ai_services.orchestration_service import QuizOrchestrationService
 from datetime import datetime, date
 from services.ai_services.chunking_service import generate_quizzes_single_async
-from services.ai_services.openai_service import QuizParseError
+from services.ai_services.llm_client_service import QuizParseError
 from services.logger import app_logger as logger
 from services.web_scraping_service import scrape_content
 

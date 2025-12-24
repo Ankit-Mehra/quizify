@@ -11,7 +11,7 @@ Tests cover:
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from services.ai_services.openai_service import (
+from services.ai_services.llm_client_service import (
     generate_quiz_async,
     QuizParseError
 )
@@ -66,7 +66,7 @@ class TestGenerateQuizAsyncErrorHandling:
     @pytest.mark.asyncio
     async def test_empty_response_returns_empty_list(self, mock_openai_response):
         """Test that empty content returns empty list without raising."""
-        with patch('services.ai_services.openai_service.get_openai_client') as mock_get_client:
+        with patch('services.ai_services.llm_client_service.get_openai_client') as mock_get_client:
             mock_client = AsyncMock()
             mock_client.chat.completions.create = AsyncMock(
                 return_value=mock_openai_response("")
@@ -84,7 +84,7 @@ class TestGenerateQuizAsyncErrorHandling:
     @pytest.mark.asyncio
     async def test_none_response_returns_empty_list(self, mock_openai_response):
         """Test that None content returns empty list without raising."""
-        with patch('services.ai_services.openai_service.get_openai_client') as mock_get_client:
+        with patch('services.ai_services.llm_client_service.get_openai_client') as mock_get_client:
             mock_client = AsyncMock()
             mock_client.chat.completions.create = AsyncMock(
                 return_value=mock_openai_response(None)
@@ -104,7 +104,7 @@ class TestGenerateQuizAsyncErrorHandling:
         """Test that malformed JSON raises QuizParseError."""
         malformed_json = "{ this is not valid json }"
         
-        with patch('services.ai_services.openai_service.get_openai_client') as mock_get_client:
+        with patch('services.ai_services.llm_client_service.get_openai_client') as mock_get_client:
             mock_client = AsyncMock()
             mock_client.chat.completions.create = AsyncMock(
                 return_value=mock_openai_response(malformed_json)
@@ -128,7 +128,7 @@ class TestGenerateQuizAsyncErrorHandling:
         # Valid JSON but missing 'quizzes' field required by QuizzesParsed
         invalid_schema_json = '{"wrong_field": "value"}'
         
-        with patch('services.ai_services.openai_service.get_openai_client') as mock_get_client:
+        with patch('services.ai_services.llm_client_service.get_openai_client') as mock_get_client:
             mock_client = AsyncMock()
             mock_client.chat.completions.create = AsyncMock(
                 return_value=mock_openai_response(invalid_schema_json)
@@ -149,7 +149,7 @@ class TestGenerateQuizAsyncErrorHandling:
         """Test that error message is user-friendly (no technical details)."""
         malformed_json = "not json at all"
         
-        with patch('services.ai_services.openai_service.get_openai_client') as mock_get_client:
+        with patch('services.ai_services.llm_client_service.get_openai_client') as mock_get_client:
             mock_client = AsyncMock()
             mock_client.chat.completions.create = AsyncMock(
                 return_value=mock_openai_response(malformed_json)
@@ -178,7 +178,7 @@ class TestGenerateQuizAsyncErrorHandling:
 {"quizzes": []}
 ```'''
         
-        with patch('services.ai_services.openai_service.get_openai_client') as mock_get_client:
+        with patch('services.ai_services.llm_client_service.get_openai_client') as mock_get_client:
             mock_client = AsyncMock()
             mock_client.chat.completions.create = AsyncMock(
                 return_value=mock_openai_response(valid_quiz_json)

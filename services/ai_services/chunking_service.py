@@ -2,7 +2,7 @@ import math
 import asyncio
 from typing import List, Optional
 import tiktoken
-from services.ai_services.openai_service import (
+from services.ai_services.llm_client_service import (
     generate_quiz_for_type,
     QUESTION_TYPE_PROMPTS,
     generate_quiz_async

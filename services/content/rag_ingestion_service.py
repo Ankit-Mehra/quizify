@@ -24,7 +24,7 @@ from config import config
 from services.logger import ai_logger as logger
 from services.db_services.supabase_documents import create_document
 from services.db_services.supabase_chunks import create_chunks
-from services.ai_services.openai_service import get_openai_client
+from services.ai_services.llm_client_service import get_openai_client
 from services.db_services.supabase_llm_analytics import track_llm_call
 from services.ai_services.pricing import calculate_cost
 

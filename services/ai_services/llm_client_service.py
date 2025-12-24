@@ -1,18 +1,25 @@
 """
-OpenAI Service with PostHog LLM Analytics Integration.
+LLM Client Service with PostHog Analytics Integration.
 
-This service provides quiz generation using OpenAI's GPT models with
-automatic tracking of:
+This service provides:
+1. OpenAI client management (singleton, thread-safe)
+2. PostHog LLM analytics tracking
+3. Retry logic for transient errors
+4. Quiz generation functions using OpenAI's GPT models
+
+Tracked metrics:
 - Token usage (input/output)
 - Latency and response times
 - Cost estimation
 - User-level analytics
 - Trace correlation for multi-step workflows
-- Thread-safe singleton initialization
 
 Note: Once initialized, the client type (PostHog-wrapped vs standard) cannot
 change without restarting the application. This is intentional for performance
 and to maintain consistent behavior throughout the application lifecycle.
+
+Renamed from openai_service.py to llm_client_service.py to better reflect
+that this provides the core LLM client infrastructure used by all AI services.
 """
 
 import os

@@ -3,7 +3,7 @@ import time
 from typing import Dict, Any, List, Optional, Tuple
 
 from config import config
-from services.ai_services.openai_service import get_openai_client, _build_posthog_kwargs
+from services.ai_services.llm_client_service import get_openai_client, _build_posthog_kwargs
 from services.db_services.supabase_llm_analytics import track_llm_call
 from services.posthog_service import capture_exception
 from services.ai_services.pricing import calculate_cost

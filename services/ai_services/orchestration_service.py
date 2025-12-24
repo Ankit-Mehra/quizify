@@ -4,7 +4,7 @@ import random
 from typing import Dict, Any, Optional, List
 
 from config import config
-from services.ai_services.openai_service import get_openai_client, _build_posthog_kwargs
+from services.ai_services.llm_client_service import get_openai_client, _build_posthog_kwargs
 from services.ai_services.context_service import ContextService
 from services.ai_services.pricing import calculate_cost
 from services.ai_services.explanation_service import ExplanationService

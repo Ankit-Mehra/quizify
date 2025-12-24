@@ -15,7 +15,7 @@ from pydantic import ValidationError
 
 from services.content.models import IngestedContent
 from services.ai_services.prompts import build_flashcard_prompt_with_difficulty
-from services.ai_services.openai_service import get_openai_client, _retry_with_backoff
+from services.ai_services.llm_client_service import get_openai_client, _retry_with_backoff
 from services.logger import ai_logger as logger
 from schemas.flashcard import (
     GeneratedFlashcard,

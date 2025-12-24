@@ -26,6 +26,7 @@ from services.llm.base import (
 )
 from services.posthog_service import get_posthog_client, is_posthog_enabled
 from services.logger import ai_logger as logger
+from config import config
 
 load_dotenv()
 
@@ -42,8 +43,6 @@ class GeminiProvider(ILLMProvider):
     Note: Requires GEMINI_API_KEY environment variable to be set.
     """
     
-    DEFAULT_MODEL = "gemini-2.0-flash"
-    
     def __init__(self):
         """Initialize the Gemini provider."""
         self._client = None
@@ -59,8 +58,8 @@ class GeminiProvider(ILLMProvider):
     
     @property
     def default_model(self) -> str:
-        """Return the default Gemini model."""
-        return self.DEFAULT_MODEL
+        """Return the default Gemini model from config."""
+        return config.GEMINI_MODEL_DEFAULT
     
     @property
     def client(self):

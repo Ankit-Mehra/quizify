@@ -18,7 +18,7 @@ from services.llm.base import (
     LLMProviderError,
     LLMRateLimitError,
 )
-from services.ai_services.openai_service import (
+from services.ai_services.llm_client_service import (
     get_openai_client,
     _build_posthog_kwargs,
     _retry_with_backoff,

@@ -26,6 +26,7 @@ from services.llm.base import (
 )
 from services.posthog_service import get_posthog_client, is_posthog_enabled
 from services.logger import ai_logger as logger
+from config import config
 
 load_dotenv()
 
@@ -48,8 +49,6 @@ class GroqProvider(ILLMProvider):
     Note: Requires GROQ_API_KEY environment variable to be set.
     """
     
-    DEFAULT_MODEL = "llama-3.3-70b-versatile"
-    
     def __init__(self):
         """Initialize the Groq provider."""
         self._client = None
@@ -65,8 +64,8 @@ class GroqProvider(ILLMProvider):
     
     @property
     def default_model(self) -> str:
-        """Return the default Groq model."""
-        return self.DEFAULT_MODEL
+        """Return the default Groq model from config."""
+        return config.GROQ_MODEL_DEFAULT
     
     @property
     def client(self):
