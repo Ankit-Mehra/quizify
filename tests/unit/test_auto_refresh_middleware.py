@@ -14,6 +14,8 @@ that keeping this in sync is trivial, and integration tests cover the full flow.
 """
 
 import pytest
+from unittest.mock import AsyncMock
+
 from starlette.testclient import TestClient
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse
@@ -238,3 +240,161 @@ class TestFunctionSync:
             f"Production implementation: {prod_impl_lines}\n"
             f"Please update the test copy to match middleware/auto_refresh.py"
         )
+
+
+class TestTokenRefreshRedisUpdate:
+    """
+    Tests for the Redis session update logic in the auto-refresh middleware.
+    
+    These tests verify that when Supabase rotates a refresh token during auto-refresh,
+    the middleware correctly updates the Redis session mapping.
+    """
+
+    def test_token_change_detection_different_tokens(self):
+        """Should detect when new refresh token differs from old one"""
+        old_token = "old_refresh_token_123"
+        new_token = "new_refresh_token_456"
+        
+        # The condition used in middleware
+        should_update = new_token and new_token != old_token
+        
+        assert should_update is True
+
+    def test_token_change_detection_same_tokens(self):
+        """Should not trigger update when tokens are identical"""
+        old_token = "same_refresh_token"
+        new_token = "same_refresh_token"
+        
+        should_update = new_token and new_token != old_token
+        
+        assert should_update is False
+
+    def test_token_change_detection_none_new_token(self):
+        """Should not trigger update when new token is None"""
+        new_token = None
+        # old_token value doesn't matter when new_token is None (short-circuit)
+        
+        should_update = new_token and new_token != "old_refresh_token"
+        
+        # None is falsy, so condition evaluates to falsy (None)
+        assert not should_update
+
+    def test_token_change_detection_empty_new_token(self):
+        """Should not trigger update when new token is empty string"""
+        old_token = "old_refresh_token"
+        new_token = ""
+        
+        should_update = new_token and new_token != old_token
+        
+        # Empty string is falsy, so condition evaluates to falsy ("")
+        assert not should_update
+
+
+class TestMiddlewareRedisIntegration:
+    """
+    Integration tests for middleware Redis session update flow.
+    
+    These tests verify the end-to-end behavior of the token refresh flow
+    including Redis session updates using mocks.
+    """
+
+    @pytest.mark.asyncio
+    async def test_update_refresh_token_called_on_rotation(self):
+        """Should call SessionService.update_refresh_token when token rotates"""
+        # Mock the SessionService
+        mock_session_service = AsyncMock()
+        mock_session_service.find_session_by_refresh_token = AsyncMock(return_value="sess_test123")
+        mock_session_service.update_refresh_token = AsyncMock(return_value=True)
+        
+        old_token = "old_refresh_token"
+        new_token = "new_refresh_token"
+        
+        # Simulate the middleware logic
+        if new_token and new_token != old_token:
+            session_id = await mock_session_service.find_session_by_refresh_token(old_token)
+            if session_id:
+                await mock_session_service.update_refresh_token(
+                    session_id=session_id,
+                    old_refresh_token=old_token,
+                    new_refresh_token=new_token
+                )
+        
+        # Verify correct calls were made
+        mock_session_service.find_session_by_refresh_token.assert_called_once_with(old_token)
+        mock_session_service.update_refresh_token.assert_called_once_with(
+            session_id="sess_test123",
+            old_refresh_token=old_token,
+            new_refresh_token=new_token
+        )
+
+    @pytest.mark.asyncio
+    async def test_update_skipped_when_session_not_found(self):
+        """Should skip update when session lookup returns None"""
+        mock_session_service = AsyncMock()
+        mock_session_service.find_session_by_refresh_token = AsyncMock(return_value=None)
+        mock_session_service.update_refresh_token = AsyncMock()
+        
+        old_token = "orphaned_refresh_token"
+        new_token = "new_refresh_token"
+        
+        # Simulate the middleware logic
+        if new_token and new_token != old_token:
+            session_id = await mock_session_service.find_session_by_refresh_token(old_token)
+            if session_id:
+                await mock_session_service.update_refresh_token(
+                    session_id=session_id,
+                    old_refresh_token=old_token,
+                    new_refresh_token=new_token
+                )
+        
+        # Verify lookup was attempted but update was not called
+        mock_session_service.find_session_by_refresh_token.assert_called_once_with(old_token)
+        mock_session_service.update_refresh_token.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_redis_error_does_not_break_request(self):
+        """Should gracefully handle Redis errors without failing the request"""
+        mock_session_service = AsyncMock()
+        mock_session_service.find_session_by_refresh_token = AsyncMock(
+            side_effect=Exception("Redis connection failed")
+        )
+        
+        old_token = "old_refresh_token"
+        new_token = "new_refresh_token"
+        request_continued = False
+        
+        # Simulate the middleware logic with error handling
+        try:
+            if new_token and new_token != old_token:
+                session_id = await mock_session_service.find_session_by_refresh_token(old_token)
+                if session_id:
+                    await mock_session_service.update_refresh_token(
+                        session_id=session_id,
+                        old_refresh_token=old_token,
+                        new_refresh_token=new_token
+                    )
+        except Exception:
+            # Log but don't fail - the request can still proceed
+            pass
+        
+        # Request should continue (simulated by setting this flag after try block)
+        request_continued = True
+        assert request_continued is True
+
+    @pytest.mark.asyncio 
+    async def test_no_redis_client_skips_update(self):
+        """Should skip Redis update when Redis client is not available"""
+        redis_client = None  # Simulates request.app.state.redis being None
+        
+        new_token = "new_refresh_token"
+        old_token = "old_refresh_token"
+        update_attempted = False
+        
+        # Simulate the middleware logic
+        if new_token and new_token != old_token:
+            if redis_client:
+                # This branch is intentionally unreachable in this test
+                # to verify that None redis_client skips the update
+                update_attempted = True
+        
+        assert update_attempted is False

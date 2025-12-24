@@ -473,6 +473,90 @@ class SessionService:
             logger.error(f"Failed to lookup session by refresh token: {e}")
             return None
 
+    async def update_refresh_token(
+        self,
+        session_id: str,
+        old_refresh_token: str,
+        new_refresh_token: str
+    ) -> bool:
+        """
+        Update the refresh token mapping when Supabase rotates the token.
+        
+        When Supabase's token refresh returns a new refresh_token, we must
+        update the Redis mapping or subsequent requests will fail to find
+        the session (causing "Session ID missing" errors).
+        
+        This method:
+        1. Deletes the old refresh_token → session_id mapping
+        2. Creates the new refresh_token → session_id mapping
+        3. Updates the session hash with the new refresh_token_hash
+        
+        All operations are performed atomically using a Redis transaction
+        to prevent race conditions in high-concurrency scenarios.
+        
+        Args:
+            session_id: The session ID to update
+            old_refresh_token: The previous refresh token (to delete mapping)
+            new_refresh_token: The new refresh token (to create mapping)
+            
+        Returns:
+            True if update succeeded, False otherwise
+            
+        Example:
+            >>> success = await service.update_refresh_token(
+            ...     session_id="sess_abc123",
+            ...     old_refresh_token="old_token...",
+            ...     new_refresh_token="new_token..."
+            ... )
+        """
+        try:
+            # Hash both tokens
+            old_hash = self._hash_refresh_token(old_refresh_token)
+            new_hash = self._hash_refresh_token(new_refresh_token)
+            
+            # Keys for old/new refresh-token mappings and session hash
+            old_key = f"refresh_token:{old_hash}"
+            new_key = f"refresh_token:{new_hash}"
+            session_key = f"session:{session_id}"
+            
+            # Determine TTL for new mapping based on remaining session TTL
+            # This ensures the refresh token mapping doesn't outlive or expire before the session
+            remaining_ttl = await self.redis.ttl(session_key)
+            # Redis TTL semantics:
+            #   > 0  => seconds to live
+            #   -1   => no expiry
+            #   -2   => key does not exist
+            if remaining_ttl is not None and remaining_ttl > 0:
+                mapping_ttl = int(remaining_ttl)
+            else:
+                # Fallback to configured session_ttl to preserve existing behavior
+                mapping_ttl = self.session_ttl
+            
+            # Perform all updates atomically using a Redis transaction
+            pipe = self.redis.pipeline(transaction=True)
+            
+            # Delete old mapping
+            pipe.delete(old_key)
+            
+            # Create new mapping with TTL aligned to the session
+            pipe.set(new_key, session_id, ex=mapping_ttl)
+            
+            # Update session hash with new refresh_token_hash
+            pipe.hset(session_key, "refresh_token_hash", new_hash)
+            
+            await pipe.execute()
+            
+            logger.debug(
+                f"Updated refresh token mapping for session {session_id[:12]}..."
+            )
+            return True
+            
+        except Exception as e:
+            logger.error(
+                f"Failed to update refresh token for session {session_id[:12]}...: {e}"
+            )
+            return False
+
     async def refresh_session(self, session_id: str) -> bool:
         """
         Refresh session activity timestamp and extend TTL.
