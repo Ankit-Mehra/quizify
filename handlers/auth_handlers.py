@@ -331,16 +331,24 @@ async def refresh_session(request: Request, response: Response):
         session = supabase.auth.refresh_session(refresh_token)
         if session.session is None or not hasattr(session.session, "access_token"):
             raise HTTPException(status_code=401, detail="Invalid refresh token or session expired")
-        new_access_token = session.session.access_token
-
-        # Use centralized cookie settings for consistency
-        cookie_settings = _get_cookie_settings()
         
-        response.set_cookie(
-            key=ACCESS_TOKEN_COOKIE_NAME,
-            value=new_access_token,
-            **cookie_settings
-        )
+        new_access_token = session.session.access_token
+        new_refresh_token = getattr(session.session, "refresh_token", None)
+        
+        # Use centralized cookie utility to set both tokens consistently
+        # This handles Supabase refresh token rotation - if Supabase returns a new
+        # refresh_token, we must update the cookie to prevent stale token issues
+        if new_refresh_token:
+            _set_auth_cookies(response, new_access_token, new_refresh_token)
+        else:
+            # Fallback: only update access token if no new refresh token provided
+            cookie_settings = _get_cookie_settings()
+            response.set_cookie(
+                key=ACCESS_TOKEN_COOKIE_NAME,
+                value=new_access_token,
+                **cookie_settings
+            )
+        
         return {"message": "Session refreshed"}
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid refresh token")
