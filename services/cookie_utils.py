@@ -9,12 +9,15 @@ we use SameSite=None to allow cookies to be sent with cross-origin requests.
 This is safe because we use JWT + Redis session validation (not cookie-only auth).
 CSRF attacks cannot forge JWT signatures.
 """
+import logging
 from typing import TYPE_CHECKING
 
 from config import config as app_config
 
 if TYPE_CHECKING:
     from fastapi import Response
+
+logger = logging.getLogger(__name__)
 
 # Token expiration times (must match across all modules)
 ACCESS_TOKEN_EXPIRE = 3600  # 1 hour
@@ -91,6 +94,9 @@ def set_auth_cookies(response: "Response", access_token: str, refresh_token: str
         access_token: JWT access token from Supabase
         refresh_token: Refresh token from Supabase
     """
+    # DEBUG: Log token lengths before setting cookies
+    logger.info(f"set_auth_cookies: access_token length={len(access_token) if access_token else 0}, refresh_token length={len(refresh_token) if refresh_token else 0}")
+    
     cookie_settings = get_cookie_settings()
     
     response.set_cookie(

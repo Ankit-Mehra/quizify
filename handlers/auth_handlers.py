@@ -206,6 +206,10 @@ async def login(request_body: LoginRequest, response: Response, request: Request
         refresh_token = session.refresh_token
         user_id = result.user.id if result.user and getattr(result.user, "id", None) else None
 
+        # DEBUG: Log token lengths to diagnose truncation issue
+        logger.info(f"Login: access_token length={len(access_token) if access_token else 0}, refresh_token length={len(refresh_token) if refresh_token else 0}")
+        logger.info(f"Login: result type={type(result)}, session type={type(session)}")
+
         logger.info(f"User logged in: {_short_user_id(user_id)}")
 
         # Create Redis session for multi-device tracking
@@ -1512,6 +1516,12 @@ async def google_signin_callback(
         user = auth_response.user
         
         user_id = user.id if user else None
+        
+        # DEBUG: Log token lengths to diagnose truncation issue
+        access_token_len = len(session.access_token) if session.access_token else 0
+        refresh_token_len = len(session.refresh_token) if session.refresh_token else 0
+        logger.info(f"Google Sign-In: access_token length={access_token_len}, refresh_token length={refresh_token_len}")
+        logger.info(f"Google Sign-In: auth_response type={type(auth_response)}, session type={type(session)}")
         
         logger.info(f"Google Sign-In successful for user {_short_user_id(user_id)}")
         
