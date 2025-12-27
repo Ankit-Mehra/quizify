@@ -40,8 +40,8 @@ class ForgotPasswordRequest(BaseModel):
 
 class ResetPasswordRequest(BaseModel):
     """Request model for resetting password with recovery token"""
-    token: str = Field(..., description="Access token from recovery email redirect")
-    refresh_token: Optional[str] = Field(None, description="Refresh token from recovery email redirect")
+    token: Optional[str] = Field(None, description="(Deprecated) Access token - now read from HttpOnly cookie")
+    refresh_token: Optional[str] = Field(None, description="(Deprecated) Refresh token - now read from HttpOnly cookie")
     new_password: str = Field(..., min_length=8, description="New password must be at least 8 characters")
 
 

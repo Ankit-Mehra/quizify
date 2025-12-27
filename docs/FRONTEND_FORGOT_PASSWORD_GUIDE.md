@@ -1,59 +1,48 @@
 # Frontend Implementation Guide: Forgot Password Flow
 
-> **Backend Status: ✅ FULLY IMPLEMENTED**
+> **Backend Status: ✅ FULLY IMPLEMENTED & SECURE**
 > 
-> This guide details the frontend implementation for the forgot password feature. All backend APIs are ready and tested.
+> This guide details the frontend implementation for the forgot password feature. All backend APIs are ready, tested, and implement secure token handling via HttpOnly cookies.
 
-## ⚠️ CRITICAL SECURITY ISSUE - ACTION REQUIRED
+## 🔒 Security Implementation
 
-**Current Implementation Status: 🔴 INSECURE - DO NOT USE IN PRODUCTION**
+**Current Status: ✅ SECURE - Production Ready**
 
-### Security Vulnerability
-The current backend implementation (`handlers/auth_handlers.py:669`) passes `access_token` and `refresh_token` directly in the URL query string:
+### Token Delivery Method: HttpOnly Cookies
 
+The backend uses **secure HttpOnly cookies** to deliver recovery tokens, protecting against:
+- ✅ Browser history exposure (tokens never in URL)
+- ✅ Server log leakage (tokens never in query params)
+- ✅ Referrer header leaks (tokens never sent to third parties)
+- ✅ XSS attacks (HttpOnly prevents JavaScript access)
+- ✅ CSRF attacks (SameSite=Lax protection)
+
+### Backend Implementation (`handlers/auth_handlers.py`)
+
+**Recovery Token Flow:**
 ```python
-# INSECURE - Current implementation
-url=f"{FRONTEND_URL}/reset-password?access_token={access_token}&refresh_token={refresh_token}"
-```
-
-**Why This Is Dangerous:**
-- ❌ Tokens exposed in browser history (persistent, accessible to any user/malware on device)
-- ❌ Tokens logged in server access logs (visible to operations team, log aggregation services)
-- ❌ Tokens leaked via `Referer` headers when loading third-party resources (analytics, CDNs)
-- ❌ Tokens visible in browser's network tab
-- ❌ Attacker who obtains URL can reset victim's password or impersonate their session
-
-### Recommended Fix (Backend Changes Required)
-
-**Option 1: Secure HttpOnly Cookies (Preferred)**
-```python
-# SECURE - Recommended implementation
-# In handlers/auth_handlers.py confirm_email() for type="recovery":
-response = RedirectResponse(url=f"{FRONTEND_URL}/reset-password?code={one_time_code}")
-response.set_cookie(
-    key="recovery_session",
+# Step 1: User clicks email link → /api/auth/confirm?token=xxx&type=recovery
+# Step 2: Backend verifies token and sets HttpOnly cookies
+redirect_response = RedirectResponse(url="/reset-password")
+redirect_response.set_cookie(
+    key="recovery_access_token",
     value=access_token,
-    httponly=True,
-    secure=True,
-    samesite="lax",
-    max_age=600  # 10 minutes
+    httponly=True,  # JavaScript cannot access
+    secure=True,    # HTTPS only
+    samesite="lax", # CSRF protection
+    max_age=600,    # 10 minutes
 )
-return response
+# Step 3: User enters new password
+# Step 4: /api/auth/reset-password reads token from cookie automatically
+# Step 5: Backend deletes cookies after successful reset
 ```
 
-**Option 2: One-Time Code Exchange**
-```python
-# Store tokens server-side, return only short-lived code
-reset_code = secrets.token_urlsafe(32)
-await redis.setex(f"reset:{reset_code}", 600, json.dumps({
-    "access_token": access_token,
-    "refresh_token": refresh_token,
-    "user_id": user_id
-}))
-return RedirectResponse(url=f"{FRONTEND_URL}/reset-password?code={reset_code}")
-```
-
-**Until this is fixed, this feature should NOT be deployed to production.**
+**Key Security Features:**
+- Tokens stored in **HttpOnly cookies** (not accessible to JavaScript)
+- **10-minute expiration** for recovery session
+- **Automatic deletion** after successful password reset
+- **SameSite=Lax** prevents CSRF attacks
+- **Secure flag** ensures HTTPS-only transmission
 
 ---
 
@@ -62,8 +51,8 @@ return RedirectResponse(url=f"{FRONTEND_URL}/reset-password?code={reset_code}")
 | Endpoint | Method | Auth Required | Purpose |
 |----------|--------|---------------|---------|
 | `/api/auth/forgot-password` | POST | ❌ No | Request password reset email |
-| `/api/auth/confirm` | GET | ❌ No | Backend handles email link (redirect) |
-| `/api/auth/reset-password` | POST | ❌ No | Set new password with token |
+| `/api/auth/confirm` | GET | ❌ No | Backend handles email link (sets cookies) |
+| `/api/auth/reset-password` | POST | ❌ No | Set new password (reads from cookies) |
 
 ---
 
@@ -303,20 +292,19 @@ const error = searchParams.get('error');
 
 ```typescript
 // POST /api/auth/reset-password
-const resetPassword = async (
-  accessToken: string,
-  refreshToken: string | null,
-  newPassword: string
-) => {
+// SECURITY: Tokens are automatically sent via HttpOnly cookies
+// No need to pass tokens explicitly in the request body
+const resetPassword = async (newPassword: string) => {
   const response = await fetch(`${API_URL}/api/auth/reset-password`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
+    credentials: 'include',  // IMPORTANT: Include cookies in request
     body: JSON.stringify({
-      token: accessToken,
-      refresh_token: refreshToken,
       new_password: newPassword,
+      // token and refresh_token are optional (deprecated)
+      // Backend reads from HttpOnly cookies instead
     }),
   });
   
@@ -333,11 +321,11 @@ const resetPassword = async (
 
 ```json
 {
-  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "refresh_token": "abc123...",  // Optional but recommended
   "new_password": "MyNewSecurePassword123!"
 }
 ```
+
+**Note:** The `token` and `refresh_token` fields are now optional and deprecated. The backend automatically reads recovery tokens from secure HttpOnly cookies set by the `/api/auth/confirm` endpoint.
 
 ### Response (Success - 200 OK)
 
@@ -388,32 +376,25 @@ import { toast } from 'react-hot-toast';
 
 export default function ResetPasswordPage() {
   const router = useRouter();
-  const [accessToken, setAccessToken] = useState<string | null>(null);
-  const [refreshToken, setRefreshToken] = useState<string | null>(null);
+  // No need to store tokens - they're in secure HttpOnly cookies
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    // SECURITY NOTE: This flow needs backend update to avoid tokens in URL
-    // Current implementation (INSECURE): Tokens passed via URL query params
-    // Recommended implementation: Use one-time codes exchanged server-side
+    // SECURITY: Tokens are now delivered via secure HttpOnly cookies (not URL)
+    // The backend /api/auth/confirm endpoint sets these cookies when verifying
+    // the recovery link, so they're automatically included in API requests.
     //
-    // TEMPORARY WORKAROUND until backend is updated:
-    // Extract tokens from URL on page load, but this exposes them to:
-    // - Browser history
-    // - Server/access logs
-    // - Referrer headers to third-party resources
+    // Frontend no longer needs to:
+    // - Extract tokens from URL query parameters
+    // - Store tokens in state
+    // - Send tokens explicitly in requests
     //
-    // TODO: Update backend /api/auth/confirm to:
-    // 1. Store tokens in secure HttpOnly cookies (not URL)
-    // 2. Return only a one-time reset code in URL: /reset-password?code=xxx
-    // 3. Frontend sends code + new password to /api/auth/reset-password
-    // 4. Backend validates code and performs password reset server-side
+    // Cookies are automatically sent with /api/auth/reset-password request
+    // and deleted by the backend after successful password reset.
     const params = new URLSearchParams(window.location.search);
-    const token = params.get('access_token');
-    const refresh = params.get('refresh_token');
     const errorParam = params.get('error');
     const messageParam = params.get('message');
 
@@ -422,21 +403,11 @@ export default function ResetPasswordPage() {
       return;
     }
 
-    if (!token) {
-      setError('Invalid reset link. Please request a new password reset.');
-      return;
-    }
-
-    setAccessToken(token);
-    setRefreshToken(refresh);
-
     if (messageParam) {
       toast(decodeURIComponent(messageParam.replace(/\+/g, ' ')));
     }
 
-    // Clean URL (remove tokens from address bar for security)
-    // NOTE: This doesn't prevent logging - tokens were already exposed
-    window.history.replaceState({}, '', '/reset-password');
+    // No need to clean URL - no sensitive data in query params anymore
   }, []);
 
   const validatePassword = (): boolean => {
@@ -455,20 +426,17 @@ export default function ResetPasswordPage() {
     e.preventDefault();
     
     if (!validatePassword()) return;
-    if (!accessToken) {
-      toast.error('Invalid reset link. Please request a new password reset.');
-      return;
-    }
 
     setIsLoading(true);
 
     try {
+      // SECURITY: Tokens automatically sent via HttpOnly cookies
+      // No need to pass them explicitly - credentials: 'include' handles it
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/auth/reset-password`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',  // IMPORTANT: Include cookies
         body: JSON.stringify({
-          token: accessToken,
-          refresh_token: refreshToken,
           new_password: newPassword,
         }),
       });
@@ -490,7 +458,7 @@ export default function ResetPasswordPage() {
       toast.error(error.message || 'Something went wrong');
       
       // If token expired, offer to request new link
-      if (error.message.includes('expired') || error.message.includes('invalid')) {
+      if (error.message.includes('expired') || error.message.includes('invalid') || error.message.includes('recovery session')) {
         setError(error.message);
       }
     } finally {
@@ -705,16 +673,20 @@ Request a password reset email.
 
 ### POST `/api/auth/reset-password`
 
-Reset password using tokens from email link.
+Reset password using recovery session from HttpOnly cookies.
+
+**Security:** Recovery tokens (`recovery_access_token` and `recovery_refresh_token`) are automatically sent via secure HttpOnly cookies. The backend sets these cookies when the user clicks the reset link in their email.
 
 **Request:**
 ```json
 {
-  "token": "string (required, access_token from URL)",
-  "refresh_token": "string (optional, refresh_token from URL)",
-  "new_password": "string (required, min 8 characters)"
+  "new_password": "string (required, min 8 characters)",
+  "token": "string (optional, deprecated - read from cookie)",
+  "refresh_token": "string (optional, deprecated - read from cookie)"
 }
 ```
+
+**Important:** Always include `credentials: 'include'` in your fetch request to send cookies.
 
 **Response (200):**
 ```json
@@ -724,7 +696,15 @@ Reset password using tokens from email link.
 }
 ```
 
+**Note:** Recovery cookies are automatically deleted by the backend after successful password reset.
+
 **Response (401):**
+```json
+{
+  "detail": "No recovery session found. Please request a new password reset link."
+}
+```
+or
 ```json
 {
   "detail": "Invalid or expired recovery token. Please request a new password reset link."

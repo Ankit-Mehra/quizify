@@ -659,16 +659,50 @@ async def confirm_email(
             )
         elif type == "recovery":
             # Password reset confirmation - token verified, now create session for password update
-            # The verified response contains session tokens we can pass to frontend
+            # SECURITY: Store tokens in HttpOnly cookies, NOT in URL query parameters
+            # URL parameters expose tokens to browser history, server logs, and referrer headers
             if response.session:
                 access_token = response.session.access_token
                 refresh_token = response.session.refresh_token
-                # Redirect to password reset page with both tokens
-                # Frontend will use these when calling /reset-password
-                return RedirectResponse(
-                    url=f"{app_config.FRONTEND_URL}/reset-password?access_token={access_token}&refresh_token={refresh_token}&message=Please+enter+your+new+password",
+                
+                # Create redirect response WITHOUT tokens in URL
+                redirect_response = RedirectResponse(
+                    url=f"{app_config.FRONTEND_URL}/reset-password?message=Please+enter+your+new+password",
                     status_code=302
                 )
+                
+                # SECURITY: Store recovery tokens in HttpOnly cookies
+                # These cookies are:
+                # - HttpOnly: Not accessible to JavaScript (XSS protection)
+                # - Secure: Only sent over HTTPS
+                # - SameSite=Lax: CSRF protection for password reset
+                # - Short-lived: 10 minutes to complete reset
+                cookie_settings = {
+                    "httponly": True,
+                    "secure": True,
+                    "samesite": "lax",
+                    "max_age": 600,  # 10 minutes
+                    "path": "/",
+                }
+                
+                # Add domain if configured (for cross-subdomain)
+                if app_config.COOKIE_DOMAIN:
+                    cookie_settings["domain"] = app_config.COOKIE_DOMAIN
+                
+                # Set recovery session cookies
+                redirect_response.set_cookie(
+                    key="recovery_access_token",
+                    value=access_token,
+                    **cookie_settings
+                )
+                redirect_response.set_cookie(
+                    key="recovery_refresh_token",
+                    value=refresh_token,
+                    **cookie_settings
+                )
+                
+                logger.info("Recovery session established with secure cookies")
+                return redirect_response
             else:
                 logger.error("Recovery token verified but no session returned")
                 return RedirectResponse(
@@ -742,25 +776,40 @@ async def forgot_password(request: ForgotPasswordRequest):
         }
 
 
-async def reset_password(request: ResetPasswordRequest):
+async def reset_password(request: ResetPasswordRequest, fastapi_request: Request, response: Response):
     """
     Reset user password with recovery tokens.
     
-    This endpoint is called by the frontend after user:
-    1. Clicks reset link in email
-    2. Gets redirected to /reset-password page (via /confirm handler)
-    3. Enters new password in form
-    4. Frontend submits new password + tokens to this endpoint
+    SECURITY: Uses HttpOnly cookies for token delivery instead of URL parameters.
     
-    The tokens are provided in the URL by the /confirm handler after
-    validating the recovery token. These tokens give temporary access to update password.
+    Flow:
+    1. User clicks reset link in email
+    2. /confirm endpoint verifies token and sets HttpOnly cookies
+    3. User gets redirected to /reset-password page
+    4. User enters new password
+    5. Frontend calls this endpoint (cookies sent automatically)
+    6. Backend reads tokens from cookies and updates password
+    7. Cookies are deleted after successful reset
+    
+    Tokens are stored in secure HttpOnly cookies:
+    - recovery_access_token: Temporary access token from Supabase
+    - recovery_refresh_token: Temporary refresh token from Supabase
     """
     try:
-        access_token = request.token
-        refresh_token = request.refresh_token
+        # SECURITY: Read tokens from HttpOnly cookies (primary method)
+        # Fallback to request body for backward compatibility (deprecated)
+        access_token = fastapi_request.cookies.get("recovery_access_token") or request.token
+        refresh_token = fastapi_request.cookies.get("recovery_refresh_token") or request.refresh_token
         new_password = request.new_password
         
-        logger.info("Password reset attempt with recovery tokens")
+        if not access_token:
+            logger.warning("Password reset attempted without recovery tokens")
+            raise HTTPException(
+                status_code=401,
+                detail="No recovery session found. Please request a new password reset link."
+            )
+        
+        logger.info("Password reset attempt with recovery session")
         
         supabase = get_supabase()
         
@@ -787,6 +836,11 @@ async def reset_password(request: ResetPasswordRequest):
                 )
             
             logger.info(f"Password reset successful for user: {response.user.id}")
+            
+            # SECURITY: Delete recovery cookies after successful password reset
+            # This ensures tokens can't be reused
+            _delete_auth_cookie(response, "recovery_access_token")
+            _delete_auth_cookie(response, "recovery_refresh_token")
             
             return {
                 "message": "Password updated successfully! You can now log in with your new password.",
