@@ -159,6 +159,26 @@ class Config:
     CHUNK_SIZE: int = int(os.getenv("CHUNK_SIZE", "512"))
     CHUNK_OVERLAP: int = int(os.getenv("CHUNK_OVERLAP", "50"))
     
+    # ============================================================================
+    # Flashcard Generation Configuration
+    # ============================================================================
+    # These settings control flashcard generation behavior
+    
+    # Card count calculation: ~1 card per N words of source content
+    FLASHCARD_CARDS_PER_100_WORDS: int = int(os.getenv("FLASHCARD_CARDS_PER_100_WORDS", "1"))
+    
+    # Minimum cards to generate per request (ensures enough study material)
+    FLASHCARD_MIN_CARDS: int = int(os.getenv("FLASHCARD_MIN_CARDS", "3"))
+    
+    # Maximum cards per single LLM request (prevents context overflow)
+    FLASHCARD_MAX_CARDS_PER_REQUEST: int = int(os.getenv("FLASHCARD_MAX_CARDS_PER_REQUEST", "50"))
+    
+    # Maximum tokens to send to LLM in single request
+    FLASHCARD_MAX_CONTENT_TOKENS: int = int(os.getenv("FLASHCARD_MAX_CONTENT_TOKENS", "6000"))
+    
+    # Word count threshold for switching to chunked generation
+    FLASHCARD_CHUNK_THRESHOLD_WORDS: int = int(os.getenv("FLASHCARD_CHUNK_THRESHOLD_WORDS", "3000"))
+    
     # Quality Settings
     ENABLE_RAG_PIPELINE: bool = os.getenv("ENABLE_RAG_PIPELINE", "true").lower() == "true"
     ENABLE_CONCEPT_EXTRACTION: bool = os.getenv("ENABLE_CONCEPT_EXTRACTION", "true").lower() == "true"

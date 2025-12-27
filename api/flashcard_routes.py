@@ -106,30 +106,32 @@ async def generate_from_url(
     summary="List user's flashcard decks",
     description="Get all flashcard decks for the authenticated user."
 )
-def list_decks(
+async def list_decks(
     limit: int = Query(50, ge=1, le=100, description="Maximum decks to return"),
     offset: int = Query(0, ge=0, description="Offset for pagination"),
     user_id: str = Depends(get_current_user_id),
     user_token: str = Depends(get_current_user_token),
 ):
     """Get all flashcard decks for the current user."""
-    return get_user_flashcard_decks(user_id, user_token, limit, offset)
+    return await get_user_flashcard_decks(user_id, user_token, limit, offset)
 
 
 @router.get(
     "/decks/{deck_id}",
     response_model=DeckWithCards,
     summary="Get flashcard deck",
-    description="Get a specific flashcard deck with all its cards."
+    description="Get a specific flashcard deck with its cards (paginated)."
 )
-def get_deck_endpoint(
+async def get_deck_endpoint(
     deck_id: UUID = Path(..., description="ID of the deck"),
     include_cards: bool = Query(True, description="Include cards in response"),
+    card_limit: int = Query(100, ge=1, le=500, description="Maximum cards to return"),
+    card_offset: int = Query(0, ge=0, description="Offset for card pagination"),
     user_id: str = Depends(get_current_user_id),
     user_token: str = Depends(get_current_user_token),
 ):
     """Get a specific flashcard deck."""
-    return get_flashcard_deck(str(deck_id), user_id, user_token, include_cards)
+    return await get_flashcard_deck(str(deck_id), user_id, user_token, include_cards, card_limit, card_offset)
 
 
 @router.patch(
@@ -138,14 +140,14 @@ def get_deck_endpoint(
     summary="Update flashcard deck",
     description="Update deck title or description."
 )
-def update_deck_endpoint(
+async def update_deck_endpoint(
     deck_id: UUID = Path(..., description="ID of the deck"),
     update_data: DeckUpdate = Body(...),
     user_id: str = Depends(get_current_user_id),
     user_token: str = Depends(get_current_user_token),
 ):
     """Update a flashcard deck."""
-    return update_flashcard_deck(str(deck_id), user_id, user_token, update_data)
+    return await update_flashcard_deck(str(deck_id), user_id, user_token, update_data)
 
 
 @router.delete(
@@ -153,13 +155,13 @@ def update_deck_endpoint(
     summary="Delete flashcard deck",
     description="Delete a deck and all its cards."
 )
-def delete_deck_endpoint(
+async def delete_deck_endpoint(
     deck_id: UUID = Path(..., description="ID of the deck"),
     user_id: str = Depends(get_current_user_id),
     user_token: str = Depends(get_current_user_token),
 ):
     """Delete a flashcard deck."""
-    return delete_flashcard_deck(str(deck_id), user_id, user_token)
+    return await delete_flashcard_deck(str(deck_id), user_id, user_token)
 
 
 # =============================================================================
@@ -172,14 +174,14 @@ def delete_deck_endpoint(
     summary="Update flashcard",
     description="Update a flashcard's front, back, or hint text."
 )
-def update_card_endpoint(
+async def update_card_endpoint(
     card_id: UUID = Path(..., description="ID of the flashcard"),
     update_data: FlashcardUpdate = Body(...),
     user_id: str = Depends(get_current_user_id),
     user_token: str = Depends(get_current_user_token),
 ):
     """Update a flashcard."""
-    return update_single_flashcard(str(card_id), user_id, user_token, update_data)
+    return await update_single_flashcard(str(card_id), user_id, user_token, update_data)
 
 
 @router.delete(
@@ -187,13 +189,13 @@ def update_card_endpoint(
     summary="Delete flashcard",
     description="Delete a single flashcard from a deck."
 )
-def delete_card_endpoint(
+async def delete_card_endpoint(
     card_id: UUID = Path(..., description="ID of the flashcard"),
     user_id: str = Depends(get_current_user_id),
     user_token: str = Depends(get_current_user_token),
 ):
     """Delete a flashcard."""
-    return delete_single_flashcard(str(card_id), user_id, user_token)
+    return await delete_single_flashcard(str(card_id), user_id, user_token)
 
 
 # =============================================================================
@@ -207,13 +209,13 @@ def delete_card_endpoint(
     description="Start a new study session for a deck. "
                 "Returns cards to study based on filters."
 )
-def start_session_endpoint(
+async def start_session_endpoint(
     request: StudySessionStart,
     user_id: str = Depends(get_current_user_id),
     user_token: str = Depends(get_current_user_token),
 ):
     """Start a new study session."""
-    return start_study_session(request, user_id, user_token)
+    return await start_study_session(request, user_id, user_token)
 
 
 @router.post(
@@ -223,13 +225,13 @@ def start_session_endpoint(
     description="Complete a study session and update card progress "
                 "based on review results."
 )
-def complete_session_endpoint(
+async def complete_session_endpoint(
     request: StudySessionComplete,
     user_id: str = Depends(get_current_user_id),
     user_token: str = Depends(get_current_user_token),
 ):
     """Complete a study session with results."""
-    return complete_flashcard_study_session(request, user_id, user_token)
+    return await complete_flashcard_study_session(request, user_id, user_token)
 
 
 # =============================================================================

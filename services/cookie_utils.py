@@ -4,10 +4,18 @@ Shared cookie utilities for authentication.
 This module provides centralized cookie settings and operations to ensure
 consistent cookie handling across the codebase (handlers, middleware, etc).
 
-SECURITY NOTE: For cross-origin deployments (frontend on Vercel, backend on Railway),
+SECURITY WARNING: For cross-origin deployments (frontend on Vercel, backend on Railway),
 we use SameSite=None to allow cookies to be sent with cross-origin requests.
-This is safe because we use JWT + Redis session validation (not cookie-only auth).
-CSRF attacks cannot forge JWT signatures.
+
+CSRF MITIGATION:
+- SameSite=None cookies CAN be sent with cross-site requests, enabling CSRF attacks
+- The comment that "CSRF attacks cannot forge JWT signatures" was INCORRECT - 
+  CSRF doesn't need to forge tokens when cookies are automatically sent
+- Our primary CSRF defense is requiring Authorization header for state-changing endpoints
+- Cookie-based auth is only used as a fallback for specific flows (OAuth callbacks)
+- All state-changing endpoints should validate that requests include proper headers
+
+For maximum security, prefer Authorization header over cookie-based auth in new endpoints.
 """
 from typing import TYPE_CHECKING
 

@@ -369,13 +369,39 @@ class PdfFlashcardExporter(BaseExporter):
 
     @staticmethod
     def _escape_text(text: str) -> str:
-        """Escape text for ReportLab Paragraph."""
+        """
+        Escape and sanitize text for ReportLab Paragraph.
+        
+        SECURITY: ReportLab's Paragraph component interprets various XML/RML tags.
+        Malicious users could craft content with:
+        - <img> tags to attempt file inclusion
+        - <font> tags to cause rendering issues
+        - <para> tags to break layout
+        - Other RML tags like <seqreset>, <greek>, etc.
+        
+        This function escapes ALL XML constructs to ensure only plain text
+        is rendered, with controlled line breaks.
+        """
         if not text:
             return ""
-        # Escape XML special characters
+        
+        import re
+        
+        # First, escape XML special characters (order matters - & first)
         text = text.replace('&', '&amp;')
         text = text.replace('<', '&lt;')
         text = text.replace('>', '&gt;')
-        # Convert newlines to line breaks
+        text = text.replace('"', '&quot;')
+        text = text.replace("'", '&#39;')
+        
+        # Remove any null bytes or other control characters (except newlines/tabs)
+        text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
+        
+        # Convert newlines to ReportLab's line break tag
+        # This is safe because we've already escaped < and >
         text = text.replace('\n', '<br/>')
+        
+        # Convert tabs to spaces for consistent rendering
+        text = text.replace('\t', '    ')
+        
         return text

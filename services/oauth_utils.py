@@ -337,13 +337,14 @@ def verify_oauth_state(state: str, expected_csrf: Optional[str]) -> Tuple[bool, 
         return False, None
 
 
-def verify_oauth_state_from_cookie(state_cookie: Optional[str]) -> Tuple[bool, Optional[str], Optional[str]]:
+def verify_oauth_state_from_cookie(state_cookie: Optional[str]) -> Tuple[bool, Optional[str], Optional[str], Optional[str]]:
     """
-    Verify an OAuth state stored entirely in the cookie and extract PKCE verifier.
+    Verify an OAuth state stored in the cookie and extract CSRF token + PKCE verifier.
     
-    This is used when the state is stored in the HttpOnly cookie instead of
-    being passed via URL query parameter. This approach is needed when the
-    OAuth provider's redirect URL allowlist doesn't support query parameters.
+    This implements the double-submit cookie pattern for CSRF protection:
+    1. State cookie contains signed payload with CSRF token + PKCE verifier
+    2. CSRF token is also sent in OAuth URL as 'state' parameter
+    3. Callback validates URL state matches cookie's CSRF token
     
     Validates:
     - State cookie is present
@@ -354,14 +355,15 @@ def verify_oauth_state_from_cookie(state_cookie: Optional[str]) -> Tuple[bool, O
         state_cookie: The full state string from the cookie
         
     Returns:
-        Tuple of (is_valid, redirect_url, code_verifier):
+        Tuple of (is_valid, redirect_url, code_verifier, csrf_token):
         - is_valid: True if state is valid, False otherwise
         - redirect_url: The redirect URL from state, or None
         - code_verifier: The PKCE code verifier from state, or None
+        - csrf_token: The CSRF token to validate against URL state parameter
     """
     if not state_cookie:
         logger.warning("OAuth state cookie is missing")
-        return False, None, None
+        return False, None, None, None
     
     try:
         # Decode base64
@@ -370,7 +372,7 @@ def verify_oauth_state_from_cookie(state_cookie: Optional[str]) -> Tuple[bool, O
         # Split payload and signature
         if '.' not in signed_state:
             logger.warning("OAuth state missing signature separator")
-            return False, None, None
+            return False, None, None, None
         
         payload_json, signature = signed_state.rsplit('.', 1)
         
@@ -383,23 +385,26 @@ def verify_oauth_state_from_cookie(state_cookie: Optional[str]) -> Tuple[bool, O
         
         if not hmac.compare_digest(signature, expected_signature):
             logger.warning("OAuth state signature verification failed - tampering detected")
-            return False, None, None
+            return False, None, None, None
         
         # Parse payload
         payload = json.loads(payload_json)
         
-        # Note: 'csrf' field in payload is not explicitly validated here because
-        # the security model relies on the HttpOnly + SameSite cookie attributes
-        # and the HMAC signature of the cookie content. The presence of this
-        # valid, signed cookie proves the request originated from a browser
-        # that received the cookie during the initiation phase.
+        # Note: The 'csrf' field in payload IS validated by the caller
+        # (auth_handlers.py) by comparing it against the URL state parameter.
+        # This two-part validation ensures:
+        # 1. Cookie signature proves authenticity (HMAC)
+        # 2. URL state matching proves same-browser origin (Login CSRF protection)
         
         # Verify timestamp is not too old
         state_ts = payload.get("ts", 0)
         now_ts = int(datetime.now(timezone.utc).timestamp())
         if now_ts - state_ts > OAUTH_STATE_MAX_AGE:
             logger.warning(f"OAuth state expired (age: {now_ts - state_ts}s)")
-            return False, None, None
+            return False, None, None, None
+        
+        # Extract CSRF token for URL state validation
+        csrf_token = payload.get("csrf")
         
         # Extract and validate redirect URL
         redirect_url = payload.get("redirect")
@@ -412,11 +417,11 @@ def verify_oauth_state_from_cookie(state_cookie: Optional[str]) -> Tuple[bool, O
         if not code_verifier:
             logger.warning("OAuth state missing PKCE code verifier - state may be from old version")
             # Fail early with clear error rather than letting exchange fail
-            return False, None, None
+            return False, None, None, None
         
         logger.debug("OAuth state cookie verification successful")
-        return True, redirect_url, code_verifier
+        return True, redirect_url, code_verifier, csrf_token
         
     except Exception as e:
         logger.warning(f"OAuth state cookie verification failed: {e}")
-        return False, None, None
+        return False, None, None, None

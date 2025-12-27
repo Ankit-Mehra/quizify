@@ -15,6 +15,9 @@ security = HTTPBearer(auto_error=False)
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
+# CSRF-safe HTTP methods (idempotent/safe methods that don't modify server state)
+CSRF_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
 # Module-level HTTP client for connection reuse (avoids TLS handshake overhead)
 _http_client: Optional[httpx.AsyncClient] = None
 
@@ -140,14 +143,94 @@ async def _validate_request_session(request: Request, user_id: str) -> Optional[
     return session_id
 
 
+def _validate_csrf_protection(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials],
+) -> None:
+    """
+    Validate CSRF protection for state-changing requests.
+    
+    SECURITY: When using SameSite=None cookies (required for cross-origin),
+    cookie-based authentication is vulnerable to CSRF attacks. An attacker's
+    site can trigger POST/PUT/DELETE requests that include the victim's cookies.
+    
+    To mitigate this, state-changing requests (POST, PUT, DELETE, PATCH) MUST
+    include either:
+    1. Authorization header with Bearer token (proves JavaScript access to token)
+    2. X-CSRF-Token header (when combined with strict CORS, proves same-origin JS)
+    
+    IMPORTANT: CSRF protection via X-CSRF-Token relies on CORS being configured
+    with specific allowed origins (NOT "*"). CORS prevents cross-origin requests
+    from adding custom headers, so presence of X-CSRF-Token proves the request
+    came from an allowed origin with JavaScript access.
+    
+    Safe methods (GET, HEAD, OPTIONS) are exempt as they should not modify state.
+    
+    Raises:
+        HTTPException: 403 if unsafe method lacks CSRF protection
+    """
+    method = request.method.upper()
+    
+    # Safe methods don't need CSRF protection
+    if method in CSRF_SAFE_METHODS:
+        return
+    
+    # Check if Authorization header is present (proves JS access, not just cookies)
+    if credentials and credentials.credentials:
+        return
+    
+    # Check for X-CSRF-Token header
+    # SECURITY: This provides CSRF protection ONLY because:
+    # 1. CORS is configured with specific allowed origins (not "*")
+    # 2. Browsers block cross-origin requests from adding custom headers
+    # 3. Therefore, presence of this header proves the request came from allowed JS
+    # 
+    # If you ever change CORS to allow "*", you MUST implement proper
+    # double-submit cookie validation (compare header value to signed cookie).
+    csrf_token = request.headers.get("X-CSRF-Token")
+    if csrf_token:
+        # Log for monitoring - helps detect if CORS is misconfigured
+        logger.debug(
+            "CSRF protection via X-CSRF-Token header for %s %s (relies on strict CORS)",
+            method,
+            request.url.path
+        )
+        return
+    
+    # No CSRF protection present for unsafe method
+    request_path = request.url.path if hasattr(request, "url") else "unknown"
+    logger.warning(
+        "CSRF protection missing for %s %s - cookie-only auth without Authorization header",
+        method,
+        request_path
+    )
+    raise HTTPException(
+        status_code=403,
+        detail="State-changing requests require Authorization header or X-CSRF-Token for CSRF protection."
+    )
+
+
 async def _authenticate_request(
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials],
+    require_csrf_protection: bool = True,
 ) -> Tuple[str, str]:
-    """Authenticate request with Supabase and validate Redis session."""
+    """
+    Authenticate request with Supabase and validate Redis session.
+    
+    Args:
+        request: FastAPI request object
+        credentials: Optional bearer token credentials
+        require_csrf_protection: If True, validates CSRF protection for unsafe methods
+    """
 
     if getattr(request.state, "auth_cached", False):
         return request.state.auth_user_id, request.state.auth_token
+
+    # SECURITY: Validate CSRF protection for state-changing requests
+    # This MUST happen before authentication to prevent cookie-only CSRF attacks
+    if require_csrf_protection:
+        _validate_csrf_protection(request, credentials)
 
     token = credentials.credentials if credentials else request.cookies.get(ACCESS_TOKEN_COOKIE_NAME)
     if not token:

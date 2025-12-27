@@ -17,6 +17,7 @@ from uuid import uuid4
 
 from pydantic import ValidationError
 
+from config import config as app_config
 from services.content.models import IngestedContent
 from services.ai_services.prompts import build_flashcard_prompt_with_difficulty
 from services.llm import get_llm_provider, LLMGenerationRequest, ILLMProvider
@@ -27,11 +28,11 @@ from schemas.flashcard import (
 )
 
 
-# Constants
-DEFAULT_CARDS_PER_100_WORDS = 1  # ~1 card per 100 words of content
-MIN_CARDS = 3  # Minimum cards to generate
-MAX_CARDS_PER_REQUEST = 50  # Maximum cards per single LLM request
-MAX_CONTENT_TOKENS = 6000  # Max tokens to send to LLM in single request
+# Configuration from centralized config
+DEFAULT_CARDS_PER_100_WORDS = app_config.FLASHCARD_CARDS_PER_100_WORDS
+MIN_CARDS = app_config.FLASHCARD_MIN_CARDS
+MAX_CARDS_PER_REQUEST = app_config.FLASHCARD_MAX_CARDS_PER_REQUEST
+MAX_CONTENT_TOKENS = app_config.FLASHCARD_MAX_CONTENT_TOKENS
 
 
 class FlashcardGenerationError(Exception):
@@ -130,8 +131,9 @@ class FlashcardGenerationService:
         num_cards = self._calculate_card_count(content, generation_config)
         logger.debug("Calculated %d cards to generate", num_cards)
         
-        # Check if content needs chunking
-        if content.word_count > 3000:  # ~3000 words is roughly 4k tokens
+        # Check if content needs chunking (threshold from config)
+        chunk_threshold = app_config.FLASHCARD_CHUNK_THRESHOLD_WORDS
+        if content.word_count > chunk_threshold:
             logger.info("Content is long (%d words), using chunked generation", content.word_count)
             flashcards = await self._generate_chunked(
                 content, num_cards, generation_config, user_id, trace_id

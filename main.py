@@ -324,8 +324,8 @@ app.add_middleware(
     allow_origins=BACKEND_CORS_ORIGINS,
     allow_origin_regex=BACKEND_CORS_ORIGIN_REGEX,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization", "Accept", "X-Session-ID", "X-Refresh-Token"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+    allow_headers=["Content-Type", "Authorization", "Accept", "X-Session-ID", "X-Refresh-Token", "X-CSRF-Token"],
     max_age=3600,
 )
 app.add_middleware(SupabaseAutoRefreshMiddleware)

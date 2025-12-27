@@ -1,3 +1,4 @@
+import hmac
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlencode
 
@@ -1352,7 +1353,11 @@ async def google_signin_initiate(
             "access_type": "offline",  # Get refresh token
             "prompt": "consent",  # Force consent screen for refresh token
             "code_challenge": code_challenge,
-            "code_challenge_method": "s256"
+            "code_challenge_method": "s256",
+            # CRITICAL SECURITY: Include state parameter in OAuth URL
+            # This state is returned in the callback URL and MUST match the cookie value
+            # to prevent login CSRF attacks (double-submit cookie pattern)
+            "state": csrf_token  # Use CSRF token portion for URL state binding
         }
         
         oauth_url = f"{supabase_url}/auth/v1/authorize?{urlencode(oauth_params)}"
@@ -1412,6 +1417,7 @@ async def google_signin_initiate(
 
 async def google_signin_callback(
     code: str = Query(None, description="Authorization code from Google"),
+    state: str = Query(None, description="OAuth state parameter for CSRF validation"),
     error: str = Query(None, description="Error from Google OAuth"),
     error_description: str = Query(None, description="Error description from Google"),
     response: Response = None,
@@ -1424,7 +1430,7 @@ async def google_signin_callback(
     authenticates. It validates the CSRF token and exchanges the code for a session.
     
     Security features:
-    - State (CSRF + redirect) is stored in HttpOnly cookie (not URL)
+    - State parameter in URL is validated against cookie value (double-submit pattern)
     - State signature is verified to prevent tampering
     - Redirect URL is re-validated before use (relative paths only)
     - Auth tokens are set in HttpOnly cookies only
@@ -1453,7 +1459,7 @@ async def google_signin_callback(
         # Even on error, try to extract redirect from state (if valid)
         redirect_path = None
         if state_cookie:
-            is_valid, redirect_path, _ = _verify_oauth_state_from_cookie(state_cookie)
+            is_valid, redirect_path, _, _ = _verify_oauth_state_from_cookie(state_cookie)
             # Don't fail on invalid state for error redirects - just use default
         
         # Use generic error message to avoid information disclosure from OAuth provider
@@ -1473,11 +1479,24 @@ async def google_signin_callback(
         return clear_oauth_state_cookie(redirect_resp)
     
     # ===== CSRF + PKCE VALIDATION (Critical Security Check) =====
-    # Validate state from cookie to prevent login CSRF attacks and retrieve PKCE verifier
-    is_valid, redirect_path, code_verifier = _verify_oauth_state_from_cookie(state_cookie)
+    # Double-submit cookie pattern: Validate URL state matches cookie's CSRF token
+    # This prevents login CSRF attacks where attacker sets the cookie then supplies their own code
+    is_valid, redirect_path, code_verifier, csrf_token = _verify_oauth_state_from_cookie(state_cookie)
     
     if not is_valid:
-        logger.warning("OAuth state validation failed - possible CSRF attack")
+        logger.warning("OAuth state cookie validation failed - possible CSRF attack")
+        redirect_resp = RedirectResponse(
+            url=f"{app_config.FRONTEND_URL}/login?error=csrf_failed&message=Security%20validation%20failed.%20Please%20try%20again."
+        )
+        return clear_oauth_state_cookie(redirect_resp)
+    
+    # CRITICAL: Validate URL state parameter matches cookie's CSRF token
+    # This is the key defense against login CSRF attacks
+    if not state or not csrf_token or not hmac.compare_digest(state, csrf_token):
+        logger.warning(
+            f"OAuth state mismatch - URL state: {state[:8] if state else 'None'}..., "
+            f"cookie CSRF: {csrf_token[:8] if csrf_token else 'None'}... - possible login CSRF attack"
+        )
         redirect_resp = RedirectResponse(
             url=f"{app_config.FRONTEND_URL}/login?error=csrf_failed&message=Security%20validation%20failed.%20Please%20try%20again."
         )

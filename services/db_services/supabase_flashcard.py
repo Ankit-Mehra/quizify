@@ -86,6 +86,8 @@ def get_deck(
     user_id: str,
     user_token: Optional[str] = None,
     include_cards: bool = False,
+    card_limit: int = 100,
+    card_offset: int = 0,
 ) -> Optional[Dict[str, Any]]:
     """
     Get a flashcard deck by ID.
@@ -95,6 +97,8 @@ def get_deck(
         user_id: ID of the requesting user (for RLS)
         user_token: JWT token for RLS enforcement
         include_cards: Whether to include cards in response
+        card_limit: Maximum number of cards to include (default 100, max 500)
+        card_offset: Offset for card pagination
         
     Returns:
         Deck data or None if not found
@@ -116,12 +120,18 @@ def get_deck(
     deck = result.data
     
     if include_cards:
+        # Enforce maximum card limit to prevent unbounded queries
+        safe_limit = min(card_limit, 500)
         cards_result = supabase.table("flashcards")\
             .select("*")\
             .eq("deck_id", deck_id)\
             .order("position")\
+            .range(card_offset, card_offset + safe_limit - 1)\
             .execute()
         deck["cards"] = cards_result.data or []
+        deck["cards_total"] = deck.get("card_count", len(deck["cards"]))
+        deck["cards_offset"] = card_offset
+        deck["cards_limit"] = safe_limit
     
     return deck
 
@@ -211,17 +221,37 @@ def delete_deck(
     user_token: Optional[str] = None,
 ) -> bool:
     """
-    Delete a flashcard deck and all its cards.
+    Delete a flashcard deck and all its cards with ownership verification.
+    
+    SECURITY: Verifies that the deck is owned by user_id before performing
+    the delete to prevent IDOR attacks.
     
     Args:
         deck_id: ID of the deck to delete
-        user_id: ID of the user (for RLS)
+        user_id: ID of the user (for ownership verification)
         user_token: JWT token for RLS enforcement
         
     Returns:
-        True if deleted, False otherwise
+        True if deleted, False if not found/not authorized
     """
     logger.info("Deleting deck %s for user %s...", deck_id, user_id[:8])
+    
+    # SECURITY: Verify ownership before delete
+    existing = get_deck(deck_id, user_id, user_token)
+    if not existing:
+        logger.warning(
+            "SECURITY: Deck %s not found for user %s... (may be unauthorized access)",
+            deck_id, user_id[:8]
+        )
+        return False
+    
+    # Additional explicit ownership check
+    if existing.get("created_by") != user_id:
+        logger.warning(
+            "SECURITY: Unauthorized delete attempt on deck %s by user %s... (owned by %s...)",
+            deck_id, user_id[:8], existing.get("created_by", "unknown")[:8]
+        )
+        return False
     
     if user_token:
         supabase = get_authed_supabase_client(user_token)
@@ -232,6 +262,7 @@ def delete_deck(
     result = supabase.table("flashcard_decks")\
         .delete()\
         .eq("id", deck_id)\
+        .eq("created_by", user_id)\
         .execute()
     
     return len(result.data) > 0 if result.data else False
@@ -327,6 +358,53 @@ def get_flashcard(
     return result.data
 
 
+def verify_flashcard_ownership(
+    card_id: str,
+    user_id: str,
+    user_token: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """
+    Verify that a flashcard belongs to a deck owned by the user.
+    
+    SECURITY: This function must be called before any update/delete operations
+    to prevent IDOR attacks. Even though RLS is in place, explicit ownership
+    verification at the business logic layer provides defense in depth.
+    
+    Args:
+        card_id: ID of the flashcard
+        user_id: ID of the user claiming ownership
+        user_token: JWT token for RLS enforcement
+        
+    Returns:
+        Flashcard data with deck info if owned by user, None otherwise
+    """
+    if user_token:
+        supabase = get_authed_supabase_client(user_token)
+    else:
+        supabase = get_supabase()
+    
+    # Join flashcards with decks to verify ownership
+    result = supabase.table("flashcards")\
+        .select("*, flashcard_decks!inner(id, created_by)")\
+        .eq("id", card_id)\
+        .single()\
+        .execute()
+    
+    if not result.data:
+        return None
+    
+    # Verify the deck belongs to the user
+    deck_info = result.data.get("flashcard_decks")
+    if not deck_info or deck_info.get("created_by") != user_id:
+        logger.warning(
+            "SECURITY: User %s attempted to access card %s owned by different user",
+            user_id[:8], card_id
+        )
+        return None
+    
+    return result.data
+
+
 def get_deck_cards(
     deck_id: str,
     user_token: Optional[str] = None,
@@ -375,6 +453,7 @@ def get_deck_cards(
 
 def update_flashcard(
     card_id: str,
+    user_id: str,
     user_token: Optional[str] = None,
     front: Optional[str] = None,
     back: Optional[str] = None,
@@ -382,10 +461,14 @@ def update_flashcard(
     status: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """
-    Update a flashcard.
+    Update a flashcard with ownership verification.
+    
+    SECURITY: Verifies that the card belongs to a deck owned by user_id
+    before performing the update to prevent IDOR attacks.
     
     Args:
         card_id: ID of the flashcard
+        user_id: ID of the user (for ownership verification)
         user_token: JWT token for RLS enforcement
         front: New front text
         back: New back text
@@ -393,9 +476,18 @@ def update_flashcard(
         status: New status
         
     Returns:
-        Updated flashcard data or None if not found
+        Updated flashcard data or None if not found/not authorized
     """
-    logger.debug("Updating flashcard %s", card_id)
+    logger.debug("Updating flashcard %s for user %s...", card_id, user_id[:8])
+    
+    # SECURITY: Verify ownership before update
+    existing = verify_flashcard_ownership(card_id, user_id, user_token)
+    if not existing:
+        logger.warning(
+            "SECURITY: Unauthorized update attempt on card %s by user %s...",
+            card_id, user_id[:8]
+        )
+        return None
     
     if user_token:
         supabase = get_authed_supabase_client(user_token)
@@ -425,19 +517,33 @@ def update_flashcard(
 
 def delete_flashcard(
     card_id: str,
+    user_id: str,
     user_token: Optional[str] = None,
 ) -> bool:
     """
-    Delete a flashcard.
+    Delete a flashcard with ownership verification.
+    
+    SECURITY: Verifies that the card belongs to a deck owned by user_id
+    before performing the delete to prevent IDOR attacks.
     
     Args:
         card_id: ID of the flashcard to delete
+        user_id: ID of the user (for ownership verification)
         user_token: JWT token for RLS enforcement
         
     Returns:
-        True if deleted, False otherwise
+        True if deleted, False if not found/not authorized
     """
-    logger.debug("Deleting flashcard %s", card_id)
+    logger.debug("Deleting flashcard %s for user %s...", card_id, user_id[:8])
+    
+    # SECURITY: Verify ownership before delete
+    existing = verify_flashcard_ownership(card_id, user_id, user_token)
+    if not existing:
+        logger.warning(
+            "SECURITY: Unauthorized delete attempt on card %s by user %s...",
+            card_id, user_id[:8]
+        )
+        return False
     
     if user_token:
         supabase = get_authed_supabase_client(user_token)
