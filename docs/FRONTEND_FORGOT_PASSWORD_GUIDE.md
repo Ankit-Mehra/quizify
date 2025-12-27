@@ -4,6 +4,59 @@
 > 
 > This guide details the frontend implementation for the forgot password feature. All backend APIs are ready and tested.
 
+## ⚠️ CRITICAL SECURITY ISSUE - ACTION REQUIRED
+
+**Current Implementation Status: 🔴 INSECURE - DO NOT USE IN PRODUCTION**
+
+### Security Vulnerability
+The current backend implementation (`handlers/auth_handlers.py:669`) passes `access_token` and `refresh_token` directly in the URL query string:
+
+```python
+# INSECURE - Current implementation
+url=f"{FRONTEND_URL}/reset-password?access_token={access_token}&refresh_token={refresh_token}"
+```
+
+**Why This Is Dangerous:**
+- ❌ Tokens exposed in browser history (persistent, accessible to any user/malware on device)
+- ❌ Tokens logged in server access logs (visible to operations team, log aggregation services)
+- ❌ Tokens leaked via `Referer` headers when loading third-party resources (analytics, CDNs)
+- ❌ Tokens visible in browser's network tab
+- ❌ Attacker who obtains URL can reset victim's password or impersonate their session
+
+### Recommended Fix (Backend Changes Required)
+
+**Option 1: Secure HttpOnly Cookies (Preferred)**
+```python
+# SECURE - Recommended implementation
+# In handlers/auth_handlers.py confirm_email() for type="recovery":
+response = RedirectResponse(url=f"{FRONTEND_URL}/reset-password?code={one_time_code}")
+response.set_cookie(
+    key="recovery_session",
+    value=access_token,
+    httponly=True,
+    secure=True,
+    samesite="lax",
+    max_age=600  # 10 minutes
+)
+return response
+```
+
+**Option 2: One-Time Code Exchange**
+```python
+# Store tokens server-side, return only short-lived code
+reset_code = secrets.token_urlsafe(32)
+await redis.setex(f"reset:{reset_code}", 600, json.dumps({
+    "access_token": access_token,
+    "refresh_token": refresh_token,
+    "user_id": user_id
+}))
+return RedirectResponse(url=f"{FRONTEND_URL}/reset-password?code={reset_code}")
+```
+
+**Until this is fixed, this feature should NOT be deployed to production.**
+
+---
+
 ## Quick Reference
 
 | Endpoint | Method | Auth Required | Purpose |
@@ -343,7 +396,21 @@ export default function ResetPasswordPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    // Extract tokens from URL on page load
+    // SECURITY NOTE: This flow needs backend update to avoid tokens in URL
+    // Current implementation (INSECURE): Tokens passed via URL query params
+    // Recommended implementation: Use one-time codes exchanged server-side
+    //
+    // TEMPORARY WORKAROUND until backend is updated:
+    // Extract tokens from URL on page load, but this exposes them to:
+    // - Browser history
+    // - Server/access logs
+    // - Referrer headers to third-party resources
+    //
+    // TODO: Update backend /api/auth/confirm to:
+    // 1. Store tokens in secure HttpOnly cookies (not URL)
+    // 2. Return only a one-time reset code in URL: /reset-password?code=xxx
+    // 3. Frontend sends code + new password to /api/auth/reset-password
+    // 4. Backend validates code and performs password reset server-side
     const params = new URLSearchParams(window.location.search);
     const token = params.get('access_token');
     const refresh = params.get('refresh_token');
@@ -368,6 +435,7 @@ export default function ResetPasswordPage() {
     }
 
     // Clean URL (remove tokens from address bar for security)
+    // NOTE: This doesn't prevent logging - tokens were already exposed
     window.history.replaceState({}, '', '/reset-password');
   }, []);
 
