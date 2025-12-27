@@ -60,7 +60,7 @@ class CsvAnkiExporter(BaseExporter):
         Returns:
             ExportResult with TSV bytes
         """
-        logger.info(f"Exporting quiz '{quiz_data.title}' to Anki format with {len(quiz_data.questions)} questions")
+        logger.info("Exporting quiz '%s' to Anki format with %d questions", quiz_data.title, len(quiz_data.questions))
         
         # Build rows (no header - Anki doesn't need it)
         rows = []
@@ -78,7 +78,7 @@ class CsvAnkiExporter(BaseExporter):
         # Generate filename with .txt extension for Anki
         filename = self._sanitize_filename(quiz_data.title) + "-anki.txt"
         
-        logger.info(f"Anki export generated: {len(tsv_bytes)} bytes, {len(rows)} cards, filename: {filename}")
+        logger.info("Anki export generated: %d bytes, %d cards, filename: %s", len(tsv_bytes), len(rows), filename)
         
         return ExportResult(
             content=tsv_bytes,
@@ -105,7 +105,7 @@ class CsvAnkiExporter(BaseExporter):
         Returns:
             ExportResult with TSV bytes
         """
-        logger.info(f"Exporting flashcard deck '{deck_data.title}' to Anki format with {deck_data.card_count} cards")
+        logger.info("Exporting flashcard deck '%s' to Anki format with %d cards", deck_data.title, deck_data.card_count)
         
         # Build rows (no header - Anki doesn't need it)
         rows = []
@@ -120,7 +120,7 @@ class CsvAnkiExporter(BaseExporter):
         # Generate filename with .txt extension for Anki
         filename = self._sanitize_filename(deck_data.title) + "-flashcards-anki.txt"
         
-        logger.info(f"Anki flashcard export generated: {len(tsv_bytes)} bytes, {len(rows)} cards, filename: {filename}")
+        logger.info("Anki flashcard export generated: %d bytes, %d cards, filename: %s", len(tsv_bytes), len(rows), filename)
         
         return ExportResult(
             content=tsv_bytes,
@@ -171,7 +171,7 @@ class CsvAnkiExporter(BaseExporter):
         elif isinstance(question, ExportQuestionMatching):
             return self._matching_to_cards(question, include_explanations)
         else:
-            logger.warning(f"Unknown question type: {type(question)}")
+            logger.warning("Unknown question type: %s", type(question))
             return []
 
     def _mcq_to_cards(

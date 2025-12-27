@@ -21,6 +21,7 @@ class SubmissionSummary(BaseModel):
     correct_count: int
     wrong_count: int
     submitted_at: str
+    quiz_title: str | None = None  # Optional for backward compatibility
 
 
 class SubmissionList(RootModel[List[SubmissionSummary]]):
@@ -212,7 +213,7 @@ def get_user_submissions(user_id: str, user_token: str = None) -> List[dict]:
         user_token: User's authentication token for RLS enforcement (recommended)
         
     Returns:
-        List of submission summaries with: id, quiz_id, score, submitted_at, total_questions
+        List of submission summaries with: id, quiz_id, quiz_title, score, submitted_at, total_questions
     """
     try:
         # Use authenticated client if token provided (enforces RLS)
@@ -223,15 +224,22 @@ def get_user_submissions(user_id: str, user_token: str = None) -> List[dict]:
         
         logger.debug(f"Fetching submissions for user: {user_id}")
         
-        # Get all submissions for this user, ordered by most recent first
+        # Get all submissions for this user with quiz title via join
         submissions = supabase.table("submissions") \
-            .select("id, quiz_id, user_id, score, total_questions, correct_count, wrong_count, submitted_at") \
+            .select("id, quiz_id, user_id, score, total_questions, correct_count, wrong_count, submitted_at, quizzes(title)") \
             .eq("user_id", user_id) \
             .order("submitted_at", desc=True) \
             .execute()
         
-        logger.debug(f"Found {len(submissions.data or [])} submissions for user: {user_id}")
-        return submissions.data or []
+        # Flatten the nested quizzes object to quiz_title
+        result = []
+        for sub in (submissions.data or []):
+            quiz_data = sub.pop("quizzes", None)
+            sub["quiz_title"] = quiz_data.get("title") if quiz_data else None
+            result.append(sub)
+        
+        logger.debug(f"Found {len(result)} submissions for user: {user_id}")
+        return result
         
     except Exception as e:
         logger.error(f"Error retrieving user submissions: {str(e)}", exc_info=True)
@@ -319,14 +327,22 @@ async def get_user_submissions_cached(user_id: str, user_token: str) -> List[dic
                 # ALWAYS use authenticated client (enforces RLS)
                 supabase = get_authed_supabase_client(user_token)
                 
-                # Get all submissions for this user
+                # Get all submissions for this user with quiz title via join
+                # Uses Supabase foreign key relationship: submissions.quiz_id -> quizzes.id
                 submissions = supabase.table("submissions") \
-                    .select("id, quiz_id, user_id, score, total_questions, correct_count, wrong_count, submitted_at") \
+                    .select("id, quiz_id, user_id, score, total_questions, correct_count, wrong_count, submitted_at, quizzes(title)") \
                     .eq("user_id", user_id) \
                     .order("submitted_at", desc=True) \
                     .execute()
                 
-                return submissions.data or []
+                # Flatten the nested quizzes object to quiz_title
+                result = []
+                for sub in (submissions.data or []):
+                    quiz_data = sub.pop("quizzes", None)
+                    sub["quiz_title"] = quiz_data.get("title") if quiz_data else None
+                    result.append(sub)
+                
+                return result
             except Exception as e:
                 logger.error(f"Supabase error fetching submissions for user {user_id}: {e}")
                 raise HTTPException(status_code=500, detail="Failed to fetch submissions from database.")

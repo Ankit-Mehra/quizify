@@ -3,25 +3,28 @@ Flashcard Generation Service.
 
 This service handles AI-powered flashcard generation from content.
 It uses the ContentIngestionService for input processing and the
-OpenAI service for generation.
+ILLMProvider abstraction for generation (supports OpenAI, Gemini, Groq).
+
+Supports two generation modes:
+- Standard: Fast, direct LLM generation (1 credit)
+- Enhanced: RAG-based with concept extraction and context retrieval (2 credits)
 """
 
 import time
 import json
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from uuid import uuid4
 
 from pydantic import ValidationError
 
 from services.content.models import IngestedContent
 from services.ai_services.prompts import build_flashcard_prompt_with_difficulty
-from services.ai_services.llm_client_service import get_openai_client, _retry_with_backoff
+from services.llm import get_llm_provider, LLMGenerationRequest, ILLMProvider
 from services.logger import ai_logger as logger
 from schemas.flashcard import (
     GeneratedFlashcard,
     FlashcardGenerationConfig,
 )
-from config import config
 
 
 # Constants
@@ -53,7 +56,8 @@ class FlashcardGenerationService:
     Service for generating flashcards using AI.
     
     This service takes ingested content and generates flashcards using
-    OpenAI's GPT models with structured output.
+    the configured LLM provider (OpenAI, Gemini, or Groq) via the
+    ILLMProvider abstraction layer.
     
     Example usage:
         service = FlashcardGenerationService()
@@ -73,12 +77,20 @@ class FlashcardGenerationService:
             user_id="user-123",
             trace_id="trace-456"
         )
+        
+        # Or with a specific provider
+        service = FlashcardGenerationService(provider_name="gemini")
     """
     
-    def __init__(self):
-        """Initialize the flashcard generation service."""
-        self.client = get_openai_client()
-        self.model = config.LLM_MODEL_MINI  # Use mini model for flashcard generation
+    def __init__(self, provider_name: Optional[str] = None):
+        """
+        Initialize the flashcard generation service.
+        
+        Args:
+            provider_name: LLM provider to use (default: config.DEFAULT_LLM_PROVIDER).
+                          Supported: "openai", "gemini", "groq"
+        """
+        self.provider: ILLMProvider = get_llm_provider(provider_name)
     
     async def generate(
         self,
@@ -141,7 +153,7 @@ class FlashcardGenerationService:
         self,
         text: str,
         num_cards: int,
-        config: FlashcardGenerationConfig,
+        generation_config: FlashcardGenerationConfig,
         user_id: Optional[str],
         trace_id: str,
     ) -> List[GeneratedFlashcard]:
@@ -151,7 +163,7 @@ class FlashcardGenerationService:
         Args:
             text: Text content to generate from
             num_cards: Number of cards to generate
-            config: Generation configuration
+            generation_config: Generation configuration
             user_id: User ID for tracking
             trace_id: Trace ID for correlation
             
@@ -162,46 +174,55 @@ class FlashcardGenerationService:
         prompt = build_flashcard_prompt_with_difficulty(
             text=text,
             num_cards=num_cards,
-            difficulty=config.difficulty,
-            card_style=config.card_style,
-            include_hints=config.include_hints,
+            difficulty=generation_config.difficulty,
+            card_style=generation_config.card_style,
+            include_hints=generation_config.include_hints,
         )
         
-        # Call the LLM with retry logic
+        # Build analytics properties
+        properties = {
+            "feature": "flashcard_generation",
+            "num_cards": num_cards,
+            "content_length": len(text),
+            "difficulty": generation_config.difficulty,
+            "card_style": generation_config.card_style,
+            "model": self.provider.default_model,
+            "provider": self.provider.provider_name,
+        }
+        
+        # Create system message for flashcard generation
+        system_message = "You are a flashcard generation expert. Always respond with valid JSON only, no additional text."
+        
+        # Call the LLM with retry logic via provider abstraction
         try:
-            response = await _retry_with_backoff(
-                lambda: self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": "You are a flashcard generation expert. Always respond with valid JSON only, no additional text."
-                        },
-                        {"role": "user", "content": prompt}
-                    ],
-                    temperature=0.7,
-                    max_tokens=4000,
-                    response_format={"type": "json_object"},
-                )
-            )
-        except Exception as e:
+            response = await self.provider.generate(LLMGenerationRequest(
+                prompt=prompt,
+                system_message=system_message,
+                response_format="json_object",
+                temperature=0.7,
+                max_tokens=4000,
+                user_id=user_id,
+                trace_id=trace_id,
+                properties=properties,
+            ))
+        except Exception as e:  # noqa: BLE001
             logger.error("LLM call failed for flashcard generation: %s", str(e))
             raise FlashcardGenerationError(
                 message=f"Failed to generate flashcards: {str(e)}",
                 original_error=e
-            )
+            ) from e
         
         # Parse the response
-        raw_content = response.choices[0].message.content
+        raw_content = response.content
         flashcards = self._parse_response(raw_content)
         
         # Log token usage for analytics
         if response.usage:
             logger.debug(
                 "Token usage - input: %d, output: %d, total: %d",
-                response.usage.prompt_tokens,
-                response.usage.completion_tokens,
-                response.usage.total_tokens
+                response.usage.get("prompt_tokens", 0),
+                response.usage.get("completion_tokens", 0),
+                response.usage.get("total_tokens", 0)
             )
         
         return flashcards
@@ -247,13 +268,13 @@ class FlashcardGenerationService:
                 chunk_flashcards = await self._generate_single(
                     text=chunk,
                     num_cards=chunk_cards,
-                    config=config,
+                    generation_config=config,
                     user_id=user_id,
                     trace_id=f"{trace_id}-chunk{i}",
                 )
                 all_flashcards.extend(chunk_flashcards)
-            except Exception as e:
-                logger.warning("Chunk %d failed, continuing with others: %s", i + 1, str(e))
+            except Exception:  # noqa: BLE001
+                logger.warning("Chunk %d failed, continuing with others", i + 1, exc_info=True)
                 continue
         
         if not all_flashcards:
@@ -350,7 +371,7 @@ class FlashcardGenerationService:
             raise FlashcardParseError(
                 message="Failed to parse AI response as JSON",
                 raw_response=raw_content[:500]
-            )
+            ) from e
         
         # Handle different response formats
         cards_data = data.get("cards", [])
@@ -464,13 +485,378 @@ class FlashcardGenerationService:
         return similarity >= threshold
 
 
-# Singleton instance
+class EnhancedFlashcardGenerationService:
+    """
+    Enhanced flashcard generation using RAG pipeline.
+    
+    This service uses concept extraction, context retrieval, and
+    Bloom's taxonomy to generate higher-quality flashcards.
+    
+    Requires:
+    - RAGIngestionService for document/chunk management
+    - ConceptExtractionService for identifying key concepts
+    - ContextService for retrieving relevant context
+    
+    Example usage:
+        service = EnhancedFlashcardGenerationService()
+        
+        result = await service.generate_enhanced(
+            content="Educational content...",
+            title="My Document",
+            config=FlashcardGenerationConfig(
+                num_cards=20,
+                mode="enhanced"
+            ),
+            user_id="user-123",
+            user_token="jwt-token",
+            trace_id="trace-456"
+        )
+        
+        # Result includes enhanced metadata
+        flashcards = result["flashcards"]
+        stats = result["generation_stats"]  # concepts, chunks, etc.
+    """
+    
+    def __init__(self, provider_name: Optional[str] = None):
+        """Initialize the enhanced flashcard service with dependencies."""
+        self.provider: ILLMProvider = get_llm_provider(provider_name)
+        
+        # Lazy import to avoid circular dependencies
+        from services.content.rag_ingestion_service import RAGIngestionService
+        from services.ai_services.concept_extraction_service import ConceptExtractionService
+        from services.ai_services.context_service import ContextService
+        
+        self.rag_service = RAGIngestionService()
+        self.concept_service = ConceptExtractionService()
+        self.context_service = ContextService()
+    
+    async def generate_enhanced(
+        self,
+        content: str,
+        title: str,
+        config: FlashcardGenerationConfig,
+        user_id: str,
+        user_token: str,
+        trace_id: Optional[str] = None,
+        content_source_type: str = "text",
+    ) -> Dict[str, Any]:
+        """
+        Generate flashcards using the enhanced RAG pipeline.
+        
+        This method:
+        1. Ingests content into the RAG pipeline (creates document + chunks)
+        2. Extracts key concepts from the content
+        3. Retrieves context for each concept
+        4. Generates flashcards for each concept with Bloom's levels
+        5. Returns flashcards with enhanced metadata
+        
+        Args:
+            content: Text content to generate flashcards from
+            title: Document title
+            config: Generation configuration
+            user_id: UUID of the requesting user
+            user_token: JWT token for RLS enforcement
+            trace_id: Trace ID for analytics
+            content_source_type: Source type ("text", "file", "url")
+            
+        Returns:
+            Dict with:
+            - flashcards: List[GeneratedFlashcard] with enhanced fields
+            - generation_stats: Dict with concepts, chunks, timing info
+        """
+        from services.ai_services.prompts import build_enhanced_flashcard_prompt
+        
+        start_time = time.time()
+        trace_id = trace_id or str(uuid4())
+        
+        logger.info(
+            "Starting enhanced flashcard generation for user %s..., trace: %s",
+            user_id[:8], trace_id[:8]
+        )
+        
+        # Step 1: Ingest content into RAG pipeline
+        t0 = time.time()
+        ingestion_result = await self.rag_service.ingest_content(
+            user_id=user_id,
+            user_token=user_token,
+            content=content,
+            title=title,
+            source_type=content_source_type,
+            trace_id=trace_id
+        )
+        document_id = ingestion_result["document_id"]
+        chunks = ingestion_result.get("chunks", [])
+        ingest_time = time.time() - t0
+        logger.info("[TIMING] RAG ingestion took %.2fs, %d chunks", ingest_time, len(chunks))
+        
+        # Step 2: Extract concepts from chunks
+        t1 = time.time()
+        concepts = await self.concept_service.extract_concepts(
+            chunks=chunks,
+            user_id=user_id,
+            user_token=user_token,
+            document_id=document_id,
+            trace_id=trace_id
+        )
+        concept_time = time.time() - t1
+        logger.info("[TIMING] Concept extraction took %.2fs, %d concepts", concept_time, len(concepts))
+        
+        if not concepts:
+            logger.warning("No concepts extracted, falling back to standard generation")
+            # Fall back to standard generation
+            standard_service = FlashcardGenerationService(provider_name=self.provider.provider_name)
+            word_count = len(content.split())
+            ingested_content = IngestedContent(
+                text=content,
+                word_count=word_count,
+                char_count=len(content),
+                title=title,
+                source_type=content_source_type,
+                metadata={}
+            )
+            flashcards = await standard_service.generate(
+                ingested_content, config, user_id, trace_id
+            )
+            return {
+                "flashcards": flashcards,
+                "generation_stats": {
+                    "mode": "enhanced_fallback",
+                    "concepts_extracted": 0,
+                    "chunks_processed": len(chunks),
+                    "fallback_reason": "no_concepts_extracted"
+                }
+            }
+        
+        # Step 3: Calculate cards per concept
+        num_cards = config.num_cards or self._estimate_cards(len(content.split()))
+        cards_per_concept = max(1, num_cards // len(concepts))
+        remaining_cards = num_cards - (cards_per_concept * len(concepts))
+        
+        # Step 4: Generate flashcards for each concept
+        t2 = time.time()
+        all_flashcards: List[GeneratedFlashcard] = []
+        
+        for i, concept in enumerate(concepts):
+            # Give extra cards to top-relevance concepts
+            concept_cards = cards_per_concept
+            if remaining_cards > 0 and concept.get("relevance", 0) > 0.7:
+                concept_cards += 1
+                remaining_cards -= 1
+            
+            # Get context for this concept
+            context = self.context_service.get_context_for_concept(
+                concept=concept,
+                user_token=user_token
+            )
+            
+            # Build enhanced prompt
+            prompt = build_enhanced_flashcard_prompt(
+                concept_name=concept.get("name", "Unknown Concept"),
+                context=context,
+                num_cards=concept_cards,
+                card_style=config.card_style,
+                difficulty=config.difficulty,
+            )
+            
+            # Generate flashcards for this concept
+            try:
+                cards = await self._generate_for_concept(
+                    prompt=prompt,
+                    concept=concept,
+                    user_id=user_id,
+                    trace_id=trace_id,
+                )
+                all_flashcards.extend(cards)
+            except Exception as e:
+                logger.warning(
+                    "Failed to generate cards for concept '%s': %s",
+                    concept.get("name"), str(e)
+                )
+                continue
+        
+        gen_time = time.time() - t2
+        logger.info("[TIMING] Flashcard generation took %.2fs, %d cards", gen_time, len(all_flashcards))
+        
+        # Step 5: Deduplicate cards
+        unique_flashcards = self._deduplicate_cards(all_flashcards)
+        
+        total_time = time.time() - start_time
+        
+        return {
+            "flashcards": unique_flashcards,
+            "generation_stats": {
+                "mode": "enhanced",
+                "concepts_extracted": len(concepts),
+                "chunks_processed": len(chunks),
+                "cards_generated": len(unique_flashcards),
+                "duplicates_removed": len(all_flashcards) - len(unique_flashcards),
+                "timing_ms": {
+                    "ingestion": int(ingest_time * 1000),
+                    "concept_extraction": int(concept_time * 1000),
+                    "flashcard_generation": int(gen_time * 1000),
+                    "total": int(total_time * 1000)
+                }
+            }
+        }
+    
+    async def _generate_for_concept(
+        self,
+        prompt: str,
+        concept: Dict[str, Any],
+        user_id: str,
+        trace_id: str,
+    ) -> List[GeneratedFlashcard]:
+        """
+        Generate flashcards for a single concept.
+        
+        Args:
+            prompt: The enhanced prompt for this concept
+            concept: Concept dictionary with name, chunk_id, etc.
+            user_id: User ID for analytics
+            trace_id: Trace ID for correlation
+            
+        Returns:
+            List of GeneratedFlashcard with enhanced metadata
+        """
+        system_message = "You are an expert educational flashcard creator. Always respond with valid JSON only."
+        
+        properties = {
+            "feature": "flashcard_generation_enhanced",
+            "concept": concept.get("name"),
+            "model": self.provider.default_model,
+            "provider": self.provider.provider_name,
+        }
+        
+        try:
+            response = await self.provider.generate(LLMGenerationRequest(
+                prompt=prompt,
+                system_message=system_message,
+                response_format="json_object",
+                temperature=0.7,
+                max_tokens=2000,
+                user_id=user_id,
+                trace_id=trace_id,
+                properties=properties,
+            ))
+        except Exception as e:
+            logger.error("LLM call failed for concept '%s': %s", concept.get("name"), str(e))
+            raise FlashcardGenerationError(
+                message=f"Failed to generate flashcards for concept: {str(e)}",
+                original_error=e
+            ) from e
+        
+        # Parse response with enhanced fields
+        return self._parse_enhanced_response(
+            raw_content=response.content,
+            concept=concept
+        )
+    
+    def _parse_enhanced_response(
+        self,
+        raw_content: str,
+        concept: Dict[str, Any]
+    ) -> List[GeneratedFlashcard]:
+        """
+        Parse LLM response into GeneratedFlashcard objects with enhanced metadata.
+        
+        Args:
+            raw_content: Raw JSON response from LLM
+            concept: Concept dictionary for metadata enrichment
+            
+        Returns:
+            List of GeneratedFlashcard with concept metadata
+        """
+        try:
+            data = json.loads(raw_content)
+        except json.JSONDecodeError as e:
+            logger.error("Failed to parse JSON response: %s", str(e))
+            raise FlashcardParseError(
+                message="Invalid JSON in AI response",
+                raw_response=raw_content[:500]
+            ) from e
+        
+        # Extract cards array (handle both "cards" and "flashcards" keys)
+        cards_data = data.get("cards", data.get("flashcards", []))
+        if not isinstance(cards_data, list):
+            raise FlashcardParseError(
+                message="Response does not contain a cards array",
+                raw_response=raw_content[:500]
+            )
+        
+        flashcards = []
+        for i, card in enumerate(cards_data):
+            try:
+                flashcard = GeneratedFlashcard(
+                    front=card.get("front", "").strip(),
+                    back=card.get("back", "").strip(),
+                    hint=card.get("hint", "").strip() if card.get("hint") else None,
+                    # Enhanced metadata
+                    concept_name=concept.get("name"),
+                    bloom_level=card.get("bloom_level"),
+                    difficulty_score=card.get("difficulty_score"),
+                    source_chunk_id=concept.get("chunk_id"),
+                )
+                flashcards.append(flashcard)
+            except ValidationError as e:
+                logger.warning("Failed to validate enhanced card %d: %s", i, str(e))
+                continue
+        
+        return flashcards
+    
+    def _estimate_cards(self, word_count: int) -> int:
+        """Estimate appropriate number of cards based on content length."""
+        cards = max(MIN_CARDS, word_count // 100)
+        return min(cards, MAX_CARDS_PER_REQUEST)
+    
+    def _deduplicate_cards(
+        self,
+        flashcards: List[GeneratedFlashcard],
+        similarity_threshold: float = 0.8
+    ) -> List[GeneratedFlashcard]:
+        """Remove duplicate or very similar flashcards."""
+        if len(flashcards) <= 1:
+            return flashcards
+        
+        unique_cards = []
+        seen_fronts = set()
+        
+        for card in flashcards:
+            normalized = card.front.lower().strip()
+            
+            is_duplicate = False
+            for seen in seen_fronts:
+                words1 = set(normalized.split())
+                words2 = set(seen.split())
+                if words1 and words2:
+                    intersection = len(words1 & words2)
+                    union = len(words1 | words2)
+                    if union > 0 and (intersection / union) >= similarity_threshold:
+                        is_duplicate = True
+                        break
+            
+            if not is_duplicate:
+                unique_cards.append(card)
+                seen_fronts.add(normalized)
+        
+        return unique_cards
+
+
+# Singleton instances
 _flashcard_service: Optional[FlashcardGenerationService] = None
+_enhanced_flashcard_service: Optional[EnhancedFlashcardGenerationService] = None
 
 
 def get_flashcard_generation_service() -> FlashcardGenerationService:
     """Get or create the singleton FlashcardGenerationService instance."""
-    global _flashcard_service
+    global _flashcard_service  # noqa: PLW0603  # type: ignore[global-statement]
     if _flashcard_service is None:
         _flashcard_service = FlashcardGenerationService()
     return _flashcard_service
+
+
+def get_enhanced_flashcard_service() -> EnhancedFlashcardGenerationService:
+    """Get or create the singleton EnhancedFlashcardGenerationService instance."""
+    global _enhanced_flashcard_service  # noqa: PLW0603  # type: ignore[global-statement]
+    if _enhanced_flashcard_service is None:
+        _enhanced_flashcard_service = EnhancedFlashcardGenerationService()
+    return _enhanced_flashcard_service

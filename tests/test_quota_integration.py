@@ -497,7 +497,7 @@ class TestQuotaCheckBeforeGeneration:
         """Test that quota check happens before AI generation for text endpoint."""
         tier_info = create_tier_info('free', 5, 5)
         
-        with mock_quota_exceeded(tier_info) as mocks:
+        with mock_quota_exceeded(tier_info):
             # Call handler and expect exception
             with pytest.raises(HTTPException) as exc_info:
                 await generate_quiz_from_text(
@@ -527,7 +527,7 @@ class TestQuotaCheckBeforeGeneration:
         mock_file.content_type = "text/plain"
         mock_file.read = AsyncMock(return_value=file_content)
         
-        with mock_quota_exceeded(tier_info) as mocks:
+        with mock_quota_exceeded(tier_info):
             # Call handler and expect exception
             with pytest.raises(HTTPException) as exc_info:
                 await generate_quiz_from_file_openai(

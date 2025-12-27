@@ -38,6 +38,7 @@ def create_deck(
     description: Optional[str] = None,
     content_source_type: Optional[str] = None,
     content_source_reference: Optional[str] = None,
+    generation_mode: str = "standard",
 ) -> Dict[str, Any]:
     """
     Create a new flashcard deck.
@@ -49,11 +50,12 @@ def create_deck(
         description: Optional description
         content_source_type: Source type (text, file, url)
         content_source_reference: Reference to source
+        generation_mode: "standard" (1 credit) or "enhanced" (2 credits)
         
     Returns:
         Created deck data
     """
-    logger.info("Creating flashcard deck for user %s...: %s", user_id[:8], title)
+    logger.info("Creating flashcard deck for user %s...: %s (mode: %s)", user_id[:8], title, generation_mode)
     
     # Use authenticated client if token provided
     if user_token:
@@ -67,6 +69,7 @@ def create_deck(
         "description": description,
         "content_source_type": content_source_type,
         "content_source_reference": content_source_reference,
+        "generation_mode": generation_mode,
     }
     
     result = supabase.table("flashcard_decks").insert(deck_data).execute()
@@ -246,6 +249,10 @@ def create_flashcards_batch(
     """
     Create multiple flashcards in a deck.
     
+    Supports both standard and enhanced mode cards.
+    Enhanced mode cards include additional metadata like
+    concept_name, bloom_level, difficulty_score, and source_chunk_id.
+    
     Args:
         deck_id: ID of the deck
         cards: List of flashcards to create
@@ -263,13 +270,25 @@ def create_flashcards_batch(
     
     card_data = []
     for i, card in enumerate(cards):
-        card_data.append({
+        card_entry = {
             "deck_id": deck_id,
             "front": card.front,
             "back": card.back,
             "hint": card.hint,
             "position": i,
-        })
+        }
+        
+        # Add enhanced mode fields if present
+        if hasattr(card, 'concept_name') and card.concept_name:
+            card_entry["concept_name"] = card.concept_name
+        if hasattr(card, 'bloom_level') and card.bloom_level:
+            card_entry["bloom_level"] = card.bloom_level
+        if hasattr(card, 'difficulty_score') and card.difficulty_score is not None:
+            card_entry["difficulty_score"] = card.difficulty_score
+        if hasattr(card, 'source_chunk_id') and card.source_chunk_id:
+            card_entry["source_chunk_id"] = card.source_chunk_id
+        
+        card_data.append(card_entry)
     
     result = supabase.table("flashcards").insert(card_data).execute()
     

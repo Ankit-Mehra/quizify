@@ -69,11 +69,11 @@ class GeminiProvider(ILLMProvider):
                 from google import genai
                 self._client = genai.Client(api_key=GEMINI_API_KEY)
                 logger.info("Gemini client initialized")
-            except ImportError:
+            except ImportError as exc:
                 raise LLMProviderError(
                     "google-genai package not installed. Run: pip install google-genai",
                     provider=self.provider_name
-                )
+                ) from exc
         return self._client
     
     @property
@@ -107,22 +107,27 @@ class GeminiProvider(ILLMProvider):
         
         try:
             # Build generation config
-            config = {}
+            gen_config = {}
             if request.response_format == "json_object":
-                config["response_mime_type"] = "application/json"
+                gen_config["response_mime_type"] = "application/json"
             
             if request.max_tokens:
-                config["max_output_tokens"] = request.max_tokens
+                gen_config["max_output_tokens"] = request.max_tokens
             
             if request.temperature != 1.0:
-                config["temperature"] = request.temperature
+                gen_config["temperature"] = request.temperature
+            
+            # Build prompt with system message if provided
+            prompt = request.prompt
+            if request.system_message:
+                prompt = f"{request.system_message}\n\n{request.prompt}"
             
             # Gemini's generate_content is synchronous, run in thread
             response = await asyncio.to_thread(
                 self.client.models.generate_content,
                 model=model,
-                contents=request.prompt,
-                config=config if config else None
+                contents=prompt,
+                config=gen_config if gen_config else None
             )
             
             latency_ms = int((time.time() - start_time) * 1000)
@@ -164,17 +169,17 @@ class GeminiProvider(ILLMProvider):
             
             # Check for rate limit errors
             if "rate" in error_msg and "limit" in error_msg:
-                raise LLMRateLimitError(self.provider_name)
+                raise LLMRateLimitError(self.provider_name) from e
             
             if "quota" in error_msg:
-                raise LLMRateLimitError(self.provider_name)
+                raise LLMRateLimitError(self.provider_name) from e
             
-            logger.error(f"Gemini generation failed: {error_type}: {e}")
+            logger.error("Gemini generation failed: %s: %s", error_type, e)
             raise LLMProviderError(
                 message=str(e),
                 provider=self.provider_name,
                 original_error=e
-            )
+            ) from e
     
     def _track_analytics(
         self,
@@ -209,5 +214,5 @@ class GeminiProvider(ILLMProvider):
                 event="$ai_generation",
                 properties=properties
             )
-        except Exception as e:
-            logger.warning(f"Failed to track Gemini analytics: {e}")
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Failed to track Gemini analytics: %s", e)

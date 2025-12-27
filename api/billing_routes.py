@@ -12,6 +12,7 @@ Epic 2-4: Full implementation with Stripe integration
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from pydantic import BaseModel, Field
 import stripe
 import time
 from collections import OrderedDict
@@ -97,9 +98,6 @@ async def get_storage_usage(user_id: str = Depends(get_current_user_id)):
     return storage
 
 
-from pydantic import BaseModel, Field
-
-
 class CreditPackCheckoutRequest(BaseModel):
     """Request body for credit pack checkout."""
     pack_size: Literal["5", "10", "15"] = Field(
@@ -151,7 +149,7 @@ async def create_credit_pack_checkout(
     price_id = price_id_map.get(pack_size)
     if not price_id:
         # Log configuration issue for operators
-        logger.error(f"Stripe price ID not configured for credit pack size: {pack_size} (user_id={user_id[:8]})")
+        logger.error("Stripe price ID not configured for credit pack size: %s (user_id=%s)", pack_size, user_id[:8])
         raise HTTPException(
             status_code=400,
             detail="Invalid credit pack size. Please choose 5, 10, or 15 credits."
@@ -160,8 +158,9 @@ async def create_credit_pack_checkout(
     # Validate price ID format (Stripe price IDs start with "price_")
     if not price_id.startswith("price_"):
         logger.error(
-            f"Invalid Stripe price ID format for {pack_size} credits: '{price_id[:20]}...' "
-            f"(expected 'price_*'). Check STRIPE_PRICE_ID_CREDITS_{pack_size} env var."
+            "Invalid Stripe price ID format for %s credits: '%s...' "
+            "(expected 'price_*'). Check STRIPE_PRICE_ID_CREDITS_%s env var.",
+            pack_size, price_id[:20], pack_size
         )
         raise HTTPException(
             status_code=500,
@@ -172,8 +171,9 @@ async def create_credit_pack_checkout(
     
     # Debug logging for troubleshooting (can be removed once stable)
     logger.info(
-        f"Credit pack checkout: pack_size={pack_size}, price_id={price_id}, "
-        f"units={units}, user={user_id[:8]}"
+        "Credit pack checkout: pack_size=%s, price_id=%s, "
+        "units=%s, user=%s",
+        pack_size, price_id, units, user_id[:8]
     )
     
     try:
@@ -185,7 +185,7 @@ async def create_credit_pack_checkout(
         
         if not customer_id:
             # Create new Stripe customer
-            logger.info(f"Creating new Stripe customer for user {user_id[:8]}")
+            logger.info("Creating new Stripe customer for user %s", user_id[:8])
             customer = stripe.Customer.create(
                 email=email,
                 metadata={"user_id": user_id}
@@ -216,7 +216,7 @@ async def create_credit_pack_checkout(
             }
         )
         
-        logger.info(f"Created credit pack checkout for user {user_id[:8]}: {pack_size} credits")
+        logger.info("Created credit pack checkout for user %s: %s credits", user_id[:8], pack_size)
         
         return {
             "checkout_url": session.url,
@@ -226,19 +226,20 @@ async def create_credit_pack_checkout(
     except stripe.InvalidRequestError as e:
         # Invalid request usually means bad price ID or invalid parameters - config issue
         logger.error(
-            f"Stripe InvalidRequestError for credit pack checkout: {e}. "
-            f"price_id={price_id}, pack_size={pack_size}, user={user_id[:8]}"
+            "Stripe InvalidRequestError for credit pack checkout: %s. "
+            "price_id=%s, pack_size=%s, user=%s",
+            e, price_id, pack_size, user_id[:8]
         )
         raise HTTPException(
             status_code=500,
             detail="Credit pack checkout configuration error. Please contact support."
-        )
+        ) from e
     except stripe.StripeError as e:
-        logger.error(f"Stripe error creating credit pack checkout: {e}")
+        logger.error("Stripe error creating credit pack checkout: %s", e)
         raise HTTPException(
             status_code=502,
             detail=f"Payment service error: {str(e)}"
-        )
+        ) from e
 
 
 # ============================================================================
@@ -304,10 +305,10 @@ class WebhookIdempotencyStore:
                     logger.info("BILLING_FALLBACK: Idempotency store recovered - Redis connection restored")
                 self._using_fallback = False
                 return result
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 if not self._using_fallback:
                     # Log transition to fallback mode (alert-worthy event)
-                    logger.warning(f"BILLING_FALLBACK: Idempotency store entering memory fallback mode - {e}")
+                    logger.warning("BILLING_FALLBACK: Idempotency store entering memory fallback mode - %s", e)
                 self._using_fallback = True
         else:
             if not self._using_fallback:
@@ -352,7 +353,7 @@ class WebhookIdempotencyStore:
         
         if is_duplicate:
             event_id_short = event_id[:12] if len(event_id) > 12 else event_id
-            logger.debug(f"Duplicate webhook event detected (Redis): {event_id_short}...")
+            logger.debug("Duplicate webhook event detected (Redis): %s...", event_id_short)
         
         return is_duplicate
     
@@ -363,7 +364,7 @@ class WebhookIdempotencyStore:
             
             if event_id in self._memory_store:
                 event_id_short = event_id[:12] if len(event_id) > 12 else event_id
-                logger.debug(f"Duplicate webhook event detected (memory): {event_id_short}...")
+                logger.debug("Duplicate webhook event detected (memory): %s...", event_id_short)
                 return True
             
             # Add event ID with current timestamp
@@ -457,10 +458,10 @@ class BillingRateLimiter:
                     logger.info("BILLING_FALLBACK: Rate limiter recovered - Redis connection restored")
                 self._using_fallback = False
                 return result
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 if not self._using_fallback:
                     # Log transition to fallback mode (alert-worthy event)
-                    logger.warning(f"BILLING_FALLBACK: Rate limiter entering memory fallback mode - {e}")
+                    logger.warning("BILLING_FALLBACK: Rate limiter entering memory fallback mode - %s", e)
                 self._using_fallback = True
         else:
             if not self._using_fallback:
@@ -511,7 +512,7 @@ class BillingRateLimiter:
         
         # Check if count EXCEEDS limit (> not >=, since current request is included)
         if current_count > self._max_requests:
-            logger.debug(f"Rate limit exceeded for user {user_id[:8]} (Redis): {current_count}/{self._max_requests}")
+            logger.debug("Rate limit exceeded for user %s (Redis): %s/%s", user_id[:8], current_count, self._max_requests)
             return True
         
         return False
@@ -533,7 +534,7 @@ class BillingRateLimiter:
             
             # Check limit
             if len(self._memory_requests[user_id]) >= self._max_requests:
-                logger.debug(f"Rate limit exceeded for user {user_id[:8]} (memory): {len(self._memory_requests[user_id])}/{self._max_requests}")
+                logger.debug("Rate limit exceeded for user %s (memory): %s/%s", user_id[:8], len(self._memory_requests[user_id]), self._max_requests)
                 return True
             
             # Record request
@@ -549,7 +550,7 @@ _billing_rate_limiter = BillingRateLimiter(max_requests=10, window_seconds=60)
 async def check_rate_limit(user_id: str = Depends(get_current_user_id)):
     """FastAPI dependency to check rate limit before processing."""
     if await _billing_rate_limiter.is_rate_limited(user_id):
-        logger.warning(f"Rate limit exceeded for user {user_id[:8]}")
+        logger.warning("Rate limit exceeded for user %s", user_id[:8])
         raise HTTPException(
             status_code=429,
             detail="Too many requests. Please wait before trying again."
@@ -662,7 +663,7 @@ async def preview_upgrade(
     - `400`: No active subscription, or already on requested tier
     - `502`: Stripe API error
     """
-    logger.info(f"Preview upgrade to {request.tier} for user {user_id[:8]}")
+    logger.info("Preview upgrade to %s for user %s", request.tier, user_id[:8])
     
     return await billing_service.preview_upgrade(
         user_id=user_id,
@@ -702,7 +703,8 @@ async def verify_session(
     - `500`: Stripe API error
     """
     logger.info(
-        f"Verifying checkout session {session_id} for user {user_id[:8]}"
+        "Verifying checkout session %s for user %s",
+        session_id, user_id[:8]
     )
     
     result = await verify_checkout_session(session_id, user_id, billing_service)
@@ -745,7 +747,7 @@ async def create_portal_session(
     
     **Epic 4: Portal session creation IMPLEMENTED**
     """
-    logger.info(f"Creating portal session for user {user_id[:8]}")
+    logger.info("Creating portal session for user %s", user_id[:8])
     
     portal_url = await billing_service.create_portal_session(user_id, user_token)
     
@@ -787,7 +789,7 @@ async def get_subscription_status(
     
     **Epic 5: Subscription status query IMPLEMENTED**
     """
-    logger.info(f"Getting subscription status for user {user_id[:8]}")
+    logger.info("Getting subscription status for user %s", user_id[:8])
     
     status_data = await billing_service.get_subscription_status(user_id)
     
@@ -850,7 +852,7 @@ async def stripe_webhook(
         )
     except ValueError as e:
         # Invalid payload
-        logger.error(f"Invalid webhook payload: {e}")
+        logger.error("Invalid webhook payload: %s", e)
         # Capture billing exception to PostHog for proper error tracking with stack trace
         capture_exception(
             exception=e,
@@ -861,10 +863,10 @@ async def stripe_webhook(
                 "stripe_event_type": "unknown",
             }
         )
-        raise HTTPException(status_code=400, detail="Invalid payload")
+        raise HTTPException(status_code=400, detail="Invalid payload") from e
     except stripe.SignatureVerificationError as e:
         # Invalid signature - potential replay attack or misconfiguration
-        logger.error(f"Invalid webhook signature: {e}")
+        logger.error("Invalid webhook signature: %s", e)
         # Capture billing exception to PostHog for proper error tracking with stack trace
         capture_exception(
             exception=e,
@@ -875,7 +877,7 @@ async def stripe_webhook(
                 "stripe_event_type": "unknown",
             }
         )
-        raise HTTPException(status_code=400, detail="Invalid signature")
+        raise HTTPException(status_code=400, detail="Invalid signature") from e
     
     # Idempotency check - prevent duplicate processing (Redis-backed)
     event_id = event["id"]
@@ -902,14 +904,14 @@ async def stripe_webhook(
         )
     
     if is_duplicate:
-        logger.info(f"Webhook event {event_id_short}... already processed, skipping")
+        logger.info("Webhook event %s... already processed, skipping", event_id_short)
         return {"status": "already_processed", "event_id": event_id}
     
     # Handle the event
     event_type = event["type"]
     data_object = event["data"]["object"]
     
-    logger.info(f"Processing webhook event: {event_type} (ID: {event_id_short}...)")
+    logger.info("Processing webhook event: %s (ID: %s...)", event_type, event_id_short)
     
     try:
         if event_type == "checkout.session.completed":
@@ -937,11 +939,12 @@ async def stripe_webhook(
             await billing_service.handle_invoice_payment_failed(data_object)
             
         else:
-            logger.info(f"Unhandled webhook event type: {event_type}")
+            logger.info("Unhandled webhook event type: %s", event_type)
     
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         logger.error(
-            f"Error processing webhook {event_type} (ID: {event_id_short}...): {e}",
+            "Error processing webhook %s (ID: %s...): %s",
+            event_type, event_id_short, e,
             exc_info=True
         )
         # Capture billing exception to PostHog for proper error tracking with stack trace
@@ -967,7 +970,7 @@ async def stripe_webhook(
         raise HTTPException(
             status_code=500,
             detail=f"Failed to process webhook: {str(e)}"
-        )
+        ) from e
     
     return {"status": "success", "event_type": event_type}
 

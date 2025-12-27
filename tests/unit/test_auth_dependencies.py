@@ -92,7 +92,7 @@ def credentials():
 async def test_get_current_user_id_valid_session(mock_supabase, redis_client, credentials):
     session_service = SessionService(redis_client)
     refresh_token = "test_refresh_token_valid"
-    client_session_token = await session_service.create_session(
+    await session_service.create_session(
         user_id="user_123",
         device_type="browser",
         ip_address="10.0.0.1",
@@ -169,7 +169,7 @@ async def test_get_current_user_id_redis_unavailable(mock_supabase, credentials)
 async def test_get_current_user_token_uses_cached_auth(mock_supabase, redis_client, credentials, monkeypatch):
     session_service = SessionService(redis_client)
     refresh_token = "test_refresh_token_cached"
-    client_session_token = await session_service.create_session(
+    await session_service.create_session(
         user_id="user_123",
         device_type="browser",
         refresh_token=refresh_token,

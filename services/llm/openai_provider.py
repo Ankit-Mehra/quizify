@@ -91,10 +91,16 @@ class OpenAIProvider(ILLMProvider):
             properties=request.properties
         )
         
+        # Build messages list
+        messages = []
+        if request.system_message:
+            messages.append({"role": "system", "content": request.system_message})
+        messages.append({"role": "user", "content": request.prompt})
+        
         # Build request kwargs
         request_kwargs = {
             "model": model,
-            "messages": [{"role": "user", "content": request.prompt}],
+            "messages": messages,
             **posthog_kwargs
         }
         
@@ -145,11 +151,11 @@ class OpenAIProvider(ILLMProvider):
             
             if "RateLimitError" in error_type:
                 retry_after = getattr(e, 'retry_after', None)
-                raise LLMRateLimitError(self.provider_name, retry_after)
+                raise LLMRateLimitError(self.provider_name, retry_after) from e
             
-            logger.error(f"OpenAI generation failed: {error_type}: {e}")
+            logger.error("OpenAI generation failed: %s: %s", error_type, e)
             raise LLMProviderError(
                 message=str(e),
                 provider=self.provider_name,
                 original_error=e
-            )
+            ) from e

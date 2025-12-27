@@ -45,7 +45,7 @@ def sample_user_tier_info() -> UserTierInfo:
 @pytest.fixture
 def mock_database_query() -> AsyncMock:
     """Mock database query with realistic latency"""
-    async def slow_query(*args, **kwargs):
+    async def slow_query(*_args, **_kwargs):
         # Simulate database query latency (50-200ms typical)
         await asyncio.sleep(0.1)  # 100ms baseline
         return {
@@ -81,7 +81,7 @@ async def test_benchmark_database_query_without_cache(
         
         # Simulate direct database query
         result = await mock_database_query()
-        user_tier = UserTierInfo(**result)
+        _ = UserTierInfo(**result)  # Validate data can be parsed
         
         elapsed = (time.perf_counter() - start) * 1000  # Convert to ms
         times.append(elapsed)
@@ -131,7 +131,7 @@ async def test_benchmark_database_query_with_cache(
         start = time.perf_counter()
         
         # Get from cache (should be fast)
-        cached_user = await cache_service.get(cache_key, UserTierInfo)
+        _ = await cache_service.get(cache_key, UserTierInfo)
         
         elapsed = (time.perf_counter() - start) * 1000  # Convert to ms
         times.append(elapsed)
@@ -178,7 +178,7 @@ async def test_benchmark_cache_speedup_comparison(
     for _ in range(BENCHMARK_ITERATIONS):
         start = time.perf_counter()
         result = await mock_database_query()
-        user_tier = UserTierInfo(**result)
+        _ = UserTierInfo(**result)  # Validate data can be parsed
         elapsed = (time.perf_counter() - start) * 1000
         db_times.append(elapsed)
     
@@ -190,7 +190,7 @@ async def test_benchmark_cache_speedup_comparison(
     cache_times: List[float] = []
     for _ in range(BENCHMARK_ITERATIONS):
         start = time.perf_counter()
-        cached_user = await cache_service.get(cache_key, UserTierInfo)
+        _ = await cache_service.get(cache_key, UserTierInfo)  # Cache read
         elapsed = (time.perf_counter() - start) * 1000
         cache_times.append(elapsed)
     
@@ -316,7 +316,7 @@ async def test_benchmark_memory_fallback_performance(sample_user_tier_info: User
     
     for _ in range(BENCHMARK_ITERATIONS):
         start = time.perf_counter()
-        cached_user = await cache_service.get(cache_key, UserTierInfo)
+        _ = await cache_service.get(cache_key, UserTierInfo)  # Cache read
         elapsed = (time.perf_counter() - start) * 1000
         redis_times.append(elapsed)
     
@@ -333,7 +333,7 @@ async def test_benchmark_memory_fallback_performance(sample_user_tier_info: User
         
         for _ in range(BENCHMARK_ITERATIONS):
             start = time.perf_counter()
-            cached_user = await cache_service.get(cache_key, UserTierInfo)
+            _ = await cache_service.get(cache_key, UserTierInfo)  # Cache read
             elapsed = (time.perf_counter() - start) * 1000
             memory_times.append(elapsed)
         

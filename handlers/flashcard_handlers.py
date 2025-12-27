@@ -3,6 +3,10 @@ Flashcard Handlers.
 
 This module contains the business logic for flashcard operations,
 following the same patterns as quiz_handlers.py.
+
+Supports two generation modes:
+- Standard: Fast, direct LLM generation (1 credit)
+- Enhanced: RAG-based with concept extraction and context retrieval (2 credits)
 """
 
 import time
@@ -11,8 +15,13 @@ from uuid import uuid4
 from fastapi import HTTPException
 
 from services.content.ingestion_service import get_content_ingestion_service
-from services.content.models import ContentSourceType, ContentValidationError, ContentExtractionError
-from services.ai_services.flashcard_service import get_flashcard_generation_service, FlashcardGenerationError, FlashcardParseError
+from services.content.models import ContentValidationError, ContentExtractionError
+from services.ai_services.flashcard_service import (
+    get_flashcard_generation_service,
+    get_enhanced_flashcard_service,
+    FlashcardGenerationError,
+    FlashcardParseError,
+)
 from services.db_services.supabase_flashcard import (
     create_deck,
     get_deck,
@@ -49,6 +58,13 @@ from schemas.flashcard import (
 
 
 # =============================================================================
+# Credit Costs
+# =============================================================================
+STANDARD_FLASHCARD_COST = 1  # 1 credit for standard mode
+ENHANCED_FLASHCARD_COST = 2  # 2 credits for enhanced mode (like enhanced quiz)
+
+
+# =============================================================================
 # Flashcard Generation Handlers
 # =============================================================================
 
@@ -60,6 +76,10 @@ async def generate_flashcards_from_text(
     """
     Generate flashcards from text content.
     
+    Supports two modes:
+    - Standard: Fast, direct LLM generation (1 credit)
+    - Enhanced: RAG-based with concept extraction (2 credits)
+    
     Args:
         request: Text flashcard request with content and config
         user_id: ID of the requesting user
@@ -70,37 +90,93 @@ async def generate_flashcards_from_text(
     """
     start_time = time.time()
     trace_id = str(uuid4())
+    mode = request.config.mode
     
     logger.info(
-        "Generating flashcards from text for user %s..., trace: %s",
-        user_id[:8], trace_id[:8]
+        "Generating flashcards from text for user %s..., mode: %s, trace: %s",
+        user_id[:8], mode, trace_id[:8]
     )
     
-    # 1. Validate credits/quota (use "standard" type - 1 unit like standard quiz)
+    # 1. Calculate credit cost based on mode
+    credit_cost = ENHANCED_FLASHCARD_COST if mode == "enhanced" else STANDARD_FLASHCARD_COST
+    
+    # 2. Validate credits/quota
     billing_state = await get_billing_state(user_id)
-    if billing_state.available_credits < 1:
+    if billing_state.available_credits < credit_cost:
         raise HTTPException(
             status_code=402,
             detail={
                 "error": "insufficient_credits",
-                "message": "Not enough credits for flashcard generation.",
+                "message": f"Not enough credits for {mode} flashcard generation.",
                 "available_credits": billing_state.available_credits,
-                "required_credits": 1,
+                "required_credits": credit_cost,
                 "plan": billing_state.plan
             }
         )
     
-    # 2. Ingest content
+    # 3. Route to appropriate generation mode
+    if mode == "enhanced":
+        return await _generate_enhanced_flashcards(
+            content=request.content,
+            title=request.title,
+            config=request.config,
+            user_id=user_id,
+            user_token=user_token,
+            trace_id=trace_id,
+            content_source_type="text",
+            content_source_reference=None,
+            start_time=start_time,
+            credit_cost=credit_cost,
+        )
+    else:
+        return await _generate_standard_flashcards(
+            content=request.content,
+            title=request.title,
+            config=request.config,
+            user_id=user_id,
+            user_token=user_token,
+            trace_id=trace_id,
+            content_source_type="text",
+            content_source_reference=None,
+            start_time=start_time,
+            credit_cost=credit_cost,
+        )
+
+
+# =============================================================================
+# Internal Generation Functions
+# =============================================================================
+
+async def _generate_standard_flashcards(
+    content: str,
+    title: str | None,
+    config,
+    user_id: str,
+    user_token: str,
+    trace_id: str,
+    content_source_type: str,
+    content_source_reference: str | None,
+    start_time: float,
+    credit_cost: int,
+) -> FlashcardGenerationResponse:
+    """
+    Generate flashcards using standard (fast) mode.
+    
+    Uses direct LLM generation without RAG pipeline.
+    Costs 1 credit.
+    """
+    
+    # 1. Ingest content
     ingestion_service = get_content_ingestion_service()
     try:
-        content = await ingestion_service.ingest_text(
-            text=request.content,
-            title=request.title,
+        ingested_content = await ingestion_service.ingest_text(
+            text=content,
+            title=title,
         )
     except ContentValidationError as e:
-        raise HTTPException(status_code=400, detail=e.message)
+        raise HTTPException(status_code=400, detail=e.message) from e
     
-    # 3. Consume credits (use "standard" - 1 unit for flashcard generation)
+    # 2. Consume credits
     success = await consume_units(user_id, "standard")
     if not success:
         raise HTTPException(
@@ -108,12 +184,12 @@ async def generate_flashcards_from_text(
             detail="Failed to consume credits for flashcard generation"
         )
     
-    # 4. Generate flashcards
+    # 3. Generate flashcards
     try:
         generation_service = get_flashcard_generation_service()
         generated_cards = await generation_service.generate(
-            content=content,
-            generation_config=request.config,
+            content=ingested_content,
+            generation_config=config,
             user_id=user_id,
             trace_id=trace_id,
         )
@@ -121,17 +197,18 @@ async def generate_flashcards_from_text(
         # Refund credit on generation failure
         await refund_units(user_id, "standard")
         logger.error("Flashcard generation failed: %s", e.message)
-        raise HTTPException(status_code=500, detail=e.message)
+        raise HTTPException(status_code=500, detail=e.message) from e
     
-    # 5. Create deck and save cards to database
-    title = request.title or f"Flashcards - {content.word_count} words"
+    # 4. Create deck and save cards to database
+    deck_title = title or f"Flashcards - {ingested_content.word_count} words"
     
     deck_data = create_deck(
         user_id=user_id,
-        title=title,
+        title=deck_title,
         user_token=user_token,
-        content_source_type="text",
-        content_source_reference=None,
+        content_source_type=content_source_type,
+        content_source_reference=content_source_reference,
+        generation_mode="standard",
     )
     
     saved_cards = create_flashcards_batch(
@@ -140,11 +217,130 @@ async def generate_flashcards_from_text(
         user_token=user_token,
     )
     
-    # 6. Build response
+    # 5. Build response
     elapsed_ms = int((time.time() - start_time) * 1000)
     estimated_study_time = len(saved_cards) // 3  # ~3 cards per minute
     
-    response_cards = [
+    response_cards = _build_flashcard_response_list(saved_cards)
+    
+    logger.info(
+        "Generated %d flashcards (standard) in %dms for user %s...",
+        len(response_cards), elapsed_ms, user_id[:8]
+    )
+    
+    return FlashcardGenerationResponse(
+        deck_id=deck_data["id"],
+        deck_title=deck_title,
+        cards=response_cards,
+        card_count=len(response_cards),
+        content_source_type=content_source_type,
+        generation_time_ms=elapsed_ms,
+        estimated_study_time_minutes=max(1, estimated_study_time),
+        generation_mode="standard",
+        generation_stats={"mode": "standard", "cards_generated": len(response_cards)},
+        credits_consumed=credit_cost,
+    )
+
+
+async def _generate_enhanced_flashcards(
+    content: str,
+    title: str | None,
+    config,
+    user_id: str,
+    user_token: str,
+    trace_id: str,
+    content_source_type: str,
+    content_source_reference: str | None,
+    start_time: float,
+    credit_cost: int,
+) -> FlashcardGenerationResponse:
+    """
+    Generate flashcards using enhanced (RAG-based) mode.
+    
+    Uses concept extraction, context retrieval, and Bloom's taxonomy.
+    Costs 2 credits.
+    """
+    # 1. Consume credits (enhanced = 2 credits)
+    success = await consume_units(user_id, "enhanced")
+    if not success:
+        raise HTTPException(
+            status_code=402,
+            detail="Failed to consume credits for enhanced flashcard generation"
+        )
+    
+    # 2. Generate enhanced flashcards
+    try:
+        enhanced_service = get_enhanced_flashcard_service()
+        result = await enhanced_service.generate_enhanced(
+            content=content,
+            title=title or "Flashcards",
+            config=config,
+            user_id=user_id,
+            user_token=user_token,
+            trace_id=trace_id,
+            content_source_type=content_source_type,
+        )
+    except (FlashcardGenerationError, FlashcardParseError) as e:
+        # Refund credits on generation failure
+        await refund_units(user_id, "enhanced")
+        logger.error("Enhanced flashcard generation failed: %s", e.message)
+        raise HTTPException(status_code=500, detail=e.message) from e
+    except Exception as e:
+        # Refund credits on unexpected failure
+        await refund_units(user_id, "enhanced")
+        logger.error("Unexpected error in enhanced flashcard generation: %s", str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    
+    generated_cards = result["flashcards"]
+    generation_stats = result["generation_stats"]
+    
+    # 3. Create deck and save cards to database
+    deck_title = title or f"Flashcards (Enhanced) - {len(generated_cards)} cards"
+    
+    deck_data = create_deck(
+        user_id=user_id,
+        title=deck_title,
+        user_token=user_token,
+        content_source_type=content_source_type,
+        content_source_reference=content_source_reference,
+        generation_mode="enhanced",
+    )
+    
+    saved_cards = create_flashcards_batch(
+        deck_id=deck_data["id"],
+        cards=generated_cards,
+        user_token=user_token,
+    )
+    
+    # 4. Build response with enhanced metadata
+    elapsed_ms = int((time.time() - start_time) * 1000)
+    estimated_study_time = len(saved_cards) // 3
+    
+    response_cards = _build_flashcard_response_list(saved_cards)
+    
+    logger.info(
+        "Generated %d flashcards (enhanced) in %dms for user %s..., concepts: %d",
+        len(response_cards), elapsed_ms, user_id[:8],
+        generation_stats.get("concepts_extracted", 0)
+    )
+    
+    return FlashcardGenerationResponse(
+        deck_id=deck_data["id"],
+        deck_title=deck_title,
+        cards=response_cards,
+        card_count=len(response_cards),
+        content_source_type=content_source_type,
+        generation_time_ms=elapsed_ms,
+        estimated_study_time_minutes=max(1, estimated_study_time),
+        generation_mode="enhanced",
+        generation_stats=generation_stats,
+        credits_consumed=credit_cost,
+    )
+
+
+def _build_flashcard_response_list(saved_cards: List[Dict]) -> List[Flashcard]:
+    """Build list of Flashcard response objects from saved card data."""
+    return [
         Flashcard(
             id=c["id"],
             deck_id=c["deck_id"],
@@ -157,27 +353,21 @@ async def generate_flashcards_from_text(
             interval_days=c.get("interval_days", 0),
             repetitions=c.get("repetitions", 0),
             next_review=c.get("next_review"),
+            # Enhanced mode fields
+            concept_name=c.get("concept_name"),
+            bloom_level=c.get("bloom_level"),
+            difficulty_score=c.get("difficulty_score"),
+            source_chunk_id=c.get("source_chunk_id"),
             created_at=c.get("created_at"),
             updated_at=c.get("updated_at"),
         )
         for c in saved_cards
     ]
-    
-    logger.info(
-        "Generated %d flashcards in %dms for user %s...",
-        len(response_cards), elapsed_ms, user_id[:8]
-    )
-    
-    return FlashcardGenerationResponse(
-        deck_id=deck_data["id"],
-        deck_title=title,
-        cards=response_cards,
-        card_count=len(response_cards),
-        content_source_type="text",
-        generation_time_ms=elapsed_ms,
-        estimated_study_time_minutes=max(1, estimated_study_time),
-    )
 
+
+# =============================================================================
+# Public Generation Handlers
+# =============================================================================
 
 async def generate_flashcards_from_file(
     request: FileFlashcardRequest,
@@ -186,6 +376,8 @@ async def generate_flashcards_from_file(
 ) -> FlashcardGenerationResponse:
     """
     Generate flashcards from an uploaded file.
+    
+    Supports both standard and enhanced modes.
     
     Args:
         request: File flashcard request with file_id and config
@@ -197,34 +389,37 @@ async def generate_flashcards_from_file(
     """
     start_time = time.time()
     trace_id = str(uuid4())
+    mode = request.config.mode
     
     logger.info(
-        "Generating flashcards from file %s for user %s..., trace: %s",
-        str(request.file_id), user_id[:8], trace_id[:8]
+        "Generating flashcards from file %s for user %s..., mode: %s, trace: %s",
+        str(request.file_id), user_id[:8], mode, trace_id[:8]
     )
     
-    # 1. Validate credits
+    # 1. Calculate credit cost based on mode
+    credit_cost = ENHANCED_FLASHCARD_COST if mode == "enhanced" else STANDARD_FLASHCARD_COST
+    
+    # 2. Validate credits
     billing_state = await get_billing_state(user_id)
-    if billing_state.available_credits < 1:
+    if billing_state.available_credits < credit_cost:
         raise HTTPException(
             status_code=402,
             detail={
                 "error": "insufficient_credits",
-                "message": "Not enough credits for flashcard generation.",
+                "message": f"Not enough credits for {mode} flashcard generation.",
                 "available_credits": billing_state.available_credits,
-                "required_credits": 1,
+                "required_credits": credit_cost,
                 "plan": billing_state.plan
             }
         )
     
-    # 2. Get file record and parse content
-    file_record = get_file_record(str(request.file_id), user_id, user_token)
+    # 3. Get file record and parse content
+    file_record = get_file_record(str(request.file_id), user_token)
     if not file_record:
         raise HTTPException(status_code=404, detail="File not found")
     
     file_content = await parse_file_from_supabase_async(
-        str(request.file_id),
-        user_id,
+        file_record,
         user_token
     )
     
@@ -234,96 +429,36 @@ async def generate_flashcards_from_file(
             detail="File contains insufficient text content"
         )
     
-    # 3. Ingest content
-    ingestion_service = get_content_ingestion_service()
-    try:
-        content = await ingestion_service.ingest_text(
-            text=file_content,
-            title=request.title or file_record.get("file_name", "Untitled"),
-        )
-        content.source_type = ContentSourceType.FILE
-        content.source_reference = str(request.file_id)
-    except ContentValidationError as e:
-        raise HTTPException(status_code=400, detail=e.message)
+    # 4. Route to appropriate generation mode
+    title = request.title or file_record.get("filename", "Flashcards from File")
+    file_id_str = str(request.file_id)
     
-    # 4. Consume credits
-    success = await consume_units(user_id, "standard")
-    if not success:
-        raise HTTPException(
-            status_code=402,
-            detail="Failed to consume credits for flashcard generation"
-        )
-    
-    # 5. Generate flashcards
-    try:
-        generation_service = get_flashcard_generation_service()
-        generated_cards = await generation_service.generate(
-            content=content,
-            generation_config=request.config,
+    if mode == "enhanced":
+        return await _generate_enhanced_flashcards(
+            content=file_content,
+            title=title,
+            config=request.config,
             user_id=user_id,
+            user_token=user_token,
             trace_id=trace_id,
+            content_source_type="file",
+            content_source_reference=file_id_str,
+            start_time=start_time,
+            credit_cost=credit_cost,
         )
-    except (FlashcardGenerationError, FlashcardParseError) as e:
-        await refund_units(user_id, "standard")
-        logger.error("Flashcard generation failed: %s", e.message)
-        raise HTTPException(status_code=500, detail=e.message)
-    
-    # 6. Create deck and save cards
-    title = request.title or file_record.get("file_name", "Flashcards")
-    if title.endswith(('.pdf', '.docx', '.txt', '.md')):
-        title = title.rsplit('.', 1)[0]
-    
-    deck_data = create_deck(
-        user_id=user_id,
-        title=title,
-        user_token=user_token,
-        content_source_type="file",
-        content_source_reference=str(request.file_id),
-    )
-    
-    saved_cards = create_flashcards_batch(
-        deck_id=deck_data["id"],
-        cards=generated_cards,
-        user_token=user_token,
-    )
-    
-    # 7. Build response
-    elapsed_ms = int((time.time() - start_time) * 1000)
-    estimated_study_time = len(saved_cards) // 3
-    
-    response_cards = [
-        Flashcard(
-            id=c["id"],
-            deck_id=c["deck_id"],
-            front=c["front"],
-            back=c["back"],
-            hint=c.get("hint"),
-            position=c.get("position", 0),
-            status=c.get("status", "new"),
-            ease_factor=float(c.get("ease_factor", 2.5)),
-            interval_days=c.get("interval_days", 0),
-            repetitions=c.get("repetitions", 0),
-            next_review=c.get("next_review"),
-            created_at=c.get("created_at"),
-            updated_at=c.get("updated_at"),
+    else:
+        return await _generate_standard_flashcards(
+            content=file_content,
+            title=title,
+            config=request.config,
+            user_id=user_id,
+            user_token=user_token,
+            trace_id=trace_id,
+            content_source_type="file",
+            content_source_reference=file_id_str,
+            start_time=start_time,
+            credit_cost=credit_cost,
         )
-        for c in saved_cards
-    ]
-    
-    logger.info(
-        "Generated %d flashcards from file in %dms for user %s...",
-        len(response_cards), elapsed_ms, user_id[:8]
-    )
-    
-    return FlashcardGenerationResponse(
-        deck_id=deck_data["id"],
-        deck_title=title,
-        cards=response_cards,
-        card_count=len(response_cards),
-        content_source_type="file",
-        generation_time_ms=elapsed_ms,
-        estimated_study_time_minutes=max(1, estimated_study_time),
-    )
 
 
 async def generate_flashcards_from_url(
@@ -333,6 +468,8 @@ async def generate_flashcards_from_url(
 ) -> FlashcardGenerationResponse:
     """
     Generate flashcards from a URL.
+    
+    Supports both standard and enhanced modes.
     
     Args:
         request: URL flashcard request with url and config
@@ -344,27 +481,31 @@ async def generate_flashcards_from_url(
     """
     start_time = time.time()
     trace_id = str(uuid4())
+    mode = request.config.mode
     
     logger.info(
-        "Generating flashcards from URL for user %s..., trace: %s",
-        user_id[:8], trace_id[:8]
+        "Generating flashcards from URL for user %s..., mode: %s, trace: %s",
+        user_id[:8], mode, trace_id[:8]
     )
     
-    # 1. Validate credits
+    # 1. Calculate credit cost based on mode
+    credit_cost = ENHANCED_FLASHCARD_COST if mode == "enhanced" else STANDARD_FLASHCARD_COST
+    
+    # 2. Validate credits
     billing_state = await get_billing_state(user_id)
-    if billing_state.available_credits < 1:
+    if billing_state.available_credits < credit_cost:
         raise HTTPException(
             status_code=402,
             detail={
                 "error": "insufficient_credits",
-                "message": "Not enough credits for flashcard generation.",
+                "message": f"Not enough credits for {mode} flashcard generation.",
                 "available_credits": billing_state.available_credits,
-                "required_credits": 1,
+                "required_credits": credit_cost,
                 "plan": billing_state.plan
             }
         )
     
-    # 2. Ingest content from URL
+    # 3. Ingest content from URL
     ingestion_service = get_content_ingestion_service()
     try:
         content = await ingestion_service.ingest_url(
@@ -373,89 +514,40 @@ async def generate_flashcards_from_url(
             user_token=user_token,
         )
     except ContentValidationError as e:
-        raise HTTPException(status_code=400, detail=e.message)
+        raise HTTPException(status_code=400, detail=e.message) from e
     except ContentExtractionError as e:
-        raise HTTPException(status_code=400, detail=e.message)
-    except HTTPException:
-        raise  # Re-raise HTTP exceptions from scraping
+        raise HTTPException(status_code=400, detail=e.message) from e
     
-    # 3. Consume credits
-    success = await consume_units(user_id, "standard")
-    if not success:
-        raise HTTPException(
-            status_code=402,
-            detail="Failed to consume credits for flashcard generation"
-        )
-    
-    # 4. Generate flashcards
-    try:
-        generation_service = get_flashcard_generation_service()
-        generated_cards = await generation_service.generate(
-            content=content,
-            generation_config=request.config,
-            user_id=user_id,
-            trace_id=trace_id,
-        )
-    except (FlashcardGenerationError, FlashcardParseError) as e:
-        await refund_units(user_id, "standard")
-        logger.error("Flashcard generation failed: %s", e.message)
-        raise HTTPException(status_code=500, detail=e.message)
-    
-    # 5. Create deck and save cards
+    # 4. Route to appropriate generation mode
     title = request.title or content.title or "Flashcards from URL"
     redacted_url = redact_url_for_storage(request.url)
     
-    deck_data = create_deck(
-        user_id=user_id,
-        title=title,
-        user_token=user_token,
-        content_source_type="url",
-        content_source_reference=redacted_url,
-    )
-    
-    saved_cards = create_flashcards_batch(
-        deck_id=deck_data["id"],
-        cards=generated_cards,
-        user_token=user_token,
-    )
-    
-    # 6. Build response
-    elapsed_ms = int((time.time() - start_time) * 1000)
-    estimated_study_time = len(saved_cards) // 3
-    
-    response_cards = [
-        Flashcard(
-            id=c["id"],
-            deck_id=c["deck_id"],
-            front=c["front"],
-            back=c["back"],
-            hint=c.get("hint"),
-            position=c.get("position", 0),
-            status=c.get("status", "new"),
-            ease_factor=float(c.get("ease_factor", 2.5)),
-            interval_days=c.get("interval_days", 0),
-            repetitions=c.get("repetitions", 0),
-            next_review=c.get("next_review"),
-            created_at=c.get("created_at"),
-            updated_at=c.get("updated_at"),
+    if mode == "enhanced":
+        return await _generate_enhanced_flashcards(
+            content=content.text,
+            title=title,
+            config=request.config,
+            user_id=user_id,
+            user_token=user_token,
+            trace_id=trace_id,
+            content_source_type="url",
+            content_source_reference=redacted_url,
+            start_time=start_time,
+            credit_cost=credit_cost,
         )
-        for c in saved_cards
-    ]
-    
-    logger.info(
-        "Generated %d flashcards from URL in %dms for user %s...",
-        len(response_cards), elapsed_ms, user_id[:8]
-    )
-    
-    return FlashcardGenerationResponse(
-        deck_id=deck_data["id"],
-        deck_title=title,
-        cards=response_cards,
-        card_count=len(response_cards),
-        content_source_type="url",
-        generation_time_ms=elapsed_ms,
-        estimated_study_time_minutes=max(1, estimated_study_time),
-    )
+    else:
+        return await _generate_standard_flashcards(
+            content=content.text,
+            title=title,
+            config=request.config,
+            user_id=user_id,
+            user_token=user_token,
+            trace_id=trace_id,
+            content_source_type="url",
+            content_source_reference=redacted_url,
+            start_time=start_time,
+            credit_cost=credit_cost,
+        )
 
 
 # =============================================================================
@@ -477,6 +569,7 @@ def get_user_flashcard_decks(
             title=d["title"],
             description=d.get("description"),
             card_count=d.get("card_count", 0),
+            generation_mode=d.get("generation_mode", "standard"),
             content_source_type=d.get("content_source_type"),
             content_source_reference=d.get("content_source_reference"),
             created_at=d.get("created_at"),
@@ -514,6 +607,11 @@ def get_flashcard_deck(
                 interval_days=c.get("interval_days", 0),
                 repetitions=c.get("repetitions", 0),
                 next_review=c.get("next_review"),
+                # Enhanced mode fields
+                concept_name=c.get("concept_name"),
+                bloom_level=c.get("bloom_level"),
+                difficulty_score=float(c["difficulty_score"]) if c.get("difficulty_score") else None,
+                source_chunk_id=c.get("source_chunk_id"),
                 created_at=c.get("created_at"),
                 updated_at=c.get("updated_at"),
             )
@@ -526,6 +624,7 @@ def get_flashcard_deck(
         title=deck_data["title"],
         description=deck_data.get("description"),
         card_count=deck_data.get("card_count", 0),
+        generation_mode=deck_data.get("generation_mode", "standard"),
         content_source_type=deck_data.get("content_source_type"),
         content_source_reference=deck_data.get("content_source_reference"),
         created_at=deck_data.get("created_at"),
@@ -559,6 +658,7 @@ def update_flashcard_deck(
         title=updated["title"],
         description=updated.get("description"),
         card_count=updated.get("card_count", 0),
+        generation_mode=updated.get("generation_mode", "standard"),
         content_source_type=updated.get("content_source_type"),
         content_source_reference=updated.get("content_source_reference"),
         created_at=updated.get("created_at"),
@@ -569,11 +669,11 @@ def update_flashcard_deck(
 
 def delete_flashcard_deck(
     deck_id: str,
-    user_id: str,
+    _user_id: str,
     user_token: str,
 ) -> Dict[str, Any]:
     """Delete a flashcard deck."""
-    success = delete_deck(deck_id, user_id, user_token)
+    success = delete_deck(deck_id, _user_id, user_token)
     
     if not success:
         raise HTTPException(status_code=404, detail="Deck not found")
@@ -587,7 +687,7 @@ def delete_flashcard_deck(
 
 def update_single_flashcard(
     card_id: str,
-    user_id: str,
+    _user_id: str,
     user_token: str,
     update_data: FlashcardUpdate,
 ) -> Flashcard:
@@ -615,6 +715,11 @@ def update_single_flashcard(
         interval_days=updated.get("interval_days", 0),
         repetitions=updated.get("repetitions", 0),
         next_review=updated.get("next_review"),
+        # Enhanced mode fields
+        concept_name=updated.get("concept_name"),
+        bloom_level=updated.get("bloom_level"),
+        difficulty_score=float(updated["difficulty_score"]) if updated.get("difficulty_score") else None,
+        source_chunk_id=updated.get("source_chunk_id"),
         created_at=updated.get("created_at"),
         updated_at=updated.get("updated_at"),
     )
@@ -622,7 +727,7 @@ def update_single_flashcard(
 
 def delete_single_flashcard(
     card_id: str,
-    user_id: str,
+    _user_id: str,
     user_token: str,
 ) -> Dict[str, Any]:
     """Delete a single flashcard."""
@@ -686,6 +791,11 @@ def start_study_session(
             interval_days=c.get("interval_days", 0),
             repetitions=c.get("repetitions", 0),
             next_review=c.get("next_review"),
+            # Enhanced mode fields
+            concept_name=c.get("concept_name"),
+            bloom_level=c.get("bloom_level"),
+            difficulty_score=float(c["difficulty_score"]) if c.get("difficulty_score") else None,
+            source_chunk_id=c.get("source_chunk_id"),
             created_at=c.get("created_at"),
             updated_at=c.get("updated_at"),
         )
@@ -706,7 +816,7 @@ def start_study_session(
 
 def complete_flashcard_study_session(
     request: StudySessionComplete,
-    user_id: str,
+    _user_id: str,
     user_token: str,
 ) -> StudySessionSummary:
     """Complete a study session and update card progress."""
@@ -763,9 +873,9 @@ def complete_flashcard_study_session(
 
 async def export_flashcard_deck(
     deck_id: str,
-    format: str,
+    format_type: str,
     include_hints: bool,
-    user_id: str,
+    _user_id: str,
     user_token: str,
 ):
     """
@@ -773,9 +883,9 @@ async def export_flashcard_deck(
     
     Args:
         deck_id: UUID of the deck to export
-        format: Export format (csv_anki, pdf)
+        format_type: Export format (csv_anki, pdf)
         include_hints: Whether to include hints in export
-        user_id: ID of the requesting user
+        _user_id: ID of the requesting user (unused, kept for API consistency)
         user_token: JWT token for RLS enforcement
         
     Returns:
@@ -789,16 +899,16 @@ async def export_flashcard_deck(
     )
     from services.exporters.csv_anki_exporter import CsvAnkiExporter
     
-    logger.info(f"Exporting flashcard deck {deck_id[:8]}... format={format} for user {user_id[:8]}...")
+    logger.info("Exporting flashcard deck %s... format=%s", deck_id[:8], format_type)
     
     # 1. Validate format
     try:
-        export_format = FlashcardExportFormat(format)
-    except ValueError:
+        export_format = FlashcardExportFormat(format_type)
+    except ValueError as exc:
         raise HTTPException(
             status_code=422,
-            detail=f"Unsupported export format: {format}. Supported: csv_anki, pdf"
-        )
+            detail=f"Unsupported export format: {format_type}. Supported: csv_anki, pdf"
+        ) from exc
     
     # 2. Get deck with cards
     deck = get_deck(deck_id, user_token)
@@ -844,6 +954,6 @@ async def export_flashcard_deck(
             detail=f"Export format {format} not yet implemented"
         )
     
-    logger.info(f"Flashcard export complete: {result.filename}, {len(result.content)} bytes")
+    logger.info("Flashcard export complete: %s, %d bytes", result.filename, len(result.content))
     
     return result

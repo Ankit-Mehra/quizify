@@ -38,13 +38,13 @@ _is_production = os.getenv("RAILWAY_ENVIRONMENT") == "production" or os.getenv("
 if _cors_origins_env:
     try:
         BACKEND_CORS_ORIGINS = json.loads(_cors_origins_env)
-        logger.info(f"CORS origins loaded: {BACKEND_CORS_ORIGINS}")
+        logger.info("CORS origins loaded: %s", BACKEND_CORS_ORIGINS)
     except json.JSONDecodeError as e:
         if _is_production:
-            logger.error(f"CRITICAL: Failed to parse BACKEND_CORS_ORIGINS in production: {e}")
-            raise RuntimeError(f"BACKEND_CORS_ORIGINS must be valid JSON in production: {e}")
+            logger.error("CRITICAL: Failed to parse BACKEND_CORS_ORIGINS in production: %s", e)
+            raise RuntimeError(f"BACKEND_CORS_ORIGINS must be valid JSON in production: {e}") from e
         BACKEND_CORS_ORIGINS = ["http://localhost:3000", "http://localhost:3001"]
-        logger.warning(f"Failed to parse CORS origins from env ({e}), using development defaults")
+        logger.warning("Failed to parse CORS origins from env (%s), using development defaults", e)
 elif _is_production:
     # SECURITY: Fail fast in production if CORS is not configured
     # 
@@ -97,17 +97,18 @@ if BACKEND_CORS_ORIGIN_REGEX:
     try:
         re.compile(BACKEND_CORS_ORIGIN_REGEX)
     except re.error as e:
-        logger.error(f"Invalid BACKEND_CORS_ORIGIN_REGEX pattern: {e}")
-        raise RuntimeError(f"BACKEND_CORS_ORIGIN_REGEX must be a valid regex pattern: {e}")
+        logger.error("Invalid BACKEND_CORS_ORIGIN_REGEX pattern: %s", e)
+        raise RuntimeError(f"BACKEND_CORS_ORIGIN_REGEX must be a valid regex pattern: {e}") from e
     
     # Security check: Warn if pattern appears overly permissive
     if is_overly_permissive_cors_regex(BACKEND_CORS_ORIGIN_REGEX):
         logger.warning(
-            f"CORS regex pattern appears overly permissive: {BACKEND_CORS_ORIGIN_REGEX}. "
-            "This may allow requests from any origin. Use specific domain patterns (e.g., ^https://.*\\.vercel\\.app$)"
+            "CORS regex pattern appears overly permissive: %s. "
+            "This may allow requests from any origin. Use specific domain patterns (e.g., ^https://.*\\.vercel\\.app$)",
+            BACKEND_CORS_ORIGIN_REGEX
         )
     
-    logger.info(f"CORS origin regex enabled: {BACKEND_CORS_ORIGIN_REGEX}")
+    logger.info("CORS origin regex enabled: %s", BACKEND_CORS_ORIGIN_REGEX)
 
 # Enable docs in development (use ENABLE_DOCS=true in .env)
 enable_docs = os.getenv("ENABLE_DOCS", "false").lower() == "true"
@@ -116,7 +117,7 @@ redoc_url = "/redoc" if enable_docs else None
 
 
 @asynccontextmanager
-async def app_lifespan(app: FastAPI):
+async def app_lifespan(_fastapi_app: FastAPI):  # noqa: ARG001
     """
     Application lifespan manager that handles startup and shutdown events.
     
@@ -233,7 +234,8 @@ async def request_validation_exception_handler(request: Request, exc: RequestVal
         errors.append({"location": loc, "message": msg})
     
     logger.warning(
-        f"Request validation error on {request.method} {request.url.path}: {errors}"
+        "Request validation error on %s %s: %s",
+        request.method, request.url.path, errors
     )
     
     return JSONResponse(
@@ -261,7 +263,8 @@ async def pydantic_validation_exception_handler(request: Request, exc: Validatio
         errors.append({"location": loc, "message": msg})
     
     logger.warning(
-        f"Pydantic validation error on {request.method} {request.url.path}: {errors}"
+        "Pydantic validation error on %s %s: %s",
+        request.method, request.url.path, errors
     )
     
     return JSONResponse(
@@ -290,7 +293,8 @@ async def global_exception_handler(request: Request, exc: Exception):
     
     # Log to console for debugging
     logger.error(
-        f"Unhandled exception on {request.method} {request.url.path}: {type(exc).__name__}: {exc}",
+        "Unhandled exception on %s %s: %s: %s",
+        request.method, request.url.path, type(exc).__name__, exc,
         exc_info=True
     )
     

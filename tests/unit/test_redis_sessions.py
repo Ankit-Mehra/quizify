@@ -56,7 +56,7 @@ class TestSessionCreation:
     async def test_create_session_with_full_metadata(self, session_service):
         """Should create session with all metadata fields"""
         refresh_token = "test_refresh_token"
-        client_session_token = await session_service.create_session(
+        await session_service.create_session(
             user_id="user_123",
             device_type="mobile",
             ip_address="192.168.1.1",
@@ -82,7 +82,7 @@ class TestSessionCreation:
     async def test_create_session_hashes_ip(self, session_service):
         """Should hash IP address for privacy"""
         refresh_token = "test_refresh_token"
-        client_session_token = await session_service.create_session(
+        await session_service.create_session(
             user_id="user_123", device_type="browser", ip_address="192.168.1.1"
         , refresh_token=refresh_token)
 
@@ -102,7 +102,7 @@ class TestSessionCreation:
         long_ua = "A" * 200  # 200 character user agent
 
         refresh_token = "test_refresh_token"
-        client_session_token = await session_service.create_session(
+        await session_service.create_session(
             user_id="user_123", device_type="browser", user_agent=long_ua
         , refresh_token=refresh_token)
 
@@ -120,7 +120,7 @@ class TestSessionCreation:
     async def test_create_session_without_optional_fields(self, session_service):
         """Should handle missing IP and user agent"""
         refresh_token = "test_refresh_token"
-        client_session_token = await session_service.create_session(
+        await session_service.create_session(
             user_id="user_123", device_type="api"
         , refresh_token=refresh_token)
 
@@ -137,7 +137,7 @@ class TestSessionCreation:
     async def test_create_session_adds_to_user_set(self, session_service, redis_client):
         """Should add session ID to user's session set"""
         refresh_token = "test_refresh_token"
-        client_session_token = await session_service.create_session(
+        await session_service.create_session(
             user_id="user_123", device_type="browser"
         , refresh_token=refresh_token)
 
@@ -155,7 +155,7 @@ class TestSessionCreation:
     async def test_create_session_sets_ttl(self, session_service, redis_client):
         """Should set TTL on session and user set"""
         refresh_token = "test_refresh_token"
-        client_session_token = await session_service.create_session(
+        await session_service.create_session(
             user_id="user_123", device_type="browser"
         , refresh_token=refresh_token)
 
@@ -243,7 +243,7 @@ class TestSessionValidation:
     async def test_validate_existing_session(self, session_service):
         """Should return session info for valid session"""
         refresh_token = "test_refresh_token"
-        client_session_token = await session_service.create_session(
+        await session_service.create_session(
             user_id="user_123", device_type="browser"
         , refresh_token=refresh_token)
 
@@ -271,7 +271,7 @@ class TestSessionValidation:
     async def test_validate_expired_session(self, session_service, redis_client):
         """Should return None and cleanup expired session"""
         refresh_token = "test_refresh_token"
-        client_session_token = await session_service.create_session(
+        await session_service.create_session(
             user_id="user_123", device_type="browser"
         , refresh_token=refresh_token)
 
@@ -297,7 +297,7 @@ class TestSessionValidation:
     async def test_validate_session_not_expired(self, session_service):
         """Should return info for recently active session"""
         refresh_token = "test_refresh_token"
-        client_session_token = await session_service.create_session(
+        await session_service.create_session(
             user_id="user_123", device_type="browser"
         , refresh_token=refresh_token)
         
@@ -318,7 +318,7 @@ class TestSessionRefresh:
     async def test_refresh_existing_session(self, session_service):
         """Should update last_active timestamp"""
         refresh_token = "test_refresh_token"
-        client_session_token = await session_service.create_session(
+        await session_service.create_session(
             user_id="user_123", device_type="browser"
         , refresh_token=refresh_token)
 
@@ -352,7 +352,7 @@ class TestSessionRefresh:
     async def test_refresh_extends_ttl(self, session_service, redis_client):
         """Should extend TTL to 24 hours"""
         refresh_token = "test_refresh_token"
-        client_session_token = await session_service.create_session(
+        await session_service.create_session(
             user_id="user_123", device_type="browser"
         , refresh_token=refresh_token)
 
@@ -375,7 +375,7 @@ class TestSessionRefresh:
     async def test_refresh_extends_user_session_set_ttl(self, session_service, redis_client):
         """Should refresh TTL for user session set as well"""
         refresh_token = "test_refresh_token"
-        client_session_token = await session_service.create_session(
+        await session_service.create_session(
             user_id="user_123", device_type="browser"
         , refresh_token=refresh_token)
 
@@ -402,7 +402,7 @@ class TestLogout:
     async def test_logout_single_session(self, session_service):
         """Should delete session and remove from user set"""
         refresh_token = "test_refresh_token"
-        client_session_token = await session_service.create_session(
+        await session_service.create_session(
             user_id="user_123", device_type="browser"
         , refresh_token=refresh_token)
 
@@ -470,7 +470,7 @@ class TestLogoutAllDevices:
         session_ids = []
         for device in ["browser", "mobile", "api"]:
             refresh_token = "test_refresh_token"
-            client_session_token = await session_service.create_session(
+            await session_service.create_session(
                 user_id="user_123", device_type=device
             , refresh_token=refresh_token)
 
@@ -665,7 +665,7 @@ class TestEdgeCases:
     async def test_session_info_is_expired_property(self, session_service):
         """Should correctly identify expired sessions"""
         refresh_token = "test_refresh_token"
-        client_session_token = await session_service.create_session(
+        await session_service.create_session(
             user_id="user_123", device_type="browser"
         , refresh_token=refresh_token)
 
@@ -695,7 +695,7 @@ class TestEdgeCases:
             for i in range(5)
         ]
 
-        results = await asyncio.gather(*tasks)
+        await asyncio.gather(*tasks)
         
         # Get session_ids from refresh tokens (results are client_session_tokens)
         session_ids = []
@@ -792,13 +792,13 @@ class TestCookieBasedAuthentication:
         token2 = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.mobile_token"
         
         # Create two sessions with different refresh_tokens
-        client_token1 = await session_service.create_session(
+        await session_service.create_session(
             user_id="user_123",
             device_type="browser",
             refresh_token=token1
         )
         
-        client_token2 = await session_service.create_session(
+        await session_service.create_session(
             user_id="user_123",
             device_type="mobile",
             refresh_token=token2
@@ -817,7 +817,7 @@ class TestCookieBasedAuthentication:
         """Should cleanup refresh_token mapping when session expires"""
         refresh_token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.test_token"
         
-        client_session_token = await session_service.create_session(
+        await session_service.create_session(
             user_id="user_123",
             device_type="browser",
             refresh_token=refresh_token
@@ -869,7 +869,7 @@ class TestCookieBasedAuthentication:
         """Should not expose raw refresh_token in session info"""
         refresh_token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.sensitive_token"
         
-        client_session_token = await session_service.create_session(
+        await session_service.create_session(
             user_id="user_123",
             device_type="browser",
             refresh_token=refresh_token
@@ -1003,7 +1003,7 @@ class TestRefreshTokenCleanup:
         """Should delete refresh_token:{hash} mapping when logging out"""
         # Create session with refresh token
         refresh_token = "test_refresh_for_logout"
-        client_token = await session_service.create_session(
+        await session_service.create_session(
             user_id="user_123",
             device_type="browser",
             refresh_token=refresh_token

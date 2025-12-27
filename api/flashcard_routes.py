@@ -275,9 +275,9 @@ async def export_deck_endpoint(
     """Export a flashcard deck to the specified format."""
     result = await export_flashcard_deck(
         deck_id=str(deck_id),
-        format=request.format,
+        format_type=request.format,
         include_hints=request.include_hints,
-        user_id=user_id,
+        _user_id=user_id,
         user_token=user_token,
     )
     

@@ -86,7 +86,7 @@ async def save_file_to_supabase_async(user_id: str, file_bytes: bytes, original_
     to avoid blocking the event loop.
     """
     try:
-        logger.debug(f"Saving file for user {user_id}")
+        logger.debug("Saving file for user %s", user_id)
         
         # generate a unique ID
         unique_id = str(uuid.uuid4())
@@ -101,27 +101,27 @@ async def save_file_to_supabase_async(user_id: str, file_bytes: bytes, original_
                 "Content-Type": file_type
             }
             
-            logger.debug(f"Uploading file to storage: {upload_url}")
+            logger.debug("Uploading file to storage: %s", upload_url)
             async with httpx.AsyncClient() as client:
                 response = await client.post(upload_url, headers=headers, content=file_bytes)
             
             if response.status_code != 200:
-                logger.error(f"Storage upload failed with status {response.status_code}: {response.text}")
+                logger.error("Storage upload failed with status %s: %s", response.status_code, response.text)
                 raise HTTPException(
                     status_code=response.status_code,
                     detail=f"Failed to upload file to storage: {response.text}"
                 )
             
-            logger.debug(f"File uploaded successfully to storage: {path}")
+            logger.debug("File uploaded successfully to storage: %s", path)
             
         except HTTPException:
             raise
         except Exception as storage_error:
-            logger.error(f"Storage upload error: {str(storage_error)}")
+            logger.error("Storage upload error: %s", str(storage_error))
             raise HTTPException(
                 status_code=500, 
                 detail=f"Failed to upload file to storage: {str(storage_error)}"
-            )
+            ) from storage_error
 
         # Save metadata to db using authenticated client
         # Run in executor to avoid blocking event loop (Supabase SDK is sync)
@@ -129,7 +129,7 @@ async def save_file_to_supabase_async(user_id: str, file_bytes: bytes, original_
         # (Supabase SDK may not be thread-safe when shared across threads)
         
         file_size = len(file_bytes)
-        logger.debug(f"Saving file metadata to database for file {unique_id}")
+        logger.debug("Saving file metadata to database for file %s", unique_id)
         
         def _insert_file_metadata():
             # Create client inside executor for thread safety
@@ -156,8 +156,8 @@ async def save_file_to_supabase_async(user_id: str, file_bytes: bytes, original_
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Unexpected error in save_file_to_supabase: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error("Unexpected error in save_file_to_supabase: %s", str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 def get_file_metadata(user_id: str = Depends(get_current_user_id), user_token: str = Depends(get_current_user_token)):
     """
@@ -178,7 +178,7 @@ def get_file_metadata(user_id: str = Depends(get_current_user_id), user_token: s
             "files": metadata.data
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 def get_file_record(file_id: str, user_token: str = None):
     """
@@ -202,23 +202,23 @@ def get_file_record(file_id: str, user_token: str = None):
         
         # Check if we got any results
         if not file_data.data or len(file_data.data) == 0:
-            logger.warning(f"No file found with ID: {file_id}")
+            logger.warning("No file found with ID: %s", file_id)
             return None
             
         # Return the first record as a dictionary
         return file_data.data[0]
     except Exception as e:
-        logger.error(f"Error retrieving file record: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error retrieving file record: {str(e)}")
+        logger.error("Error retrieving file record: %s", str(e))
+        raise HTTPException(status_code=500, detail=f"Error retrieving file record: {str(e)}") from e
     
 def create_presigned_url(file_id: str, user_id: str = Depends(get_current_user_id), token: str = Depends(get_current_user_token)):
     try:
-        logger.debug(f"Creating presigned URL for file {file_id}")
-        logger.debug(f"User ID: {user_id}")
+        logger.debug("Creating presigned URL for file %s", file_id)
+        logger.debug("User ID: %s", user_id)
 
         # Use authenticated client to fetch file record (enforces RLS)
         file_record = get_file_record(file_id, token)
-        logger.debug(f"File data: {file_record}")
+        logger.debug("File data: %s", file_record)
         
         if not file_record:
             logger.error("File record not found in database")
@@ -231,7 +231,7 @@ def create_presigned_url(file_id: str, user_id: str = Depends(get_current_user_i
 
         # Get storage path
         storage_path = file_record["storage_path"]
-        logger.debug(f"Storage path: {storage_path}")
+        logger.debug("Storage path: %s", storage_path)
 
         try:
             headers = {
@@ -254,7 +254,7 @@ def create_presigned_url(file_id: str, user_id: str = Depends(get_current_user_i
             }
         
         except Exception as e:
-            logger.error(f"Detailed storage error: {str(e)}")
+            logger.error("Detailed storage error: %s", str(e))
             
             # Check if this is a 404 error (file not found)
             error_str = str(e)
@@ -264,20 +264,20 @@ def create_presigned_url(file_id: str, user_id: str = Depends(get_current_user_i
                 raise HTTPException(
                     status_code=404, 
                     detail="The file could not be found in storage. It may have been deleted or moved."
-                )
+                ) from e
             
-            if isinstance(e, httpx.HTTPStatusError) and hasattr(e.response, 'content'):
-                logger.error(f"Error response content: {e.response.content}")
-            raise HTTPException(status_code=500, detail=f"Error accessing file: {str(e)}")
+            if isinstance(e, httpx.HTTPStatusError) and hasattr(e, 'response') and hasattr(e.response, 'content'):
+                logger.error("Error response content: %s", e.response.content)
+            raise HTTPException(status_code=500, detail=f"Error accessing file: {str(e)}") from e
     
     except HTTPException as he:
         # Re-raise HTTP exceptions
         raise he
     except Exception as e:
-        logger.error(f"Unexpected error in create_presigned_url: {str(e)}")
+        logger.error("Unexpected error in create_presigned_url: %s", str(e))
         if hasattr(e, '__dict__'):
-            logger.error(f"Error details: {e.__dict__}")
-        raise HTTPException(status_code=500, detail=str(e))
+            logger.error("Error details: %s", e.__dict__)
+        raise HTTPException(status_code=500, detail=str(e)) from e
     
 async def read_file_content_async(path: str, token: str) -> bytes:
     """
@@ -310,10 +310,10 @@ async def read_file_content_async(path: str, token: str) -> bytes:
             raise HTTPException(
                 status_code=404, 
                 detail="File not found in storage"
-            )
-        raise HTTPException(status_code=e.response.status_code, detail=f"Storage service error: {e.response.text}")
+            ) from e
+        raise HTTPException(status_code=e.response.status_code, detail=f"Storage service error: {e.response.text}") from e
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 def read_file_content(path: str, token: str) -> bytes:
@@ -337,7 +337,7 @@ def read_file_content(path: str, token: str) -> bytes:
             raise
         except Exception as e:
             # Wrap unexpected errors in an HTTPException for consistency.
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail=str(e)) from e
     else:
         # A running event loop exists: refuse to run to avoid creating
         # nested event loops or misusing the sync wrapper in async code.
@@ -385,58 +385,58 @@ def parse_file_from_supabase(file_record: dict, user_token: str) -> str:
     
             # Handle by MIME type first
             if file_type == "application/pdf":
-                logger.debug(f"Parsing PDF file: {file_name}")
+                logger.debug("Parsing PDF file: %s", file_name)
                 return extract_text_from_pdf(file_bytes)
             
             elif file_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-                logger.debug(f"Parsing DOCX file: {file_name}")
+                logger.debug("Parsing DOCX file: %s", file_name)
                 return extract_text_from_docx(file_bytes)
             
             elif file_type.startswith("text/"):
-                logger.debug(f"Parsing text file: {file_name}")
+                logger.debug("Parsing text file: %s", file_name)
                 return file_bytes.decode("utf-8", errors="ignore")
             
             else:
                 # Fallback: check file extension and raw bytes
                 if file_name.endswith('.pdf') or is_pdf(file_bytes):
-                    logger.debug(f"Parsing PDF file (fallback detection): {file_name}")
+                    logger.debug("Parsing PDF file (fallback detection): %s", file_name)
                     return extract_text_from_pdf(file_bytes)
                 
                 elif file_name.endswith('.docx'):
-                    logger.debug(f"Parsing DOCX file (fallback detection): {file_name}")
+                    logger.debug("Parsing DOCX file (fallback detection): %s", file_name)
                     return extract_text_from_docx(file_bytes)
                 
                 elif file_name.endswith('.doc'):
                     # Legacy .doc format not supported
-                    logger.warning(f"Legacy .doc format not supported: {file_name}")
+                    logger.warning("Legacy .doc format not supported: %s", file_name)
                     raise HTTPException(
                         status_code=400,
                         detail="Legacy .doc format is not supported. Please convert to .docx or PDF."
                     )
                 
                 elif file_name.endswith(('.txt', '.md', '.csv', '.json', '.xml', '.html')):
-                    logger.debug(f"Parsing text file (fallback detection): {file_name}")
+                    logger.debug("Parsing text file (fallback detection): %s", file_name)
                     return file_bytes.decode("utf-8", errors="ignore")
                 
                 else:
                     # Unknown format - try to decode as text
-                    logger.warning(f"Unknown file type '{file_type}' for file '{file_name}', attempting text decode")
+                    logger.warning("Unknown file type '%s' for file '%s', attempting text decode", file_type, file_name)
                     try:
                         return file_bytes.decode("utf-8", errors="ignore")
-                    except Exception:
+                    except Exception as decode_err:
                         raise HTTPException(
                             status_code=400,
                             detail=f"Unsupported file format: {file_type or 'unknown'}. Supported formats: PDF, DOCX, TXT."
-                        )
+                        ) from decode_err
                         
         except HTTPException as he:
             if he.status_code == 404:
                 # File not found in storage - provide a clear error
-                logger.error(f"File not found in storage: {file_path}")
+                logger.error("File not found in storage: %s", file_path)
                 raise HTTPException(
                     status_code=404,
                     detail="The file could not be found in storage. It may have been deleted."
-                )
+                ) from he
             # Re-raise other HTTP exceptions
             raise he
             
@@ -444,8 +444,8 @@ def parse_file_from_supabase(file_record: dict, user_token: str) -> str:
         # Re-raise HTTP exceptions
         raise he
     except Exception as e:
-        logger.error(f"Error parsing file content: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error parsing file content: {str(e)}")
+        logger.error("Error parsing file content: %s", str(e))
+        raise HTTPException(status_code=500, detail=f"Error parsing file content: {str(e)}") from e
 
 
 async def parse_file_from_supabase_async(file_record: dict, user_token: str) -> str:
@@ -490,62 +490,62 @@ async def parse_file_from_supabase_async(file_record: dict, user_token: str) -> 
     
             # Handle by MIME type first - run CPU-bound parsing in executor
             if file_type == "application/pdf":
-                logger.debug(f"Parsing PDF file: {file_name}")
+                logger.debug("Parsing PDF file: %s", file_name)
                 return await run_sync_in_executor(extract_text_from_pdf, file_bytes)
             
             elif file_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-                logger.debug(f"Parsing DOCX file: {file_name}")
+                logger.debug("Parsing DOCX file: %s", file_name)
                 return await run_sync_in_executor(extract_text_from_docx, file_bytes)
             
             elif file_type.startswith("text/"):
-                logger.debug(f"Parsing text file: {file_name}")
+                logger.debug("Parsing text file: %s", file_name)
                 return file_bytes.decode("utf-8", errors="ignore")
             
             else:
                 # Fallback: check file extension and raw bytes
                 if file_name.endswith('.pdf') or is_pdf(file_bytes):
-                    logger.debug(f"Parsing PDF file (fallback detection): {file_name}")
+                    logger.debug("Parsing PDF file (fallback detection): %s", file_name)
                     return await run_sync_in_executor(extract_text_from_pdf, file_bytes)
                 
                 elif file_name.endswith('.docx'):
-                    logger.debug(f"Parsing DOCX file (fallback detection): {file_name}")
+                    logger.debug("Parsing DOCX file (fallback detection): %s", file_name)
                     return await run_sync_in_executor(extract_text_from_docx, file_bytes)
                 
                 elif file_name.endswith('.doc'):
-                    logger.warning(f"Legacy .doc format not supported: {file_name}")
+                    logger.warning("Legacy .doc format not supported: %s", file_name)
                     raise HTTPException(
                         status_code=400,
                         detail="Legacy .doc format is not supported. Please convert to .docx or PDF."
                     )
                 
                 elif file_name.endswith(('.txt', '.md', '.csv', '.json', '.xml', '.html')):
-                    logger.debug(f"Parsing text file (fallback detection): {file_name}")
+                    logger.debug("Parsing text file (fallback detection): %s", file_name)
                     return file_bytes.decode("utf-8", errors="ignore")
                 
                 else:
-                    logger.warning(f"Unknown file type '{file_type}' for file '{file_name}', attempting text decode")
+                    logger.warning("Unknown file type '%s' for file '%s', attempting text decode", file_type, file_name)
                     try:
                         return file_bytes.decode("utf-8", errors="ignore")
-                    except Exception:
+                    except Exception as decode_err:
                         raise HTTPException(
                             status_code=400,
                             detail=f"Unsupported file format: {file_type or 'unknown'}. Supported formats: PDF, DOCX, TXT."
-                        )
+                        ) from decode_err
                         
         except HTTPException as he:
             if he.status_code == 404:
-                logger.error(f"File not found in storage: {file_path}")
+                logger.error("File not found in storage: %s", file_path)
                 raise HTTPException(
                     status_code=404,
                     detail="The file could not be found in storage. It may have been deleted."
-                )
+                ) from he
             raise he
             
     except HTTPException as he:
         raise he
     except Exception as e:
-        logger.error(f"Error parsing file content: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error parsing file content: {str(e)}")
+        logger.error("Error parsing file content: %s", str(e))
+        raise HTTPException(status_code=500, detail=f"Error parsing file content: {str(e)}") from e
 
 
 def delete_file_from_supabase(file_id: str, token: str, user_id: str, original_filename: str):
@@ -568,7 +568,7 @@ def delete_file_from_supabase(file_id: str, token: str, user_id: str, original_f
         supabase.table("user_files").delete().eq("id", file_id).execute()
         delete_file_from_supabase_storage(file_id, token, user_id, original_filename)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 async def delete_file_from_supabase_async(file_id: str, token: str, user_id: str, original_filename: str):
@@ -600,8 +600,8 @@ async def delete_file_from_supabase_async(file_id: str, token: str, user_id: str
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error deleting file {file_id}: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error("Error deleting file %s: %s", file_id, str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 def delete_file_from_supabase_storage(file_id: str, token: str, user_id: str, original_filename: str):
     try:
@@ -617,7 +617,7 @@ def delete_file_from_supabase_storage(file_id: str, token: str, user_id: str, or
         response.raise_for_status()
         return response.json()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 async def delete_file_from_supabase_storage_async(file_id: str, token: str, user_id: str, original_filename: str):
@@ -639,5 +639,5 @@ async def delete_file_from_supabase_storage_async(file_id: str, token: str, user
         response.raise_for_status()
         return response.json()
     except Exception as e:
-        logger.error(f"Error deleting file from storage {path}: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error("Error deleting file from storage %s: %s", path, str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e

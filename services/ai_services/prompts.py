@@ -417,3 +417,158 @@ Create a balanced mix of difficulty levels:
         "## IMPORTANT RULES",
         f"{difficulty_text}\n## IMPORTANT RULES"
     )
+
+
+# =============================================================================
+# Enhanced Flashcard Prompts (RAG-based)
+# =============================================================================
+
+ENHANCED_FLASHCARD_PROMPT = """
+You are an expert educational content creator specializing in flashcard generation using pedagogical best practices.
+
+## CONTEXT INFORMATION
+Concept to cover: {concept_name}
+Source Context:
+\"\"\"
+{context}
+\"\"\"
+
+## TASK
+Generate {num_cards} high-quality flashcards that test understanding of "{concept_name}" using Bloom's taxonomy levels.
+
+## BLOOM'S TAXONOMY LEVELS FOR FLASHCARDS
+- Remember: Basic recall of facts, terms, definitions
+- Understand: Explain concepts, compare, interpret meaning
+- Apply: Use knowledge in new situations, solve problems
+- Analyze: Break down information, identify relationships
+
+## CARD STYLES
+{card_style_instruction}
+
+## DIFFICULTY TARGETING
+{difficulty_instruction}
+
+## OUTPUT FORMAT
+Return a JSON object with the following structure:
+{{
+  "cards": [
+    {{
+      "front": "Question or prompt text",
+      "back": "Answer or response text",
+      "hint": "Optional hint (null if not needed)",
+      "bloom_level": "remember|understand|apply|analyze",
+      "difficulty_score": 0.1 to 1.0
+    }}
+  ]
+}}
+
+## QUALITY REQUIREMENTS
+1. Front (question) should be clear and specific
+2. Back (answer) should be concise but complete
+3. Each card should test ONE key concept
+4. Cards should be self-contained (no "see previous card")
+5. Use simple, direct language
+6. Avoid yes/no questions unless using true/false style
+7. Include source references when relevant
+8. Hints should guide without giving away the answer
+
+Generate exactly {num_cards} cards. Return ONLY valid JSON, no additional text.
+"""
+
+ENHANCED_FLASHCARD_CARD_STYLES = {
+    "question_answer": """
+Style: QUESTION-ANSWER
+- Front: Direct question (What, How, Why, etc.)
+- Back: Clear, complete answer
+- Example Front: "What is the primary function of mitochondria?"
+- Example Back: "To produce ATP (energy) through cellular respiration"
+""",
+    "term_definition": """
+Style: TERM-DEFINITION
+- Front: Technical term or concept name
+- Back: Clear definition with examples if helpful
+- Example Front: "Photosynthesis"
+- Example Back: "The process by which plants convert light energy into chemical energy (glucose), using carbon dioxide and water"
+""",
+    "cloze": """
+Style: CLOZE (Fill-in-the-blank)
+- Front: Statement with key term blanked out using _____
+- Back: The missing term(s)
+- Example Front: "The _____ is the powerhouse of the cell"
+- Example Back: "mitochondria"
+""",
+    "mixed": """
+Style: MIXED (Variety of formats)
+Create a mix of:
+- ~40% Question-Answer format
+- ~30% Term-Definition format
+- ~30% Cloze (fill-in-blank) format
+"""
+}
+
+ENHANCED_FLASHCARD_DIFFICULTY = {
+    "easy": """
+Difficulty: EASY (score 0.1-0.3)
+- Basic definitions and terminology
+- Simple factual recall
+- Recognition-level content
+""",
+    "medium": """
+Difficulty: MEDIUM (score 0.4-0.6)
+- Understanding relationships between concepts
+- Cause and effect connections
+- Comparison and contrast
+""",
+    "hard": """
+Difficulty: HARD (score 0.7-1.0)
+- Application to new scenarios
+- Analysis of complex relationships
+- Synthesis of multiple concepts
+""",
+    "mixed": """
+Difficulty: MIXED
+Target a balanced distribution:
+- ~30% Easy (0.1-0.3)
+- ~50% Medium (0.4-0.6)  
+- ~20% Hard (0.7-1.0)
+"""
+}
+
+
+def build_enhanced_flashcard_prompt(
+    concept_name: str,
+    context: str,
+    num_cards: int,
+    card_style: str = "mixed",
+    difficulty: str = "mixed",
+) -> str:
+    """
+    Build a prompt for enhanced (RAG-based) flashcard generation.
+    
+    This prompt uses retrieved context from the RAG pipeline and
+    applies Bloom's taxonomy for educational quality.
+    
+    Args:
+        concept_name: Name of the concept being tested
+        context: Retrieved context text for the concept
+        num_cards: Number of cards to generate for this concept
+        card_style: "question_answer", "term_definition", "cloze", or "mixed"
+        difficulty: "easy", "medium", "hard", or "mixed"
+        
+    Returns:
+        Formatted prompt string
+    """
+    card_style_instruction = ENHANCED_FLASHCARD_CARD_STYLES.get(
+        card_style, ENHANCED_FLASHCARD_CARD_STYLES["mixed"]
+    )
+    difficulty_instruction = ENHANCED_FLASHCARD_DIFFICULTY.get(
+        difficulty, ENHANCED_FLASHCARD_DIFFICULTY["mixed"]
+    )
+    
+    return ENHANCED_FLASHCARD_PROMPT.format(
+        concept_name=concept_name,
+        context=context,
+        num_cards=num_cards,
+        card_style_instruction=card_style_instruction,
+        difficulty_instruction=difficulty_instruction,
+    )

@@ -45,6 +45,7 @@ class LLMGenerationRequest:
     
     Attributes:
         prompt: The prompt text to send to the LLM
+        system_message: Optional system message for chat models
         model: The model to use (provider-specific)
         response_format: Response format type (e.g., "json_object")
         user_id: Optional user ID for analytics
@@ -54,6 +55,7 @@ class LLMGenerationRequest:
         temperature: Sampling temperature (default: 1.0)
     """
     prompt: str
+    system_message: Optional[str] = None
     model: Optional[str] = None
     response_format: str = "json_object"
     user_id: Optional[str] = None
@@ -92,13 +94,13 @@ class ILLMProvider(ABC):
     @abstractmethod
     def provider_name(self) -> str:
         """Return the name of this provider (e.g., 'openai', 'gemini')."""
-        pass
+        raise NotImplementedError
     
     @property
     @abstractmethod
     def default_model(self) -> str:
         """Return the default model for this provider."""
-        pass
+        raise NotImplementedError
     
     @abstractmethod
     async def generate(self, request: LLMGenerationRequest) -> LLMGenerationResponse:
@@ -114,7 +116,7 @@ class ILLMProvider(ABC):
         Raises:
             LLMProviderError: If generation fails
         """
-        pass
+        raise NotImplementedError
     
     async def generate_structured(
         self,
@@ -147,7 +149,7 @@ class ILLMProvider(ABC):
                 message=f"Failed to parse LLM response into {response_type.__name__}",
                 raw_response=response.content[:500] if response.content else None,
                 original_error=e
-            )
+            ) from e
 
 
 class LLMProviderError(Exception):
@@ -194,7 +196,7 @@ class LLMRateLimitError(LLMProviderError):
 _provider_instances: Dict[str, ILLMProvider] = {}
 
 
-def get_llm_provider(provider_name: str = "openai") -> ILLMProvider:
+def get_llm_provider(provider_name: Optional[str] = None) -> ILLMProvider:
     """
     Get an LLM provider instance.
     
@@ -206,7 +208,7 @@ def get_llm_provider(provider_name: str = "openai") -> ILLMProvider:
     Provider instances are cached for reuse.
     
     Args:
-        provider_name: Name of the provider (default: "openai")
+        provider_name: Name of the provider. If None, uses config.DEFAULT_LLM_PROVIDER
         
     Returns:
         An instance of the requested LLM provider
@@ -214,7 +216,11 @@ def get_llm_provider(provider_name: str = "openai") -> ILLMProvider:
     Raises:
         ValueError: If the provider is not supported
     """
-    global _provider_instances
+    from config import config
+    
+    # Use config default if no provider specified
+    if provider_name is None:
+        provider_name = config.DEFAULT_LLM_PROVIDER
     
     # Return cached instance if available
     if provider_name in _provider_instances:
@@ -247,7 +253,6 @@ def reset_provider_instances() -> None:
     
     Useful for testing or when provider configuration changes.
     """
-    global _provider_instances
     _provider_instances.clear()
     logger.info("LLM provider instances reset")
     logger.info("LLM provider instance reset")
