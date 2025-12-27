@@ -177,23 +177,26 @@ class TestSessionCreation:
 
     @pytest.mark.asyncio
     async def test_create_session_enforces_max_limit(self, session_service):
-        """Should reject session creation if user has 5+ sessions (updated limit)"""
-        # Create 5 sessions (new limit)
+        """Should auto-evict oldest session when user reaches the limit (improved UX)"""
+        # Create 5 sessions (at the limit)
         for i in range(5):
             refresh_token = f"test_refresh_token_{i}"
             await session_service.create_session(
                 user_id="user_123", device_type=f"device_{i}", refresh_token=refresh_token
             )
 
-        # 6th session should raise error
-        with pytest.raises(TooManySessionsError) as exc_info:
-            await session_service.create_session(
-                user_id="user_123", device_type="device_6", refresh_token="test_refresh_token_6"
-            )
-
-        assert exc_info.value.user_id == "user_123"
-        assert exc_info.value.count == 5
-        assert exc_info.value.max_sessions == 5
+        # Verify we have 5 sessions
+        session_count = await session_service.get_session_count("user_123")
+        assert session_count == 5
+        
+        # 6th session should auto-evict oldest instead of raising error
+        await session_service.create_session(
+            user_id="user_123", device_type="device_6", refresh_token="test_refresh_token_6"
+        )
+        
+        # Should still have 5 sessions (oldest one evicted)
+        session_count = await session_service.get_session_count("user_123")
+        assert session_count == 5
 
     @pytest.mark.asyncio
     async def test_create_session_cleans_up_expired_before_limit_check(self, session_service, redis_client):

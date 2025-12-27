@@ -226,6 +226,46 @@ class SessionService:
         # Return a compact token: first 8 chars of session_id + signature
         return f"cst_{session_id[:8]}_{signature}"
 
+    async def _logout_oldest_session(self, user_id: str) -> Optional[str]:
+        """
+        Find and logout the oldest session for a user (auto-eviction for better UX).
+        
+        This method is called automatically when a user exceeds the session limit.
+        Instead of blocking the new login, we evict the oldest session to make room.
+        
+        Args:
+            user_id: User identifier
+            
+        Returns:
+            Device type of the logged out session (for logging), or None if no sessions
+        """
+        try:
+            # Get all active sessions
+            sessions = await self.list_sessions(user_id)
+            
+            if not sessions:
+                logger.warning(f"No sessions found for user {user_id[:8]}... during auto-eviction")
+                return None
+            
+            # Sort by created_at to find oldest
+            sessions.sort(key=lambda s: s.created_at)
+            oldest_session = sessions[0]
+            
+            # Logout the oldest session
+            logger.info(
+                f"Auto-evicting oldest session for user {user_id[:8]}... "
+                f"(device: {oldest_session.device_type}, "
+                f"created: {oldest_session.created_at.strftime('%Y-%m-%d %H:%M:%S')})"
+            )
+            
+            await self.logout(oldest_session.session_id)
+            
+            return oldest_session.device_type
+            
+        except Exception as e:
+            logger.error(f"Failed to auto-evict oldest session for user {user_id[:8]}...: {e}")
+            return None
+
     async def create_session(
         self,
         user_id: str,
@@ -238,8 +278,9 @@ class SessionService:
         Create a new authentication session atomically.
 
         Generates a unique session ID, stores session metadata in Redis,
-        and adds session to user's active session set. Uses Lua script
-        to ensure atomic check-and-add operation (prevents race conditions).
+        and adds session to user's active session set. If the user has reached
+        the maximum session limit, automatically logs out the oldest session
+        to make room for the new one (improved UX - no blocking).
         
         Creates a refresh_token → session_id mapping to enable cookie-based 
         session lookup (XSS-safe authentication).
@@ -255,7 +296,6 @@ class SessionService:
             str: client_session_token - HMAC-signed token for UI identification only
 
         Raises:
-            TooManySessionsError: If user has >= MAX_SESSIONS_PER_USER active sessions
             redis.RedisError: If Redis operation fails
 
         Example:
@@ -276,15 +316,36 @@ class SessionService:
             # preventing false "Too many sessions" errors when slots are actually available
             await self.cleanup_expired_sessions(user_id)
             
-            # Atomic check-and-add using Lua script (prevents race conditions)
-            try:
-                result = await self.redis.eval(
-                    self.CREATE_SESSION_SCRIPT,
-                    1,  # number of keys
-                    user_sessions_key,  # KEYS[1]
-                    session_id,  # ARGV[1]
-                    str(self.MAX_SESSIONS_PER_USER),  # ARGV[2]
+            # Check current session count BEFORE attempting to create
+            # If at limit, auto-evict oldest session for better UX
+            session_count = await self.redis.scard(user_sessions_key)
+            if session_count >= self.MAX_SESSIONS_PER_USER:
+                logger.info(
+                    f"User {user_id[:8]}... at session limit ({session_count}/{self.MAX_SESSIONS_PER_USER}). "
+                    f"Auto-evicting oldest session..."
                 )
+                evicted_device = await self._logout_oldest_session(user_id)
+                if evicted_device:
+                    logger.info(
+                        f"Successfully evicted oldest session (device: {evicted_device}) "
+                        f"for user {user_id[:8]}..."
+                    )
+                else:
+                    logger.warning(
+                        f"Failed to evict oldest session for user {user_id[:8]}... "
+                        f"but proceeding with session creation"
+                    )
+            
+            # Atomic add to session set (session ID already generated above)
+            # After auto-eviction, there should always be room for the new session
+            try:
+                result = await self.redis.sadd(user_sessions_key, session_id)
+                if result == 0:
+                    # This should not happen after auto-eviction, but log if it does
+                    logger.warning(
+                        f"Session {session_id} was already in set for user {user_id[:8]}... "
+                        f"(possible duplicate, ignoring)"
+                    )
             except Exception as lua_error:
                 # SECURITY: Only allow non-atomic fallback in test environments
                 # Production Redis MUST support Lua scripts for atomic session creation
@@ -307,20 +368,10 @@ class SessionService:
                 else:
                     # Production: Fail hard if Lua not supported
                     logger.error(
-                        f"CRITICAL: Lua script failed in production. This breaks atomic session creation. "
+                        f"CRITICAL: Session creation failed in production. "
                         f"Error: {lua_error}"
                     )
                     raise
-            
-            if result == 0:
-                # Limit exceeded - get current count for error message
-                session_count = await self.redis.scard(user_sessions_key)
-                logger.warning(
-                    f"User {user_id[:8]}... has too many sessions: {session_count}"
-                )
-                raise TooManySessionsError(
-                    user_id, session_count, max_sessions=self.MAX_SESSIONS_PER_USER
-                )
 
             # Prepare session metadata
             now = datetime.utcnow()
@@ -374,8 +425,6 @@ class SessionService:
 
             return client_session_token
 
-        except TooManySessionsError:
-            raise
         except Exception as e:
             logger.error(f"Failed to create session for user {user_id[:8]}...: {e}")
             raise
