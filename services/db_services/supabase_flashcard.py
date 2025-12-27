@@ -641,13 +641,15 @@ def complete_study_session(
     # Also update the deck's last_studied timestamp
     if result.data:
         session = result.data[0]
+        # TODO: Implement increment_study_sessions RPC function in Supabase
+        # Once created, uncomment the total_study_sessions update below
         supabase.table("flashcard_decks")\
             .update({
-                "last_studied": datetime.utcnow().isoformat(),
-                "total_study_sessions": supabase.rpc(
-                    "increment_study_sessions",
-                    {"deck_id": session["deck_id"]}
-                ) if False else None  # TODO: Create this RPC function
+                "last_studied": datetime.utcnow().isoformat()
+                # "total_study_sessions": supabase.rpc(
+                #     "increment_study_sessions",
+                #     {"deck_id": session["deck_id"]}
+                # )
             })\
             .eq("id", session["deck_id"])\
             .execute()

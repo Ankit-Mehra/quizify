@@ -8,8 +8,7 @@ providing a better UX instead of blocking the new login.
 
 import pytest
 import fakeredis.aioredis
-from datetime import datetime, timedelta
-from services.redis.sessions import SessionService, SessionInfo
+from services.redis.sessions import SessionService
 
 
 @pytest.fixture

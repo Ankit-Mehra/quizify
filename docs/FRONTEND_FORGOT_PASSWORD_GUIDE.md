@@ -216,17 +216,26 @@ export default function ForgotPasswordPage() {
 When user clicks the reset link in their email:
 1. Browser goes to: `https://api.quizify.ca/api/auth/confirm?token=xxx&type=recovery`
 2. Backend verifies the token
-3. Backend redirects to: `https://www.quizify.ca/reset-password?access_token=xxx&refresh_token=yyy&message=Please+enter+your+new+password`
+3. Backend redirects to: `https://www.quizify.ca/reset-password?code=one-time-reset-code&message=Please+enter+your+new+password`
 
-### Extract Tokens from URL
+**Security Note**: We use a short-lived one-time code instead of embedding `access_token` and `refresh_token` in the URL to prevent token leakage via:
+- Browser history
+- Server/access logs
+- Referer headers to third-party resources
+- Copy/paste of URLs
+
+### Extract Reset Code from URL
 
 ```typescript
-// Get tokens from URL when page loads
+// Get reset code and optional status params from URL when page loads
 const searchParams = new URLSearchParams(window.location.search);
-const accessToken = searchParams.get('access_token');
-const refreshToken = searchParams.get('refresh_token');
+const resetCode = searchParams.get('code');
 const message = searchParams.get('message');
 const error = searchParams.get('error');
+
+// The resetCode is a short-lived, one-time value.
+// Send it to your backend via POST to complete the password reset;
+// do not pass access or refresh tokens via the URL query string.
 ```
 
 ### UI Components Needed
