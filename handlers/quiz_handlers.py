@@ -9,9 +9,9 @@ from services.ai_services.doc_service import (
     extract_text_from_plain_text,
     extract_text_from_docx
 )
-from services.db_services.supabase_quiz import (  # noqa: F401
+from services.db_services.supabase_quiz import (
     save_quiz_to_database, get_user_quizzes,
-    get_quiz_from_database, save_metadata, 
+    save_metadata, 
     get_metadata, delete_quiz_from_database,
     get_user_tier_info_cached, get_quiz_metadata_cached,
     get_authed_supabase_client, invalidate_user_tier_cache)
@@ -27,12 +27,12 @@ from schemas.quiz import (
     BloomLevel, Difficulty, ALL_QUESTION_TYPES
 )
 from typing import Dict, Any, List, Optional
-from services.ai_services.ingestion_service import IngestionService
+from services.content.rag_ingestion_service import RAGIngestionService
 from services.ai_services.concept_extraction_service import ConceptExtractionService
 from services.ai_services.orchestration_service import QuizOrchestrationService
 from datetime import datetime, date
 from services.ai_services.chunking_service import generate_quizzes_single_async
-from services.ai_services.openai_service import QuizParseError
+from services.ai_services.llm_client_service import QuizParseError
 from services.logger import app_logger as logger
 from services.web_scraping_service import scrape_content
 
@@ -99,11 +99,11 @@ async def _generate_standard_mode(
             content_source_type=content_source_type
         )
     except QuizParseError as e:
-        logger.error(f"Quiz parse error for user {user_id[:8]}...: {e.message}")
+        logger.error("Quiz parse error for user %s...: %s", user_id[:8], e.message)
         raise HTTPException(
             status_code=500,
             detail=e.message
-        )
+        ) from e
     
     # Save to database with proper content source tracking
     quiz_id, saved_questions = save_quiz_to_database(
@@ -164,7 +164,7 @@ async def _ingest_and_extract_concepts(
     user_id: str,
     user_token: str,
     trace_id: str,
-    ingestion_service: IngestionService,
+    ingestion_service: RAGIngestionService,
     concept_service: ConceptExtractionService,
     content_source_type: str = "text"
 ) -> tuple[str, List[Dict], List[Dict]]:
@@ -188,7 +188,7 @@ async def _ingest_and_extract_concepts(
         trace_id=trace_id
     )
     t1 = time.time()
-    logger.info(f"[TIMING] Ingestion took {t1-t0:.2f}s")
+    logger.info("[TIMING] Ingestion took %.2fs", t1-t0)
     
     document_id = ingestion_result["document_id"]
     chunks = ingestion_result.get("chunks", [])
@@ -204,7 +204,7 @@ async def _ingest_and_extract_concepts(
         content_source_type=content_source_type
     )
     t3 = time.time()
-    logger.info(f"[TIMING] Concept extraction took {t3-t2:.2f}s for {len(chunks)} chunks -> {len(concepts)} concepts")
+    logger.info("[TIMING] Concept extraction took %.2fs for %d chunks -> %d concepts", t3-t2, len(chunks), len(concepts))
     
     if not concepts:
         raise ValueError(
@@ -308,7 +308,7 @@ async def _generate_questions_parallel(
     non_matching_pairs = []
     non_matching_bloom_diff = []
     
-    logger.info(f"[TIMING] _generate_questions_parallel START (received {len(concept_type_pairs)} concept pairs)")
+    logger.info("[TIMING] _generate_questions_parallel START (received %d concept pairs)", len(concept_type_pairs))
     for i, (concept, q_type) in enumerate(concept_type_pairs):
         if q_type == "matching":
             matching_indices.append(i)
@@ -341,12 +341,12 @@ async def _generate_questions_parallel(
             if isinstance(res, dict):
                 valid_questions.append(res)
             else:
-                logger.error(f"Question generation failed for index {orig_idx}: {res}")
+                logger.error("Question generation failed for index %d: %s", orig_idx, res)
                 failed_items.append((concept, q_type, orig_idx))
         
         # Retry failed non-matching questions with fallback to MCQ
         if failed_items:
-            logger.info(f"Retrying {len(failed_items)} failed non-matching questions...")
+            logger.info("Retrying %d failed non-matching questions...", len(failed_items))
             retry_tasks = []
             for concept, q_type, orig_idx in failed_items:
                 # First retry with same type
@@ -359,12 +359,12 @@ async def _generate_questions_parallel(
                 if isinstance(res, dict):
                     valid_questions.append(res)
                 else:
-                    logger.error(f"Retry failed for index {orig_idx}, will try MCQ fallback")
+                    logger.error("Retry failed for index %d, will try MCQ fallback", orig_idx)
                     fallback_items.append((concept, orig_idx))
             
             # Fallback to MCQ
             if fallback_items:
-                logger.info(f"Fallback: {len(fallback_items)} questions switching to multiple_choice")
+                logger.info("Fallback: %d questions switching to multiple_choice", len(fallback_items))
                 fallback_tasks = [generate_one(c, "multiple_choice", idx) for c, idx in fallback_items]
                 fallback_results = await asyncio.gather(*fallback_tasks, return_exceptions=True)
                 
@@ -372,13 +372,13 @@ async def _generate_questions_parallel(
                     if isinstance(res, dict):
                         valid_questions.append(res)
                     else:
-                        logger.error(f"Fallback also failed: {res}")
+                        logger.error("Fallback also failed: %s", res)
     
     # Generate matching questions - aggregate 4 concepts per matching question
     if matching_indices:
         t_matching_start = time.time()
-        logger.info(f"[TIMING] Starting matching question generation at +{time.time()-t_start:.2f}s")
-        logger.info(f"Generating {len(matching_indices)} matching question(s) using aggregated concepts")
+        logger.info("[TIMING] Starting matching question generation at +%.2fs", time.time()-t_start)
+        logger.info("Generating %d matching question(s) using aggregated concepts", len(matching_indices))
         
         # Use ALL available concepts for matching (not just those assigned to matching slots)
         # This ensures diverse matching questions with unique concept sets
@@ -386,8 +386,8 @@ async def _generate_questions_parallel(
             # Concepts are already deduplicated in concept extraction, skip redundant dedup
             # Just sort by relevance to prioritize important concepts
             available_concepts = sorted(all_concepts, key=lambda x: x.get("relevance_score", 0), reverse=True)
-            logger.info(f"[TIMING] Concept sort took {time.time()-t_matching_start:.2f}s")
-            logger.info(f"Using {len(available_concepts)} concepts for {len(matching_indices)} matching questions")
+            logger.info("[TIMING] Concept sort took %.2fs", time.time()-t_matching_start)
+            logger.info("Using %d concepts for %d matching questions", len(available_concepts), len(matching_indices))
         else:
             # Fallback to concepts assigned to matching slots
             available_concepts = [concept_type_pairs[i][0] for i in matching_indices]
@@ -410,8 +410,8 @@ async def _generate_questions_parallel(
                         content_source_type=content_source_type
                     )
                     valid_questions.append(fallback_result)
-                except Exception as e:
-                    logger.error(f"MCQ fallback for empty matching concepts failed: {e}")
+                except Exception as e:  # noqa: BLE001
+                    logger.error("MCQ fallback for empty matching concepts failed: %s", e)
         else:
             # For each matching question, we need 4 UNIQUE concepts
             # Ensure each matching question uses different concepts
@@ -455,7 +455,7 @@ async def _generate_questions_parallel(
                             fill_idx = len(concepts_for_matching) % len(available_concepts)
                             concepts_for_matching.append(available_concepts[fill_idx])
                     else:
-                        logger.error(f"No available concepts for matching question {i}, skipping")
+                        logger.error("No available concepts for matching question %d, skipping", i)
                         continue
             
                 # Store concepts for potential retry
@@ -481,19 +481,19 @@ async def _generate_questions_parallel(
                 if isinstance(res, dict):
                     valid_questions.append(res)
                 else:
-                    logger.error(f"Matching question {i} failed: {res}")
+                    logger.error("Matching question %d failed: %s", i, res)
                     failed_matching_items.append((i, matching_indices[i]))
             
             # Retry failed matching questions using the SAME concepts as original attempt
             if failed_matching_items:
-                logger.info(f"Retrying {len(failed_matching_items)} failed matching questions...")
+                logger.info("Retrying %d failed matching questions...", len(failed_matching_items))
                 retry_tasks = []
                 for orig_i, idx in failed_matching_items:
                     bloom_level, difficulty = bloom_difficulty_pairs[idx]
                     # Get the exact same 4 concepts used in the original attempt
                     concepts_for_retry = matching_concepts_map.get(orig_i, [])
                     if not concepts_for_retry:
-                        logger.error(f"Cannot retry matching question {orig_i}: original concepts not found")
+                        logger.error("Cannot retry matching question %d: original concepts not found", orig_i)
                         continue
                     retry_tasks.append(
                         orchestration_service.generate_matching_question(
@@ -515,12 +515,12 @@ async def _generate_questions_parallel(
                     if isinstance(res, dict):
                         valid_questions.append(res)
                     else:
-                        logger.error(f"Retry failed for matching question {orig_i}, will try MCQ fallback")
+                        logger.error("Retry failed for matching question %d, will try MCQ fallback", orig_i)
                         fallback_items.append(idx)
                 
                 # Fallback to MCQ for items that failed retry
                 if fallback_items:
-                    logger.info(f"Fallback: {len(fallback_items)} matching questions switching to multiple_choice")
+                    logger.info("Fallback: %d matching questions switching to multiple_choice", len(fallback_items))
                     for idx in fallback_items:
                         try:
                             concept = concept_type_pairs[idx][0]
@@ -536,8 +536,8 @@ async def _generate_questions_parallel(
                                 content_source_type=content_source_type
                             )
                             valid_questions.append(fallback_result)
-                        except Exception as e:
-                            logger.error(f"Matching fallback to MCQ also failed: {e}")
+                        except Exception as e:  # noqa: BLE001
+                            logger.error("Matching fallback to MCQ also failed: %s", e)
     
     if not valid_questions:
         raise ValueError(
@@ -651,7 +651,7 @@ async def reserve_credits_atomic(user_id: str, quiz_type: str) -> None:
             }
         )
     
-    logger.info(f"Credits reserved for user {user_id[:8]}... ({quiz_type} quiz)")
+    logger.info("Credits reserved for user %s... (%s quiz)", user_id[:8], quiz_type)
 
 
 async def refund_credits_on_failure(user_id: str, quiz_type: str) -> None:
@@ -668,12 +668,13 @@ async def refund_credits_on_failure(user_id: str, quiz_type: str) -> None:
     """
     success = await refund_units(user_id, quiz_type)
     if success:
-        logger.info(f"Credits refunded for user {user_id[:8]}... after failed {quiz_type} quiz generation")
+        logger.info("Credits refunded for user %s... after failed %s quiz generation", user_id[:8], quiz_type)
     else:
         # Log error but don't raise - this is a compensation action
         logger.error(
-            f"CRITICAL: Failed to refund credits for user {user_id[:8]}... after failed "
-            f"{quiz_type} quiz generation. Manual intervention may be required."
+            "CRITICAL: Failed to refund credits for user %s... after failed "
+            "%s quiz generation. Manual intervention may be required.",
+            user_id[:8], quiz_type
         )
     
     # Invalidate cache so next request sees updated balance
@@ -691,7 +692,7 @@ async def finalize_credits_after_success(user_id: str, quiz_type: str) -> None:
         user_id: UUID of the user  
         quiz_type: "standard" or "enhanced"
     """
-    logger.info(f"Quiz generated successfully for user {user_id[:8]}... ({quiz_type} quiz, credits already reserved)")
+    logger.info("Quiz generated successfully for user %s... (%s quiz, credits already reserved)", user_id[:8], quiz_type)
     
     # Invalidate cache so next request sees updated balance
     await invalidate_user_tier_cache(user_id)
@@ -749,7 +750,7 @@ async def generate_quiz_from_file_openai(
             # Extraction errors (corrupted files, invalid format, etc.)
             error_msg = str(extraction_error)
             if "Failed to extract text" in error_msg or "Failed to open" in error_msg:
-                raise HTTPException(status_code=400, detail=error_msg)
+                raise HTTPException(status_code=400, detail=error_msg) from extraction_error
             raise  # Re-raise unexpected errors
 
         # Validate extraction succeeded (for extractors that return error strings instead of raising)
@@ -812,7 +813,7 @@ async def generate_quiz_from_file_openai(
         # Re-raise HTTP exceptions as-is (refund handled in finally)
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error processing file: {str(e)}") from e
     finally:
         # Refund credits if reserved but generation failed
         if credits_reserved:
@@ -821,16 +822,16 @@ async def generate_quiz_from_file_openai(
             if file_id and original_filename:
                 try:
                     await delete_file_from_supabase_async(file_id, user_token, current_user_id, original_filename)
-                    logger.info(f"Cleaned up orphaned file after generation failure (file_id: {file_id})")
+                    logger.info("Cleaned up orphaned file after generation failure (file_id: %s)", file_id)
                 except HTTPException as cleanup_err:
                     if cleanup_err.status_code == 404:
                         # Expected in cases where the storage object was never created or already removed
-                        logger.info(f"Orphaned file missing from storage during cleanup (file_id: {file_id})")
+                        logger.info("Orphaned file missing from storage during cleanup (file_id: %s)", file_id)
                     else:
-                        logger.warning(f"Unexpected failure while cleaning up orphaned file {file_id}: {cleanup_err}")
-                except Exception as cleanup_err:
+                        logger.warning("Unexpected failure while cleaning up orphaned file %s: %s", file_id, cleanup_err)
+                except Exception as cleanup_err:  # noqa: BLE001
                     # Log but don't re-raise - cleanup failure shouldn't mask the original error
-                    logger.warning(f"Failed to cleanup orphaned file {file_id}: {cleanup_err}")
+                    logger.warning("Failed to cleanup orphaned file %s: %s", file_id, cleanup_err)
 
 # === Generate quiz from file ID ===
 async def generate_quiz_from_fileid(
@@ -839,8 +840,8 @@ async def generate_quiz_from_fileid(
     current_user_id: str = Depends(get_current_user_id),
     user_token: str = Depends(get_current_user_token)
 ):
-    logger.info(f"Generating quiz from file ID: {file_id}")
-    logger.info(f"Quiz parameters: title={data.title}, num_questions={data.num_questions}, question_types={data.question_type}")
+    logger.info("Generating quiz from file ID: %s", file_id)
+    logger.info("Quiz parameters: title=%s, num_questions=%s, question_types=%s", data.title, data.num_questions, data.question_type)
     
     file_content = None
     
@@ -849,43 +850,43 @@ async def generate_quiz_from_fileid(
         file_record = get_file_record(file_id, user_token)
         
         if not file_record:
-            logger.error(f"File not found with ID: {file_id}")
+            logger.error("File not found with ID: %s", file_id)
             raise HTTPException(status_code=404, detail="File not found in the database")
         
         # Check user authorization
         if file_record["user_id"] != current_user_id:
-            logger.warning(f"Unauthorized file access attempt for file {file_id}")
+            logger.warning("Unauthorized file access attempt for file %s", file_id)
             raise HTTPException(status_code=403, detail="You don't have permission to access this file")
             
         storage_path = file_record.get("storage_path")
-        logger.info(f"File storage path: {storage_path}")
+        logger.info("File storage path: %s", storage_path)
         
         # Try to get content from storage (async to avoid blocking event loop)
         try:
             logger.info("Attempting to get file content...")
             file_content = await parse_file_from_supabase_async(file_record, user_token)
-            logger.info(f"Successfully retrieved file content: {len(file_content)} characters")
+            logger.info("Successfully retrieved file content: %d characters", len(file_content))
         except HTTPException as he:
             if he.status_code == 404:
                 logger.error("File missing from storage but exists in database")
                 raise HTTPException(
                     status_code=404,
                     detail="The file was found in the database but is missing from storage. It may have been deleted."
-                )
+                ) from he
             # Re-raise other HTTP exceptions
             raise he
         
         # Validate content
         if not file_content or not isinstance(file_content, str) or len(file_content.strip()) < MIN_STORED_CONTENT_LENGTH:
-            logger.error(f"Invalid or insufficient content extracted from file {file_id}")
+            logger.error("Invalid or insufficient content extracted from file %s", file_id)
             raise HTTPException(status_code=400, detail="The file content couldn't be properly extracted or is too short")
 
     except HTTPException as he:
         # Re-raise HTTP exceptions
         raise he
     except Exception as e:
-        logger.error(f"Error reading file {file_id}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Error reading file: {str(e)}")
+        logger.error("Error reading file %s: %s", file_id, e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error reading file: {str(e)}") from e
 
     # Track whether we need to refund credits on failure
     # Initialize BEFORE reservation attempt to avoid uninitialized variable in finally
@@ -897,7 +898,7 @@ async def generate_quiz_from_fileid(
     credits_reserved = True  # Only set after successful reservation
 
     try:
-        logger.info(f"Generating quiz questions from file content (length: {len(file_content)})")
+        logger.info("Generating quiz questions from file content (length: %d)", len(file_content))
         total_questions = data.num_questions if data.num_questions is not None else 10
         
         # Use unified generation function that handles both modes
@@ -930,7 +931,7 @@ async def generate_quiz_from_fileid(
             "question_count": len(result.questions)
         }
         save_metadata(metadata, user_token=user_token)
-        logger.info(f"Saved quiz with ID: {result.quiz_id}")
+        logger.info("Saved quiz with ID: %s", result.quiz_id)
 
         # SUCCESS: Credits were already reserved, finalize consumption
         credits_reserved = False  # Don't refund
@@ -944,8 +945,8 @@ async def generate_quiz_from_fileid(
         # Re-raise HTTP exceptions (refund handled in finally)
         raise he
     except Exception as e:
-        logger.error(f"Error generating quiz from file {file_id}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Error generating quiz: {str(e)}")
+        logger.error("Error generating quiz from file %s: %s", file_id, e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error generating quiz: {str(e)}") from e
     finally:
         # Refund credits if reserved but generation failed
         if credits_reserved:
@@ -1009,9 +1010,9 @@ async def generate_quiz_from_text(
             # Truncate filename in logs to prevent potential PII exposure
             truncated_filename = original_filename[:20] + '...' if len(original_filename) > 20 else original_filename
             logger.error(
-                f"Failed to save text input as file to Supabase Storage "
-                f"(filename='{truncated_filename}', status_code={storage_exc.status_code}): "
-                f"{storage_exc.detail}"
+                "Failed to save text input as file to Supabase Storage "
+                "(filename='%s', status_code=%d): %s",
+                truncated_filename, storage_exc.status_code, storage_exc.detail
             )
             # Re-raise with context-specific error message
             if storage_exc.status_code == 413:
@@ -1030,7 +1031,7 @@ async def generate_quiz_from_text(
             ) from storage_exc
         
         file_id = file_result.get('file_id')
-        logger.info(f"Saved text input as file: {original_filename} (file_id: {file_id})")
+        logger.info("Saved text input as file: %s (file_id: %s)", original_filename, file_id)
         
         # Use unified generation function that handles both modes
         enhanced_request = EnhancedTextQuizRequest(
@@ -1077,10 +1078,10 @@ async def generate_quiz_from_text(
         raise he
     except ValueError as ve:
         # Handle validation errors
-        raise HTTPException(status_code=422, detail=str(ve))
+        raise HTTPException(status_code=422, detail=str(ve)) from ve
     except Exception as e:
         # Handle all other errors
-        raise HTTPException(status_code=500, detail=f"Error generating quiz: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error generating quiz: {str(e)}") from e
     finally:
         # Refund credits if reserved but generation failed
         if credits_reserved:
@@ -1089,16 +1090,16 @@ async def generate_quiz_from_text(
             if file_id and original_filename:
                 try:
                     await delete_file_from_supabase_async(file_id, user_token, current_user_id, original_filename)
-                    logger.info(f"Cleaned up orphaned file after generation failure (file_id: {file_id})")
+                    logger.info("Cleaned up orphaned file after generation failure (file_id: %s)", file_id)
                 except HTTPException as cleanup_err:
                     if cleanup_err.status_code == 404:
                         # Expected in cases where the storage object was never created or already removed
-                        logger.info(f"Orphaned file missing from storage during cleanup (file_id: {file_id})")
+                        logger.info("Orphaned file missing from storage during cleanup (file_id: %s)", file_id)
                     else:
-                        logger.warning(f"Unexpected failure while cleaning up orphaned file {file_id}: {cleanup_err}")
-                except Exception as cleanup_err:
+                        logger.warning("Unexpected failure while cleaning up orphaned file %s: %s", file_id, cleanup_err)
+                except Exception as cleanup_err:  # noqa: BLE001
                     # Log but don't re-raise - cleanup failure shouldn't mask the original error
-                    logger.warning(f"Failed to cleanup orphaned file {file_id}: {cleanup_err}")
+                    logger.warning("Failed to cleanup orphaned file %s: %s", file_id, cleanup_err)
 
 # === Get user quizzes ===
 async def get_user_quizzes_handler(
@@ -1161,7 +1162,7 @@ async def get_user_quizzes_handler(
         # Re-raise HTTP exceptions as-is
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 # === Get quiz by ID ===
 async def get_quiz_by_id_handler(
@@ -1211,7 +1212,7 @@ async def get_quiz_by_id_handler(
         except HTTPException as e:
             if e.status_code == 404:
                 # Quiz doesn't exist or user doesn't have access
-                raise HTTPException(status_code=404, detail="Quiz not found")
+                raise HTTPException(status_code=404, detail="Quiz not found") from e
             raise
         
         # Defense-in-depth: Explicitly verify ownership after fetching metadata
@@ -1221,13 +1222,13 @@ async def get_quiz_by_id_handler(
             raise HTTPException(status_code=403, detail="Access denied")
         
         # Log quiz access (without exposing full quiz IDs)
-        logger.info(f"Quiz access for quiz ID: {quiz_preview}...")
+        logger.info("Quiz access for quiz ID: %s...", quiz_preview)
         
         # Check question_count from cached metadata to detect data integrity issues early
         # This avoids an unnecessary database query if we know there are no questions
         question_count = metadata.get("question_count", 0)
         if question_count == 0:
-            logger.error(f"Data integrity issue: Quiz {quiz_preview}... has no questions")
+            logger.error("Data integrity issue: Quiz %s... has no questions", quiz_preview)
             raise HTTPException(status_code=500, detail="Quiz data incomplete. Please contact support.")
         
         # Fetch questions from database (not cached due to size)
@@ -1237,7 +1238,8 @@ async def get_quiz_by_id_handler(
         
         # Verify questions were actually returned (RLS could filter them out)
         if not questions_response.data:
-            logger.error(f"Data integrity issue: Quiz {quiz_preview}... has question_count={question_count} but RLS returned no questions")
+            logger.error("Data integrity issue: Quiz %s... has question_count=%d but RLS returned no questions",
+                        quiz_preview, question_count)
             raise HTTPException(status_code=500, detail="Quiz data incomplete. Please contact support.")
         
         # Combine metadata and questions
@@ -1257,14 +1259,14 @@ async def get_quiz_by_id_handler(
         raise e
     except Exception as e:
         # Log detailed error for debugging (with truncated quiz_id)
-        logger.error(f"Error retrieving quiz {quiz_preview}...: {str(e)}", exc_info=True)
+        logger.error("Error retrieving quiz %s...: %s", quiz_preview, e, exc_info=True)
         # Return generic error message (security: don't expose internal details)
-        raise HTTPException(status_code=500, detail="An error occurred while retrieving the quiz. Please try again later.")
+        raise HTTPException(status_code=500, detail="An error occurred while retrieving the quiz. Please try again later.") from e
 
 # === Delete quiz by ID ===
 async def delete_quiz_by_id_handler(
     quiz_id: str = Path(...),
-    current_user_id: str = Depends(get_current_user_id),
+    _current_user_id: str = Depends(get_current_user_id),
     user_token: str = Depends(get_current_user_token)
 ):
     """Delete a quiz by ID."""
@@ -1279,8 +1281,8 @@ async def delete_quiz_by_id_handler(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error deleting quiz {quiz_id[:8]}...: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to delete quiz")
+        logger.error("Error deleting quiz %s...: %s", quiz_id[:8], e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to delete quiz") from e
 
 # === Get metadata ===
 async def get_metadata_handler(
@@ -1293,7 +1295,7 @@ async def get_metadata_handler(
         
         return sources
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 # NOTE: Quiz submission is handled by handlers/submission_handler.py
 # The submit_quiz function there has proper:
@@ -1333,7 +1335,8 @@ async def generate_quiz_from_url(
         # Scrape content with user ID for resource tracking
         # Enable PDF saving to user_files if URL is a PDF
         # NOTE: We log redacted URL only to prevent secret leakage
-        logger.info(f"User {current_user_id[:8]}... ({tier_info['account_tier']} tier) generating quiz from URL: {redacted_url}")
+        logger.info("User %s... (%s tier) generating quiz from URL: %s",
+                   current_user_id[:8], tier_info['account_tier'], redacted_url)
         content, file_info = await scrape_content(
             url=str(data.url),  # Pass full URL for scraping (validated internally)
             user_id=current_user_id,
@@ -1345,7 +1348,7 @@ async def generate_quiz_from_url(
         # SECURITY: Always use redacted URL or file_id - never raw URL
         if file_info and file_info.get('file_id'):
             content_source_reference = file_info['file_id']
-            logger.info(f"PDF from URL saved as file_id: {content_source_reference}")
+            logger.info("PDF from URL saved as file_id: %s", content_source_reference)
         else:
             # Use redacted URL (no query params/credentials) for storage
             content_source_reference = redacted_url
@@ -1385,7 +1388,7 @@ async def generate_quiz_from_url(
             "question_count": len(result.questions)
         }
         save_metadata(metadata, user_token=user_token)
-        logger.info(f"Saved quiz from URL with ID: {result.quiz_id}")
+        logger.info("Saved quiz from URL with ID: %s", result.quiz_id)
         
         # SUCCESS: Credits were already reserved, finalize consumption
         credits_reserved = False  # Don't refund
@@ -1404,11 +1407,11 @@ async def generate_quiz_from_url(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error generating quiz from URL: {str(e)}", exc_info=True)
+        logger.error("Error generating quiz from URL: %s", e, exc_info=True)
         raise HTTPException(
             status_code=500,
             detail=f"Error generating quiz from URL: {str(e)}"
-        )
+        ) from e
     finally:
         # Refund credits if reserved but generation failed
         if credits_reserved:
@@ -1417,7 +1420,7 @@ async def generate_quiz_from_url(
             # Clean up orphaned file if generation failed
             if file_info and file_info.get('file_id'):
                 try:
-                    logger.info(f"Cleaning up orphaned file {file_info['file_id']} after failed generation")
+                    logger.info("Cleaning up orphaned file %s after failed generation", file_info['file_id'])
                     await delete_file_from_supabase_async(
                         file_id=file_info['file_id'],
                         token=user_token,
@@ -1427,11 +1430,11 @@ async def generate_quiz_from_url(
                 except HTTPException as cleanup_err:
                     if cleanup_err.status_code == 404:
                         # Expected in cases where the storage object was never created or already removed
-                        logger.info(f"Orphaned file missing from storage during cleanup (file_id: {file_info['file_id']})")
+                        logger.info("Orphaned file missing from storage during cleanup (file_id: %s)", file_info['file_id'])
                     else:
-                        logger.warning(f"Unexpected failure while cleaning up orphaned file {file_info['file_id']}: {cleanup_err}")
-                except Exception as cleanup_error:
-                    logger.error(f"Failed to cleanup orphaned file: {str(cleanup_error)}")
+                        logger.warning("Unexpected failure while cleaning up orphaned file %s: %s", file_info['file_id'], cleanup_err)
+                except Exception as cleanup_error:  # noqa: BLE001
+                    logger.error("Failed to cleanup orphaned file: %s", cleanup_error)
 
 async def generate_quiz_rag_async(
     request: EnhancedTextQuizRequest,
@@ -1488,8 +1491,8 @@ async def generate_quiz_rag_async(
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Standard Quiz Generation failed: {str(e)}")
-            raise HTTPException(status_code=500, detail="Quiz generation failed. Please try again.")
+            logger.error("Standard Quiz Generation failed: %s", e)
+            raise HTTPException(status_code=500, detail="Quiz generation failed. Please try again.") from e
     
     # Step 3: Enhanced mode - Full RAG pipeline
     return await _generate_enhanced_mode(
@@ -1525,7 +1528,7 @@ async def _generate_enhanced_mode(
     pipeline_start = time.time()
     
     # Initialize services
-    ingestion_service = IngestionService()
+    ingestion_service = RAGIngestionService()
     concept_service = ConceptExtractionService()
     orchestration_service = QuizOrchestrationService()
     
@@ -1541,7 +1544,7 @@ async def _generate_enhanced_mode(
             concept_service=concept_service,
             content_source_type=content_source_type
         )
-        logger.info(f"[TIMING] Step 1 (ingest+extract) took {time.time()-t1:.2f}s")
+        logger.info("[TIMING] Step 1 (ingest+extract) took %.2fs", time.time()-t1)
         
         # Step 2: Select concepts and assign types/bloom/difficulty
         t2 = time.time()
@@ -1551,11 +1554,11 @@ async def _generate_enhanced_mode(
             question_type=request.question_type,
             orchestration_service=orchestration_service
         )
-        logger.info(f"[TIMING] Step 2 (select concepts) took {time.time()-t2:.2f}s")
+        logger.info("[TIMING] Step 2 (select concepts) took %.2fs", time.time()-t2)
         
         # Step 3: Generate questions in parallel
         t3 = time.time()
-        logger.info(f"[TIMING] Starting Step 3 question generation at +{time.time()-t1:.2f}s from start")
+        logger.info("[TIMING] Starting Step 3 question generation at +%.2fs from start", time.time()-t1)
         valid_questions = await _generate_questions_parallel(
             concept_type_pairs=concept_type_pairs,
             bloom_difficulty_pairs=bloom_difficulty_pairs,
@@ -1566,12 +1569,12 @@ async def _generate_enhanced_mode(
             all_concepts=concepts,  # Pass all concepts for matching question diversity
             content_source_type=content_source_type
         )
-        logger.info(f"[TIMING] Step 3 (generate questions) took {time.time()-t3:.2f}s")
+        logger.info("[TIMING] Step 3 (generate questions) took %.2fs", time.time()-t3)
         
         # Step 4: Convert to Pydantic models
         t4 = time.time()
         final_questions = _build_enhanced_questions(valid_questions)
-        logger.info(f"[TIMING] Step 4 (build models) took {time.time()-t4:.2f}s")
+        logger.info("[TIMING] Step 4 (build models) took %.2fs", time.time()-t4)
         
         # Step 5: Save to Database
         t5 = time.time()
@@ -1584,9 +1587,9 @@ async def _generate_enhanced_mode(
             user_token=user_token,
             generation_mode="enhanced"
         )
-        logger.info(f"[TIMING] Step 5 (save quiz) took {time.time()-t5:.2f}s")
+        logger.info("[TIMING] Step 5 (save quiz) took %.2fs", time.time()-t5)
         
-        logger.info(f"[TIMING] TOTAL PIPELINE took {time.time()-pipeline_start:.2f}s")
+        logger.info("[TIMING] TOTAL PIPELINE took %.2fs", time.time()-pipeline_start)
         
         # NOTE: Credits are now consumed by caller (atomic reservation pattern)
         # No credit consumption here - this function may be called after credits are reserved
@@ -1611,8 +1614,8 @@ async def _generate_enhanced_mode(
     except HTTPException:
         raise
     except ValueError as e:
-        logger.warning(f"RAG Quiz Generation validation error: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
+        logger.warning("RAG Quiz Generation validation error: %s", e)
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
-        logger.error(f"RAG Quiz Generation failed: {str(e)}")
-        raise HTTPException(status_code=500, detail="Quiz generation failed. Please try again.")
+        logger.error("RAG Quiz Generation failed: %s", e)
+        raise HTTPException(status_code=500, detail="Quiz generation failed. Please try again.") from e

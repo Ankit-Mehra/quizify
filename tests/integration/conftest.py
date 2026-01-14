@@ -33,13 +33,13 @@ class MockSupabaseAuth:
         password = credentials.get("password", "")
         
         if not email or "@" not in email:
-            raise Exception(f"Email address \"{email}\" is invalid")
+            raise ValueError(f"Email address \"{email}\" is invalid")
         
         if email in self._users:
-            raise Exception("User already registered")
+            raise ValueError("User already registered")
         
         if len(password) < 8:
-            raise Exception("Password should be at least 8 characters")
+            raise ValueError("Password should be at least 8 characters")
         
         user_id = f"user_{self._next_user_id}"
         self._next_user_id += 1
@@ -57,14 +57,14 @@ class MockSupabaseAuth:
         password = credentials.get("password", "")
         
         if not email or not password:
-            raise Exception("Invalid login credentials")
+            raise ValueError("Invalid login credentials")
         
         if email not in self._users:
-            raise Exception("Invalid login credentials")
+            raise ValueError("Invalid login credentials")
         
         user_id, stored_password = self._users[email]
         if password != stored_password:
-            raise Exception("Invalid login credentials")
+            raise ValueError("Invalid login credentials")
         
         response = MockSupabaseAuthResponse(user_id, email)
         
@@ -80,7 +80,7 @@ class MockSupabaseAuth:
         """Mock user logout."""
         return Mock()
     
-    def get_user(self, jwt):
+    def get_user(self, _jwt):
         """Mock get user from token."""
         # For integration tests, just return a mock user
         return Mock(user=Mock(id="mock_user_123", email="test@example.com"))
@@ -91,13 +91,14 @@ class MockSupabaseStorage:
     
     def __init__(self):
         self._files = {}  # file_id -> file_data
+        self.bucket_name = ""  # Initialize in __init__
     
     def from_(self, bucket_name):
         """Return self to allow method chaining."""
         self.bucket_name = bucket_name
         return self
     
-    def upload(self, path, file_data, file_options=None):
+    def upload(self, path, file_data, _file_options=None):
         """Mock file upload."""
         file_id = f"file_{len(self._files) + 1}"
         self._files[file_id] = {
@@ -107,7 +108,7 @@ class MockSupabaseStorage:
         }
         return Mock(path=path)
     
-    def remove(self, paths):
+    def remove(self, _paths):
         """Mock file removal."""
         return Mock()
     
@@ -138,12 +139,12 @@ class MockSupabaseTable:
                 }
             ]
     
-    def select(self, *args, **kwargs):
+    def select(self, *_args, **_kwargs):
         """Mock select query."""
         self._query = {"operation": "select"}
         return self
     
-    def insert(self, data, **kwargs):
+    def insert(self, data, **_kwargs):
         """Mock insert query."""
         if isinstance(data, list):
             self._data.extend(data)
@@ -161,6 +162,10 @@ class MockSupabaseTable:
         """Mock delete query."""
         self._query = {"operation": "delete"}
         return self
+    
+    def add_data(self, data):
+        """Add data directly to table (public method for tests)."""
+        self._data.append(data)
     
     def eq(self, column, value):
         """Mock equality filter."""
@@ -227,14 +232,14 @@ class MockSupabaseClient:
             self._tables[table_name] = MockSupabaseTable(table_name, self._quiz_storage)
         return self._tables[table_name]
     
-    def rpc(self, function, params=None):
+    def rpc(self, _function, _params=None):
         """Mock RPC call."""
         return Mock(execute=lambda: Mock(data=True, error=None))
     
     def add_user_tier_info(self, user_id, email):
         """Add user tier info when user signs up."""
         tier_table = self.table("user_tier_info")
-        tier_table._data.append({
+        tier_table.add_data({
             "id": user_id,
             "email": email,
             "account_tier": "free",
@@ -263,7 +268,7 @@ class MockQuizStorage:
         
         # Add IDs to questions to match real database behavior
         saved_questions = []
-        for i, q in enumerate(quizzes):
+        for _i, q in enumerate(quizzes):
             question_with_id = q.copy() if isinstance(q, dict) else q.model_dump()
             question_with_id['id'] = str(uuid.uuid4())  # Generate proper UUID
             question_with_id['quiz_id'] = quiz_id
@@ -394,7 +399,7 @@ def create_mock_quiz_response(num_questions, question_types=None, text="sample t
 
 
 # Mock AI services
-async def mock_generate_quizzes_single_async(text, num_questions, question_types=None, user_id=None, trace_id=None, generation_mode=None, content_source_type=None):
+async def mock_generate_quizzes_single_async(text, num_questions, question_types=None, _user_id=None, _trace_id=None, _generation_mode=None, _content_source_type=None):
     """
     Mock OpenAI quiz generation with PostHog analytics support.
     
@@ -455,17 +460,17 @@ async def mock_generate_quizzes_single_async(text, num_questions, question_types
     return questions
 
 
-def mock_save_quiz_to_database(title, quizzes, created_by, content_source_type=None, content_source_reference=None, user_token=None, generation_mode=None):
+def mock_save_quiz_to_database(title, quizzes, created_by, content_source_type=None, content_source_reference=None, _user_token=None, _generation_mode=None):
     """Mock saving quiz to database - returns (quiz_id, saved_questions) tuple."""
     return _quiz_storage.save_quiz(title, quizzes, created_by, content_source_type, content_source_reference)
 
 
-def mock_save_file_to_supabase(*args, **kwargs):
+def mock_save_file_to_supabase(*_args, **_kwargs):
     """Mock file upload to storage."""
     return {"message": "File uploaded successfully", "file_id": "mock_file_123"}
 
 
-def mock_save_metadata(metadata, user_token=None):
+def mock_save_metadata(_metadata, _user_token=None):
     """Mock saving quiz metadata - now accepts optional user_token parameter."""
     return {"success": True, "quiz_id": "mock_quiz_123"}
 
@@ -473,7 +478,7 @@ def mock_save_metadata(metadata, user_token=None):
 # Module-level token-to-user mapping for mock auth
 _token_user_map = {}
 
-def mock_requests_get(url, headers=None, **kwargs):
+def mock_requests_get(url, headers=None, **_kwargs):
     """Mock requests.get for auth verification."""
     if "/auth/v1/user" in url:
         # Extract token from headers
@@ -513,7 +518,7 @@ def mock_requests_get(url, headers=None, **kwargs):
 class MockSupabaseAsyncClient:
     """Async mock of httpx.AsyncClient for Supabase auth calls."""
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *_args, **kwargs):
         self.timeout = kwargs.get("timeout", None)
 
     async def __aenter__(self):
@@ -526,7 +531,7 @@ class MockSupabaseAsyncClient:
         return mock_requests_get(url, headers=headers)
 
 
-def mock_get_user_quizzes(user_id, user_token=None, title=None, start_date=None, end_date=None, source_type=None, mode=None, page=1, limit=20):
+def mock_get_user_quizzes(user_id, _user_token=None, _title=None, _start_date=None, _end_date=None, _source_type=None, _mode=None, page=1, limit=20):
     """Mock getting user quizzes with optional filtering and pagination."""
     quizzes = _quiz_storage.get_user_quizzes(user_id)
     # Note: Filtering not implemented in mock - returns all quizzes with pagination wrapper
@@ -560,7 +565,7 @@ class MockUserBillingState:
         self.subscription_remaining = subscription_remaining
 
 
-async def mock_get_billing_state(user_id: str):
+async def mock_get_billing_state(_user_id: str):
     """Mock billing state - always returns sufficient credits for testing."""
     return MockUserBillingState(
         plan="free",
@@ -570,27 +575,27 @@ async def mock_get_billing_state(user_id: str):
     )
 
 
-async def mock_consume_units(user_id: str, quiz_type: str) -> bool:
+async def mock_consume_units(_user_id: str, _quiz_type: str) -> bool:
     """Mock credit consumption - always succeeds for testing."""
     return True
 
 
-async def mock_refund_units(user_id: str, quiz_type: str) -> bool:
+async def mock_refund_units(_user_id: str, _quiz_type: str) -> bool:
     """Mock credit refund - always succeeds for testing."""
     return True
 
 
-async def mock_finalize_credits_after_success(user_id: str, quiz_type: str) -> None:
+async def mock_finalize_credits_after_success(_user_id: str, _quiz_type: str) -> None:
     """Mock finalizing credits - no-op for testing."""
-    pass
+    return None
 
 
-async def mock_invalidate_user_tier_cache(user_id: str) -> None:
+async def mock_invalidate_user_tier_cache(_user_id: str) -> None:
     """Mock cache invalidation - no-op for testing."""
-    pass
+    return None
 
 
-async def mock_get_quiz_metadata_cached(quiz_id, user_id, user_token=None):
+async def mock_get_quiz_metadata_cached(quiz_id, user_id, _user_token=None):
     """Mock cached metadata retrieval using in-memory quiz storage."""
     quiz = _quiz_storage.get_quiz(quiz_id, user_id)
     if not quiz:
@@ -685,7 +690,7 @@ class SimpleAsyncRedis:
         self._expires[name] = time
         return True
     
-    async def eval(self, script, numkeys, *keys_and_args):
+    async def eval(self, _script, _numkeys, *_keys_and_args):
         """Mock eval for Lua scripts - just approve session creation."""
         return 1  # Success
     
@@ -719,7 +724,7 @@ async def mock_validate_request_session_integration(request, user_id: str):
     # Get Redis client
     redis_client = getattr(request.app.state, "redis", None)
     if not redis_client:
-        from fastapi import HTTPException
+
         raise HTTPException(status_code=503, detail="Redis unavailable")
     
     session_service = SessionService(redis_client)
@@ -735,7 +740,7 @@ async def mock_validate_request_session_integration(request, user_id: str):
     
     # Create a new test session for this user
     refresh_token = f"test_refresh_{user_id}"
-    client_token = await session_service.create_session(
+    _ = await session_service.create_session(
         user_id=user_id,
         device_type="test_client",
         ip_address="127.0.0.1",

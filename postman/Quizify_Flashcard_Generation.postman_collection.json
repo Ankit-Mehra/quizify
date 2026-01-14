@@ -1,0 +1,1335 @@
+{
+	"info": {
+		"_postman_id": "flashcard-gen-001",
+		"name": "Quizify - Flashcard Generation & Management",
+		"description": "Complete test suite for flashcard generation, deck management, study sessions, and export functionality.\n\n**Feature Overview:**\n- Generate AI-powered flashcards from text, files, or URLs\n- Two generation modes: Standard (1 credit) and Enhanced (2 credits)\n- Enhanced mode: RAG-based with concept extraction and Bloom's taxonomy\n- Card styles: question_answer, term_definition, cloze, mixed\n- Difficulty levels: easy, medium, hard, mixed\n- Spaced repetition study sessions\n- Export to Anki (TSV) or PDF\n\n**Generation Modes:**\n- `standard`: Fast, direct LLM generation (default, 1 credit)\n- `enhanced`: RAG pipeline with concept extraction, Bloom's taxonomy levels, and higher quality (2 credits)\n\n**API Prefix:** `/api/flashcards`\n\n**Setup Instructions:**\n1. Set `{{base_url}}` variable (e.g., http://localhost:8000)\n2. Set `{{auth_token}}` variable with your JWT token\n3. Run endpoints in order (some depend on previous responses)\n\n**Endpoints Covered:**\n- POST /generate/text - Generate from text content\n- POST /generate/file - Generate from uploaded file\n- POST /generate/url - Generate from web URL\n- GET /decks - List user's flashcard decks\n- GET /decks/{deck_id} - Get deck with cards\n- PATCH /decks/{deck_id} - Update deck\n- DELETE /decks/{deck_id} - Delete deck\n- PATCH /cards/{card_id} - Update card\n- DELETE /cards/{card_id} - Delete card\n- POST /study/start - Start study session\n- POST /study/complete - Complete session with results\n- POST /decks/{deck_id}/export - Export deck\n\n**Last Updated:** 2025-12-25",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "1. Health & Auth Check",
+			"item": [
+				{
+					"name": "Test API",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"API is working\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.status).to.eql(\"ok\");",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/test",
+							"host": ["{{base_url}}"],
+							"path": ["api", "test"]
+						},
+						"description": "Verify API is running and accessible"
+					},
+					"response": []
+				},
+				{
+					"name": "Verify Authentication",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"User info returned\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('id');",
+									"    pm.environment.set(\"user_id\", jsonData.id);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/auth/me",
+							"host": ["{{base_url}}"],
+							"path": ["api", "auth", "me"]
+						},
+						"description": "Verify JWT token is valid"
+					},
+					"response": []
+				}
+			],
+			"description": "Basic health check and authentication verification"
+		},
+		{
+			"name": "2. Flashcard Generation - Text",
+			"item": [
+				{
+					"name": "Generate Flashcards from Text (Success)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response has deck_id\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('deck_id');",
+									"    pm.environment.set(\"deck_id\", jsonData.deck_id);",
+									"});",
+									"",
+									"pm.test(\"Response has cards array\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('cards');",
+									"    pm.expect(jsonData.cards).to.be.an('array');",
+									"    pm.expect(jsonData.cards.length).to.be.greaterThan(0);",
+									"});",
+									"",
+									"pm.test(\"Cards have front and back\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    var card = jsonData.cards[0];",
+									"    pm.expect(card).to.have.property('front');",
+									"    pm.expect(card).to.have.property('back');",
+									"    pm.expect(card).to.have.property('id');",
+									"    pm.environment.set(\"card_id\", card.id);",
+									"});",
+									"",
+									"pm.test(\"Response has generation metadata\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('card_count');",
+									"    pm.expect(jsonData).to.have.property('generation_time_ms');",
+									"    pm.expect(jsonData).to.have.property('content_source_type');",
+									"    pm.expect(jsonData.content_source_type).to.eql('text');",
+									"});",
+									"",
+									"pm.test(\"Response has generation mode\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('generation_mode');",
+									"    pm.expect(jsonData).to.have.property('credits_consumed');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"content\": \"Python is a high-level, interpreted programming language known for its simplicity and readability. It was created by Guido van Rossum and first released in 1991. Python supports multiple programming paradigms including procedural, object-oriented, and functional programming. The language uses indentation to define code blocks instead of braces or keywords. Python has a large standard library and an extensive ecosystem of third-party packages available through PyPI (Python Package Index). It is widely used in web development, data science, artificial intelligence, scientific computing, and automation.\",\n  \"title\": \"Python Basics Flashcards\",\n  \"config\": {\n    \"num_cards\": 10,\n    \"include_hints\": true,\n    \"card_style\": \"mixed\",\n    \"difficulty\": \"medium\",\n    \"mode\": \"standard\"\n  }\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/flashcards/generate/text",
+							"host": ["{{base_url}}"],
+							"path": ["api", "flashcards", "generate", "text"]
+						},
+						"description": "Generate flashcards from text content.\n\n**Authentication Required:** Bearer token in Authorization header\n\n**Request Body:**\n- content: Text content to generate flashcards from (min 50 chars, required)\n- title: Title for the deck (optional)\n- config: Generation configuration (optional)\n  - num_cards: Number of cards to generate (1-100, auto-calculated if null)\n  - include_hints: Whether to include hints (default: false)\n  - card_style: question_answer, term_definition, cloze, mixed (default: mixed)\n  - difficulty: easy, medium, hard, mixed (default: mixed)\n  - mode: standard (1 credit) or enhanced (2 credits, RAG-based)\n\n**Generation Modes:**\n- standard: Fast, direct LLM generation (default)\n- enhanced: RAG pipeline with concept extraction, Bloom's taxonomy\n\n**Success Response (200):**\n```json\n{\n  \"deck_id\": \"uuid\",\n  \"deck_title\": \"Deck Title\",\n  \"cards\": [...],\n  \"card_count\": 10,\n  \"content_source_type\": \"text\",\n  \"generation_time_ms\": 2500,\n  \"estimated_study_time_minutes\": 5,\n  \"generation_mode\": \"standard\",\n  \"generation_stats\": {},\n  \"credits_consumed\": 1\n}\n```\n\n**Error Responses:**\n- 401: Unauthorized (missing/invalid token)\n- 402: Insufficient credits\n- 422: Validation error (content too short)"
+					},
+					"response": []
+				},
+				{
+					"name": "Generate Flashcards - Question Answer Style",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Cards generated with Q&A style\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.cards.length).to.be.greaterThan(0);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"content\": \"Machine learning is a subset of artificial intelligence that enables systems to learn and improve from experience without being explicitly programmed. The three main types of machine learning are supervised learning, unsupervised learning, and reinforcement learning. Supervised learning uses labeled data to train models, while unsupervised learning finds patterns in unlabeled data. Reinforcement learning trains agents through rewards and penalties.\",\n  \"title\": \"Machine Learning Q&A Cards\",\n  \"config\": {\n    \"num_cards\": 5,\n    \"include_hints\": false,\n    \"card_style\": \"question_answer\",\n    \"difficulty\": \"easy\",\n    \"mode\": \"standard\"\n  }\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/flashcards/generate/text",
+							"host": ["{{base_url}}"],
+							"path": ["api", "flashcards", "generate", "text"]
+						},
+						"description": "Generate flashcards with question_answer style (Q on front, A on back)"
+					},
+					"response": []
+				},
+				{
+					"name": "Generate Flashcards - Term Definition Style",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Cards generated with term/definition style\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.cards.length).to.be.greaterThan(0);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"content\": \"API (Application Programming Interface) is a set of protocols and tools for building software applications. REST (Representational State Transfer) is an architectural style for designing networked applications. HTTP (Hypertext Transfer Protocol) is the foundation of data communication on the web. JSON (JavaScript Object Notation) is a lightweight data interchange format.\",\n  \"title\": \"Tech Terms Flashcards\",\n  \"config\": {\n    \"num_cards\": 4,\n    \"include_hints\": true,\n    \"card_style\": \"term_definition\",\n    \"difficulty\": \"medium\",\n    \"mode\": \"standard\"\n  }\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/flashcards/generate/text",
+							"host": ["{{base_url}}"],
+							"path": ["api", "flashcards", "generate", "text"]
+						},
+						"description": "Generate flashcards with term_definition style (Term on front, Definition on back)"
+					},
+					"response": []
+				},
+				{
+					"name": "Generate Flashcards - Enhanced Mode (RAG)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Generation mode is enhanced\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.generation_mode).to.eql('enhanced');",
+									"});",
+									"",
+									"pm.test(\"Credits consumed is 2\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.credits_consumed).to.eql(2);",
+									"});",
+									"",
+									"pm.test(\"Response has generation stats\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('generation_stats');",
+									"    pm.expect(jsonData.generation_stats).to.have.property('mode');",
+									"    pm.expect(jsonData.generation_stats.mode).to.eql('enhanced');",
+									"});",
+									"",
+									"pm.test(\"Cards may have enhanced fields\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    if (jsonData.cards && jsonData.cards.length > 0) {",
+									"        var card = jsonData.cards[0];",
+									"        // Enhanced mode cards may have concept_name, bloom_level, difficulty_score",
+									"        pm.expect(card).to.have.property('front');",
+									"        pm.expect(card).to.have.property('back');",
+									"    }",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"content\": \"Photosynthesis is the process by which plants convert light energy into chemical energy. It occurs in the chloroplasts of plant cells, primarily in the leaves. The process involves two main stages: the light-dependent reactions and the light-independent reactions (Calvin cycle). During the light-dependent reactions, water molecules are split to produce oxygen and ATP. The Calvin cycle uses CO2 and ATP to produce glucose. Chlorophyll, the green pigment in plants, plays a crucial role in capturing light energy. The overall equation for photosynthesis is: 6CO2 + 6H2O + light energy → C6H12O6 + 6O2.\",\n  \"title\": \"Photosynthesis (Enhanced Mode)\",\n  \"config\": {\n    \"num_cards\": 8,\n    \"include_hints\": true,\n    \"card_style\": \"mixed\",\n    \"difficulty\": \"medium\",\n    \"mode\": \"enhanced\"\n  }\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/flashcards/generate/text",
+							"host": ["{{base_url}}"],
+							"path": ["api", "flashcards", "generate", "text"]
+						},
+						"description": "Generate flashcards using ENHANCED mode (RAG-based).\\n\\n**Enhanced Mode Features:**\\n- Uses RAG pipeline with concept extraction\\n- Applies Bloom's taxonomy levels\\n- Higher quality cards with better context\\n- Costs 2 credits (vs 1 for standard)\\n\\n**Enhanced Card Fields:**\\n- concept_name: The concept this card tests\\n- bloom_level: remember, understand, apply, analyze\\n- difficulty_score: 0.0 to 1.0\\n- source_chunk_id: RAG chunk reference\\n\\n**Generation Stats Include:**\\n- concepts_extracted: Number of concepts found\\n- chunks_processed: Number of document chunks\\n- timing breakdown"
+					},
+					"response": []
+				},
+				{
+					"name": "Generate Flashcards - Content Too Short (422)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 422\", function () {",
+									"    pm.response.to.have.status(422);",
+									"});",
+									"",
+									"pm.test(\"Error message about content length\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.detail).to.be.an('array');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"content\": \"Too short\",\n  \"title\": \"Invalid Flashcards\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/flashcards/generate/text",
+							"host": ["{{base_url}}"],
+							"path": ["api", "flashcards", "generate", "text"]
+						},
+						"description": "Test validation error - content too short (< 50 characters)"
+					},
+					"response": []
+				}
+			],
+			"description": "Flashcard generation from text content"
+		},
+		{
+			"name": "3. Flashcard Generation - File",
+			"item": [
+				{
+					"name": "Generate Flashcards from File ID",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response has deck_id\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('deck_id');",
+									"    pm.environment.set(\"file_deck_id\", jsonData.deck_id);",
+									"});",
+									"",
+									"pm.test(\"Content source is file\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.content_source_type).to.eql('file');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"file_id\": \"{{file_id}}\",\n  \"title\": \"Flashcards from Document\",\n  \"config\": {\n    \"num_cards\": 15,\n    \"include_hints\": true,\n    \"card_style\": \"mixed\",\n    \"difficulty\": \"mixed\",\n    \"mode\": \"standard\"\n  }\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/flashcards/generate/file",
+							"host": ["{{base_url}}"],
+							"path": ["api", "flashcards", "generate", "file"]
+						},
+						"description": "Generate flashcards from a previously uploaded file.\n\n**Prerequisites:**\n1. Upload a file first (use file upload endpoint)\n2. Get the file_id from upload response\n3. Set {{file_id}} variable in Postman\n\n**Request Body:**\n- file_id: UUID of the uploaded file (required)\n- title: Title for the deck (optional)\n- config: Generation configuration (optional)\n\n**Success Response (200):**\n```json\n{\n  \"deck_id\": \"uuid\",\n  \"deck_title\": \"Deck Title\",\n  \"cards\": [...],\n  \"card_count\": 15,\n  \"content_source_type\": \"file\",\n  \"generation_time_ms\": 3500\n}\n```"
+					},
+					"response": []
+				},
+				{
+					"name": "Generate Flashcards - File Not Found (404)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 404\", function () {",
+									"    pm.response.to.have.status(404);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"file_id\": \"00000000-0000-0000-0000-000000000000\",\n  \"title\": \"Test Not Found\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/flashcards/generate/file",
+							"host": ["{{base_url}}"],
+							"path": ["api", "flashcards", "generate", "file"]
+						},
+						"description": "Test file not found error (404)"
+					},
+					"response": []
+				}
+			],
+			"description": "Flashcard generation from uploaded files"
+		},
+		{
+			"name": "4. Flashcard Generation - URL",
+			"item": [
+				{
+					"name": "Generate Flashcards from URL (Success)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response has deck_id\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('deck_id');",
+									"    pm.environment.set(\"url_deck_id\", jsonData.deck_id);",
+									"});",
+									"",
+									"pm.test(\"Content source is url\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.content_source_type).to.eql('url');",
+									"});",
+									"",
+									"pm.test(\"Cards have front and back\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    if (jsonData.cards && jsonData.cards.length > 0) {",
+									"        pm.expect(jsonData.cards[0]).to.have.property('front');",
+									"        pm.expect(jsonData.cards[0]).to.have.property('back');",
+									"    }",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"url\": \"https://en.wikipedia.org/wiki/Machine_learning\",\n  \"title\": \"Machine Learning Flashcards\",\n  \"config\": {\n    \"num_cards\": 12,\n    \"include_hints\": true,\n    \"card_style\": \"mixed\",\n    \"difficulty\": \"medium\",\n    \"mode\": \"standard\"\n  }\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/flashcards/generate/url",
+							"host": ["{{base_url}}"],
+							"path": ["api", "flashcards", "generate", "url"]
+						},
+						"description": "Generate flashcards from a web URL.\n\n**Request Body:**\n- url: Web URL to scrape content from (required)\n- title: Title for the deck (optional)\n- config: Generation configuration (optional)\n\n**SSRF Protection:**\n- Localhost and private IPs blocked\n- file:// protocol blocked\n\n**Success Response (200):**\n```json\n{\n  \"deck_id\": \"uuid\",\n  \"deck_title\": \"Deck Title\",\n  \"cards\": [...],\n  \"card_count\": 12,\n  \"content_source_type\": \"url\",\n  \"generation_time_ms\": 4500\n}\n```"
+					},
+					"response": []
+				},
+				{
+					"name": "Generate Flashcards - SSRF Localhost Blocked",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 400\", function () {",
+									"    pm.response.to.have.status(400);",
+									"});",
+									"",
+									"pm.test(\"SSRF protection active\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.detail).to.include('private');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"url\": \"http://localhost:8000/api/test\",\n  \"title\": \"SSRF Test\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/flashcards/generate/url",
+							"host": ["{{base_url}}"],
+							"path": ["api", "flashcards", "generate", "url"]
+						},
+						"description": "Test SSRF protection - localhost URLs should be rejected"
+					},
+					"response": []
+				}
+			],
+			"description": "Flashcard generation from web URLs"
+		},
+		{
+			"name": "5. Deck Management",
+			"item": [
+				{
+					"name": "List My Flashcard Decks",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response is array\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.be.an('array');",
+									"});",
+									"",
+									"pm.test(\"Decks have required fields\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    if (jsonData.length > 0) {",
+									"        pm.expect(jsonData[0]).to.have.property('id');",
+									"        pm.expect(jsonData[0]).to.have.property('title');",
+									"        pm.expect(jsonData[0]).to.have.property('card_count');",
+									"        pm.expect(jsonData[0]).to.have.property('created_at');",
+									"    }",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/flashcards/decks?limit=50&offset=0",
+							"host": ["{{base_url}}"],
+							"path": ["api", "flashcards", "decks"],
+							"query": [
+								{
+									"key": "limit",
+									"value": "50",
+									"description": "Maximum decks to return (1-100)"
+								},
+								{
+									"key": "offset",
+									"value": "0",
+									"description": "Offset for pagination"
+								}
+							]
+						},
+						"description": "Get all flashcard decks for the authenticated user.\n\n**Query Parameters:**\n- limit: Maximum decks to return (1-100, default: 50)\n- offset: Offset for pagination (default: 0)\n\n**Response:**\n```json\n[\n  {\n    \"id\": \"uuid\",\n    \"title\": \"Deck Title\",\n    \"description\": \"Optional description\",\n    \"card_count\": 10,\n    \"content_source_type\": \"text\",\n    \"created_at\": \"2025-12-24T...\",\n    \"last_studied\": \"2025-12-24T...\"\n  }\n]\n```"
+					},
+					"response": []
+				},
+				{
+					"name": "Get Deck with Cards",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Deck has cards array\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('cards');",
+									"    pm.expect(jsonData.cards).to.be.an('array');",
+									"});",
+									"",
+									"pm.test(\"Deck has metadata\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('id');",
+									"    pm.expect(jsonData).to.have.property('title');",
+									"    pm.expect(jsonData).to.have.property('card_count');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/flashcards/decks/{{deck_id}}?include_cards=true",
+							"host": ["{{base_url}}"],
+							"path": ["api", "flashcards", "decks", "{{deck_id}}"],
+							"query": [
+								{
+									"key": "include_cards",
+									"value": "true",
+									"description": "Include cards in response (default: true)"
+								}
+							]
+						},
+						"description": "Get a specific flashcard deck with all its cards.\n\n**Path Parameters:**\n- deck_id: UUID of the deck\n\n**Query Parameters:**\n- include_cards: Include cards array (default: true)\n\n**Response:**\n```json\n{\n  \"id\": \"uuid\",\n  \"title\": \"Deck Title\",\n  \"cards\": [\n    {\n      \"id\": \"uuid\",\n      \"front\": \"Question?\",\n      \"back\": \"Answer\",\n      \"hint\": \"Optional hint\",\n      \"status\": \"new\",\n      \"position\": 0\n    }\n  ],\n  \"card_count\": 10\n}\n```"
+					},
+					"response": []
+				},
+				{
+					"name": "Update Deck",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Deck updated\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.title).to.eql('Updated Deck Title');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"title\": \"Updated Deck Title\",\n  \"description\": \"Updated description for the deck\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/flashcards/decks/{{deck_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["api", "flashcards", "decks", "{{deck_id}}"]
+						},
+						"description": "Update deck title or description.\n\n**Request Body:**\n- title: New title (optional)\n- description: New description (optional)"
+					},
+					"response": []
+				},
+				{
+					"name": "Delete Deck",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/flashcards/decks/{{deck_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["api", "flashcards", "decks", "{{deck_id}}"]
+						},
+						"description": "Delete a deck and all its cards.\n\n**Note:** This action is permanent and cannot be undone."
+					},
+					"response": []
+				}
+			],
+			"description": "Deck CRUD operations"
+		},
+		{
+			"name": "6. Card Management",
+			"item": [
+				{
+					"name": "Update Flashcard",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Card updated\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.front).to.eql('Updated question?');",
+									"    pm.expect(jsonData.back).to.eql('Updated answer');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"front\": \"Updated question?\",\n  \"back\": \"Updated answer\",\n  \"hint\": \"Updated hint\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/flashcards/cards/{{card_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["api", "flashcards", "cards", "{{card_id}}"]
+						},
+						"description": "Update a flashcard's front, back, or hint text.\n\n**Request Body:**\n- front: Updated front text (optional)\n- back: Updated back text (optional)\n- hint: Updated hint (optional)"
+					},
+					"response": []
+				},
+				{
+					"name": "Delete Flashcard",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/flashcards/cards/{{card_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["api", "flashcards", "cards", "{{card_id}}"]
+						},
+						"description": "Delete a single flashcard from a deck."
+					},
+					"response": []
+				}
+			],
+			"description": "Individual flashcard CRUD operations"
+		},
+		{
+			"name": "7. Study Sessions",
+			"item": [
+				{
+					"name": "Start Study Session",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Session has ID\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('session_id');",
+									"    pm.environment.set(\"session_id\", jsonData.session_id);",
+									"});",
+									"",
+									"pm.test(\"Session has cards\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('cards');",
+									"    pm.expect(jsonData.cards).to.be.an('array');",
+									"});",
+									"",
+									"pm.test(\"Session has progress tracking\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('new_count');",
+									"    pm.expect(jsonData).to.have.property('learning_count');",
+									"    pm.expect(jsonData).to.have.property('review_count');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"deck_id\": \"{{deck_id}}\",\n  \"card_limit\": 20,\n  \"shuffle\": true,\n  \"filter_status\": [\"new\", \"learning\", \"review\"]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/flashcards/study/start",
+							"host": ["{{base_url}}"],
+							"path": ["api", "flashcards", "study", "start"]
+						},
+						"description": "Start a new study session for a deck.\n\n**Request Body:**\n- deck_id: UUID of the deck to study (required)\n- card_limit: Maximum cards to study (1-100, optional)\n- shuffle: Whether to shuffle cards (default: true)\n- filter_status: Filter by card status (optional)\n  - Options: new, learning, review, mastered\n\n**Response:**\n```json\n{\n  \"session_id\": \"uuid\",\n  \"deck_id\": \"uuid\",\n  \"deck_title\": \"Deck Title\",\n  \"cards\": [...],\n  \"total_cards\": 20,\n  \"new_count\": 10,\n  \"learning_count\": 5,\n  \"review_count\": 5\n}\n```"
+					},
+					"response": []
+				},
+				{
+					"name": "Complete Study Session",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Summary has statistics\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('cards_studied');",
+									"    pm.expect(jsonData).to.have.property('accuracy_percent');",
+									"    pm.expect(jsonData).to.have.property('cards_mastered');",
+									"    pm.expect(jsonData).to.have.property('cards_learning');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"session_id\": \"{{session_id}}\",\n  \"results\": [\n    {\n      \"card_id\": \"{{card_id}}\",\n      \"result\": \"good\",\n      \"time_spent_seconds\": 15\n    }\n  ]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/flashcards/study/complete",
+							"host": ["{{base_url}}"],
+							"path": ["api", "flashcards", "study", "complete"]
+						},
+						"description": "Complete a study session with results.\n\n**Request Body:**\n- session_id: UUID of the session (required)\n- results: Array of card review results\n  - card_id: UUID of the card\n  - result: again, hard, good, easy\n  - time_spent_seconds: Time spent on card (optional)\n\n**Response:**\n```json\n{\n  \"session_id\": \"uuid\",\n  \"deck_id\": \"uuid\",\n  \"cards_studied\": 20,\n  \"time_spent_seconds\": 300,\n  \"accuracy_percent\": 85.0,\n  \"cards_mastered\": 5,\n  \"cards_learning\": 15,\n  \"streak_days\": 3\n}\n```"
+					},
+					"response": []
+				}
+			],
+			"description": "Spaced repetition study session endpoints"
+		},
+		{
+			"name": "8. Export",
+			"item": [
+				{
+					"name": "Export Deck to Anki (TSV)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Content type is TSV\", function () {",
+									"    pm.expect(pm.response.headers.get('Content-Type')).to.include('text/tab-separated-values');",
+									"});",
+									"",
+									"pm.test(\"Has Content-Disposition header\", function () {",
+									"    pm.expect(pm.response.headers.get('Content-Disposition')).to.include('attachment');",
+									"    pm.expect(pm.response.headers.get('Content-Disposition')).to.include('.tsv');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"format\": \"csv_anki\",\n  \"include_hints\": true\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/flashcards/decks/{{deck_id}}/export",
+							"host": ["{{base_url}}"],
+							"path": ["api", "flashcards", "decks", "{{deck_id}}", "export"]
+						},
+						"description": "Export a flashcard deck to Anki-compatible TSV format.\n\n**Supported Formats:**\n- csv_anki: Anki-compatible TSV format for importing\n- pdf: Printable PDF flashcard sheets\n\n**Request Body:**\n- format: Export format (required)\n- include_hints: Include hints in export (default: true)\n\n**Returns:**\n- Binary file download with appropriate Content-Type"
+					},
+					"response": []
+				},
+				{
+					"name": "Export Deck to PDF",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Content type is PDF\", function () {",
+									"    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/pdf');",
+									"});",
+									"",
+									"pm.test(\"Has Content-Disposition header\", function () {",
+									"    pm.expect(pm.response.headers.get('Content-Disposition')).to.include('attachment');",
+									"    pm.expect(pm.response.headers.get('Content-Disposition')).to.include('.pdf');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"format\": \"pdf\",\n  \"include_hints\": false\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/flashcards/decks/{{deck_id}}/export",
+							"host": ["{{base_url}}"],
+							"path": ["api", "flashcards", "decks", "{{deck_id}}", "export"]
+						},
+						"description": "Export a flashcard deck to printable PDF format."
+					},
+					"response": []
+				}
+			],
+			"description": "Export flashcard decks to various formats"
+		},
+		{
+			"name": "9. Error Handling",
+			"item": [
+				{
+					"name": "Unauthorized - No Token (401)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 401 or 403\", function () {",
+									"    pm.expect(pm.response.code).to.be.oneOf([401, 403]);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/flashcards/decks",
+							"host": ["{{base_url}}"],
+							"path": ["api", "flashcards", "decks"]
+						},
+						"description": "Test unauthorized access without token"
+					},
+					"response": []
+				},
+				{
+					"name": "Deck Not Found (404)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 404\", function () {",
+									"    pm.response.to.have.status(404);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/flashcards/decks/00000000-0000-0000-0000-000000000000",
+							"host": ["{{base_url}}"],
+							"path": ["api", "flashcards", "decks", "00000000-0000-0000-0000-000000000000"]
+						},
+						"description": "Test deck not found error"
+					},
+					"response": []
+				},
+				{
+					"name": "Invalid UUID Format (422)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 422\", function () {",
+									"    pm.response.to.have.status(422);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/flashcards/decks/not-a-valid-uuid",
+							"host": ["{{base_url}}"],
+							"path": ["api", "flashcards", "decks", "not-a-valid-uuid"]
+						},
+						"description": "Test invalid UUID format validation"
+					},
+					"response": []
+				}
+			],
+			"description": "Error handling test cases"
+		}
+	],
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"exec": [""]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"exec": [""]
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "http://localhost:8000",
+			"type": "string"
+		},
+		{
+			"key": "auth_token",
+			"value": "your_jwt_token_here",
+			"type": "string"
+		},
+		{
+			"key": "deck_id",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "card_id",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "session_id",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "file_id",
+			"value": "",
+			"type": "string",
+			"description": "File ID from file upload endpoint"
+		},
+		{
+			"key": "user_id",
+			"value": "",
+			"type": "string"
+		}
+	]
+}

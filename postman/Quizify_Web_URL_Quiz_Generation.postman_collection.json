@@ -2,7 +2,7 @@
 	"info": {
 		"_postman_id": "web-url-quiz-gen-001",
 		"name": "Quizify - Web URL Quiz Generation",
-		"description": "Comprehensive test suite for Web URL quiz generation feature (Issue #4).\n\n**Feature Overview:**\n- Generate quizzes from web page URLs using Playwright + Trafilatura\n- Available for all tiers (Free: 5 quizzes, Basic: 20, Educator: 500)\n- SSRF protection (blocks private IPs, localhost)\n- 30-second timeout, min 100 chars, max 500KB content\n- Quota enforcement applies to all tiers\n\n**Setup Instructions:**\n1. Set `{{base_url}}` variable (e.g., http://localhost:8000 or https://api.quizify.app)\n2. Set `{{auth_token}}` variable with your JWT token\n3. Set `{{user_tier}}` to test different scenarios (free/basic/educator)\n4. Run \"Setup\" folder first to configure test environment\n5. Test scenarios are organized by tier and error conditions\n\n**Test Coverage:**\n- ✅ Free tier with quota limits\n- ✅ Basic tier success\n- ✅ Educator tier success\n- ✅ Quota enforcement for all tiers\n- ✅ SSRF protection (localhost, private IPs)\n- ✅ URL validation\n- ✅ Content extraction validation\n- ✅ Timeout handling\n- ✅ Error responses\n\n**Last Updated:** 2025-10-15\n**Related Issue:** #4 - Web URL Quiz Generation\n**Implementation:** services/web_scraping_service.py, handlers/quiz_handlers.py",
+		"description": "Comprehensive test suite for Web URL quiz generation feature.\n\n**Feature Overview:**\n- Generate quizzes from web page URLs using Playwright + Trafilatura\n- Available for all tiers (Free: 5 quizzes, Basic: 20, Educator: 500)\n- Standard mode (fast) and Enhanced mode (RAG-based with Bloom's taxonomy)\n- SSRF protection (blocks private IPs, localhost)\n- 30-second timeout, min 100 chars, max 500KB content\n- Quota enforcement applies to all tiers\n\n**Generation Modes:**\n- mode='standard': Fast quiz generation\n- mode='enhanced': RAG-based quality with Bloom's taxonomy, difficulty levels, concept tracking\n\n**Setup Instructions:**\n1. Set `{{base_url}}` variable (e.g., http://localhost:8000 or https://api.quizify.app)\n2. Set `{{auth_token}}` variable with your JWT token\n3. Set `{{user_tier}}` to test different scenarios (free/basic/educator)\n4. Run \"Setup\" folder first to configure test environment\n5. Test scenarios are organized by tier and error conditions\n\n**Test Coverage:**\n- ✅ Standard and Enhanced mode generation\n- ✅ Free tier with quota limits\n- ✅ Basic tier success\n- ✅ Educator tier success\n- ✅ Quota enforcement for all tiers\n- ✅ SSRF protection (localhost, private IPs)\n- ✅ URL validation\n- ✅ Content extraction validation\n- ✅ Timeout handling\n- ✅ Error responses\n\n**Last Updated:** 2025-12-24\n**Implementation:** services/web_scraping_service.py, handlers/quiz_handlers.py",
 		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
 	},
 	"item": [
@@ -192,7 +192,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"url\": \"https://en.wikipedia.org/wiki/Machine_learning\",\n  \"title\": \"Machine Learning Quiz\",\n  \"num_questions\": 10,\n  \"question_type\": [\"multiple_choice\", \"true_false\"]\n}",
+							"raw": "{\n  \"url\": \"https://en.wikipedia.org/wiki/Machine_learning\",\n  \"title\": \"Machine Learning Quiz\",\n  \"num_questions\": 10,\n  \"question_type\": [\"multiple_choice\", \"true_false\"],\n  \"mode\": \"standard\"\n}",
 							"options": {
 								"raw": {
 									"language": "json"
@@ -245,7 +245,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"url\": \"https://www.python.org/about/gettingstarted/\",\n  \"title\": \"Python Getting Started Quiz\",\n  \"num_questions\": 5,\n  \"question_type\": [\"multiple_choice\"]\n}",
+							"raw": "{\n  \"url\": \"https://www.python.org/about/gettingstarted/\",\n  \"title\": \"Python Getting Started Quiz\",\n  \"num_questions\": 5,\n  \"question_type\": [\"multiple_choice\"],\n  \"mode\": \"standard\"\n}",
 							"options": {
 								"raw": {
 									"language": "json"
@@ -364,6 +364,83 @@
 			"description": "Test successful quiz generation for Basic tier users"
 		},
 		{
+			"name": "1b. Enhanced Mode - RAG Quality",
+			"item": [
+				{
+					"name": "Generate Quiz from URL (Enhanced Mode)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 201\", function () {",
+									"    pm.response.to.have.status(201);",
+									"});",
+									"",
+									"pm.test(\"Response has enhanced fields\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('quiz_id');",
+									"    pm.expect(jsonData).to.have.property('questions');",
+									"    pm.expect(jsonData).to.have.property('generation_stats');",
+									"    pm.environment.set(\"enhanced_quiz_id\", jsonData.quiz_id);",
+									"});",
+									"",
+									"pm.test(\"Questions have Bloom's taxonomy\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    if (jsonData.questions && jsonData.questions.length > 0) {",
+									"        var q = jsonData.questions[0];",
+									"        pm.expect(q).to.have.property('bloom_level');",
+									"        pm.expect(q).to.have.property('difficulty');",
+									"    }",
+									"});",
+									"",
+									"pm.test(\"Questions have explanations\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    if (jsonData.questions && jsonData.questions.length > 0) {",
+									"        pm.expect(jsonData.questions[0]).to.have.property('explanation');",
+									"    }",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"url\": \"https://en.wikipedia.org/wiki/Deep_learning\",\n  \"title\": \"Deep Learning Quiz (Enhanced)\",\n  \"num_questions\": 8,\n  \"question_type\": [\"multiple_choice\", \"true_false\"],\n  \"mode\": \"enhanced\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/quiz/generate/url",
+							"host": ["{{base_url}}"],
+							"path": ["api", "quiz", "generate", "url"]
+						},
+						"description": "Generate quiz using Enhanced mode (RAG-based with Bloom's taxonomy).\n\n**Enhanced Mode Features:**\n- RAG-based question generation for higher quality\n- Bloom's taxonomy levels: remember, understand, apply, analyze, evaluate, create\n- Difficulty levels: easy, medium, hard\n- Concept tracking for better content coverage\n- Fact-checking and validation\n- Distractor explanations for MCQ (why wrong answers are wrong)\n\n**Response includes:**\n- questions[].bloom_level: Cognitive level (remember, understand, apply, analyze, evaluate, create)\n- questions[].difficulty: easy, medium, hard\n- questions[].concept_name: Human-readable concept being tested\n- questions[].confidence_score: AI confidence in question quality\n- questions[].distractor_explanations: Why each wrong option is incorrect (MCQ only)\n- generation_stats: Chunks processed, concepts identified, tokens used"
+					},
+					"response": []
+				}
+			],
+			"description": "Test Enhanced mode quiz generation with RAG and Bloom's taxonomy"
+		},
+		{
 			"name": "2. Success Scenarios - Educator Tier",
 			"item": [
 				{
@@ -402,7 +479,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"url\": \"https://en.wikipedia.org/wiki/Artificial_intelligence\",\n  \"title\": \"AI Quiz for Educators\",\n  \"num_questions\": 15,\n  \"question_type\": [\"multiple_choice\", \"true_false\"]\n}",
+							"raw": "{\n  \"url\": \"https://en.wikipedia.org/wiki/Artificial_intelligence\",\n  \"title\": \"AI Quiz for Educators\",\n  \"num_questions\": 15,\n  \"question_type\": [\"multiple_choice\", \"true_false\"],\n  \"mode\": \"standard\"\n}",
 							"options": {
 								"raw": {
 									"language": "json"
@@ -469,7 +546,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"url\": \"https://en.wikipedia.org/wiki/Python_(programming_language)\",\n  \"title\": \"Python Quiz\",\n  \"num_questions\": 5,\n  \"question_type\": [\"multiple_choice\"]\n}",
+							"raw": "{\n  \"url\": \"https://en.wikipedia.org/wiki/Python_(programming_language)\",\n  \"title\": \"Python Quiz\",\n  \"num_questions\": 5,\n  \"question_type\": [\"multiple_choice\"],\n  \"mode\": \"standard\"\n}",
 							"options": {
 								"raw": {
 									"language": "json"
@@ -535,7 +612,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"url\": \"https://en.wikipedia.org/wiki/Software_engineering\",\n  \"title\": \"Software Engineering Quiz\",\n  \"num_questions\": 5,\n  \"question_type\": [\"multiple_choice\"]\n}",
+							"raw": "{\n  \"url\": \"https://en.wikipedia.org/wiki/Software_engineering\",\n  \"title\": \"Software Engineering Quiz\",\n  \"num_questions\": 5,\n  \"question_type\": [\"multiple_choice\"],\n  \"mode\": \"standard\"\n}",
 							"options": {
 								"raw": {
 									"language": "json"

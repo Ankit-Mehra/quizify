@@ -99,20 +99,58 @@ class SessionService:
         >>> await service.logout(session_id)
     """
 
-    # Lua script for atomic session limit check + add
-    # Returns: 1 if added successfully, 0 if limit exceeded
+    # Lua script for atomic session limit check + auto-evict + add
+    # SECURITY: All operations must be atomic to prevent race conditions
+    # Returns JSON: {"status": "added"|"evicted", "count": N, "evicted_session_id": "..."|null}
     CREATE_SESSION_SCRIPT = """
     local user_sessions_key = KEYS[1]
     local session_id = ARGV[1]
     local max_sessions = tonumber(ARGV[2])
+    local session_prefix = ARGV[3]  -- "session:" prefix for looking up session data
     
+    -- Check current count
     local count = redis.call('SCARD', user_sessions_key)
-    if count >= max_sessions then
-        return 0
+    
+    if count < max_sessions then
+        -- Under limit: simple add
+        redis.call('SADD', user_sessions_key, session_id)
+        return cjson.encode({status = "added", count = count + 1, evicted_session_id = nil})
+    end
+    
+    -- At or over limit: find and evict oldest session
+    local session_ids = redis.call('SMEMBERS', user_sessions_key)
+    local oldest_session_id = nil
+    local oldest_timestamp = nil
+    
+    for i, sid in ipairs(session_ids) do
+        local session_key = session_prefix .. sid
+        local created_at = redis.call('HGET', session_key, 'created_at')
+        
+        if created_at then
+            -- Compare timestamps (ISO format strings are lexicographically sortable)
+            if oldest_timestamp == nil or created_at < oldest_timestamp then
+                oldest_timestamp = created_at
+                oldest_session_id = sid
+            end
+        else
+            -- Session data doesn't exist (stale reference), mark for removal
+            if oldest_session_id == nil then
+                oldest_session_id = sid
+                oldest_timestamp = "0000-00-00T00:00:00"  -- Treat as oldest
+            end
+        end
+    end
+    
+    -- Evict oldest and add new session
+    if oldest_session_id then
+        redis.call('SREM', user_sessions_key, oldest_session_id)
+        -- Note: Full session cleanup (hash, mappings) done by caller after this returns
     end
     
     redis.call('SADD', user_sessions_key, session_id)
-    return 1
+    local new_count = redis.call('SCARD', user_sessions_key)
+    
+    return cjson.encode({status = "evicted", count = new_count, evicted_session_id = oldest_session_id})
     """
     
     # Module-level flag to log IP_HASH_SECRET warning only once
@@ -226,6 +264,90 @@ class SessionService:
         # Return a compact token: first 8 chars of session_id + signature
         return f"cst_{session_id[:8]}_{signature}"
 
+    async def _logout_oldest_session(self, user_id: str) -> Optional[str]:
+        """
+        Find and logout the oldest session for a user (auto-eviction for better UX).
+        
+        This method is called automatically when a user exceeds the session limit.
+        Instead of blocking the new login, we evict the oldest session to make room.
+        
+        Args:
+            user_id: User identifier
+            
+        Returns:
+            Device type of the logged out session (for logging), or None if no sessions
+        """
+        try:
+            # Get all active sessions
+            sessions = await self.list_sessions(user_id)
+            
+            if not sessions:
+                logger.warning(f"No sessions found for user {user_id[:8]}... during auto-eviction")
+                return None
+            
+            # Sort by created_at to find oldest
+            sessions.sort(key=lambda s: s.created_at)
+            oldest_session = sessions[0]
+            
+            # Logout the oldest session
+            logger.info(
+                f"Auto-evicting oldest session for user {user_id[:8]}... "
+                f"(device: {oldest_session.device_type}, "
+                f"created: {oldest_session.created_at.strftime('%Y-%m-%d %H:%M:%S')})"
+            )
+            
+            await self.logout(oldest_session.session_id)
+            
+            return oldest_session.device_type
+            
+        except Exception as e:
+            logger.error(f"Failed to auto-evict oldest session for user {user_id[:8]}...: {e}")
+            return None
+
+    async def _cleanup_evicted_session(self, session_id: str) -> None:
+        """
+        Clean up Redis data for an evicted session (hash, mappings).
+        
+        Called AFTER the atomic Lua script has already removed the session from
+        the user_sessions set. This performs the non-critical cleanup of the
+        session's hash data and reverse mappings.
+        
+        Args:
+            session_id: The session ID that was evicted by the Lua script
+        """
+        try:
+            session_key = f"session:{session_id}"
+            
+            # Get session data to find mappings to clean up
+            session_data = await self.redis.hgetall(session_key)
+            
+            if session_data:
+                # Convert bytes to strings if needed
+                if isinstance(next(iter(session_data.keys()), None), bytes):
+                    session_data = {
+                        k.decode(): v.decode() if isinstance(v, bytes) else v 
+                        for k, v in session_data.items()
+                    }
+                
+                # Clean up refresh token mapping
+                refresh_token_hash = session_data.get("refresh_token_hash")
+                if refresh_token_hash:
+                    await self.redis.delete(f"refresh_token:{refresh_token_hash}")
+                    
+                # Clean up client token mapping
+                client_token = session_data.get("client_session_token")
+                if client_token:
+                    await self.redis.delete(f"client_token:{client_token}")
+            
+            # Delete the session hash
+            await self.redis.delete(session_key)
+            
+            logger.debug(f"Cleaned up evicted session {session_id[:12]}...")
+            
+        except Exception as e:
+            # Non-critical: log but don't fail session creation
+            logger.warning(f"Failed to cleanup evicted session {session_id[:12]}...: {e}")
+
     async def create_session(
         self,
         user_id: str,
@@ -238,8 +360,9 @@ class SessionService:
         Create a new authentication session atomically.
 
         Generates a unique session ID, stores session metadata in Redis,
-        and adds session to user's active session set. Uses Lua script
-        to ensure atomic check-and-add operation (prevents race conditions).
+        and adds session to user's active session set. If the user has reached
+        the maximum session limit, automatically logs out the oldest session
+        to make room for the new one (improved UX - no blocking).
         
         Creates a refresh_token → session_id mapping to enable cookie-based 
         session lookup (XSS-safe authentication).
@@ -255,7 +378,6 @@ class SessionService:
             str: client_session_token - HMAC-signed token for UI identification only
 
         Raises:
-            TooManySessionsError: If user has >= MAX_SESSIONS_PER_USER active sessions
             redis.RedisError: If Redis operation fails
 
         Example:
@@ -276,15 +398,35 @@ class SessionService:
             # preventing false "Too many sessions" errors when slots are actually available
             await self.cleanup_expired_sessions(user_id)
             
-            # Atomic check-and-add using Lua script (prevents race conditions)
+            # SECURITY: Atomic session limit enforcement with auto-eviction
+            # All operations (check count, evict oldest, add new) happen in one Lua script
+            # to prevent race conditions where multiple concurrent logins could exceed limits
+            evicted_session_id = None
             try:
-                result = await self.redis.eval(
+                import json
+                result_json = await self.redis.eval(
                     self.CREATE_SESSION_SCRIPT,
-                    1,  # number of keys
+                    1,  # Number of keys
                     user_sessions_key,  # KEYS[1]
                     session_id,  # ARGV[1]
                     str(self.MAX_SESSIONS_PER_USER),  # ARGV[2]
+                    "session:",  # ARGV[3] - session key prefix
                 )
+                result = json.loads(result_json)
+                
+                if result["status"] == "evicted":
+                    evicted_session_id = result.get("evicted_session_id")
+                    logger.info(
+                        f"User {user_id[:8]}... at session limit. "
+                        f"Atomically evicted session {evicted_session_id[:12] if evicted_session_id else 'unknown'}... "
+                        f"and created new session. Current count: {result['count']}"
+                    )
+                else:
+                    logger.debug(
+                        f"Created session for user {user_id[:8]}... "
+                        f"Session count: {result['count']}/{self.MAX_SESSIONS_PER_USER}"
+                    )
+                    
             except Exception as lua_error:
                 # SECURITY: Only allow non-atomic fallback in test environments
                 # Production Redis MUST support Lua scripts for atomic session creation
@@ -300,27 +442,23 @@ class SessionService:
                     # Non-atomic fallback (race condition possible, but acceptable in tests)
                     session_count = await self.redis.scard(user_sessions_key)
                     if session_count >= self.MAX_SESSIONS_PER_USER:
-                        result = 0
-                    else:
-                        await self.redis.sadd(user_sessions_key, session_id)
-                        result = 1
+                        # Auto-evict oldest in test mode
+                        evicted_device = await self._logout_oldest_session(user_id)
+                        if evicted_device:
+                            logger.info(f"Test mode: evicted oldest session (device: {evicted_device})")
+                    await self.redis.sadd(user_sessions_key, session_id)
                 else:
                     # Production: Fail hard if Lua not supported
                     logger.error(
-                        f"CRITICAL: Lua script failed in production. This breaks atomic session creation. "
+                        f"CRITICAL: Atomic session creation failed. Redis may not support Lua scripts. "
                         f"Error: {lua_error}"
                     )
                     raise
             
-            if result == 0:
-                # Limit exceeded - get current count for error message
-                session_count = await self.redis.scard(user_sessions_key)
-                logger.warning(
-                    f"User {user_id[:8]}... has too many sessions: {session_count}"
-                )
-                raise TooManySessionsError(
-                    user_id, session_count, max_sessions=self.MAX_SESSIONS_PER_USER
-                )
+            # If we evicted a session, clean up its Redis data (hash, mappings)
+            # This runs AFTER the atomic Lua script, so the slot is already secured
+            if evicted_session_id:
+                await self._cleanup_evicted_session(evicted_session_id)
 
             # Prepare session metadata
             now = datetime.utcnow()
@@ -374,8 +512,6 @@ class SessionService:
 
             return client_session_token
 
-        except TooManySessionsError:
-            raise
         except Exception as e:
             logger.error(f"Failed to create session for user {user_id[:8]}...: {e}")
             raise

@@ -34,6 +34,16 @@ class ExportFormat(str, Enum):
     GOOGLE_FORMS = "google_forms"
 
 
+class FlashcardExportFormat(str, Enum):
+    """
+    Supported flashcard export formats.
+    
+    All formats available to all tiers who own the deck.
+    """
+    CSV_ANKI = "csv_anki"  # Anki-compatible TSV format
+    PDF = "pdf"            # Printable flashcard sheets
+
+
 # NOTE: Tier access constants (PRO_ONLY_FORMATS, PAID_TIER_FORMATS) are defined in
 # services.exporters.tier_validator - that is the single source of truth for tier gating.
 # Do not define duplicate constants here to avoid configuration drift.
@@ -208,6 +218,58 @@ class ExportResult(BaseModel):
     warnings: Optional[List[str]] = Field(None, description="Warnings during export")
     
     model_config = ConfigDict(arbitrary_types_allowed=True)
+
+
+# =============================================================================
+# Flashcard Export Models
+# =============================================================================
+
+class FlashcardExportRequest(BaseModel):
+    """Request body for flashcard deck export endpoint."""
+    model_config = ConfigDict(use_enum_values=True)
+    
+    format: FlashcardExportFormat = Field(
+        ..., 
+        description="Export format to generate"
+    )
+    include_hints: bool = Field(
+        default=True,
+        description="Whether to include hints in the export"
+    )
+
+
+class ExportFlashcard(BaseModel):
+    """Flashcard data for export."""
+    id: UUID
+    front: str
+    back: str
+    hint: Optional[str] = None
+
+
+class FlashcardDeckExportData(BaseModel):
+    """
+    Complete flashcard deck data prepared for export.
+    
+    This is the internal model used by flashcard exporters.
+    """
+    model_config = ConfigDict(from_attributes=True)
+    
+    # Deck metadata
+    deck_id: UUID
+    title: str
+    description: Optional[str] = None
+    created_at: datetime
+    
+    # Content source info
+    content_source_type: Optional[str] = None  # 'file', 'url', 'text'
+    content_source_reference: Optional[str] = None
+    
+    # Flashcards
+    cards: List[ExportFlashcard]
+    
+    @property
+    def card_count(self) -> int:
+        return len(self.cards)
 
 
 class GoogleFormsExportResponse(BaseModel):

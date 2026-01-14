@@ -4,7 +4,7 @@ import asyncio
 from typing import List, Dict, Any, Optional
 from uuid import uuid4
 
-from services.ai_services.openai_service import get_openai_client, _build_posthog_kwargs
+from services.ai_services.llm_client_service import get_openai_client, _build_posthog_kwargs
 from services.logger import ai_logger as logger
 from services.db_services.supabase_concepts import create_concepts
 from services.db_services.supabase_llm_analytics import track_llm_call
@@ -116,6 +116,17 @@ class ConceptExtractionService:
         """Generate embeddings using OpenAI client (with PostHog tracking)."""
         embeddings = []
         
+        # Build PostHog kwargs once (reused for all batches)
+        posthog_kwargs = _build_posthog_kwargs(
+            user_id=user_id,
+            trace_id=trace_id,
+            properties={
+                "call_type": "embedding",
+                "generation_mode": "enhanced",
+                "feature": "concept_extraction"
+            }
+        )
+        
         # Process in batches
         batch_size = config.EMBEDDING_BATCH_SIZE
         for i in range(0, len(texts), batch_size):
@@ -123,11 +134,12 @@ class ConceptExtractionService:
             start_time = time.time()
             
             try:
-                # Use the wrapped client for PostHog analytics
+                # Use the wrapped client for PostHog analytics with user context
                 response = await self.client.embeddings.create(
                     input=batch,
                     model=config.EMBEDDING_MODEL,
-                    dimensions=config.EMBEDDING_DIMENSIONS
+                    dimensions=config.EMBEDDING_DIMENSIONS,
+                    **posthog_kwargs
                 )
                 
                 # Extract embeddings (ensure order is preserved)
@@ -148,7 +160,7 @@ class ConceptExtractionService:
                 )
                 
             except Exception as e:
-                logger.error(f"Embedding generation failed: {str(e)}")
+                logger.error("Embedding generation failed: %s", e)
                 raise
                 
         return embeddings
@@ -186,18 +198,19 @@ class ConceptExtractionService:
         trace_id = trace_id or str(uuid4())
         total_chunks = len(chunks)
         
-        logger.info(f"Extracting concepts from {total_chunks} chunks for doc {document_id}")
+        logger.info("Extracting concepts from %d chunks for doc %s", total_chunks, document_id)
         
         # Estimate total document size for this concept extraction
         total_chars = sum(len(c.get("content", "")) for c in chunks)
-        logger.info(f"[BATCH] Total content length: {total_chars} characters")
+        logger.info("[BATCH] Total content length: %d characters", total_chars)
         
         # Fast path: for medium-sized docs, run a single batch call over all chunks
         # This avoids multiple LLM calls and significantly reduces wall-clock time
         if total_chars <= DOC_SINGLE_CALL_CHAR_THRESHOLD:
             logger.info(
-                f"[BATCH] Using single-call extraction for doc {document_id} "
-                f"(chars={total_chars} <= {DOC_SINGLE_CALL_CHAR_THRESHOLD})"
+                "[BATCH] Using single-call extraction for doc %s "
+                "(chars=%d <= %d)",
+                document_id, total_chars, DOC_SINGLE_CALL_CHAR_THRESHOLD
             )
             raw_concepts = await self._extract_from_batch(
                 chunks=chunks,
@@ -211,8 +224,9 @@ class ConceptExtractionService:
             extracted_concepts_data = raw_concepts or []
             successful_batches = 1 if extracted_concepts_data else 0
             logger.info(
-                f"[BATCH] {successful_batches}/1 batches succeeded, "
-                f"extracted {len(extracted_concepts_data)} raw concepts"
+                "[BATCH] %d/1 batches succeeded, "
+                "extracted %d raw concepts",
+                successful_batches, len(extracted_concepts_data)
             )
             return await self._post_process_and_store_concepts(
                 extracted_concepts_data,
@@ -233,7 +247,7 @@ class ConceptExtractionService:
             batches.append(batch)
         
         num_batches = len(batches)
-        logger.info(f"[BATCH] Processing {total_chunks} chunks in {num_batches} batches ({CHUNKS_PER_BATCH} chunks/batch)")
+        logger.info("[BATCH] Processing %d chunks in %d batches (%d chunks/batch)", total_chunks, num_batches, CHUNKS_PER_BATCH)
         
         # Process batches with staggered starts to avoid OpenAI burst rate limiting
         # OpenAI throttles response times when hit with many simultaneous requests
@@ -245,12 +259,12 @@ class ConceptExtractionService:
         async def process_batch(batch: List[Dict], batch_idx: int):
             async with semaphore:
                 batch_start_times[batch_idx] = time.time() - global_start
-                logger.info(f"[BATCH {batch_idx}] Starting at +{batch_start_times[batch_idx]:.2f}s")
+                logger.info("[BATCH %d] Starting at +%.2fs", batch_idx, batch_start_times[batch_idx])
                 result = await self._extract_from_batch(
                     batch, batch_idx, user_id, document_id, trace_id, content_source_type, is_single_call=False
                 )
                 batch_end_times[batch_idx] = time.time() - global_start
-                logger.info(f"[BATCH {batch_idx}] Finished at +{batch_end_times[batch_idx]:.2f}s (took {batch_end_times[batch_idx] - batch_start_times[batch_idx]:.2f}s)")
+                logger.info("[BATCH %d] Finished at +%.2fs (took %.2fs)", batch_idx, batch_end_times[batch_idx], batch_end_times[batch_idx] - batch_start_times[batch_idx])
                 return result
         
         start_time = time.time()
@@ -270,17 +284,19 @@ class ConceptExtractionService:
             avg_per_batch = sum(durations) / len(durations) if durations else 0
             max_batch_duration = max(durations) if durations else 0
             logger.info(
-                f"[BATCH] All {num_batches} batches completed in {batch_time:.2f}s "
-                f"(avg {avg_per_batch:.2f}s/batch, max {max_batch_duration:.2f}s)"
+                "[BATCH] All %d batches completed in %.2fs "
+                "(avg %.2fs/batch, max %.2fs)",
+                num_batches, batch_time, avg_per_batch, max_batch_duration
             )
             # If total time >> max single batch, parallelism is limited
             if batch_time > max_batch_duration * 1.5:
                 logger.warning(
-                    f"[BATCH] ⚠️ Limited parallelism detected "
-                    f"(total {batch_time:.2f}s vs max single-batch {max_batch_duration:.2f}s)"
+                    "[BATCH] ⚠️ Limited parallelism detected "
+                    "(total %.2fs vs max single-batch %.2fs)",
+                    batch_time, max_batch_duration
                 )
         else:
-            logger.info(f"[BATCH] All {num_batches} batches completed in {batch_time:.2f}s")
+            logger.info("[BATCH] All %d batches completed in %.2fs", num_batches, batch_time)
         
         # Flatten results, skip failures
         extracted_concepts_data = []
@@ -290,9 +306,10 @@ class ConceptExtractionService:
                 extracted_concepts_data.extend(result)
                 successful_batches += 1
             elif isinstance(result, Exception):
-                logger.error(f"Batch {batch_idx} extraction failed: {result}")
+                logger.error("Batch %d extraction failed: %s", batch_idx, result)
         
-        logger.info(f"[BATCH] {successful_batches}/{num_batches} batches succeeded, extracted {len(extracted_concepts_data)} raw concepts")
+        logger.info("[BATCH] %d/%d batches succeeded, extracted %d raw concepts",
+                   successful_batches, num_batches, len(extracted_concepts_data))
         
         return await self._post_process_and_store_concepts(
             extracted_concepts_data,
@@ -316,7 +333,7 @@ class ConceptExtractionService:
         Shared by both single-call and multi-batch extraction paths.
         """
         if not extracted_concepts_data:
-            logger.warning(f"No concepts extracted for document {document_id}")
+            logger.warning("No concepts extracted for document %s", document_id)
             return []
 
         # Sort by relevance BEFORE deduplication to ensure highest-relevance instance is kept
@@ -343,7 +360,7 @@ class ConceptExtractionService:
                     unique_concepts.append(concept)
                 # Skip concepts with no name and no source_text (malformed)
         
-        logger.info(f"[BATCH] After deduplication: {len(unique_concepts)} unique concepts")
+        logger.info("[BATCH] After deduplication: %d unique concepts", len(unique_concepts))
         
         # Limit total concepts and sort by relevance
         max_concepts = config.MAX_CONCEPTS_PER_DOCUMENT
@@ -360,7 +377,7 @@ class ConceptExtractionService:
         
         # Store in DB (with user_token for RLS)
         stored_concepts = create_concepts(unique_concepts, user_token)
-        logger.info(f"Stored {len(stored_concepts)} concepts for document {document_id}")
+        logger.info("Stored %d concepts for document %s", len(stored_concepts), document_id)
         
         return stored_concepts
     
@@ -393,8 +410,9 @@ class ConceptExtractionService:
             List of formatted concept dicts ready for DB storage
         """
         start_time = time.time()
-        # Use nano model for fastest concept extraction (~5s per batch vs 25-50s with mini)
-        model = config.LLM_MODEL_NANO
+        # Use OpenAI-specific nano model - concept extraction uses OpenAI client directly
+        # (Groq/Gemini don't support embeddings, so RAG pipeline always uses OpenAI)
+        model = config.OPENAI_MODEL_FOR_CONCEPTS
         num_chunks = len(chunks)
         
         # Build sections text with numbered headers
@@ -467,7 +485,7 @@ class ConceptExtractionService:
                 data = json.loads(content)
                 concepts = data.get("concepts", [])
             except json.JSONDecodeError:
-                logger.error(f"Batch {batch_idx}: Failed to parse JSON: {content[:100]}...")
+                logger.error("Batch %d: Failed to parse JSON: %s...", batch_idx, content[:100])
                 concepts = []
             
             # Track analytics
@@ -511,8 +529,8 @@ class ConceptExtractionService:
             
             return formatted_concepts
             
-        except Exception as e:
-            logger.error(f"Batch {batch_idx}: Error extracting concepts: {str(e)}")
+        except Exception as e:  # noqa: BLE001
+            logger.error("Batch %d: Error extracting concepts: %s", batch_idx, e)
             # Track failure
             track_llm_call(
                 user_id=user_id,

@@ -17,17 +17,17 @@ class Config:
     Centralizes all environment variable access and provides
     utility methods for common configuration needs.
     """
-    
+
     # Supabase configuration
     SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
     SUPABASE_KEY: str = os.getenv("SUPABASE_KEY", "")
     SUPABASE_SERVICE_ROLE_KEY: str = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
     STORAGE_NAME: str = os.getenv("SUPABASE_STORAGE_NAME", "")
-    
+
     # Testing environment detection
     # IMPORTANT: This is the single source of truth for testing mode
     TESTING: bool = os.getenv("TESTING", "false").lower() == "true"
-    
+
     # Development mode - returns tokens in response for API testing (Postman, etc)
     # In production, tokens are ONLY in HttpOnly cookies (more secure)
     DEVELOPMENT_MODE: bool = os.getenv("DEVELOPMENT_MODE", "false").lower() == "true"
@@ -66,15 +66,118 @@ class Config:
     # Primary model: Used for quiz generation (higher quality, slightly more expensive)
     # Mini model: Used for verification, explanation, concept extraction (cost-efficient)
     
-    LLM_MODEL_PRIMARY: str = os.getenv("LLM_MODEL_PRIMARY", "gpt-4.1")
-    LLM_MODEL_MINI: str = os.getenv("LLM_MODEL_MINI", "gpt-4.1-mini")
-    LLM_MODEL_NANO: str = os.getenv("LLM_MODEL_NANO", "gpt-4.1-nano")  # Fastest, for concept extraction
+    # Default LLM Provider - switch between providers via environment variable
+    # Supported: "openai" (default), "gemini", "groq"
+    DEFAULT_LLM_PROVIDER: str = os.getenv("DEFAULT_LLM_PROVIDER", "openai")
+    
+    # OpenAI Models (tiered: primary > mini > nano)
+    OPENAI_MODEL_PRIMARY: str = os.getenv("OPENAI_MODEL_PRIMARY", "gpt-4.1")
+    OPENAI_MODEL_MINI: str = os.getenv("OPENAI_MODEL_MINI", "gpt-4.1-mini")
+    OPENAI_MODEL_NANO: str = os.getenv("OPENAI_MODEL_NANO", "gpt-4.1-nano")
+    
+    # Gemini Models (tiered: primary > mini > nano)
+    GEMINI_MODEL_PRIMARY: str = os.getenv("GEMINI_MODEL_PRIMARY", "gemini-2.0-flash")
+    GEMINI_MODEL_MINI: str = os.getenv("GEMINI_MODEL_MINI", "gemini-2.0-flash")
+    GEMINI_MODEL_NANO: str = os.getenv("GEMINI_MODEL_NANO", "gemini-2.0-flash-lite")
+    
+    # Groq Models (tiered: primary > mini > nano)
+    GROQ_MODEL_PRIMARY: str = os.getenv("GROQ_MODEL_PRIMARY", "llama-3.3-70b-versatile")
+    GROQ_MODEL_MINI: str = os.getenv("GROQ_MODEL_MINI", "llama-3.1-8b-instant")
+    GROQ_MODEL_NANO: str = os.getenv("GROQ_MODEL_NANO", "llama-3.1-8b-instant")
+    
+    # ============================================================================
+    # Provider-Agnostic Model Getters (use these in services!)
+    # ============================================================================
+    # These return the correct model based on DEFAULT_LLM_PROVIDER
+    
+    @property
+    def LLM_MODEL_PRIMARY(self) -> str:
+        """Primary model for quiz generation (highest quality)."""
+        provider = self.DEFAULT_LLM_PROVIDER
+        if provider == "gemini":
+            return self.GEMINI_MODEL_PRIMARY
+        elif provider == "groq":
+            return self.GROQ_MODEL_PRIMARY
+        return self.OPENAI_MODEL_PRIMARY
+    
+    @property
+    def LLM_MODEL_MINI(self) -> str:
+        """Mini model for explanations, verification (balanced)."""
+        provider = self.DEFAULT_LLM_PROVIDER
+        if provider == "gemini":
+            return self.GEMINI_MODEL_MINI
+        elif provider == "groq":
+            return self.GROQ_MODEL_MINI
+        return self.OPENAI_MODEL_MINI
+    
+    @property
+    def LLM_MODEL_NANO(self) -> str:
+        """Nano model for concept extraction (fastest)."""
+        provider = self.DEFAULT_LLM_PROVIDER
+        if provider == "gemini":
+            return self.GEMINI_MODEL_NANO
+        elif provider == "groq":
+            return self.GROQ_MODEL_NANO
+        return self.OPENAI_MODEL_NANO
+    
+    # Legacy aliases (for backward compatibility)
+    @property
+    def GEMINI_MODEL_DEFAULT(self) -> str:
+        return self.GEMINI_MODEL_PRIMARY
+    
+    @property
+    def GROQ_MODEL_DEFAULT(self) -> str:
+        return self.GROQ_MODEL_PRIMARY
+    
+    # ============================================================================
+    # OpenAI-Only Model Getters (for services that MUST use OpenAI)
+    # ============================================================================
+    # These are used by services that require OpenAI specifically:
+    # - Embedding-based services (RAG, concept extraction) - OpenAI embeddings only
+    # - Enhanced quiz mode - uses OpenAI client for all operations
+    # - Flashcard generation - uses OpenAI client
+    # NOTE: Groq/Gemini don't support embeddings, so these services must use OpenAI
+    
+    @property
+    def OPENAI_MODEL_FOR_RAG(self) -> str:
+        """Model for RAG/embedding-based operations (always uses OpenAI)."""
+        return self.OPENAI_MODEL_NANO
+    
+    @property  
+    def OPENAI_MODEL_FOR_CONCEPTS(self) -> str:
+        """Model for concept extraction (always uses OpenAI)."""
+        return self.OPENAI_MODEL_NANO
+    
+    @property
+    def OPENAI_MODEL_FOR_FLASHCARDS(self) -> str:
+        """Model for flashcard generation (always uses OpenAI)."""
+        return self.OPENAI_MODEL_MINI
     
     # LlamaIndex & RAG Configuration
     EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
     EMBEDDING_DIMENSIONS: int = int(os.getenv("EMBEDDING_DIMENSIONS", "1536"))
     CHUNK_SIZE: int = int(os.getenv("CHUNK_SIZE", "512"))
     CHUNK_OVERLAP: int = int(os.getenv("CHUNK_OVERLAP", "50"))
+    
+    # ============================================================================
+    # Flashcard Generation Configuration
+    # ============================================================================
+    # These settings control flashcard generation behavior
+    
+    # Card count calculation: ~1 card per N words of source content
+    FLASHCARD_CARDS_PER_100_WORDS: int = int(os.getenv("FLASHCARD_CARDS_PER_100_WORDS", "1"))
+    
+    # Minimum cards to generate per request (ensures enough study material)
+    FLASHCARD_MIN_CARDS: int = int(os.getenv("FLASHCARD_MIN_CARDS", "3"))
+    
+    # Maximum cards per single LLM request (prevents context overflow)
+    FLASHCARD_MAX_CARDS_PER_REQUEST: int = int(os.getenv("FLASHCARD_MAX_CARDS_PER_REQUEST", "50"))
+    
+    # Maximum tokens to send to LLM in single request
+    FLASHCARD_MAX_CONTENT_TOKENS: int = int(os.getenv("FLASHCARD_MAX_CONTENT_TOKENS", "6000"))
+    
+    # Word count threshold for switching to chunked generation
+    FLASHCARD_CHUNK_THRESHOLD_WORDS: int = int(os.getenv("FLASHCARD_CHUNK_THRESHOLD_WORDS", "3000"))
     
     # Quality Settings
     ENABLE_RAG_PIPELINE: bool = os.getenv("ENABLE_RAG_PIPELINE", "true").lower() == "true"
@@ -252,7 +355,7 @@ class Config:
         # Debug: Log which key type is being used (safe - only shows prefix)
         key_prefix = cls.SUPABASE_SERVICE_ROLE_KEY[:20] if cls.SUPABASE_SERVICE_ROLE_KEY else "EMPTY"
         import logging
-        logging.getLogger("app").debug(f"Creating service role client with key prefix: {key_prefix}...")
+        logging.getLogger("app").debug("Creating service role client with key prefix: %s...", key_prefix)
             
         return create_client(cls.SUPABASE_URL, cls.SUPABASE_SERVICE_ROLE_KEY)
 

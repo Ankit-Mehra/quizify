@@ -1,3 +1,4 @@
+import hmac
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlencode
 
@@ -658,16 +659,50 @@ async def confirm_email(
             )
         elif type == "recovery":
             # Password reset confirmation - token verified, now create session for password update
-            # The verified response contains session tokens we can pass to frontend
+            # SECURITY: Store tokens in HttpOnly cookies, NOT in URL query parameters
+            # URL parameters expose tokens to browser history, server logs, and referrer headers
             if response.session:
                 access_token = response.session.access_token
                 refresh_token = response.session.refresh_token
-                # Redirect to password reset page with both tokens
-                # Frontend will use these when calling /reset-password
-                return RedirectResponse(
-                    url=f"{app_config.FRONTEND_URL}/reset-password?access_token={access_token}&refresh_token={refresh_token}&message=Please+enter+your+new+password",
+                
+                # Create redirect response WITHOUT tokens in URL
+                redirect_response = RedirectResponse(
+                    url=f"{app_config.FRONTEND_URL}/reset-password?message=Please+enter+your+new+password",
                     status_code=302
                 )
+                
+                # SECURITY: Store recovery tokens in HttpOnly cookies
+                # These cookies are:
+                # - HttpOnly: Not accessible to JavaScript (XSS protection)
+                # - Secure: Only sent over HTTPS
+                # - SameSite=Lax: CSRF protection for password reset
+                # - Short-lived: 10 minutes to complete reset
+                cookie_settings = {
+                    "httponly": True,
+                    "secure": True,
+                    "samesite": "lax",
+                    "max_age": 600,  # 10 minutes
+                    "path": "/",
+                }
+                
+                # Add domain if configured (for cross-subdomain)
+                if app_config.COOKIE_DOMAIN:
+                    cookie_settings["domain"] = app_config.COOKIE_DOMAIN
+                
+                # Set recovery session cookies
+                redirect_response.set_cookie(
+                    key="recovery_access_token",
+                    value=access_token,
+                    **cookie_settings
+                )
+                redirect_response.set_cookie(
+                    key="recovery_refresh_token",
+                    value=refresh_token,
+                    **cookie_settings
+                )
+                
+                logger.info("Recovery session established with secure cookies")
+                return redirect_response
             else:
                 logger.error("Recovery token verified but no session returned")
                 return RedirectResponse(
@@ -741,25 +776,40 @@ async def forgot_password(request: ForgotPasswordRequest):
         }
 
 
-async def reset_password(request: ResetPasswordRequest):
+async def reset_password(request: ResetPasswordRequest, fastapi_request: Request, response: Response):
     """
     Reset user password with recovery tokens.
     
-    This endpoint is called by the frontend after user:
-    1. Clicks reset link in email
-    2. Gets redirected to /reset-password page (via /confirm handler)
-    3. Enters new password in form
-    4. Frontend submits new password + tokens to this endpoint
+    SECURITY: Uses HttpOnly cookies for token delivery instead of URL parameters.
     
-    The tokens are provided in the URL by the /confirm handler after
-    validating the recovery token. These tokens give temporary access to update password.
+    Flow:
+    1. User clicks reset link in email
+    2. /confirm endpoint verifies token and sets HttpOnly cookies
+    3. User gets redirected to /reset-password page
+    4. User enters new password
+    5. Frontend calls this endpoint (cookies sent automatically)
+    6. Backend reads tokens from cookies and updates password
+    7. Cookies are deleted after successful reset
+    
+    Tokens are stored in secure HttpOnly cookies:
+    - recovery_access_token: Temporary access token from Supabase
+    - recovery_refresh_token: Temporary refresh token from Supabase
     """
     try:
-        access_token = request.token
-        refresh_token = request.refresh_token
+        # SECURITY: Read tokens from HttpOnly cookies (primary method)
+        # Fallback to request body for backward compatibility (deprecated)
+        access_token = fastapi_request.cookies.get("recovery_access_token") or request.token
+        refresh_token = fastapi_request.cookies.get("recovery_refresh_token") or request.refresh_token
         new_password = request.new_password
         
-        logger.info("Password reset attempt with recovery tokens")
+        if not access_token:
+            logger.warning("Password reset attempted without recovery tokens")
+            raise HTTPException(
+                status_code=401,
+                detail="No recovery session found. Please request a new password reset link."
+            )
+        
+        logger.info("Password reset attempt with recovery session")
         
         supabase = get_supabase()
         
@@ -786,6 +836,11 @@ async def reset_password(request: ResetPasswordRequest):
                 )
             
             logger.info(f"Password reset successful for user: {response.user.id}")
+            
+            # SECURITY: Delete recovery cookies after successful password reset
+            # This ensures tokens can't be reused
+            _delete_auth_cookie(response, "recovery_access_token")
+            _delete_auth_cookie(response, "recovery_refresh_token")
             
             return {
                 "message": "Password updated successfully! You can now log in with your new password.",
@@ -1352,7 +1407,11 @@ async def google_signin_initiate(
             "access_type": "offline",  # Get refresh token
             "prompt": "consent",  # Force consent screen for refresh token
             "code_challenge": code_challenge,
-            "code_challenge_method": "s256"
+            "code_challenge_method": "s256",
+            # CRITICAL SECURITY: Include state parameter in OAuth URL
+            # This state is returned in the callback URL and MUST match the cookie value
+            # to prevent login CSRF attacks (double-submit cookie pattern)
+            "state": csrf_token  # Use CSRF token portion for URL state binding
         }
         
         oauth_url = f"{supabase_url}/auth/v1/authorize?{urlencode(oauth_params)}"
@@ -1412,6 +1471,7 @@ async def google_signin_initiate(
 
 async def google_signin_callback(
     code: str = Query(None, description="Authorization code from Google"),
+    state: str = Query(None, description="OAuth state parameter for CSRF validation"),
     error: str = Query(None, description="Error from Google OAuth"),
     error_description: str = Query(None, description="Error description from Google"),
     response: Response = None,
@@ -1424,7 +1484,7 @@ async def google_signin_callback(
     authenticates. It validates the CSRF token and exchanges the code for a session.
     
     Security features:
-    - State (CSRF + redirect) is stored in HttpOnly cookie (not URL)
+    - State parameter in URL is validated against cookie value (double-submit pattern)
     - State signature is verified to prevent tampering
     - Redirect URL is re-validated before use (relative paths only)
     - Auth tokens are set in HttpOnly cookies only
@@ -1453,7 +1513,7 @@ async def google_signin_callback(
         # Even on error, try to extract redirect from state (if valid)
         redirect_path = None
         if state_cookie:
-            is_valid, redirect_path, _ = _verify_oauth_state_from_cookie(state_cookie)
+            is_valid, redirect_path, _, _ = _verify_oauth_state_from_cookie(state_cookie)
             # Don't fail on invalid state for error redirects - just use default
         
         # Use generic error message to avoid information disclosure from OAuth provider
@@ -1473,11 +1533,24 @@ async def google_signin_callback(
         return clear_oauth_state_cookie(redirect_resp)
     
     # ===== CSRF + PKCE VALIDATION (Critical Security Check) =====
-    # Validate state from cookie to prevent login CSRF attacks and retrieve PKCE verifier
-    is_valid, redirect_path, code_verifier = _verify_oauth_state_from_cookie(state_cookie)
+    # Double-submit cookie pattern: Validate URL state matches cookie's CSRF token
+    # This prevents login CSRF attacks where attacker sets the cookie then supplies their own code
+    is_valid, redirect_path, code_verifier, csrf_token = _verify_oauth_state_from_cookie(state_cookie)
     
     if not is_valid:
-        logger.warning("OAuth state validation failed - possible CSRF attack")
+        logger.warning("OAuth state cookie validation failed - possible CSRF attack")
+        redirect_resp = RedirectResponse(
+            url=f"{app_config.FRONTEND_URL}/login?error=csrf_failed&message=Security%20validation%20failed.%20Please%20try%20again."
+        )
+        return clear_oauth_state_cookie(redirect_resp)
+    
+    # CRITICAL: Validate URL state parameter matches cookie's CSRF token
+    # This is the key defense against login CSRF attacks
+    if not state or not csrf_token or not hmac.compare_digest(state, csrf_token):
+        logger.warning(
+            f"OAuth state mismatch - URL state: {state[:8] if state else 'None'}..., "
+            f"cookie CSRF: {csrf_token[:8] if csrf_token else 'None'}... - possible login CSRF attack"
+        )
         redirect_resp = RedirectResponse(
             url=f"{app_config.FRONTEND_URL}/login?error=csrf_failed&message=Security%20validation%20failed.%20Please%20try%20again."
         )

@@ -21,6 +21,7 @@ from starlette.applications import Starlette
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 from starlette.requests import Request
+from services.cookie_utils import REFRESH_TOKEN_COOKIE_NAME
 
 
 def _extract_refresh_token(request: Request) -> str | None:
@@ -33,7 +34,7 @@ def _extract_refresh_token(request: Request) -> str | None:
     
     Returns None if the cookie is missing or empty.
     """
-    token = request.cookies.get("refresh_token")
+    token = request.cookies.get(REFRESH_TOKEN_COOKIE_NAME)
     return token if token else None
 
 
@@ -58,7 +59,7 @@ class TestExtractRefreshToken:
 
     def test_single_cookie_extraction(self, test_app):
         """Test that a single refresh_token cookie is extracted correctly."""
-        response = test_app.get("/", headers={"Cookie": "refresh_token=valid_token_123"})
+        response = test_app.get("/", headers={"Cookie": "quizify_refresh_token=valid_token_123"})
         
         assert response.status_code == 200
         data = response.json()
@@ -74,7 +75,7 @@ class TestExtractRefreshToken:
         """
         response = test_app.get(
             "/", 
-            headers={"Cookie": "refresh_token=old_stale_token; refresh_token=new_valid_token"}
+            headers={"Cookie": "quizify_refresh_token=old_stale_token; quizify_refresh_token=new_valid_token"}
         )
         
         assert response.status_code == 200
@@ -85,7 +86,7 @@ class TestExtractRefreshToken:
         """Test with three duplicate cookies - should return the last one."""
         response = test_app.get(
             "/",
-            headers={"Cookie": "refresh_token=first; refresh_token=second; refresh_token=third"}
+            headers={"Cookie": "quizify_refresh_token=first; quizify_refresh_token=second; quizify_refresh_token=third"}
         )
         
         assert response.status_code == 200
@@ -94,7 +95,7 @@ class TestExtractRefreshToken:
 
     def test_empty_cookie_returns_none(self, test_app):
         """Test that an empty cookie value returns None."""
-        response = test_app.get("/", headers={"Cookie": "refresh_token="})
+        response = test_app.get("/", headers={"Cookie": "quizify_refresh_token="})
         
         assert response.status_code == 200
         data = response.json()
@@ -123,7 +124,7 @@ class TestExtractRefreshToken:
         """Test that cookies with special characters are handled correctly."""
         # Supabase tokens contain base64 characters including = and -
         token_value = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.test-payload_123"
-        response = test_app.get("/", headers={"Cookie": f"refresh_token={token_value}"})
+        response = test_app.get("/", headers={"Cookie": f"quizify_refresh_token={token_value}"})
         
         assert response.status_code == 200
         data = response.json()
@@ -131,7 +132,7 @@ class TestExtractRefreshToken:
 
     def test_whitespace_only_cookie_returns_none(self, test_app):
         """Test that whitespace-only cookie value returns None."""
-        response = test_app.get("/", headers={"Cookie": "refresh_token=   "})
+        response = test_app.get("/", headers={"Cookie": "quizify_refresh_token=   "})
         
         assert response.status_code == 200
         data = response.json()
@@ -145,7 +146,7 @@ class TestExtractRefreshToken:
         """Test extraction when multiple different cookies are present."""
         response = test_app.get(
             "/",
-            headers={"Cookie": "access_token=abc; refresh_token=target_token; session_id=xyz"}
+            headers={"Cookie": "access_token=abc; quizify_refresh_token=target_token; session_id=xyz"}
         )
         
         assert response.status_code == 200
@@ -388,13 +389,9 @@ class TestMiddlewareRedisIntegration:
         
         new_token = "new_refresh_token"
         old_token = "old_refresh_token"
-        update_attempted = False
         
         # Simulate the middleware logic
-        if new_token and new_token != old_token:
-            if redis_client:
-                # This branch is intentionally unreachable in this test
-                # to verify that None redis_client skips the update
-                update_attempted = True
+        # When redis_client is None and tokens differ, no update should occur
+        should_update = new_token and new_token != old_token and redis_client is not None
         
-        assert update_attempted is False
+        assert should_update is False

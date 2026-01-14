@@ -13,7 +13,6 @@ from services.cookie_utils import (
     REFRESH_TOKEN_COOKIE_NAME,
 )
 from services.redis.sessions import SessionService
-from config import config as app_config
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
@@ -24,7 +23,7 @@ _http_client: httpx.AsyncClient | None = None
 
 def _get_http_client() -> httpx.AsyncClient:
     """Get or create the shared async HTTP client."""
-    global _http_client
+    global _http_client  # noqa: PLW0603  # type: ignore[global-statement]
     if _http_client is None:
         _http_client = httpx.AsyncClient(timeout=10.0)
     return _http_client
@@ -36,7 +35,7 @@ async def close_http_client() -> None:
     
     Should be called during application shutdown to prevent resource leaks.
     """
-    global _http_client
+    global _http_client  # noqa: PLW0603  # type: ignore[global-statement]
     if _http_client is not None:
         await _http_client.aclose()
         _http_client = None
@@ -97,9 +96,9 @@ class SupabaseAutoRefreshMiddleware(BaseHTTPMiddleware):
                 if user_resp.status_code == 200:
                     return await call_next(request)
                 logger.info("Access token invalid, attempting refresh", extra={"status": user_resp.status_code})
-            except Exception:
+            except Exception:  # noqa: BLE001
                 logger.exception("Access token validation failed, attempting refresh")
-                pass  # Fall through to refresh
+                # Fall through to refresh
 
         if refresh_token:
             try:
@@ -119,7 +118,7 @@ class SupabaseAutoRefreshMiddleware(BaseHTTPMiddleware):
                     new_access_token = session.get("access_token")
                     new_refresh_token = session.get("refresh_token")
                     if not new_access_token:
-                        raise Exception("No access token returned")
+                        raise ValueError("No access token returned from refresh")
 
                     # Make refreshed token available to downstream dependencies immediately
                     request.state.access_token = new_access_token
@@ -177,9 +176,9 @@ class SupabaseAutoRefreshMiddleware(BaseHTTPMiddleware):
                             session_id = await session_service.find_session_by_refresh_token(refresh_token)
                             if session_id:
                                 await session_service.logout(session_id)
-                                logger.info(f"Cleaned up expired session {session_id[:12]}... on auto-logout (refresh failed)")
-                        except Exception as cleanup_error:
-                            logger.warning(f"Failed to cleanup session on auto-logout: {cleanup_error}")
+                                logger.info("Cleaned up expired session %s... on auto-logout (refresh failed)", session_id[:12])
+                        except Exception as cleanup_error:  # noqa: BLE001
+                            logger.warning("Failed to cleanup session on auto-logout: %s", cleanup_error)
                     
                     # Don't call the next handler - return 401 directly and clear cookies
                     response = JSONResponse(
@@ -190,7 +189,7 @@ class SupabaseAutoRefreshMiddleware(BaseHTTPMiddleware):
                     _delete_auth_cookie(response, REFRESH_TOKEN_COOKIE_NAME)
                     _delete_auth_cookie(response, ACCESS_TOKEN_COOKIE_NAME)
                     return response
-            except Exception:
+            except Exception:  # noqa: BLE001
                 logger.exception("Token refresh failed - clearing cookies")
                 
                 # Cleanup Redis session before returning 401
@@ -201,9 +200,9 @@ class SupabaseAutoRefreshMiddleware(BaseHTTPMiddleware):
                         session_id = await session_service.find_session_by_refresh_token(refresh_token)
                         if session_id:
                             await session_service.logout(session_id)
-                            logger.info(f"Cleaned up expired session {session_id[:12]}... on auto-logout (refresh exception)")
-                    except Exception as cleanup_error:
-                        logger.warning(f"Failed to cleanup session on auto-logout: {cleanup_error}")
+                            logger.info("Cleaned up expired session %s... on auto-logout (refresh exception)", session_id[:12])
+                    except Exception as cleanup_error:  # noqa: BLE001
+                        logger.warning("Failed to cleanup session on auto-logout: %s", cleanup_error)
                 
                 response = JSONResponse(
                     status_code=HTTP_401_UNAUTHORIZED,

@@ -104,7 +104,8 @@
               "});",
               "",
               "pm.test(\"Cookies are set\", function () {",
-              "    pm.expect(pm.cookies.has('access_token')).to.be.true;",
+              "    pm.expect(pm.cookies.has('quizify_access_token')).to.be.true;",
+              "    pm.expect(pm.cookies.has('quizify_refresh_token')).to.be.true;",
               "});"
             ],
             "type": "text/javascript"

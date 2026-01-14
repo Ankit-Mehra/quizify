@@ -25,6 +25,7 @@ class QuizSubmission(BaseModel):
     wrong_count: int = Field(..., description="Number of wrong answers", ge=0)
     total_questions: int = Field(..., description="Total questions answered", gt=0)
     submitted_at: datetime = Field(..., description="Timestamp of submission")
+    quiz_title: str | None = Field(None, description="Title of the quiz (for display purposes)")
 
 class QuizAnswer(BaseModel):
     """Individual answer record with correctness evaluation"""

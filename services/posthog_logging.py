@@ -63,7 +63,8 @@ _APP_LOGGER_NAMES = [
     "services.db_services.supabase_file",
     "services.redis.sessions",
     "services.share_service",
-    "services.ai_services.gemini_service",
+    "services.llm.gemini_provider",  # Replaced gemini_service
+    "services.llm.groq_provider",
     "services.exporters.csv_anki_exporter",
     "services.exporters.csv_quizify_exporter",
     "services.exporters.docx_exporter",
@@ -122,7 +123,7 @@ def setup_posthog_logging(
         - Thread-safe with singleton pattern
         - Logs below min_log_level are not sent to PostHog (but still logged locally)
     """
-    global _logger_provider, _logging_handler, _posthog_logging_initialized
+    global _logger_provider, _logging_handler, _posthog_logging_initialized  # noqa: PLW0603  # type: ignore[global-statement]
     
     # Fast path: already initialized
     if _posthog_logging_initialized:
@@ -199,13 +200,13 @@ def setup_posthog_logging(
             
             _posthog_logging_initialized = True
             _module_logger.info(
-                f"PostHog OpenTelemetry logging initialized "
-                f"(endpoint: {logs_endpoint}, level: {logging.getLevelName(min_log_level)})"
+                "PostHog OpenTelemetry logging initialized (endpoint: %s, level: %s)",
+                logs_endpoint, logging.getLevelName(min_log_level)
             )
             return True
             
-        except Exception as e:
-            _module_logger.error(f"Failed to initialize PostHog logging: {e}")
+        except Exception as e:  # noqa: BLE001
+            _module_logger.error("Failed to initialize PostHog logging: %s", e)
             # Clean up partial initialization to allow retry
             _logger_provider = None
             _logging_handler = None
@@ -223,7 +224,7 @@ def shutdown_posthog_logging() -> None:
     Each cleanup step is wrapped in its own try-except to ensure
     we attempt all cleanup operations even if one fails.
     """
-    global _logger_provider, _logging_handler, _posthog_logging_initialized
+    global _logger_provider, _logging_handler, _posthog_logging_initialized  # noqa: PLW0603  # type: ignore[global-statement]
     
     with _posthog_logging_lock:
         if not _posthog_logging_initialized:
@@ -247,8 +248,8 @@ def shutdown_posthog_logging() -> None:
                 
                 _logging_handler = None
                 handler_removed = True
-        except Exception as e:
-            _module_logger.error(f"Error removing logging handler: {e}")
+        except Exception as e:  # noqa: BLE001
+            _module_logger.error("Error removing logging handler: %s", e)
         
         # Step 2: Shutdown provider (flushes pending logs)
         try:
@@ -256,8 +257,8 @@ def shutdown_posthog_logging() -> None:
                 _logger_provider.shutdown()
                 _logger_provider = None
                 provider_shutdown = True
-        except Exception as e:
-            _module_logger.error(f"Error shutting down logger provider: {e}")
+        except Exception as e:  # noqa: BLE001
+            _module_logger.error("Error shutting down logger provider: %s", e)
         
         # Always mark as uninitialized to allow re-initialization
         _posthog_logging_initialized = False

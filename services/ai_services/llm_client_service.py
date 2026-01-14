@@ -1,18 +1,25 @@
 """
-OpenAI Service with PostHog LLM Analytics Integration.
+LLM Client Service with PostHog Analytics Integration.
 
-This service provides quiz generation using OpenAI's GPT models with
-automatic tracking of:
+This service provides:
+1. OpenAI client management (singleton, thread-safe)
+2. PostHog LLM analytics tracking
+3. Retry logic for transient errors
+4. Quiz generation functions using OpenAI's GPT models
+
+Tracked metrics:
 - Token usage (input/output)
 - Latency and response times
 - Cost estimation
 - User-level analytics
 - Trace correlation for multi-step workflows
-- Thread-safe singleton initialization
 
 Note: Once initialized, the client type (PostHog-wrapped vs standard) cannot
 change without restarting the application. This is intentional for performance
 and to maintain consistent behavior throughout the application lifecycle.
+
+Renamed from openai_service.py to llm_client_service.py to better reflect
+that this provides the core LLM client infrastructure used by all AI services.
 """
 
 import os
@@ -112,7 +119,7 @@ async def _retry_with_backoff(coro_factory, max_retries: int = LLM_MAX_RETRIES):
         except (RateLimitError, APIConnectionError, APITimeoutError) as e:
             last_exception = e
             if attempt == max_retries:
-                logger.error(f"LLM request failed after {max_retries + 1} attempts: {e}")
+                logger.error("LLM request failed after %d attempts: %s", max_retries + 1, e)
                 raise
             
             # For RateLimitError, respect Retry-After header if present
@@ -121,24 +128,27 @@ async def _retry_with_backoff(coro_factory, max_retries: int = LLM_MAX_RETRIES):
                 if retry_after:
                     actual_delay = min(float(retry_after), LLM_MAX_DELAY)
                     logger.warning(
-                        f"Rate limited (attempt {attempt + 1}/{max_retries + 1}). "
-                        f"Respecting Retry-After: {actual_delay:.1f}s"
+                        "Rate limited (attempt %d/%d). "
+                        "Respecting Retry-After: %.1fs",
+                        attempt + 1, max_retries + 1, actual_delay
                     )
                 else:
                     # Fallback to exponential backoff with jitter
                     jitter = random.uniform(-delay * 0.1, delay * 0.1)
                     actual_delay = min(delay + jitter, LLM_MAX_DELAY)
                     logger.warning(
-                        f"Rate limited (attempt {attempt + 1}/{max_retries + 1}). "
-                        f"Retrying in {actual_delay:.1f}s..."
+                        "Rate limited (attempt %d/%d). "
+                        "Retrying in %.1fs...",
+                        attempt + 1, max_retries + 1, actual_delay
                     )
             else:
                 # For connection/timeout errors, use exponential backoff with jitter
                 jitter = random.uniform(-delay * 0.1, delay * 0.1)
                 actual_delay = min(delay + jitter, LLM_MAX_DELAY)
                 logger.warning(
-                    f"LLM request failed (attempt {attempt + 1}/{max_retries + 1}): {type(e).__name__}. "
-                    f"Retrying in {actual_delay:.1f}s..."
+                    "LLM request failed (attempt %d/%d): %s. "
+                    "Retrying in %.1fs...",
+                    attempt + 1, max_retries + 1, type(e).__name__, actual_delay
                 )
             
             await asyncio.sleep(actual_delay)
@@ -168,7 +178,7 @@ def _create_openai_client() -> BaseAsyncOpenAI:
     Both clients are configured with LLM_TIMEOUT to prevent hung requests.
     The httpx client is stored globally for proper lifecycle management.
     """
-    global _http_client
+    global _http_client  # noqa: PLW0603  # type: ignore[global-statement]
     
     # Create httpx client with higher connection limits for parallel batch requests
     # Default is 10 connections per host which serializes parallel calls
@@ -199,7 +209,7 @@ def get_openai_client() -> BaseAsyncOpenAI:
     
     Uses double-checked locking pattern for thread-safe lazy initialization.
     """
-    global _client
+    global _client  # noqa: PLW0603  # type: ignore[global-statement]
     
     # Fast path: return cached client if already initialized
     if _client is not None:
@@ -221,7 +231,7 @@ async def cleanup_openai_client() -> None:
     and prevent resource leaks. This is especially important for the httpx
     AsyncClient which manages connection pooling.
     """
-    global _client, _http_client
+    global _client, _http_client  # noqa: PLW0603  # type: ignore[global-statement]
     
     if _http_client is not None:
         await _http_client.aclose()
@@ -277,23 +287,23 @@ def _get_user_email_cached(user_id: str) -> Optional[str]:
             if current_time < expiry:
                 # Move to end for LRU ordering
                 _email_cache.move_to_end(user_id)
-                logger.debug(f"Email cache HIT for user {user_id[:8]}...")
+                logger.debug("Email cache HIT for user %s...", user_id[:8])
                 return email
             else:
                 # Expired - remove from cache
                 del _email_cache[user_id]
-                logger.debug(f"Email cache EXPIRED for user {user_id[:8]}...")
+                logger.debug("Email cache EXPIRED for user %s...", user_id[:8])
     
     # Cache miss or expired - fetch from database
     email = None
     try:
-        from config import config
+        # Use module-level config (already imported at top)
         supabase = config.get_supabase_client()
         response = supabase.table("user_tier_info").select("email").eq("id", user_id).execute()
         if response.data and len(response.data) > 0:
             email = response.data[0].get("email")
-    except Exception as e:
-        logger.warning(f"Failed to get email for user {user_id[:8]}...: {e}")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Failed to get email for user %s...: %s", user_id[:8], e)
         # Don't cache failures - return None and try again next time
         return None
     
@@ -304,7 +314,7 @@ def _get_user_email_cached(user_id: str) -> Optional[str]:
             _email_cache.popitem(last=False)  # Remove oldest (first) item
         
         _email_cache[user_id] = (email, current_time + _EMAIL_CACHE_TTL_SECONDS)
-        logger.debug(f"Email cache SET for user {user_id[:8]}... (TTL: {_EMAIL_CACHE_TTL_SECONDS}s)")
+        logger.debug("Email cache SET for user %s... (TTL: %ds)", user_id[:8], _EMAIL_CACHE_TTL_SECONDS)
     
     return email
 
@@ -325,7 +335,7 @@ def invalidate_user_email_cache(user_id: str) -> bool:
     with _email_cache_lock:
         if user_id in _email_cache:
             del _email_cache[user_id]
-            logger.info(f"Invalidated email cache for user {user_id[:8]}...")
+            logger.info("Invalidated email cache for user %s...", user_id[:8])
             return True
         return False
 
@@ -361,12 +371,18 @@ def _build_posthog_kwargs(
     
     # Prefer email as distinct_id (shows nicely in PostHog UI)
     # Fall back to user_id if email not available
+    # CRITICAL: Always provide distinct_id - PostHog falls back to trace_id if not provided
+    # which creates separate "Person" entries for each trace (showing UUIDs instead of user)
     if user_email:
         kwargs["posthog_distinct_id"] = user_email
     elif user_id:
         # Try to get email from cache
         email = _get_user_email_cached(user_id)
         kwargs["posthog_distinct_id"] = email if email else user_id
+    else:
+        # Always provide a distinct_id, even if no user context
+        # This prevents PostHog from using trace_id as distinct_id
+        kwargs["posthog_distinct_id"] = "system"
     
     if trace_id:
         kwargs["posthog_trace_id"] = trace_id
@@ -430,9 +446,10 @@ async def generate_quiz_for_type(
     )
 
     # Use retry wrapper for transient errors (rate limits, connection issues)
+    # This service uses OpenAI client directly, so always use OpenAI models
     response = await _retry_with_backoff(
         lambda: client.chat.completions.create(
-            model=config.LLM_MODEL_PRIMARY,
+            model=config.OPENAI_MODEL_PRIMARY,
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
             **posthog_kwargs
@@ -445,7 +462,7 @@ async def generate_quiz_for_type(
     if raw_json.startswith("```json") and raw_json.endswith("```"):
         raw_json = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw_json.strip())
 
-    logger.debug(f"Raw JSON response for {qtype}: {raw_json[:200]}...")
+    logger.debug("Raw JSON response for %s: %s...", qtype, raw_json[:200])
 
     parsed = Quizzes.model_validate_json(raw_json)
     return parsed.quizzes
@@ -459,12 +476,14 @@ async def generate_quiz_async(
     trace_id: Optional[str] = None,
     generation_mode: str = "standard",
     content_source_type: Optional[str] = None,
+    provider_name: Optional[str] = None,
 ) -> List[Question]:
     """
-    Generate a mixed-type quiz using GPT-4o-mini with structured output.
+    Generate a mixed-type quiz using the configured LLM provider.
     
     This is the primary quiz generation function that supports multiple
-    question types in a single call using OpenAI's structured output feature.
+    question types in a single call. Supports multiple LLM providers
+    (OpenAI, Gemini, Groq) via the provider abstraction layer.
     
     Args:
         text: Source text to generate questions from
@@ -474,77 +493,81 @@ async def generate_quiz_async(
         trace_id: Optional trace ID for correlating related LLM calls
         generation_mode: "standard" or "enhanced" for analytics tracking
         content_source_type: "text", "file", or "url" for analytics tracking
+        provider_name: LLM provider to use (default: config.DEFAULT_LLM_PROVIDER)
         
     Returns:
         List of generated Question objects
     """
+    from services.llm import get_llm_provider, LLMGenerationRequest
+    
     prompt = build_quiz_prompt_mixed(text, num_questions, question_types)
     
-    logger.debug("Generating quiz with %s questions for types %s", num_questions, question_types)
+    # Get the configured LLM provider
+    provider = get_llm_provider(provider_name)
     
-    client = get_openai_client()
+    logger.debug(
+        "Generating quiz with %s questions for types %s using provider: %s",
+        num_questions, question_types, provider.provider_name
+    )
     
-    # Determine question_type for PostHog (use "mixed" if multiple types, otherwise the single type)
-    # This ensures consistent filtering in PostHog - always use singular "question_type" 
+    # Determine question_type for analytics (use "mixed" if multiple types)
     if len(question_types) == 1:
         question_type_value = question_types[0]
     else:
         question_type_value = "mixed"
     
-    # Build PostHog tracking kwargs with generation mode and source type
+    # Build analytics properties
     properties = {
-        "question_type": question_type_value,  # Singular, consistent with generate_quiz_for_type
+        "question_type": question_type_value,
         "num_questions": num_questions,
         "content_length": len(text),
         "feature": "quiz_generation",
-        "model": config.LLM_MODEL_MINI,
+        "model": provider.default_model,
+        "provider": provider.provider_name,
         "generation_mode": generation_mode,
-        "quiz_type": generation_mode,  # Epic 5.1: Add quiz_type (standard/enhanced)
+        "quiz_type": generation_mode,
     }
     if content_source_type:
         properties["content_source_type"] = content_source_type
     
-    posthog_kwargs = _build_posthog_kwargs(
-        user_id=user_id,
-        trace_id=trace_id,
-        properties=properties
-    )
+    # Generate using the provider abstraction
+    try:
+        response = await provider.generate(LLMGenerationRequest(
+            prompt=prompt,
+            response_format="json_object",
+            user_id=user_id,
+            trace_id=trace_id,
+            properties=properties,
+            temperature=0.7,
+        ))
+    except Exception as e:
+        logger.error("LLM generation failed with provider %s: %s", provider.provider_name, e)
+        raise QuizParseError(
+            message=f"Failed to generate quiz: {str(e)}",
+            raw_response=None
+        ) from e
     
-    # OpenAI's structured outputs API doesn't support Union types (it generates oneOf in the JSON schema).
-    # This is problematic because our QuizzesParsed model uses a discriminated Union for question types.
-    # OpenAI's output may not match the expected schema, causing parsing failures with Pydantic.
-    # Therefore, we parse the JSON manually and validate with Pydantic after.
-    # Use retry wrapper for transient errors (rate limits, connection issues)
-    response = await _retry_with_backoff(
-        lambda: client.chat.completions.create(
-            model=config.LLM_MODEL_MINI,
-            messages=[{"role": "user", "content": prompt}],
-            response_format={"type": "json_object"},
-            **posthog_kwargs
-        )
-    )
-    
-    raw_json = (response.choices[0].message.content or "").strip()
+    raw_json = (response.content or "").strip()
     
     if not raw_json:
-        logger.warning("OpenAI returned empty content for quiz generation")
+        logger.warning("LLM returned empty content for quiz generation")
         return []
     
     # Strip triple backticks and "json" if present (defensive parsing, case-insensitive)
     if re.match(r"^```(?:json)?", raw_json, re.IGNORECASE) and raw_json.endswith("```"):
         raw_json = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw_json, flags=re.IGNORECASE)
     
-    logger.debug(f"Raw JSON response for mixed quiz: {raw_json[:200]}...")
+    logger.debug("Raw JSON response for mixed quiz: %s...", raw_json[:200])
     
     # Validate with Pydantic
     try:
         parsed_response = QuizzesParsed.model_validate_json(raw_json)
     except ValidationError as e:
-        logger.error(f"Failed to parse quiz response: {e}")
+        logger.error("Failed to parse quiz response: %s", e)
         raise QuizParseError(
             message="Failed to parse AI-generated quiz. Please try again.",
             raw_response=raw_json[:500] if raw_json else None
-        )
+        ) from e
 
     if not parsed_response or not parsed_response.quizzes:
         return []

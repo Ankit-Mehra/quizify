@@ -4,7 +4,7 @@ import random
 from typing import Dict, Any, Optional, List
 
 from config import config
-from services.ai_services.openai_service import get_openai_client, _build_posthog_kwargs
+from services.ai_services.llm_client_service import get_openai_client, _build_posthog_kwargs
 from services.ai_services.context_service import ContextService
 from services.ai_services.pricing import calculate_cost
 from services.ai_services.explanation_service import ExplanationService
@@ -136,7 +136,7 @@ class QuizOrchestrationService:
             # Check for blank marker in question
             question = result.get("question", "")
             if "_____" not in question and "____" not in question and "{{blank}}" not in question.lower():
-                logger.warning(f"Fill-blank question may be missing blank marker: {question[:50]}...")
+                logger.warning("Fill-blank question may be missing blank marker: %s...", question[:50])
                 
         elif question_type == "matching":
             left = result.get("left")
@@ -210,7 +210,8 @@ class QuizOrchestrationService:
         )
         
         # 4. Call LLM with PostHog tracking
-        model = config.LLM_MODEL_PRIMARY
+        # Use OpenAI-specific model - this service uses OpenAI client directly for RAG
+        model = config.OPENAI_MODEL_PRIMARY
         posthog_kwargs = _build_posthog_kwargs(
             user_id=user_id,
             trace_id=trace_id,
@@ -244,9 +245,9 @@ class QuizOrchestrationService:
             # 5. Parse Response
             try:
                 result = json.loads(content)
-            except json.JSONDecodeError:
-                logger.error(f"Failed to parse JSON from question generation: {content[:100]}...")
-                raise ValueError("Invalid JSON response from LLM")
+            except json.JSONDecodeError as exc:
+                logger.error("Failed to parse JSON from question generation: %s...", content[:100])
+                raise ValueError("Invalid JSON response from LLM") from exc
             
             # 5b. Pre-validate required fields BEFORE expensive verification call
             # This catches malformed LLM responses early and saves verification tokens
@@ -274,7 +275,7 @@ class QuizOrchestrationService:
             )
             
             # 7. Verify + Explain in ONE LLM call (50% faster than separate calls)
-            is_valid, confidence, issues, explanation, distractor_explanations = await self.explanation_service.verify_and_explain(
+            is_valid, _confidence, issues, explanation, distractor_explanations = await self.explanation_service.verify_and_explain(
                 question_data=result,
                 context=context,
                 user_id=user_id,
@@ -283,7 +284,7 @@ class QuizOrchestrationService:
             )
             
             if not is_valid:
-                logger.warning(f"Question verification failed: {issues}")
+                logger.warning("Question verification failed: %s", issues)
                 # Strictly filter out low-quality questions
                 raise ValueError(f"Question rejected by verification: {issues}")
             
@@ -310,13 +311,13 @@ class QuizOrchestrationService:
             return result
             
         except Exception as e:
-            logger.error(f"Error generating question: {str(e)}")
+            logger.error("Error generating question: %s", e)
             # Track failure to Supabase (sync)
             track_llm_call(
                 user_id=user_id,
                 trace_id=trace_id,
                 call_type="generation",
-                model=config.LLM_MODEL_PRIMARY,
+                model=config.OPENAI_MODEL_PRIMARY,
                 input_tokens=0,
                 output_tokens=0,
                 latency_ms=int((time.time() - start_time) * 1000),
@@ -331,7 +332,7 @@ class QuizOrchestrationService:
                 properties={
                     "generation_mode": "enhanced",
                     "stage": "rag_question_generation",
-                    "model": config.LLM_MODEL_PRIMARY,
+                    "model": config.OPENAI_MODEL_PRIMARY,
                     "question_type": question_type,
                     "content_source_type": content_source_type,
                     "trace_id": trace_id,
@@ -452,7 +453,7 @@ class QuizOrchestrationService:
         )
         
         # Call LLM
-        model = config.LLM_MODEL_PRIMARY
+        model = config.OPENAI_MODEL_PRIMARY
         posthog_kwargs = _build_posthog_kwargs(
             user_id=user_id,
             trace_id=trace_id,
@@ -487,9 +488,9 @@ class QuizOrchestrationService:
             # Parse Response
             try:
                 result = json.loads(content)
-            except json.JSONDecodeError:
-                logger.error(f"Failed to parse JSON from matching generation: {content[:100]}...")
-                raise ValueError("Invalid JSON response from LLM")
+            except json.JSONDecodeError as exc:
+                logger.error("Failed to parse JSON from matching generation: %s...", content[:100])
+                raise ValueError("Invalid JSON response from LLM") from exc
             
             # Validate matching structure
             self._validate_question_structure(result, "matching")
@@ -527,7 +528,7 @@ class QuizOrchestrationService:
                 if explanation:
                     logger.info("Used fallback explanation for matching question")
             
-            logger.info(f"Matching question generated successfully with {len(result.get('left', []))} pairs")
+            logger.info("Matching question generated successfully with %d pairs", len(result.get('left', [])))
             
             # Format Result
             result["explanation"] = explanation
@@ -542,13 +543,13 @@ class QuizOrchestrationService:
             return result
             
         except Exception as e:
-            logger.error(f"Error generating matching question: {str(e)}")
+            logger.error("Error generating matching question: %s", e)
             # Track failure to Supabase
             track_llm_call(
                 user_id=user_id,
                 trace_id=trace_id,
                 call_type="matching_generation",
-                model=config.LLM_MODEL_PRIMARY,
+                model=config.OPENAI_MODEL_PRIMARY,
                 input_tokens=0,
                 output_tokens=0,
                 latency_ms=int((time.time() - start_time) * 1000),
@@ -562,7 +563,7 @@ class QuizOrchestrationService:
                 properties={
                     "generation_mode": "enhanced",
                     "stage": "rag_matching_generation",
-                    "model": config.LLM_MODEL_PRIMARY,
+                    "model": config.OPENAI_MODEL_PRIMARY,
                     "question_type": "matching",
                     "content_source_type": content_source_type,
                     "trace_id": trace_id,

@@ -3,7 +3,7 @@ import time
 from typing import Dict, Any, List, Optional, Tuple
 
 from config import config
-from services.ai_services.openai_service import get_openai_client, _build_posthog_kwargs
+from services.ai_services.llm_client_service import get_openai_client, _build_posthog_kwargs
 from services.db_services.supabase_llm_analytics import track_llm_call
 from services.posthog_service import capture_exception
 from services.ai_services.pricing import calculate_cost
@@ -261,7 +261,7 @@ class ExplanationService:
             distractor_explanations_dict is None for true_false and matching, populated for MCQ and fill_blank
         """
         start_time = time.time()
-        model = config.LLM_MODEL_MINI
+        model = config.OPENAI_MODEL_MINI
         
         try:
             # Detect question type and build appropriate prompt
@@ -286,29 +286,34 @@ class ExplanationService:
                             else:
                                 # Log skipped pair for debugging - invalid right index
                                 logger.debug(
-                                    f"Skipping pair: left[{i}] ('{left_item}') - "
-                                    f"invalid right_idx ({right_idx}) or out of bounds (right len: {len(right)})"
+                                    "Skipping pair: left[%d] ('%s') - "
+                                    "invalid right_idx (%s) or out of bounds (right len: %d)",
+                                    i, left_item, right_idx, len(right)
                                 )
                         else:
                             # Log skipped pair for debugging - no mapping in correct_answer
                             logger.debug(
-                                f"Skipping pair: left[{i}] ('{left_item}') - "
-                                f"correct_answer does not have index {i} (len: {len(correct_answer)})"
+                                "Skipping pair: left[%d] ('%s') - "
+                                "correct_answer does not have index %d (len: %d)",
+                                i, left_item, i, len(correct_answer)
                             )
                 
                 # Log summary if not all left items were matched
                 if left and len(matched_pairs_list) != len(left):
                     logger.debug(
-                        f"Not all left items were matched: {len(matched_pairs_list)} pairs created "
-                        f"from {len(left)} left items (correct_answer length: {len(correct_answer)})"
+                        "Not all left items were matched: %d pairs created "
+                        "from %d left items (correct_answer length: %d)",
+                        len(matched_pairs_list), len(left), len(correct_answer)
                     )
                 
                 matched_pairs_str = "\n".join(matched_pairs_list) if matched_pairs_list else "N/A (invalid matching data)"
                 
                 # Log what we're sending to verification
-                logger.info(f"Matching verification - pairs built: {len(matched_pairs_list)}, left: {len(left) if left else 0}, right: {len(right) if right else 0}")
+                logger.info("Matching verification - pairs built: %d, left: %d, right: %d",
+                           len(matched_pairs_list), len(left) if left else 0, len(right) if right else 0)
                 if matched_pairs_str == "N/A (invalid matching data)":
-                    logger.warning(f"Matching verification getting invalid data - left: {left}, right: {right}, correct_answer: {correct_answer}")
+                    logger.warning("Matching verification getting invalid data - left: %s, right: %s, correct_answer: %s",
+                                  left, right, correct_answer)
                 
                 prompt = VERIFY_AND_EXPLAIN_MATCHING_PROMPT.format(
                     question=question_data.get("question"),
@@ -380,7 +385,7 @@ class ExplanationService:
             try:
                 result = json.loads(content)
             except json.JSONDecodeError as json_err:
-                logger.error(f"verify_and_explain: invalid JSON from LLM: {content[:200]}")
+                logger.error("verify_and_explain: invalid JSON from LLM: %s", content[:200])
                 track_llm_call(
                     user_id=user_id,
                     trace_id=trace_id,
@@ -420,8 +425,8 @@ class ExplanationService:
                 result.get("distractor_explanations", None)  # None for true_false/matching, dict for MCQ/fill_blank
             )
             
-        except Exception as e:
-            logger.error(f"Verify+explain failed: {str(e)}")
+        except Exception as e:  # noqa: BLE001
+            logger.error("Verify+explain failed: %s", e)
             # Capture to PostHog Error Tracking for proper stack traces
             capture_exception(
                 exception=e,
@@ -429,7 +434,7 @@ class ExplanationService:
                 properties={
                     "generation_mode": "enhanced",
                     "stage": "verify_and_explain",
-                    "model": config.LLM_MODEL_MINI,
+                    "model": config.OPENAI_MODEL_MINI,
                     "content_source_type": content_source_type,
                     "trace_id": trace_id,
                 }
@@ -451,7 +456,7 @@ class ExplanationService:
         Note: Consider using verify_and_explain() instead for better performance.
         """
         start_time = time.time()
-        model = config.LLM_MODEL_MINI
+        model = config.OPENAI_MODEL_MINI
         
         try:
             prompt = VERIFICATION_PROMPT.format(
@@ -491,7 +496,7 @@ class ExplanationService:
             try:
                 result = json.loads(content)
             except json.JSONDecodeError as json_err:
-                logger.error(f"verify_question: invalid JSON from LLM: {content[:200]}")
+                logger.error("verify_question: invalid JSON from LLM: %s", content[:200])
                 track_llm_call(
                     user_id=user_id,
                     trace_id=trace_id,
@@ -529,8 +534,8 @@ class ExplanationService:
                 result.get("issues", [])
             )
             
-        except Exception as e:
-            logger.error(f"Verification failed: {str(e)}")
+        except Exception as e:  # noqa: BLE001
+            logger.error("Verification failed: %s", e)
             # Capture exception to PostHog for proper error tracking with stack trace
             capture_exception(
                 exception=e,
@@ -538,7 +543,7 @@ class ExplanationService:
                 properties={
                     "generation_mode": "enhanced",
                     "stage": "verification",
-                    "model": config.LLM_MODEL_MINI,
+                    "model": config.OPENAI_MODEL_MINI,
                     "content_source_type": content_source_type,
                     "trace_id": trace_id,
                 }
@@ -558,7 +563,7 @@ class ExplanationService:
         Generate detailed explanation string.
         """
         start_time = time.time()
-        model = config.LLM_MODEL_MINI
+        model = config.OPENAI_MODEL_MINI
         
         try:
             # Prepare distractors string
@@ -604,7 +609,7 @@ class ExplanationService:
             try:
                 result = json.loads(content)
             except json.JSONDecodeError as json_err:
-                logger.error(f"generate_explanation: invalid JSON from LLM: {content[:200]}")
+                logger.error("generate_explanation: invalid JSON from LLM: %s", content[:200])
                 track_llm_call(
                     user_id=user_id,
                     trace_id=trace_id,
@@ -646,15 +651,15 @@ class ExplanationService:
             final_text = f"{main_expl}\n\n"
             if dist_expls:
                 final_text += "Analysis of options:\n"
-                for k, v in dist_expls.items():
+                for _k, v in dist_expls.items():
                     # If key is like "distractor_1", try to map to option text if possible
                     # But simple listing is fine
                     final_text += f"- {v}\n"
             
             return final_text.strip()
             
-        except Exception as e:
-            logger.error(f"Explanation generation failed: {str(e)}")
+        except Exception as e:  # noqa: BLE001
+            logger.error("Explanation generation failed: %s", e)
             # Capture exception to PostHog for proper error tracking with stack trace
             capture_exception(
                 exception=e,
@@ -662,7 +667,7 @@ class ExplanationService:
                 properties={
                     "generation_mode": "enhanced",
                     "stage": "explanation_generation",
-                    "model": config.LLM_MODEL_MINI,
+                    "model": config.OPENAI_MODEL_MINI,
                     "content_source_type": content_source_type,
                     "trace_id": trace_id,
                 }
