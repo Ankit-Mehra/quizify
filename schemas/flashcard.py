@@ -188,8 +188,8 @@ class FlashcardGenerationResponse(BaseModel):
         default_factory=dict,
         description="Generation statistics (concepts extracted, chunks processed, etc.)"
     )
-    credits_consumed: int = Field(1, description="Credits consumed for this generation")
-    
+    credits_consumed: float = Field(0.5, description="Credits consumed for this generation (0.5 for standard, 1.0 for enhanced)")
+
     class Config:
         from_attributes = True
 
