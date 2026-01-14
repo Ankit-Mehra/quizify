@@ -311,7 +311,8 @@ class ContentIngestionService:
         
         try:
             # Use existing web scraping service (includes SSRF protection)
-            result = await scrape_content(url, user_id, user_token)
+            # scrape_content returns tuple: (extracted_text, file_info_dict or None)
+            extracted_text, file_info = await scrape_content(url, user_id, user_token)
         except HTTPException:
             # Re-raise HTTP exceptions as-is
             raise
@@ -323,9 +324,11 @@ class ContentIngestionService:
                 original_error=e,
             )
         
-        # Extract text and metadata from scrape result
-        extracted_text = result.get("text", "")
-        page_title = result.get("title", "")
+        # Extract file_id if PDF was saved
+        file_id = file_info.get("file_id") if file_info else None
+        # Current scraping pipeline does not provide a page title for HTML or PDF;
+        # we keep this placeholder and fall back to URL-based title extraction.
+        page_title = ""
         
         cleaned_text = self._normalize_text(extracted_text)
         
@@ -344,7 +347,7 @@ class ContentIngestionService:
             metadata={
                 "original_url": url,
                 "scraped_title": page_title,
-                "file_id": result.get("file_id"),  # If PDF was downloaded
+                "file_id": file_id,  # If PDF was downloaded
             },
             extracted_at=datetime.utcnow(),
         )

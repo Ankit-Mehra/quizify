@@ -261,7 +261,7 @@ Return ONLY valid JSON with this exact structure:
   "cards": [
     {{
       "front": "Question or prompt text",
-      "back": "Answer or response text"{', "hint": "Optional hint"' if include_hints else ''}
+      "back": "Answer or response text"{', "hint": "Hint to help recall the answer"' if include_hints else ''}
     }}
   ]
 }}
@@ -345,13 +345,15 @@ Mix these types throughout the deck for engaging study sessions.
 def _get_hint_instruction(include_hints: bool) -> str:
     """Get hint instruction based on configuration."""
     if include_hints:
-        return """## HINTS (OPTIONAL)
-Include a brief hint for each card to help learners who are stuck.
-Hints should:
+        return """## HINTS (Required)
+Include a "hint" field for every card.
+Each hint should:
 - Give a clue without revealing the answer
-- Reference the topic area or first letter
+- Reference the topic area, first letter, or related concept
 - Be shorter than the answer itself
-Example: For "What is the capital of France?" → Hint: "Starts with 'P', city of lights"
+Example: For "What is the capital of France?" → hint: "Starts with 'P', city of lights"
+
+Every card must have a hint field. Do not skip hints on any card.
 """
     return ""
 

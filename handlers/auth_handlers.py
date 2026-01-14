@@ -1,4 +1,3 @@
-import hmac
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlencode
 
@@ -1401,6 +1400,10 @@ async def google_signin_initiate(
         # - code_verifier is stored in signed HttpOnly cookie (retrieved during callback)
         # - This maintains PKCE security benefits while supporting stateless backend
         supabase_url = app_config.SUPABASE_URL
+        # NOTE: Do NOT pass custom 'state' parameter in oauth_params.
+        # Supabase manages its own OAuth state and passing a custom state causes conflicts.
+        # Our CSRF protection is handled via the signed oauth_state cookie
+        # which stores the PKCE verifier and redirect URL.
         oauth_params = {
             "provider": "google",
             "redirect_to": callback_url,
@@ -1408,10 +1411,6 @@ async def google_signin_initiate(
             "prompt": "consent",  # Force consent screen for refresh token
             "code_challenge": code_challenge,
             "code_challenge_method": "s256",
-            # CRITICAL SECURITY: Include state parameter in OAuth URL
-            # This state is returned in the callback URL and MUST match the cookie value
-            # to prevent login CSRF attacks (double-submit cookie pattern)
-            "state": csrf_token  # Use CSRF token portion for URL state binding
         }
         
         oauth_url = f"{supabase_url}/auth/v1/authorize?{urlencode(oauth_params)}"
@@ -1471,7 +1470,7 @@ async def google_signin_initiate(
 
 async def google_signin_callback(
     code: str = Query(None, description="Authorization code from Google"),
-    state: str = Query(None, description="OAuth state parameter for CSRF validation"),
+    state: str = Query(None, description="OAuth state parameter (managed by Supabase)"),
     error: str = Query(None, description="Error from Google OAuth"),
     error_description: str = Query(None, description="Error description from Google"),
     response: Response = None,
@@ -1481,13 +1480,16 @@ async def google_signin_callback(
     Handle Google Sign-In OAuth callback with CSRF protection.
     
     This endpoint receives the authorization code from Google after user
-    authenticates. It validates the CSRF token and exchanges the code for a session.
+    authenticates. It validates the PKCE verifier and exchanges the code for a session.
     
     Security features:
-    - State parameter in URL is validated against cookie value (double-submit pattern)
+    - PKCE verifier stored in signed HttpOnly cookie
     - State signature is verified to prevent tampering
     - Redirect URL is re-validated before use (relative paths only)
     - Auth tokens are set in HttpOnly cookies only
+    
+    Note: Supabase manages the OAuth 'state' parameter. We use our own
+    signed cookie for PKCE verifier storage and redirect URL tracking.
     """
     logger.info("Processing Google Sign-In callback")
     
@@ -1532,29 +1534,25 @@ async def google_signin_callback(
         )
         return clear_oauth_state_cookie(redirect_resp)
     
-    # ===== CSRF + PKCE VALIDATION (Critical Security Check) =====
-    # Double-submit cookie pattern: Validate URL state matches cookie's CSRF token
-    # This prevents login CSRF attacks where attacker sets the cookie then supplies their own code
+    # ===== PKCE VALIDATION (Critical Security Check) =====
+    # Validate signed cookie containing PKCE verifier and redirect URL
+    # Supabase handles OAuth state validation, we handle PKCE for stateless backend
     is_valid, redirect_path, code_verifier, csrf_token = _verify_oauth_state_from_cookie(state_cookie)
     
     if not is_valid:
-        logger.warning("OAuth state cookie validation failed - possible CSRF attack")
+        logger.warning("OAuth state cookie validation failed - signature check or expiry")
         redirect_resp = RedirectResponse(
             url=f"{app_config.FRONTEND_URL}/login?error=csrf_failed&message=Security%20validation%20failed.%20Please%20try%20again."
         )
         return clear_oauth_state_cookie(redirect_resp)
     
-    # CRITICAL: Validate URL state parameter matches cookie's CSRF token
-    # This is the key defense against login CSRF attacks
-    if not state or not csrf_token or not hmac.compare_digest(state, csrf_token):
-        logger.warning(
-            f"OAuth state mismatch - URL state: {state[:8] if state else 'None'}..., "
-            f"cookie CSRF: {csrf_token[:8] if csrf_token else 'None'}... - possible login CSRF attack"
-        )
-        redirect_resp = RedirectResponse(
-            url=f"{app_config.FRONTEND_URL}/login?error=csrf_failed&message=Security%20validation%20failed.%20Please%20try%20again."
-        )
-        return clear_oauth_state_cookie(redirect_resp)
+    # Note: The 'state' parameter in URL is managed by Supabase for their own CSRF protection
+    # We don't validate it against our cookie as that caused conflicts with Supabase's state management
+    # Our security is provided by:
+    # 1. Signed HttpOnly cookie with HMAC validation
+    # 2. PKCE verifier/challenge exchange
+    # 3. Short-lived state cookie (10 min expiry)
+    # 4. Supabase's own OAuth state validation
     
     if not code_verifier:
         logger.error("PKCE code_verifier missing from OAuth state - cannot complete PKCE flow")

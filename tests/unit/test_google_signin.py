@@ -355,19 +355,21 @@ class TestVerifyOAuthStateFromCookie:
     
     def test_verify_valid_cookie(self):
         """Valid state cookie should verify successfully and return PKCE verifier."""
-        state, _, code_verifier, _ = generate_oauth_state("/dashboard")
-        is_valid, redirect, pkce_verifier = verify_oauth_state_from_cookie(state)
+        state, csrf_token, code_verifier, _ = generate_oauth_state("/dashboard")
+        is_valid, redirect, pkce_verifier, returned_csrf = verify_oauth_state_from_cookie(state)
         
         assert is_valid is True
         assert redirect == "/dashboard"
         assert pkce_verifier == code_verifier
+        assert returned_csrf == csrf_token
         
     def test_verify_missing_cookie(self):
         """Missing cookie should fail verification."""
-        is_valid, redirect, pkce_verifier = verify_oauth_state_from_cookie(None)
+        is_valid, redirect, pkce_verifier, csrf_token = verify_oauth_state_from_cookie(None)
         assert is_valid is False
         assert redirect is None
         assert pkce_verifier is None
+        assert csrf_token is None
         
     def test_verify_tampered_signature(self):
         """Tampered signature should fail verification."""
@@ -382,10 +384,11 @@ class TestVerifyOAuthStateFromCookie:
         tampered_state_str = f"{tampered_payload}.{signature}"
         tampered_cookie = base64.urlsafe_b64encode(tampered_state_str.encode()).decode()
         
-        is_valid, redirect, pkce_verifier = verify_oauth_state_from_cookie(tampered_cookie)
+        is_valid, redirect, pkce_verifier, csrf_token = verify_oauth_state_from_cookie(tampered_cookie)
         assert is_valid is False
         assert redirect is None
         assert pkce_verifier is None
+        assert csrf_token is None
         
     def test_verify_expired_state(self):
         """Expired state should fail verification."""
@@ -410,24 +413,27 @@ class TestVerifyOAuthStateFromCookie:
         state_str = f"{payload_json}.{signature}"
         state_cookie = base64.urlsafe_b64encode(state_str.encode()).decode()
         
-        is_valid, redirect, pkce_verifier = verify_oauth_state_from_cookie(state_cookie)
+        is_valid, redirect, pkce_verifier, csrf_token = verify_oauth_state_from_cookie(state_cookie)
         assert is_valid is False
         assert redirect is None
         assert pkce_verifier is None
+        assert csrf_token is None
 
     def test_verify_invalid_format(self):
         """Invalid format should fail verification."""
-        is_valid, redirect, pkce_verifier = verify_oauth_state_from_cookie("not-base64-encoded")
+        is_valid, redirect, pkce_verifier, csrf_token = verify_oauth_state_from_cookie("not-base64-encoded")
         assert is_valid is False
         assert redirect is None
         assert pkce_verifier is None
+        assert csrf_token is None
         
         # Base64 but not dot separated
         b64_no_dot = base64.urlsafe_b64encode(b"invalid-format").decode()
-        is_valid, redirect, pkce_verifier = verify_oauth_state_from_cookie(b64_no_dot)
+        is_valid, redirect, pkce_verifier, csrf_token = verify_oauth_state_from_cookie(b64_no_dot)
         assert is_valid is False
         assert redirect is None
         assert pkce_verifier is None
+        assert csrf_token is None
 
 
 # ============================================================================
@@ -639,11 +645,12 @@ class TestGoogleSignInIntegration:
         assert is_valid is True
         assert redirect == "/quiz/123"
         
-        # Also verify cookie-based verification returns PKCE verifier
-        is_valid, redirect, pkce = verify_oauth_state_from_cookie(state)
+        # Also verify cookie-based verification returns PKCE verifier and CSRF token
+        is_valid, redirect, pkce, returned_csrf = verify_oauth_state_from_cookie(state)
         assert is_valid is True
         assert redirect == "/quiz/123"
         assert pkce == code_verifier
+        assert returned_csrf == csrf
     
     def test_csrf_uniqueness(self):
         """Each state generation should produce unique tokens."""

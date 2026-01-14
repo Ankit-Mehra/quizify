@@ -59,20 +59,21 @@ from schemas.flashcard import (
 
 
 # =============================================================================
-# Credit Costs
+# Credit Units (1 unit = 0.5 credits)
 # =============================================================================
-STANDARD_FLASHCARD_COST = 0.5  # 0.5 credits for standard mode
-ENHANCED_FLASHCARD_COST = 1    # 1 credit for enhanced mode
+CREDITS_PER_UNIT = 0.5  # Conversion factor: units to credits
+STANDARD_FLASHCARD_UNITS = 1   # Standard mode
+ENHANCED_FLASHCARD_UNITS = 2   # Enhanced mode
 
 
 # =============================================================================
 # Credit Validation Helper
 # =============================================================================
 
-async def validate_and_get_credit_cost(
+async def validate_and_get_unit_cost(
     user_id: str,
     mode: str,
-) -> float:
+) -> int:
     """
     Validate user has sufficient credits for the requested generation mode.
     
@@ -84,12 +85,13 @@ async def validate_and_get_credit_cost(
         mode: Generation mode ("standard" or "enhanced")
         
     Returns:
-        The credit cost for the requested mode
+        The unit cost for the requested mode (1 for standard, 2 for enhanced)
         
     Raises:
         HTTPException: 402 if insufficient credits
     """
-    credit_cost = ENHANCED_FLASHCARD_COST if mode == "enhanced" else STANDARD_FLASHCARD_COST
+    unit_cost = ENHANCED_FLASHCARD_UNITS if mode == "enhanced" else STANDARD_FLASHCARD_UNITS
+    credit_cost = unit_cost * CREDITS_PER_UNIT
     
     billing_state = await get_billing_state(user_id)
     if billing_state.available_credits < credit_cost:
@@ -104,7 +106,7 @@ async def validate_and_get_credit_cost(
             }
         )
     
-    return credit_cost
+    return unit_cost
 
 
 # =============================================================================
@@ -141,7 +143,7 @@ async def generate_flashcards_from_text(
     )
     
     # Validate credits (DRY - uses shared helper)
-    credit_cost = await validate_and_get_credit_cost(user_id, mode)
+    unit_cost = await validate_and_get_unit_cost(user_id, mode)
     
     # Route to appropriate generation mode
     if mode == "enhanced":
@@ -155,7 +157,7 @@ async def generate_flashcards_from_text(
             content_source_type="text",
             content_source_reference=None,
             start_time=start_time,
-            credit_cost=credit_cost,
+            unit_cost=unit_cost,
         )
     else:
         return await _generate_standard_flashcards(
@@ -168,7 +170,7 @@ async def generate_flashcards_from_text(
             content_source_type="text",
             content_source_reference=None,
             start_time=start_time,
-            credit_cost=credit_cost,
+            unit_cost=unit_cost,
         )
 
 
@@ -186,13 +188,13 @@ async def _generate_standard_flashcards(
     content_source_type: str,
     content_source_reference: str | None,
     start_time: float,
-    credit_cost: float,
+    unit_cost: int,
 ) -> FlashcardGenerationResponse:
     """
     Generate flashcards using standard (fast) mode.
     
     Uses direct LLM generation without RAG pipeline.
-    Costs 0.5 credits.
+    Costs 1 unit (0.5 credits).
     """
     credits_consumed = False
     
@@ -247,22 +249,14 @@ async def _generate_standard_flashcards(
             user_token=user_token,
         )
         
-        # Success - don't refund
-        credits_consumed = False  # Reset flag to prevent refund in finally
-        
-        # 5. Build response
+        # 5. Build response BEFORE marking success (to ensure refund on build failure)
         elapsed_ms = int((time.time() - start_time) * 1000)
         estimated_study_time = len(saved_cards) // 3  # ~3 cards per minute
         
         response_cards = _build_flashcard_response_list(saved_cards)
         
-        logger.info(
-            "CREDIT_AUDIT: Standard flashcard generation SUCCESS for user %s..., "
-            "cards: %d, trace: %s",
-            user_id[:8], len(response_cards), trace_id[:8]
-        )
-        
-        return FlashcardGenerationResponse(
+        # Build response object - if this fails, credits should be refunded
+        response = FlashcardGenerationResponse(
             deck_id=deck_data["id"],
             deck_title=deck_title,
             cards=response_cards,
@@ -272,8 +266,19 @@ async def _generate_standard_flashcards(
             estimated_study_time_minutes=max(1, estimated_study_time),
             generation_mode="standard",
             generation_stats={"mode": "standard", "cards_generated": len(response_cards)},
-            credits_consumed=credit_cost,
+            credits_consumed=unit_cost * CREDITS_PER_UNIT,
         )
+        
+        # SUCCESS - only mark as not consumed AFTER response is built successfully
+        credits_consumed = False
+        
+        logger.info(
+            "CREDIT_AUDIT: Standard flashcard generation SUCCESS for user %s..., "
+            "cards: %d, trace: %s",
+            user_id[:8], len(response_cards), trace_id[:8]
+        )
+        
+        return response
         
     except HTTPException:
         # Re-raise HTTP exceptions as-is
@@ -310,13 +315,13 @@ async def _generate_enhanced_flashcards(
     content_source_type: str,
     content_source_reference: str | None,
     start_time: float,
-    credit_cost: float,
+    unit_cost: int,
 ) -> FlashcardGenerationResponse:
     """
     Generate flashcards using enhanced (RAG-based) mode.
     
     Uses concept extraction, context retrieval, and Bloom's taxonomy.
-    Costs 1 credit.
+    Costs 2 units (1 credit).
     """
     credits_consumed = False
     
@@ -367,23 +372,14 @@ async def _generate_enhanced_flashcards(
             user_token=user_token,
         )
         
-        # Success - don't refund
-        credits_consumed = False  # Reset flag to prevent refund in finally
-        
-        # 4. Build response with enhanced metadata
+        # 4. Build response with enhanced metadata BEFORE marking success
         elapsed_ms = int((time.time() - start_time) * 1000)
         estimated_study_time = len(saved_cards) // 3
         
         response_cards = _build_flashcard_response_list(saved_cards)
         
-        logger.info(
-            "CREDIT_AUDIT: Enhanced flashcard generation SUCCESS for user %s..., "
-            "cards: %d, concepts: %d, trace: %s",
-            user_id[:8], len(response_cards),
-            generation_stats.get("concepts_extracted", 0), trace_id[:8]
-        )
-        
-        return FlashcardGenerationResponse(
+        # Build response object - if this fails, credits should be refunded
+        response = FlashcardGenerationResponse(
             deck_id=deck_data["id"],
             deck_title=deck_title,
             cards=response_cards,
@@ -393,8 +389,20 @@ async def _generate_enhanced_flashcards(
             estimated_study_time_minutes=max(1, estimated_study_time),
             generation_mode="enhanced",
             generation_stats=generation_stats,
-            credits_consumed=credit_cost,
+            credits_consumed=unit_cost * CREDITS_PER_UNIT,
         )
+        
+        # SUCCESS - only mark as not consumed AFTER response is built successfully
+        credits_consumed = False
+        
+        logger.info(
+            "CREDIT_AUDIT: Enhanced flashcard generation SUCCESS for user %s..., "
+            "cards: %d, concepts: %d, trace: %s",
+            user_id[:8], len(response_cards),
+            generation_stats.get("concepts_extracted", 0), trace_id[:8]
+        )
+        
+        return response
         
     except HTTPException:
         # Re-raise HTTP exceptions as-is
@@ -480,7 +488,7 @@ async def generate_flashcards_from_file(
     )
     
     # Validate credits (DRY - uses shared helper)
-    credit_cost = await validate_and_get_credit_cost(user_id, mode)
+    unit_cost = await validate_and_get_unit_cost(user_id, mode)
     
     # Get file record and parse content
     file_record = get_file_record(str(request.file_id), user_token)
@@ -513,7 +521,7 @@ async def generate_flashcards_from_file(
             content_source_type="file",
             content_source_reference=file_id_str,
             start_time=start_time,
-            credit_cost=credit_cost,
+            unit_cost=unit_cost,
         )
     else:
         return await _generate_standard_flashcards(
@@ -526,7 +534,7 @@ async def generate_flashcards_from_file(
             content_source_type="file",
             content_source_reference=file_id_str,
             start_time=start_time,
-            credit_cost=credit_cost,
+            unit_cost=unit_cost,
         )
 
 
@@ -558,7 +566,7 @@ async def generate_flashcards_from_url(
     )
     
     # Validate credits (DRY - uses shared helper)
-    credit_cost = await validate_and_get_credit_cost(user_id, mode)
+    unit_cost = await validate_and_get_unit_cost(user_id, mode)
     
     # Ingest content from URL
     ingestion_service = get_content_ingestion_service()
@@ -588,7 +596,7 @@ async def generate_flashcards_from_url(
             content_source_type="url",
             content_source_reference=redacted_url,
             start_time=start_time,
-            credit_cost=credit_cost,
+            unit_cost=unit_cost,
         )
     else:
         return await _generate_standard_flashcards(
@@ -601,7 +609,7 @@ async def generate_flashcards_from_url(
             content_source_type="url",
             content_source_reference=redacted_url,
             start_time=start_time,
-            credit_cost=credit_cost,
+            unit_cost=unit_cost,
         )
 
 

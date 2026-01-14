@@ -800,13 +800,15 @@ async def generate_quiz_from_file_openai(
         }
         save_metadata(metadata, user_token=user_token)
         
-        # SUCCESS: Credits were already reserved, finalize consumption
-        credits_reserved = False  # Don't refund
-        await finalize_credits_after_success(current_user_id, mode)
-        
         # Update message and return EnhancedQuizGenerationResponse directly
         result.message = f"Quiz generated successfully from file ({mode} mode)"
         result.file_id = file_id
+        
+        # SUCCESS: Credits were already reserved, finalize consumption
+        # Set flag AFTER all response building is complete
+        credits_reserved = False  # Don't refund
+        await finalize_credits_after_success(current_user_id, mode)
+        
         return result
     
     except HTTPException:
@@ -933,13 +935,15 @@ async def generate_quiz_from_fileid(
         save_metadata(metadata, user_token=user_token)
         logger.info("Saved quiz with ID: %s", result.quiz_id)
 
-        # SUCCESS: Credits were already reserved, finalize consumption
-        credits_reserved = False  # Don't refund
-        await finalize_credits_after_success(current_user_id, data.mode)
-
         # Update message and return EnhancedQuizGenerationResponse
         result.message = f"Quiz generated successfully from file ({data.mode} mode)"
         result.file_id = file_id
+        
+        # SUCCESS: Credits were already reserved, finalize consumption
+        # Set flag AFTER all response building is complete
+        credits_reserved = False  # Don't refund
+        await finalize_credits_after_success(current_user_id, data.mode)
+        
         return result
     except HTTPException as he:
         # Re-raise HTTP exceptions (refund handled in finally)
@@ -1064,13 +1068,15 @@ async def generate_quiz_from_text(
         }
         save_metadata(metadata, user_token=user_token)
         
-        # SUCCESS: Credits were already reserved, finalize consumption
-        credits_reserved = False  # Don't refund
-        await finalize_credits_after_success(current_user_id, data.mode)
-        
         # Update message and return EnhancedQuizGenerationResponse directly
         result.message = f"Quiz generated successfully from text ({data.mode} mode)"
         result.file_id = file_id  # Include file_id in response for consistency
+        
+        # SUCCESS: Credits were already reserved, finalize consumption
+        # Set flag AFTER all response building is complete
+        credits_reserved = False  # Don't refund
+        await finalize_credits_after_success(current_user_id, data.mode)
+        
         return result
     
     except HTTPException as he:
@@ -1390,10 +1396,6 @@ async def generate_quiz_from_url(
         save_metadata(metadata, user_token=user_token)
         logger.info("Saved quiz from URL with ID: %s", result.quiz_id)
         
-        # SUCCESS: Credits were already reserved, finalize consumption
-        credits_reserved = False  # Don't refund
-        await finalize_credits_after_success(current_user_id, data.mode)
-        
         # Update result with URL-specific info and return directly
         result.source_url = str(data.url)
         if file_info:
@@ -1401,6 +1403,11 @@ async def generate_quiz_from_url(
             result.message = f"Quiz generated successfully from PDF URL ({data.mode} mode, PDF saved to your files)"
         else:
             result.message = f"Quiz generated successfully from URL ({data.mode} mode)"
+        
+        # SUCCESS: Credits were already reserved, finalize consumption
+        # Set flag AFTER all response building is complete
+        credits_reserved = False  # Don't refund
+        await finalize_credits_after_success(current_user_id, data.mode)
         
         return result
         
