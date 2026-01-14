@@ -345,15 +345,15 @@ Mix these types throughout the deck for engaging study sessions.
 def _get_hint_instruction(include_hints: bool) -> str:
     """Get hint instruction based on configuration."""
     if include_hints:
-        return """## HINTS (REQUIRED)
-You MUST include a "hint" field for EVERY card. This is NOT optional.
+        return """## HINTS (Required)
+Include a "hint" field for every card.
 Each hint should:
 - Give a clue without revealing the answer
 - Reference the topic area, first letter, or related concept
 - Be shorter than the answer itself
 Example: For "What is the capital of France?" → hint: "Starts with 'P', city of lights"
 
-IMPORTANT: Every card MUST have a hint field. Do not skip hints on any card.
+Every card must have a hint field. Do not skip hints on any card.
 """
     return ""
 

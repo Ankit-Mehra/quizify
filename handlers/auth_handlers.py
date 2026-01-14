@@ -1400,17 +1400,17 @@ async def google_signin_initiate(
         # - code_verifier is stored in signed HttpOnly cookie (retrieved during callback)
         # - This maintains PKCE security benefits while supporting stateless backend
         supabase_url = app_config.SUPABASE_URL
+        # NOTE: Do NOT pass custom 'state' parameter in oauth_params.
+        # Supabase manages its own OAuth state and passing a custom state causes conflicts.
+        # Our CSRF protection is handled via the signed oauth_state cookie
+        # which stores the PKCE verifier and redirect URL.
         oauth_params = {
             "provider": "google",
             "redirect_to": callback_url,
             "access_type": "offline",  # Get refresh token
             "prompt": "consent",  # Force consent screen for refresh token
             "code_challenge": code_challenge,
-            "code_challenge_method": "s256"
-            # NOTE: Do NOT pass custom 'state' parameter here
-            # Supabase manages its own OAuth state and passing a custom state causes conflicts
-            # Our CSRF protection is handled via the signed oauth_state cookie
-            # which stores the PKCE verifier and redirect URL
+            "code_challenge_method": "s256",
         }
         
         oauth_url = f"{supabase_url}/auth/v1/authorize?{urlencode(oauth_params)}"

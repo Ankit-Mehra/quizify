@@ -326,7 +326,8 @@ class ContentIngestionService:
         
         # Extract file_id if PDF was saved
         file_id = file_info.get("file_id") if file_info else None
-        # HTML scraping doesn't return title - it's extracted by trafilatura in raw text
+        # Current scraping pipeline does not provide a page title for HTML or PDF;
+        # we keep this placeholder and fall back to URL-based title extraction.
         page_title = ""
         
         cleaned_text = self._normalize_text(extracted_text)

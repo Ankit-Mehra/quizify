@@ -59,10 +59,11 @@ from schemas.flashcard import (
 
 
 # =============================================================================
-# Unit Costs (1 unit = 0.5 credits)
+# Credit Units (1 unit = 0.5 credits)
 # =============================================================================
-STANDARD_FLASHCARD_UNITS = 1   # 1 unit (0.5 credits) for standard mode
-ENHANCED_FLASHCARD_UNITS = 2   # 2 units (1 credit) for enhanced mode
+CREDITS_PER_UNIT = 0.5  # Conversion factor: units to credits
+STANDARD_FLASHCARD_UNITS = 1   # Standard mode
+ENHANCED_FLASHCARD_UNITS = 2   # Enhanced mode
 
 
 # =============================================================================
@@ -90,8 +91,7 @@ async def validate_and_get_unit_cost(
         HTTPException: 402 if insufficient credits
     """
     unit_cost = ENHANCED_FLASHCARD_UNITS if mode == "enhanced" else STANDARD_FLASHCARD_UNITS
-    # Convert units to credits for comparison (1 unit = 0.5 credits)
-    credit_cost = unit_cost / 2.0
+    credit_cost = unit_cost * CREDITS_PER_UNIT
     
     billing_state = await get_billing_state(user_id)
     if billing_state.available_credits < credit_cost:
@@ -266,7 +266,7 @@ async def _generate_standard_flashcards(
             estimated_study_time_minutes=max(1, estimated_study_time),
             generation_mode="standard",
             generation_stats={"mode": "standard", "cards_generated": len(response_cards)},
-            credits_consumed=unit_cost / 2.0,  # Convert units to credits for user display
+            credits_consumed=unit_cost * CREDITS_PER_UNIT,
         )
         
         # SUCCESS - only mark as not consumed AFTER response is built successfully
@@ -389,7 +389,7 @@ async def _generate_enhanced_flashcards(
             estimated_study_time_minutes=max(1, estimated_study_time),
             generation_mode="enhanced",
             generation_stats=generation_stats,
-            credits_consumed=unit_cost / 2.0,  # Convert units to credits for user display
+            credits_consumed=unit_cost * CREDITS_PER_UNIT,
         )
         
         # SUCCESS - only mark as not consumed AFTER response is built successfully
