@@ -1,5 +1,5 @@
 """
-Contract tests for file size validation on POST /api/quiz/generate/file endpoint.
+Contract tests for file size validation on POST /api/quiz/generate/upload endpoint.
 
 Tests file size limits including:
 - Files under 10MB (should pass)
@@ -65,7 +65,7 @@ class TestFileSizeValidation:
             "num_questions": "3"
         }
         
-        response = client.post("/api/quiz/generate/file", headers=auth_headers, files=files, data=data)
+        response = client.post("/api/quiz/generate/upload", headers=auth_headers, files=files, data=data)
         
         assert response.status_code == 201, \
             f"Expected 201 for 9MB file, got {response.status_code}: {response.text}"
@@ -93,7 +93,7 @@ class TestFileSizeValidation:
             "num_questions": "3"
         }
         
-        response = client.post("/api/quiz/generate/file", headers=auth_headers, files=files, data=data)
+        response = client.post("/api/quiz/generate/upload", headers=auth_headers, files=files, data=data)
         
         assert response.status_code == 201, \
             f"Expected 201 for 10MB file, got {response.status_code}: {response.text}"
@@ -121,7 +121,7 @@ class TestFileSizeValidation:
             "num_questions": "3"
         }
         
-        response = client.post("/api/quiz/generate/file", headers=auth_headers, files=files, data=data)
+        response = client.post("/api/quiz/generate/upload", headers=auth_headers, files=files, data=data)
         
         assert response.status_code == 413, \
             f"Expected 413 for 11MB file, got {response.status_code}: {response.text}"
@@ -161,7 +161,7 @@ class TestFileSizeValidation:
             "num_questions": "3"
         }
         
-        response = client.post("/api/quiz/generate/file", headers=auth_headers, files=files, data=data)
+        response = client.post("/api/quiz/generate/upload", headers=auth_headers, files=files, data=data)
         
         assert response.status_code == 201, \
             f"Expected 201, got {response.status_code}: {response.text}"
@@ -198,7 +198,7 @@ class TestFileSizeValidation:
             "num_questions": "3"
         }
         
-        response = client.post("/api/quiz/generate/file", headers=auth_headers, files=files, data=data)
+        response = client.post("/api/quiz/generate/upload", headers=auth_headers, files=files, data=data)
         
         # Should fail with 400 for insufficient content, not 413 for size
         assert response.status_code == 400, \
@@ -231,7 +231,7 @@ class TestFileSizeValidation:
             "num_questions": "3"
         }
         
-        response = client.post("/api/quiz/generate/file", headers=auth_headers, files=files, data=data)
+        response = client.post("/api/quiz/generate/upload", headers=auth_headers, files=files, data=data)
         
         # Should fail with 413 for size (before PDF parsing fails)
         assert response.status_code == 413, \
@@ -257,7 +257,7 @@ class TestFileSizeValidation:
             "num_questions": "3"
         }
         
-        response = client.post("/api/quiz/generate/file", headers=auth_headers, files=files, data=data)
+        response = client.post("/api/quiz/generate/upload", headers=auth_headers, files=files, data=data)
         
         # Should fail with 413 for size (before DOCX parsing fails)
         assert response.status_code == 413, \

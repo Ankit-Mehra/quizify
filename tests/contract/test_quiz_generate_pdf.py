@@ -1,5 +1,5 @@
 """
-Contract tests for POST /api/quiz/generate/file endpoint (PDF files).
+Contract tests for POST /api/quiz/generate/upload endpoint (PDF files).
 
 Tests PDF-based quiz generation including:
 - Valid PDF upload and quiz generation
@@ -105,7 +105,7 @@ class TestQuizGeneratePDF:
             "question_types": '["multiple_choice", "true_false"]'
         }
         
-        response = client.post("/api/quiz/generate/file", headers=headers, files=files, data=data)
+        response = client.post("/api/quiz/generate/upload", headers=headers, files=files, data=data)
         
         assert response.status_code == 201, \
             f"Expected 201 for valid PDF quiz generation, got {response.status_code}: {response.text}"
@@ -139,7 +139,7 @@ class TestQuizGeneratePDF:
             "question_types": '["multiple_choice"]'
         }
         
-        response = client.post("/api/quiz/generate/file", headers=headers, files=files, data=data)
+        response = client.post("/api/quiz/generate/upload", headers=headers, files=files, data=data)
         
         assert response.status_code == 400, \
             f"Expected 400 for corrupted PDF, got {response.status_code}: {response.text}"
@@ -170,7 +170,7 @@ class TestQuizGeneratePDF:
             "question_types": '["multiple_choice"]'
         }
         
-        response = client.post("/api/quiz/generate/file", headers=headers, files=files, data=data)
+        response = client.post("/api/quiz/generate/upload", headers=headers, files=files, data=data)
         
         assert response.status_code == 400, \
             f"Expected 400 for empty PDF, got {response.status_code}: {response.text}"
@@ -193,7 +193,7 @@ class TestQuizGeneratePDF:
             "question_types": '["multiple_choice"]'
         }
         
-        response = client.post("/api/quiz/generate/file", files=files, data=data)
+        response = client.post("/api/quiz/generate/upload", files=files, data=data)
         
         assert response.status_code == 401, \
             f"Expected 401 without auth, got {response.status_code}: {response.text}"

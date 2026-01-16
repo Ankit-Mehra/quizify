@@ -124,7 +124,7 @@ class TestQuizGenerationFlow:
             "question_type": ["multiple_choice", "true_false"]  # Provide as list, not JSON string
         }
         
-        quiz_response = client.post("/api/quiz/generate/file", headers=headers, files=quiz_files, data=quiz_data)
+        quiz_response = client.post("/api/quiz/generate/upload", headers=headers, files=quiz_files, data=quiz_data)
         
         assert quiz_response.status_code == 201, \
             f"Quiz generation failed: {quiz_response.text}"

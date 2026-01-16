@@ -1,5 +1,5 @@
 """
-Contract tests for POST /api/quiz/generate/file endpoint (DOCX files).
+Contract tests for POST /api/quiz/generate/upload endpoint (DOCX files).
 
 Tests DOCX-based quiz generation including:
 - Valid DOCX upload and quiz generation
@@ -101,7 +101,7 @@ class TestQuizGenerateDOCX:
             "question_types": '["multiple_choice", "true_false"]'
         }
         
-        response = client.post("/api/quiz/generate/file", headers=headers, files=files, data=data)
+        response = client.post("/api/quiz/generate/upload", headers=headers, files=files, data=data)
         
         assert response.status_code == 201, \
             f"Expected 201 for valid DOCX quiz generation, got {response.status_code}: {response.text}"
@@ -141,7 +141,7 @@ class TestQuizGenerateDOCX:
             "question_types": '["multiple_choice"]'
         }
         
-        response = client.post("/api/quiz/generate/file", headers=headers, files=files, data=data)
+        response = client.post("/api/quiz/generate/upload", headers=headers, files=files, data=data)
         
         assert response.status_code == 400, \
             f"Expected 400 for corrupted DOCX, got {response.status_code}: {response.text}"
@@ -172,7 +172,7 @@ class TestQuizGenerateDOCX:
             "question_types": '["multiple_choice"]'
         }
         
-        response = client.post("/api/quiz/generate/file", headers=headers, files=files, data=data)
+        response = client.post("/api/quiz/generate/upload", headers=headers, files=files, data=data)
         
         assert response.status_code == 400, \
             f"Expected 400 for empty DOCX, got {response.status_code}: {response.text}"
@@ -195,7 +195,7 @@ class TestQuizGenerateDOCX:
             "question_types": '["multiple_choice"]'
         }
         
-        response = client.post("/api/quiz/generate/file", files=files, data=data)
+        response = client.post("/api/quiz/generate/upload", files=files, data=data)
         
         assert response.status_code == 401, \
             f"Expected 401 without auth, got {response.status_code}: {response.text}"

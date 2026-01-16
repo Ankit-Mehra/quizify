@@ -12,7 +12,7 @@ Supports two generation modes:
 import asyncio
 import time
 from typing import List, Dict, Any
-from uuid import uuid4
+from uuid import uuid4, UUID
 from fastapi import HTTPException
 
 from services.content.ingestion_service import get_content_ingestion_service
@@ -461,6 +461,7 @@ def _build_flashcard_response_list(saved_cards: List[Dict]) -> List[Flashcard]:
 # =============================================================================
 
 async def generate_flashcards_from_file(
+    file_id: UUID,
     request: FileFlashcardRequest,
     user_id: str,
     user_token: str,
@@ -471,7 +472,8 @@ async def generate_flashcards_from_file(
     Supports both standard and enhanced modes.
     
     Args:
-        request: File flashcard request with file_id and config
+        file_id: UUID of the previously uploaded file (from path parameter)
+        request: File flashcard request with config options
         user_id: ID of the requesting user
         user_token: JWT token for RLS enforcement
         
@@ -481,17 +483,18 @@ async def generate_flashcards_from_file(
     start_time = time.time()
     trace_id = str(uuid4())
     mode = request.config.mode
+    file_id_str = str(file_id)
     
     logger.info(
         "Generating flashcards from file %s for user %s..., mode: %s, trace: %s",
-        str(request.file_id), user_id[:8], mode, trace_id[:8]
+        file_id_str, user_id[:8], mode, trace_id[:8]
     )
     
     # Validate credits (DRY - uses shared helper)
     unit_cost = await validate_and_get_unit_cost(user_id, mode)
     
     # Get file record and parse content
-    file_record = get_file_record(str(request.file_id), user_token)
+    file_record = get_file_record(file_id_str, user_token)
     if not file_record:
         raise HTTPException(status_code=404, detail="File not found")
     
@@ -508,7 +511,6 @@ async def generate_flashcards_from_file(
     
     # Route to appropriate generation mode
     title = request.title or file_record.get("filename", "Flashcards from File")
-    file_id_str = str(request.file_id)
     
     if mode == "enhanced":
         return await _generate_enhanced_flashcards(
@@ -536,7 +538,6 @@ async def generate_flashcards_from_file(
             start_time=start_time,
             unit_cost=unit_cost,
         )
-
 
 async def generate_flashcards_from_file_upload(
     file,

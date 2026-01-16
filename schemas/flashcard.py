@@ -143,8 +143,7 @@ class TextFlashcardRequest(BaseModel):
 
 
 class FileFlashcardRequest(BaseModel):
-    """Request for generating flashcards from a file."""
-    file_id: UUID = Field(..., description="ID of the uploaded file")
+    """Request for generating flashcards from a file (file_id is in URL path)."""
     title: Optional[str] = Field(None, description="Title for the deck")
     config: FlashcardGenerationConfig = Field(
         default_factory=FlashcardGenerationConfig,

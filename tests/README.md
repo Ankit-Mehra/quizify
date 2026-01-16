@@ -22,7 +22,7 @@ Integration tests for the quiz generation endpoints with quota enforcement:
   - Basic tier scenarios (under/at limit)
   - Educator tier scenarios (under/at limit)
   
-- `TestQuotaEnforcementFileEndpoint`: Tests for `/api/quiz/generate/file`
+- `TestQuotaEnforcementFileEndpoint`: Tests for `/api/quiz/generate/upload`
   - Free tier scenarios (under/at limit)
   - Basic tier scenarios (under/at limit)
   
