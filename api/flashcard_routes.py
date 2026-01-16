@@ -7,13 +7,14 @@ including generation, deck management, card CRUD, and study sessions.
 
 from typing import List
 from uuid import UUID
-from fastapi import APIRouter, Depends, Query, Path, Body
+from fastapi import APIRouter, Depends, Query, Path, Body, UploadFile, File, Form
 from fastapi.responses import Response
 
 from dependencies.auth_dependencies import get_current_user_id, get_current_user_token
 from handlers.flashcard_handlers import (
     generate_flashcards_from_text,
     generate_flashcards_from_file,
+    generate_flashcards_from_file_upload,
     generate_flashcards_from_url,
     get_user_flashcard_decks,
     get_flashcard_deck,
@@ -69,16 +70,47 @@ async def generate_from_text(
 @router.post(
     "/generate/file",
     response_model=FlashcardGenerationResponse,
-    summary="Generate flashcards from file",
-    description="Generate AI-powered flashcards from an uploaded file (PDF, DOCX, TXT)."
+    summary="Generate flashcards from file ID",
+    description="Generate AI-powered flashcards from a previously uploaded file using its ID."
 )
 async def generate_from_file(
     request: FileFlashcardRequest,
     user_id: str = Depends(get_current_user_id),
     user_token: str = Depends(get_current_user_token),
 ):
-    """Generate flashcards from an uploaded file."""
+    """Generate flashcards from a previously uploaded file."""
     return await generate_flashcards_from_file(request, user_id, user_token)
+
+
+@router.post(
+    "/generate/file-upload",
+    response_model=FlashcardGenerationResponse,
+    summary="Generate flashcards from direct file upload",
+    description="Generate AI-powered flashcards from a file upload in a single step (PDF, DOCX, TXT)."
+)
+async def generate_from_file_upload_route(
+    file: UploadFile = File(...),
+    title: str = Form(...),
+    card_count: int = Form(10),
+    card_style: str = Form("mixed"),
+    difficulty: str = Form("intermediate"),
+    include_hints: bool = Form(True),
+    mode: str = Form("standard"),
+    user_id: str = Depends(get_current_user_id),
+    user_token: str = Depends(get_current_user_token),
+):
+    """Generate flashcards from direct file upload (single-step)."""
+    return await generate_flashcards_from_file_upload(
+        file=file,
+        title=title,
+        card_count=card_count,
+        card_style=card_style,
+        difficulty=difficulty,
+        include_hints=include_hints,
+        mode=mode,
+        user_id=user_id,
+        user_token=user_token,
+    )
 
 
 @router.post(

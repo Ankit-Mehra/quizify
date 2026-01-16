@@ -538,6 +538,162 @@ async def generate_flashcards_from_file(
         )
 
 
+async def generate_flashcards_from_file_upload(
+    file,
+    title: str,
+    card_count: int,
+    card_style: str,
+    difficulty: str,
+    include_hints: bool,
+    mode: str,
+    user_id: str,
+    user_token: str,
+) -> FlashcardGenerationResponse:
+    """
+    Generate flashcards from direct file upload (single-step approach).
+    
+    This endpoint accepts a file upload directly and handles:
+    1. File validation and extraction
+    2. Saving file to storage
+    3. Generating flashcards
+    4. Cleanup on failure
+    
+    Args:
+        file: Uploaded file (UploadFile)
+        title: Title for the deck
+        card_count: Number of cards to generate
+        card_style: Card style (simple, detailed, mixed)
+        difficulty: Difficulty level (beginner, intermediate, advanced)
+        include_hints: Whether to include hints
+        mode: Generation mode ("standard" or "enhanced")
+        user_id: ID of the requesting user
+        user_token: JWT token for RLS enforcement
+        
+    Returns:
+        FlashcardGenerationResponse with generated deck and cards
+    """
+    from services.db_services.supabase_file import save_file_to_supabase_async, delete_file_from_supabase_async
+    from services.content.parsers import extract_text_from_pdf, extract_text_from_docx, extract_text_from_plain_text
+    
+    start_time = time.time()
+    trace_id = str(uuid4())
+    file_id = None
+    original_filename = None
+    
+    logger.info(
+        "Generating flashcards from file upload for user %s..., mode: %s, trace: %s",
+        user_id[:8], mode, trace_id[:8]
+    )
+    
+    # Validate credits (DRY - uses shared helper)
+    unit_cost = await validate_and_get_unit_cost(user_id, mode)
+    
+    try:
+        # Read and validate file
+        file_bytes = await file.read()
+        file_size = len(file_bytes)
+        
+        # Validate file size (10MB limit)
+        MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+        if file_size > MAX_FILE_SIZE:
+            raise HTTPException(
+                status_code=413,
+                detail=f"File too large. Maximum file size is 10MB. Your file is {file_size} bytes."
+            )
+        
+        # Extract text based on file type
+        try:
+            if file.content_type == "application/pdf":
+                file_content = extract_text_from_pdf(file_bytes)
+            elif file.content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+                file_content = extract_text_from_docx(file_bytes)
+            else:  # text/plain
+                file_content = extract_text_from_plain_text(file_bytes)
+        except Exception as extraction_error:
+            error_msg = str(extraction_error)
+            if "Failed to extract text" in error_msg or "Failed to open" in error_msg:
+                raise HTTPException(status_code=400, detail=error_msg) from extraction_error
+            raise
+        
+        # Validate content length
+        if not file_content or len(file_content.strip()) < 50:
+            raise HTTPException(
+                status_code=400,
+                detail="File contains insufficient text content"
+            )
+        
+        # Save file to storage
+        original_filename = file.filename or f"flashcard_upload_{int(time.time())}"
+        file_result = await save_file_to_supabase_async(
+            user_id, file_bytes, original_filename, user_token, file.content_type
+        )
+        file_id = file_result.get('file_id')
+        
+        # Create flashcard config
+        from schemas.flashcard import FlashcardGenerationConfig
+        config = FlashcardGenerationConfig(
+            card_count=card_count,
+            card_style=card_style,
+            difficulty=difficulty,
+            include_hints=include_hints,
+            mode=mode
+        )
+        
+        # Generate flashcards using appropriate mode
+        if mode == "enhanced":
+            result = await _generate_enhanced_flashcards(
+                content=file_content,
+                title=title,
+                config=config,
+                user_id=user_id,
+                user_token=user_token,
+                trace_id=trace_id,
+                content_source_type="file",
+                content_source_reference=file_id,
+                start_time=start_time,
+                unit_cost=unit_cost,
+            )
+        else:
+            result = await _generate_standard_flashcards(
+                content=file_content,
+                title=title,
+                config=config,
+                user_id=user_id,
+                user_token=user_token,
+                trace_id=trace_id,
+                content_source_type="file",
+                content_source_reference=file_id,
+                start_time=start_time,
+                unit_cost=unit_cost,
+            )
+        
+        return result
+        
+    except HTTPException:
+        # Cleanup uploaded file on failure
+        if file_id and original_filename:
+            try:
+                from services.db_services.supabase_file import delete_file_from_supabase_async
+                await delete_file_from_supabase_async(file_id, user_token, user_id, original_filename)
+                logger.info("Cleaned up orphaned file after flashcard generation failure (file_id: %s)", file_id)
+            except Exception as cleanup_err:
+                logger.warning("Failed to cleanup orphaned file %s: %s", file_id, cleanup_err)
+        raise
+    except Exception as e:
+        # Cleanup uploaded file on failure
+        if file_id and original_filename:
+            try:
+                from services.db_services.supabase_file import delete_file_from_supabase_async
+                await delete_file_from_supabase_async(file_id, user_token, user_id, original_filename)
+                logger.info("Cleaned up orphaned file after flashcard generation failure (file_id: %s)", file_id)
+            except Exception as cleanup_err:
+                logger.warning("Failed to cleanup orphaned file %s: %s", file_id, cleanup_err)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error generating flashcards from file: {str(e)}"
+        ) from e
+
+
 async def generate_flashcards_from_url(
     request: UrlFlashcardRequest,
     user_id: str,
