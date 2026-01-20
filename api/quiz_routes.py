@@ -53,19 +53,19 @@ router.add_api_route(
     tags=["Quiz Generation"]
 )
 
-# Generate quiz from file
+# Generate quiz from direct file upload
 router.add_api_route(
-    path="/quiz/generate/file",
+    path="/quiz/generate/upload",
     endpoint=generate_quiz_from_file_openai,
     methods=["POST"],
-    summary="Generate Quiz from File",
-    description="Generate a quiz from an uploaded file (PDF/DOCX). Use mode='standard' for fast generation or mode='enhanced' for RAG-based quality.",
+    summary="Generate Quiz from File Upload",
+    description="Generate a quiz from a direct file upload (PDF/DOCX). Use mode='standard' for fast generation or mode='enhanced' for RAG-based quality.",
     response_model=EnhancedQuizGenerationResponse,
     status_code=201,
     tags=["Quiz Generation"]
 )
 
-# Generate quiz from URL (must come BEFORE /quiz/generate/{file_id} to avoid route conflict)
+# Generate quiz from URL
 router.add_api_route(
     path="/quiz/generate/url",
     endpoint=generate_quiz_from_url,
@@ -77,13 +77,13 @@ router.add_api_route(
     tags=["Quiz Generation"]
 )
 
-# Generate quiz from file ID (must come AFTER specific routes like /url to avoid capturing them)
+# Generate quiz from existing file ID
 router.add_api_route(
-    path="/quiz/generate/{file_id}",
+    path="/quiz/generate/file/{file_id}",
     endpoint=generate_quiz_from_fileid,
     methods=["POST"],
     summary="Generate Quiz from File ID",
-    description="Generate a quiz from a previously uploaded file. Use mode='standard' for fast generation or mode='enhanced' for RAG-based quality.",
+    description="Generate a quiz from a previously uploaded file using its UUID. Use mode='standard' for fast generation or mode='enhanced' for RAG-based quality.",
     response_model=EnhancedQuizGenerationResponse,
     tags=["Quiz Generation"]
 )

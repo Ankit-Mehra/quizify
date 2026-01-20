@@ -12,7 +12,7 @@ Supports two generation modes:
 import asyncio
 import time
 from typing import List, Dict, Any
-from uuid import uuid4
+from uuid import uuid4, UUID
 from fastapi import HTTPException
 
 from services.content.ingestion_service import get_content_ingestion_service
@@ -23,6 +23,7 @@ from services.ai_services.flashcard_service import (
     FlashcardGenerationError,
     FlashcardParseError,
 )
+from handlers.file_handlers import _validate_file_type
 from services.db_services.supabase_flashcard import (
     create_deck,
     get_deck,
@@ -65,9 +66,88 @@ CREDITS_PER_UNIT = 0.5  # Conversion factor: units to credits
 STANDARD_FLASHCARD_UNITS = 1   # Standard mode
 ENHANCED_FLASHCARD_UNITS = 2   # Enhanced mode
 
+# Supported content types for flashcard generation
+ALLOWED_FLASHCARD_CONTENT_TYPES = {
+    "application/pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "text/plain",
+    "text/markdown",
+}
+
 
 # =============================================================================
-# Credit Validation Helper
+# Credit Reservation Helpers (Atomic Pattern)
+# =============================================================================
+
+async def reserve_credits_atomic(user_id: str, mode: str) -> None:
+    """
+    Atomically reserve credits for flashcard generation (consume BEFORE generation).
+    
+    This prevents TOCTOU race conditions where concurrent requests could bypass
+    credit limits by checking availability at the same time before consumption.
+    
+    Pattern:
+    1. This function consumes credits atomically (with row locking)
+    2. If generation fails, caller must call refund_credits_on_failure()
+    3. If generation succeeds, credits are already consumed (no further action)
+    
+    Args:
+        user_id: UUID of the user
+        mode: "standard" (0.5 credits / 1 unit) or "enhanced" (1.0 credits / 2 units)
+        
+    Raises:
+        HTTPException 402 if insufficient credits (atomic check + consume failed)
+    """
+    success = await consume_units(user_id, mode)
+    
+    if not success:
+        state = await get_billing_state(user_id)
+        required = CREDITS_PER_UNIT if mode == "standard" else CREDITS_PER_UNIT * 2
+        
+        if state.plan == "pro":
+            message = "Not enough credits. Purchase additional credits to continue."
+        else:
+            message = "Not enough credits. Upgrade to Pro or purchase credits."
+        
+        raise HTTPException(
+            status_code=402,
+            detail={
+                "error": "insufficient_credits",
+                "message": message,
+                "available_credits": state.available_credits,
+                "required_credits": required,
+                "plan": state.plan
+            }
+        )
+    
+    logger.info("Credits reserved for user %s... (%s flashcard generation)", user_id[:8], mode)
+
+
+async def refund_credits_on_failure(user_id: str, mode: str) -> None:
+    """
+    Refund credits after failed flashcard generation.
+    
+    This should be called when generation fails AFTER credits were reserved
+    via reserve_credits_atomic(). This is best-effort - if refund fails, it's logged
+    but doesn't raise an exception (user can contact support).
+    
+    Args:
+        user_id: UUID of the user
+        mode: "standard" (1 unit) or "enhanced" (2 units)
+    """
+    success = await refund_units(user_id, mode)
+    if success:
+        logger.info("Credits refunded for user %s... after failed %s flashcard generation", user_id[:8], mode)
+    else:
+        logger.error(
+            "CRITICAL: Failed to refund credits for user %s... after failed "
+            "%s flashcard generation. Manual intervention may be required.",
+            user_id[:8], mode
+        )
+
+
+# =============================================================================
+# Credit Validation Helper (Non-Atomic - for read-only checks)
 # =============================================================================
 
 async def validate_and_get_unit_cost(
@@ -189,12 +269,17 @@ async def _generate_standard_flashcards(
     content_source_reference: str | None,
     start_time: float,
     unit_cost: int,
+    credits_pre_reserved: bool = False,
 ) -> FlashcardGenerationResponse:
     """
     Generate flashcards using standard (fast) mode.
     
     Uses direct LLM generation without RAG pipeline.
     Costs 1 unit (0.5 credits).
+    
+    Args:
+        credits_pre_reserved: If True, credits were already consumed atomically
+                              and no internal consumption/refund is needed.
     """
     credits_consumed = False
     
@@ -209,18 +294,24 @@ async def _generate_standard_flashcards(
         raise HTTPException(status_code=400, detail=e.message) from e
     
     try:
-        # 2. Consume credits (with audit logging)
-        logger.info(
-            "CREDIT_AUDIT: Consuming standard credits for user %s..., trace: %s",
-            user_id[:8], trace_id[:8]
-        )
-        success = await consume_units(user_id, "standard")
-        if not success:
-            raise HTTPException(
-                status_code=402,
-                detail="Failed to consume credits for flashcard generation"
+        # 2. Consume credits (with audit logging) - skip if pre-reserved
+        if not credits_pre_reserved:
+            logger.info(
+                "CREDIT_AUDIT: Consuming standard credits for user %s..., trace: %s",
+                user_id[:8], trace_id[:8]
             )
-        credits_consumed = True
+            success = await consume_units(user_id, "standard")
+            if not success:
+                raise HTTPException(
+                    status_code=402,
+                    detail="Failed to consume credits for flashcard generation"
+                )
+            credits_consumed = True
+        else:
+            logger.info(
+                "CREDIT_AUDIT: Credits pre-reserved for user %s..., trace: %s (skipping consumption)",
+                user_id[:8], trace_id[:8]
+            )
         
         # 3. Generate flashcards
         generation_service = get_flashcard_generation_service()
@@ -316,28 +407,39 @@ async def _generate_enhanced_flashcards(
     content_source_reference: str | None,
     start_time: float,
     unit_cost: int,
+    credits_pre_reserved: bool = False,
 ) -> FlashcardGenerationResponse:
     """
     Generate flashcards using enhanced (RAG-based) mode.
     
     Uses concept extraction, context retrieval, and Bloom's taxonomy.
     Costs 2 units (1 credit).
+    
+    Args:
+        credits_pre_reserved: If True, credits were already consumed atomically
+                              and no internal consumption/refund is needed.
     """
     credits_consumed = False
     
     try:
-        # 1. Consume credits (with audit logging)
-        logger.info(
-            "CREDIT_AUDIT: Consuming enhanced credits for user %s..., trace: %s",
-            user_id[:8], trace_id[:8]
-        )
-        success = await consume_units(user_id, "enhanced")
-        if not success:
-            raise HTTPException(
-                status_code=402,
-                detail="Failed to consume credits for enhanced flashcard generation"
+        # 1. Consume credits (with audit logging) - skip if pre-reserved
+        if not credits_pre_reserved:
+            logger.info(
+                "CREDIT_AUDIT: Consuming enhanced credits for user %s..., trace: %s",
+                user_id[:8], trace_id[:8]
             )
-        credits_consumed = True
+            success = await consume_units(user_id, "enhanced")
+            if not success:
+                raise HTTPException(
+                    status_code=402,
+                    detail="Failed to consume credits for enhanced flashcard generation"
+                )
+            credits_consumed = True
+        else:
+            logger.info(
+                "CREDIT_AUDIT: Credits pre-reserved for user %s..., trace: %s (skipping consumption)",
+                user_id[:8], trace_id[:8]
+            )
         
         # 2. Generate enhanced flashcards
         enhanced_service = get_enhanced_flashcard_service()
@@ -461,6 +563,7 @@ def _build_flashcard_response_list(saved_cards: List[Dict]) -> List[Flashcard]:
 # =============================================================================
 
 async def generate_flashcards_from_file(
+    file_id: UUID,
     request: FileFlashcardRequest,
     user_id: str,
     user_token: str,
@@ -471,7 +574,8 @@ async def generate_flashcards_from_file(
     Supports both standard and enhanced modes.
     
     Args:
-        request: File flashcard request with file_id and config
+        file_id: UUID of the previously uploaded file (from path parameter)
+        request: File flashcard request with config options
         user_id: ID of the requesting user
         user_token: JWT token for RLS enforcement
         
@@ -481,17 +585,18 @@ async def generate_flashcards_from_file(
     start_time = time.time()
     trace_id = str(uuid4())
     mode = request.config.mode
+    file_id_str = str(file_id)
     
     logger.info(
         "Generating flashcards from file %s for user %s..., mode: %s, trace: %s",
-        str(request.file_id), user_id[:8], mode, trace_id[:8]
+        file_id_str, user_id[:8], mode, trace_id[:8]
     )
     
     # Validate credits (DRY - uses shared helper)
     unit_cost = await validate_and_get_unit_cost(user_id, mode)
     
     # Get file record and parse content
-    file_record = get_file_record(str(request.file_id), user_token)
+    file_record = get_file_record(file_id_str, user_token)
     if not file_record:
         raise HTTPException(status_code=404, detail="File not found")
     
@@ -508,7 +613,6 @@ async def generate_flashcards_from_file(
     
     # Route to appropriate generation mode
     title = request.title or file_record.get("filename", "Flashcards from File")
-    file_id_str = str(request.file_id)
     
     if mode == "enhanced":
         return await _generate_enhanced_flashcards(
@@ -536,6 +640,185 @@ async def generate_flashcards_from_file(
             start_time=start_time,
             unit_cost=unit_cost,
         )
+
+async def generate_flashcards_from_file_upload(
+    file,
+    title: str,
+    card_count: int,
+    card_style: str,
+    difficulty: str,
+    include_hints: bool,
+    mode: str,
+    user_id: str,
+    user_token: str,
+) -> FlashcardGenerationResponse:
+    """
+    Generate flashcards from direct file upload (single-step approach).
+    
+    This endpoint accepts a file upload directly and handles:
+    1. File validation and extraction
+    2. Saving file to storage
+    3. Generating flashcards
+    4. Cleanup on failure
+    
+    Args:
+        file: Uploaded file (UploadFile)
+        title: Title for the deck
+        card_count: Number of cards to generate
+        card_style: Card style ("question_answer", "term_definition", "cloze", "mixed")
+        difficulty: Difficulty level ("easy", "medium", "hard", "mixed")
+        include_hints: Whether to include hints
+        mode: Generation mode ("standard" or "enhanced")
+        user_id: ID of the requesting user
+        user_token: JWT token for RLS enforcement
+        
+    Returns:
+        FlashcardGenerationResponse with generated deck and cards
+    """
+    from services.db_services.supabase_file import save_file_to_supabase_async, delete_file_from_supabase_async
+    from services.content.parsers import extract_text_from_pdf, extract_text_from_docx, extract_text_from_plain_text
+    from schemas.flashcard import FlashcardGenerationConfig
+    
+    async def cleanup_file_on_failure(fid: str, token: str, uid: str, fname: str) -> None:
+        """Helper to cleanup uploaded file on failure."""
+        try:
+            await delete_file_from_supabase_async(fid, token, uid, fname)
+            logger.info("Cleaned up orphaned file after flashcard generation failure (file_id: %s)", fid)
+        except Exception as cleanup_err:
+            logger.warning("Failed to cleanup orphaned file %s: %s", fid, cleanup_err)
+    
+    start_time = time.time()
+    trace_id = str(uuid4())
+    file_id = None
+    original_filename = None
+    credits_reserved = False
+    
+    logger.info(
+        "Generating flashcards from file upload for user %s..., mode: %s, trace: %s",
+        user_id[:8], mode, trace_id[:8]
+    )
+    
+    # Reserve credits atomically BEFORE any file operations (prevents TOCTOU race)
+    await reserve_credits_atomic(user_id, mode)
+    credits_reserved = True
+    
+    try:
+        # Read and validate file
+        file_bytes = await file.read()
+        file_size = len(file_bytes)
+        
+        # Validate file size (10MB limit)
+        MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+        if file_size > MAX_FILE_SIZE:
+            raise HTTPException(
+                status_code=413,
+                detail=f"File too large. Maximum file size is 10MB. Your file is {file_size} bytes."
+            )
+        
+        # Validate file type (consistent with file_handlers.py pattern)
+        validated_content_type = _validate_file_type(file.filename, file.content_type)
+        
+        # Restrict to supported content types for flashcard generation
+        if validated_content_type not in ALLOWED_FLASHCARD_CONTENT_TYPES:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Unsupported file type: {validated_content_type}. "
+                    "Only PDF, DOCX, and plain text/markdown files are supported for flashcard generation."
+                ),
+            )
+        
+        # Extract text based on file type
+        try:
+            if validated_content_type == "application/pdf":
+                file_content = extract_text_from_pdf(file_bytes)
+            elif validated_content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+                file_content = extract_text_from_docx(file_bytes)
+            else:  # text/plain or markdown
+                file_content = extract_text_from_plain_text(file_bytes)
+        except Exception as extraction_error:
+            error_msg = str(extraction_error)
+            if "Failed to extract text" in error_msg or "Failed to open" in error_msg:
+                raise HTTPException(status_code=400, detail=error_msg) from extraction_error
+            raise
+        
+        # Validate content length
+        if not file_content or len(file_content.strip()) < 50:
+            raise HTTPException(
+                status_code=400,
+                detail="File contains insufficient text content"
+            )
+        
+        # Save file to storage (use validated content type)
+        original_filename = file.filename or f"flashcard_upload_{int(time.time())}"
+        file_result = await save_file_to_supabase_async(
+            user_id, file_bytes, original_filename, user_token, validated_content_type
+        )
+        file_id = file_result.get('file_id')
+        
+        # Create flashcard config
+        config = FlashcardGenerationConfig(
+            num_cards=card_count,
+            card_style=card_style,
+            difficulty=difficulty,
+            include_hints=include_hints,
+            mode=mode
+        )
+        
+        # Calculate unit cost for response
+        unit_cost = ENHANCED_FLASHCARD_UNITS if mode == "enhanced" else STANDARD_FLASHCARD_UNITS
+        
+        # Generate flashcards using appropriate mode (credits already reserved)
+        if mode == "enhanced":
+            result = await _generate_enhanced_flashcards(
+                content=file_content,
+                title=title,
+                config=config,
+                user_id=user_id,
+                user_token=user_token,
+                trace_id=trace_id,
+                content_source_type="file",
+                content_source_reference=file_id,
+                start_time=start_time,
+                unit_cost=unit_cost,
+                credits_pre_reserved=True,
+            )
+        else:
+            result = await _generate_standard_flashcards(
+                content=file_content,
+                title=title,
+                config=config,
+                user_id=user_id,
+                user_token=user_token,
+                trace_id=trace_id,
+                content_source_type="file",
+                content_source_reference=file_id,
+                start_time=start_time,
+                unit_cost=unit_cost,
+                credits_pre_reserved=True,
+            )
+        
+        return result
+        
+    except HTTPException:
+        # Cleanup uploaded file on failure
+        if file_id and original_filename:
+            await cleanup_file_on_failure(file_id, user_token, user_id, original_filename)
+        # Refund credits since generation failed
+        if credits_reserved:
+            await refund_credits_on_failure(user_id, mode)
+        raise
+    except Exception as e:
+        # Cleanup uploaded file on failure
+        if file_id and original_filename:
+            await cleanup_file_on_failure(file_id, user_token, user_id, original_filename)
+        # Refund credits since generation failed
+        if credits_reserved:
+            await refund_credits_on_failure(user_id, mode)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error generating flashcards from file: {str(e)}"
+        ) from e
 
 
 async def generate_flashcards_from_url(

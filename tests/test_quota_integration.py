@@ -1,6 +1,6 @@
 """
 Integration tests for quota enforcement in quiz generation endpoints.
-Tests both /api/quiz/generate/text and /api/quiz/generate/file endpoints.
+Tests both /api/quiz/generate/text and /api/quiz/generate/upload endpoints.
 """
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock

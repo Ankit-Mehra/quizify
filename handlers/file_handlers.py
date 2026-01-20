@@ -127,12 +127,13 @@ async def upload_file(
         )
         
         # Use validated content type (may be inferred from extension)
-        await save_file_to_supabase_async(user_id, file_bytes, file.filename, user_token, validated_content_type)
-        logger.info(f"File successfully uploaded to Supabase: {file.filename}")
+        file_record = await save_file_to_supabase_async(user_id, file_bytes, file.filename, user_token, validated_content_type)
+        logger.info(f"File successfully uploaded to Supabase: {file.filename} (ID: {file_record['file_id']})")
         
         return {
             "message": "File uploaded successfully",
-            "file_id": file.filename
+            "file_id": file_record["file_id"],
+            "filename": file.filename
         }
     except HTTPException:
         # Re-raise HTTP exceptions (storage quota, file size errors)
