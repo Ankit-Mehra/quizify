@@ -5,7 +5,7 @@ This module defines the FastAPI routes for flashcard operations,
 including generation, deck management, card CRUD, and study sessions.
 """
 
-from typing import List
+from typing import List, Literal
 from uuid import UUID
 from fastapi import APIRouter, Depends, Query, Path, Body, UploadFile, File, Form
 from fastapi.responses import Response
@@ -40,6 +40,7 @@ from schemas.flashcard import (
     StudySessionResponse,
     StudySessionComplete,
     StudySessionSummary,
+    FLASHCARD_GENERATION_MODE,
 )
 from schemas.export import FlashcardExportRequest
 
@@ -77,10 +78,10 @@ async def generate_from_upload(
     file: UploadFile = File(...),
     title: str = Form(...),
     card_count: int = Form(10),
-    card_style: str = Form("mixed"),
-    difficulty: str = Form("intermediate"),
+    card_style: Literal["question_answer", "term_definition", "cloze", "mixed"] = Form("mixed"),
+    difficulty: Literal["easy", "medium", "hard", "mixed"] = Form("mixed"),
     include_hints: bool = Form(True),
-    mode: str = Form("standard"),
+    mode: FLASHCARD_GENERATION_MODE = Form("standard"),
     user_id: str = Depends(get_current_user_id),
     user_token: str = Depends(get_current_user_token),
 ):

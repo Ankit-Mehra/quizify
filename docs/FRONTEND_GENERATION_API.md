@@ -203,8 +203,8 @@ const formData = new FormData();
 formData.append('file', fileObject);
 formData.append('title', 'My Flashcard Deck');
 formData.append('card_count', '15');
-formData.append('card_style', 'mixed');     // 'simple', 'detailed', 'mixed'
-formData.append('difficulty', 'intermediate'); // 'beginner', 'intermediate', 'advanced'
+formData.append('card_style', 'mixed');     // 'question_answer', 'term_definition', 'cloze', 'mixed'
+formData.append('difficulty', 'medium');    // 'easy', 'medium', 'hard', 'mixed'
 formData.append('include_hints', 'true');
 formData.append('mode', 'standard');        // or 'enhanced'
 
@@ -254,7 +254,7 @@ const response = await fetch(`/api/flashcards/generate/file/${fileId}`, {
     config: {
       num_cards: 15,
       card_style: 'mixed',
-      difficulty: 'intermediate',
+      difficulty: 'medium',
       include_hints: true,
       mode: 'standard'
     }
@@ -296,7 +296,7 @@ const response = await fetch('/api/flashcards/generate/text', {
     config: {
       num_cards: 10,
       card_style: 'mixed',
-      difficulty: 'intermediate',
+      difficulty: 'medium',
       include_hints: true,
       mode: 'standard'
     }
@@ -338,7 +338,7 @@ const response = await fetch('/api/flashcards/generate/url', {
     config: {
       num_cards: 15,
       card_style: 'mixed',
-      difficulty: 'intermediate',
+      difficulty: 'medium',
       include_hints: true,
       mode: 'standard'
     }
