@@ -252,7 +252,7 @@ const response = await fetch(`/api/flashcards/generate/file/${fileId}`, {
   body: JSON.stringify({
     title: 'My Flashcard Deck',
     config: {
-      card_count: 15,
+      num_cards: 15,
       card_style: 'mixed',
       difficulty: 'intermediate',
       include_hints: true,
@@ -294,7 +294,7 @@ const response = await fetch('/api/flashcards/generate/text', {
     content: 'Your text content here...',
     title: 'My Deck',
     config: {
-      card_count: 10,
+      num_cards: 10,
       card_style: 'mixed',
       difficulty: 'intermediate',
       include_hints: true,
@@ -336,7 +336,7 @@ const response = await fetch('/api/flashcards/generate/url', {
     url: 'https://example.com/article',
     title: 'Web Content Flashcards',
     config: {
-      card_count: 15,
+      num_cards: 15,
       card_style: 'mixed',
       difficulty: 'intermediate',
       include_hints: true,

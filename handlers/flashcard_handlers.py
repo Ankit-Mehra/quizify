@@ -23,6 +23,7 @@ from services.ai_services.flashcard_service import (
     FlashcardGenerationError,
     FlashcardParseError,
 )
+from handlers.file_handlers import _validate_file_type
 from services.db_services.supabase_flashcard import (
     create_deck,
     get_deck,
@@ -575,6 +576,15 @@ async def generate_flashcards_from_file_upload(
     """
     from services.db_services.supabase_file import save_file_to_supabase_async, delete_file_from_supabase_async
     from services.content.parsers import extract_text_from_pdf, extract_text_from_docx, extract_text_from_plain_text
+    from schemas.flashcard import FlashcardGenerationConfig
+    
+    async def cleanup_file_on_failure(fid: str, token: str, uid: str, fname: str) -> None:
+        """Helper to cleanup uploaded file on failure."""
+        try:
+            await delete_file_from_supabase_async(fid, token, uid, fname)
+            logger.info("Cleaned up orphaned file after flashcard generation failure (file_id: %s)", fid)
+        except Exception as cleanup_err:
+            logger.warning("Failed to cleanup orphaned file %s: %s", fid, cleanup_err)
     
     start_time = time.time()
     trace_id = str(uuid4())
@@ -602,13 +612,16 @@ async def generate_flashcards_from_file_upload(
                 detail=f"File too large. Maximum file size is 10MB. Your file is {file_size} bytes."
             )
         
+        # Validate file type (consistent with file_handlers.py pattern)
+        validated_content_type = _validate_file_type(file.filename, file.content_type)
+        
         # Extract text based on file type
         try:
-            if file.content_type == "application/pdf":
+            if validated_content_type == "application/pdf":
                 file_content = extract_text_from_pdf(file_bytes)
-            elif file.content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+            elif validated_content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
                 file_content = extract_text_from_docx(file_bytes)
-            else:  # text/plain
+            else:  # text/plain or markdown
                 file_content = extract_text_from_plain_text(file_bytes)
         except Exception as extraction_error:
             error_msg = str(extraction_error)
@@ -623,17 +636,16 @@ async def generate_flashcards_from_file_upload(
                 detail="File contains insufficient text content"
             )
         
-        # Save file to storage
+        # Save file to storage (use validated content type)
         original_filename = file.filename or f"flashcard_upload_{int(time.time())}"
         file_result = await save_file_to_supabase_async(
-            user_id, file_bytes, original_filename, user_token, file.content_type
+            user_id, file_bytes, original_filename, user_token, validated_content_type
         )
         file_id = file_result.get('file_id')
         
         # Create flashcard config
-        from schemas.flashcard import FlashcardGenerationConfig
         config = FlashcardGenerationConfig(
-            card_count=card_count,
+            num_cards=card_count,
             card_style=card_style,
             difficulty=difficulty,
             include_hints=include_hints,
@@ -673,22 +685,12 @@ async def generate_flashcards_from_file_upload(
     except HTTPException:
         # Cleanup uploaded file on failure
         if file_id and original_filename:
-            try:
-                from services.db_services.supabase_file import delete_file_from_supabase_async
-                await delete_file_from_supabase_async(file_id, user_token, user_id, original_filename)
-                logger.info("Cleaned up orphaned file after flashcard generation failure (file_id: %s)", file_id)
-            except Exception as cleanup_err:
-                logger.warning("Failed to cleanup orphaned file %s: %s", file_id, cleanup_err)
+            await cleanup_file_on_failure(file_id, user_token, user_id, original_filename)
         raise
     except Exception as e:
         # Cleanup uploaded file on failure
         if file_id and original_filename:
-            try:
-                from services.db_services.supabase_file import delete_file_from_supabase_async
-                await delete_file_from_supabase_async(file_id, user_token, user_id, original_filename)
-                logger.info("Cleaned up orphaned file after flashcard generation failure (file_id: %s)", file_id)
-            except Exception as cleanup_err:
-                logger.warning("Failed to cleanup orphaned file %s: %s", file_id, cleanup_err)
+            await cleanup_file_on_failure(file_id, user_token, user_id, original_filename)
         raise HTTPException(
             status_code=500,
             detail=f"Error generating flashcards from file: {str(e)}"
