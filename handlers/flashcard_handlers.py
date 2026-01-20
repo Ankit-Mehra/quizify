@@ -665,8 +665,8 @@ async def generate_flashcards_from_file_upload(
         file: Uploaded file (UploadFile)
         title: Title for the deck
         card_count: Number of cards to generate
-        card_style: Card style (simple, detailed, mixed)
-        difficulty: Difficulty level (beginner, intermediate, advanced)
+        card_style: Card style ("question_answer", "term_definition", "cloze", "mixed")
+        difficulty: Difficulty level ("easy", "medium", "hard", "mixed")
         include_hints: Whether to include hints
         mode: Generation mode ("standard" or "enhanced")
         user_id: ID of the requesting user
