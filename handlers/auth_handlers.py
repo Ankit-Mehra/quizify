@@ -834,7 +834,7 @@ async def reset_password(request: ResetPasswordRequest, fastapi_request: Request
                     detail="Invalid or expired recovery token. Please request a new password reset link."
                 )
             
-            logger.info(f"Password reset successful for user: {update_result.user.id}")
+            logger.info(f"Password reset successful for user: {_short_user_id(update_result.user.id)}")
             
             # SECURITY: Delete recovery cookies after successful password reset
             # This ensures tokens can't be reused
