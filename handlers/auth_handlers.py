@@ -825,16 +825,16 @@ async def reset_password(request: ResetPasswordRequest, fastapi_request: Request
                 supabase = app_config.get_authenticated_supabase_client(access_token)
             
             # Now update the password - user is authenticated via the recovery session
-            response = supabase.auth.update_user({"password": new_password})
+            update_result = supabase.auth.update_user({"password": new_password})
             
-            if not response.user:
+            if not update_result.user:
                 logger.warning("Password reset failed - invalid or expired token")
                 raise HTTPException(
                     status_code=401,
                     detail="Invalid or expired recovery token. Please request a new password reset link."
                 )
             
-            logger.info(f"Password reset successful for user: {response.user.id}")
+            logger.info(f"Password reset successful for user: {update_result.user.id}")
             
             # SECURITY: Delete recovery cookies after successful password reset
             # This ensures tokens can't be reused
