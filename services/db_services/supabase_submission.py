@@ -107,7 +107,8 @@ def save_submission(submission: QuizSubmission, user_token: str = None):
     
     logger.debug(f"Saving submission for quiz_id: {submission.quiz_id}, user_id: {submission.user_id}")
     try:
-        payload = submission.model_dump(mode="json")
+        # Exclude quiz_title from payload - it's not a database column, only used for API responses
+        payload = submission.model_dump(mode="json", exclude={"quiz_title"})
         supabase.table("submissions").insert(payload).execute()
         logger.debug(f"Successfully saved submission: {submission.id}")
     except Exception as e:
