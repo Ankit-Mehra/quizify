@@ -536,18 +536,20 @@ class TestShareRoutesIntegration:
         response = client.get(f"/api/share/status/{uuid4()}")
         assert response.status_code == 401
     
-    def test_create_share_requires_auth(self, client, sample_quiz_id):
-        """Test create share endpoint requires authentication."""
+    def test_create_share_requires_auth_returns_403_csrf(self, client, sample_quiz_id):
+        """Test create share endpoint requires CSRF protection (returns 403 without headers)."""
         response = client.post(
             "/api/share",
             json={"quiz_id": str(sample_quiz_id)},
         )
-        assert response.status_code == 401
+        # POST without Authorization header triggers CSRF protection (403) before auth (401)
+        assert response.status_code == 403
     
-    def test_revoke_share_requires_auth(self, client, sample_quiz_id):
-        """Test revoke share endpoint requires authentication."""
+    def test_revoke_share_requires_auth_returns_403_csrf(self, client, sample_quiz_id):
+        """Test revoke share endpoint requires CSRF protection (returns 403 without headers)."""
         response = client.delete(f"/api/share/{sample_quiz_id}")
-        assert response.status_code == 401
+        # DELETE without Authorization header triggers CSRF protection (403) before auth (401)
+        assert response.status_code == 403
 
 
 # ============================================================================

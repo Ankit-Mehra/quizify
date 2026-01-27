@@ -9,6 +9,30 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 
+# Mock out Supabase calls for all tests in this module
+@pytest.fixture(autouse=True)
+def mock_supabase_for_tests(mocker):
+    """Mock Supabase client to prevent database calls during matching verification tests."""
+    # Reset OpenAI client to avoid stale mocks from integration tests
+    import services.ai_services.llm_client_service as llm_service
+    llm_service._client = None
+    llm_service._http_client = None
+    
+    # Mock get_supabase_service to return None (triggers test mode in track_llm_call)
+    mocker.patch("services.db_services.supabase_llm_analytics.get_supabase_service", return_value=None)
+    # Mock config to prevent stale module-level state from integration tests
+    mocker.patch.object(
+        __import__('config', fromlist=['config']).config,
+        'get_supabase_client',
+        return_value=None
+    )
+    # Also mock the email cache lookup to return None
+    mocker.patch(
+        "services.ai_services.llm_client_service._get_user_email_cached",
+        return_value=None
+    )
+
+
 def _build_matched_pairs_string(left: list, right: list, correct_answer: list) -> str:
     """
     Helper to build matched pairs string (mirrors service logic).
@@ -181,12 +205,14 @@ class TestMatchingQuestionVerification:
     @pytest.mark.asyncio
     async def test_verify_and_explain_matching_integration(self, matching_question_data, mock_openai_response):
         """Integration test: verify_and_explain correctly handles matching questions."""
-        from services.ai_services.explanation_service import ExplanationService
+        # Create mock OpenAI client
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_openai_response)
         
-        service = ExplanationService()
-        
-        with patch.object(service.client.chat.completions, 'create', new_callable=AsyncMock) as mock_create:
-            mock_create.return_value = mock_openai_response
+        # Patch at the import location in explanation_service
+        with patch('services.ai_services.explanation_service.get_openai_client', return_value=mock_client):
+            from services.ai_services.explanation_service import ExplanationService
+            service = ExplanationService()
             
             is_valid, confidence, issues, explanation, distractor_explanations = await service.verify_and_explain(
                 question_data=matching_question_data,
@@ -196,10 +222,10 @@ class TestMatchingQuestionVerification:
             )
             
             # Verify the call was made
-            mock_create.assert_called_once()
+            mock_client.chat.completions.create.assert_called_once()
             
             # Check the prompt contains matching-specific content
-            call_args = mock_create.call_args
+            call_args = mock_client.chat.completions.create.call_args
             messages = call_args.kwargs.get("messages", [])
             user_message = next((m for m in messages if m.get("role") == "user"), None)
             
@@ -223,12 +249,14 @@ class TestMatchingQuestionVerification:
     @pytest.mark.asyncio
     async def test_verify_and_explain_mcq_still_works(self, mcq_question_data, mock_openai_response):
         """Ensure MCQ verification still works after matching changes."""
-        from services.ai_services.explanation_service import ExplanationService
+        # Create mock OpenAI client
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_openai_response)
         
-        service = ExplanationService()
-        
-        with patch.object(service.client.chat.completions, 'create', new_callable=AsyncMock) as mock_create:
-            mock_create.return_value = mock_openai_response
+        # Patch at the import location in explanation_service
+        with patch('services.ai_services.explanation_service.get_openai_client', return_value=mock_client):
+            from services.ai_services.explanation_service import ExplanationService
+            service = ExplanationService()
             
             is_valid, confidence, issues, explanation, distractor_explanations = await service.verify_and_explain(
                 question_data=mcq_question_data,
@@ -238,10 +266,10 @@ class TestMatchingQuestionVerification:
             )
             
             # Verify the call was made
-            mock_create.assert_called_once()
+            mock_client.chat.completions.create.assert_called_once()
             
             # Check the prompt contains MCQ-specific content (options)
-            call_args = mock_create.call_args
+            call_args = mock_client.chat.completions.create.call_args
             messages = call_args.kwargs.get("messages", [])
             user_message = next((m for m in messages if m.get("role") == "user"), None)
             

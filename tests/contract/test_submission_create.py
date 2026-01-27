@@ -27,13 +27,16 @@ class TestSubmissionCreate:
         - Response includes submission information
         """
     
-    def test_submit_without_auth_returns_401(self, mock_supabase_client):
+    def test_submit_without_auth_returns_403_csrf(self, mock_supabase_client):
         """
-        Test that submission without authentication returns HTTP 401.
+        Test that submission without authentication returns HTTP 403 (CSRF protection).
+        
+        Note: POST requests without Authorization header or X-CSRF-Token are rejected
+        by CSRF middleware before auth can run. This is correct security behavior.
         
         Expected:
-        - Status code: 401
-        - Error message about authentication
+        - Status code: 403
+        - Error message about CSRF protection
         """
         quiz_id = str(uuid4())
         submission_payload = {
@@ -49,8 +52,8 @@ class TestSubmissionCreate:
         
         response = client.post(f"/api/quiz/{quiz_id}/submit", json=submission_payload)
         
-        assert response.status_code == 401, \
-            f"Expected 401 without auth, got {response.status_code}: {response.text}"
+        assert response.status_code == 403, \
+            f"Expected 403 without auth, got {response.status_code}: {response.text}"
         
         data = response.json()
         assert "detail" in data or "message" in data, f"Error response missing detail/message: {data}"

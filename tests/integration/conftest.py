@@ -399,7 +399,7 @@ def create_mock_quiz_response(num_questions, question_types=None, text="sample t
 
 
 # Mock AI services
-async def mock_generate_quizzes_single_async(text, num_questions, question_types=None, _user_id=None, _trace_id=None, _generation_mode=None, _content_source_type=None):
+async def mock_generate_quizzes_single_async(text, num_questions, question_types=None, model_token_limit=8000, user_id=None, trace_id=None, generation_mode=None, content_source_type=None):
     """
     Mock OpenAI quiz generation with PostHog analytics support.
     
@@ -460,7 +460,7 @@ async def mock_generate_quizzes_single_async(text, num_questions, question_types
     return questions
 
 
-def mock_save_quiz_to_database(title, quizzes, created_by, content_source_type=None, content_source_reference=None, _user_token=None, _generation_mode=None):
+def mock_save_quiz_to_database(title, quizzes, created_by, content_source_type=None, content_source_reference=None, user_token=None, generation_mode=None):
     """Mock saving quiz to database - returns (quiz_id, saved_questions) tuple."""
     return _quiz_storage.save_quiz(title, quizzes, created_by, content_source_type, content_source_reference)
 
@@ -470,7 +470,7 @@ def mock_save_file_to_supabase(*_args, **_kwargs):
     return {"message": "File uploaded successfully", "file_id": "mock_file_123"}
 
 
-def mock_save_metadata(_metadata, _user_token=None):
+def mock_save_metadata(metadata, user_token=None):
     """Mock saving quiz metadata - now accepts optional user_token parameter."""
     return {"success": True, "quiz_id": "mock_quiz_123"}
 
@@ -531,7 +531,7 @@ class MockSupabaseAsyncClient:
         return mock_requests_get(url, headers=headers)
 
 
-def mock_get_user_quizzes(user_id, _user_token=None, _title=None, _start_date=None, _end_date=None, _source_type=None, _mode=None, page=1, limit=20):
+def mock_get_user_quizzes(user_id, user_token=None, title=None, start_date=None, end_date=None, source_type=None, mode=None, page=1, limit=20):
     """Mock getting user quizzes with optional filtering and pagination."""
     quizzes = _quiz_storage.get_user_quizzes(user_id)
     # Note: Filtering not implemented in mock - returns all quizzes with pagination wrapper
@@ -548,9 +548,9 @@ def mock_get_user_quizzes(user_id, _user_token=None, _title=None, _start_date=No
     }
 
 
-def mock_get_quiz_from_database(quiz_id, user_id=None):
+def mock_get_quiz_from_database(quiz_id, user_token=None):
     """Mock getting quiz from database."""
-    return _quiz_storage.get_quiz(quiz_id, user_id)
+    return _quiz_storage.get_quiz(quiz_id, user_token)
 
 
 # === Billing Service Mocks ===
@@ -690,9 +690,11 @@ class SimpleAsyncRedis:
         self._expires[name] = time
         return True
     
-    async def eval(self, _script, _numkeys, *_keys_and_args):
-        """Mock eval for Lua scripts - just approve session creation."""
-        return 1  # Success
+    async def eval(self, _script, _numkeys, *keys_and_args):
+        """Mock eval for Lua scripts - simulate session creation response."""
+        import json
+        # Return a properly formatted JSON response for session creation script
+        return json.dumps({"status": "added", "count": 1, "evicted_session_id": None})
     
     async def close(self):
         pass
@@ -793,7 +795,7 @@ def setup_integration_mocks():
         stack.enter_context(patch("handlers.quiz_handlers.generate_quizzes_single_async", side_effect=mock_generate_quizzes_single_async))
         stack.enter_context(patch("handlers.quiz_handlers.save_quiz_to_database", side_effect=mock_save_quiz_to_database))
         stack.enter_context(patch("handlers.quiz_handlers.get_user_quizzes", side_effect=mock_get_user_quizzes))
-        stack.enter_context(patch("handlers.quiz_handlers.get_quiz_from_database", side_effect=mock_get_quiz_from_database))
+        stack.enter_context(patch("handlers.submission_handler.get_quiz_from_database", side_effect=mock_get_quiz_from_database))
         stack.enter_context(patch("handlers.quiz_handlers.save_file_to_supabase_async", side_effect=mock_save_file_to_supabase))
         stack.enter_context(patch("handlers.quiz_handlers.save_metadata", side_effect=mock_save_metadata))
         stack.enter_context(patch("handlers.file_handlers.save_file_to_supabase_async", side_effect=mock_save_file_to_supabase))
