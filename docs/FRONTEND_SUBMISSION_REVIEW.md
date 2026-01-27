@@ -383,8 +383,8 @@ Aggregate review data to show:
 - Enforces RLS policies - users can only access their own submissions
 
 ### Performance
-- Single query to fetch all data (no N+1 problem)
-- Returns full question details in one response
+- Two set-based queries to fetch all data (no per-question N+1 queries)
+- Returns full question details in a single API response
 - No additional API calls needed for explanations
 
 ### Security
@@ -439,11 +439,11 @@ This is a **new endpoint** - no breaking changes to existing endpoints.
 
 | Endpoint | Purpose | Returns Detailed Answers |
 |----------|---------|-------------------------|
-| `POST /quiz/{id}/submit` | Submit quiz answers | ✅ Yes (immediate feedback) |
-| `GET /submission/{id}` | Get submission summary | ❌ No (score only) |
-| `GET /submission/{id}/review` | **Get detailed review** | ✅ **Yes (with explanations)** |
-| `GET /submissions` | List all user submissions | ❌ No (summaries only) |
-| `GET /quiz/{id}/submissions` | List quiz attempts | ❌ No (summaries only) |
+| `POST /api/quiz/{id}/submit` | Submit quiz answers | ✅ Yes (immediate feedback) |
+| `GET /api/submission/{id}` | Get submission summary | ❌ No (score only) |
+| `GET /api/submission/{id}/review` | **Get detailed review** | ✅ **Yes (with explanations)** |
+| `GET /api/submissions` | List all user submissions | ❌ No (summaries only) |
+| `GET /api/quiz/{id}/submissions` | List quiz attempts | ❌ No (summaries only) |
 
 ---
 

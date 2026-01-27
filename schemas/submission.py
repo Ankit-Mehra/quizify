@@ -42,7 +42,14 @@ class DetailedResult(BaseModel):
     This is the base schema for question results, used in immediate submission responses.
     """
     question_id: UUID = Field(..., description="ID of the question")
-    question_type: str = Field(..., description="Type of question: multiple_choice, true_false, fill_blank, matching")
+    question_type: str = Field(
+        ...,
+        description=(
+            "Type of question: multiple_choice, true_false, fill_blank, matching, "
+            "or unknown (used when the original question has been deleted and full "
+            "question data is no longer available)"
+        ),
+    )
     question: str = Field(..., description="The question text")
     your_answer: Union[str, bool, List[int]] = Field(..., description="User's submitted answer")
     correct_answer: Union[str, bool, List[int]] = Field(..., description="The correct answer")

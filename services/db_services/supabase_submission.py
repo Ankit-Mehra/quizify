@@ -54,7 +54,7 @@ def _get_client(user_token: str = None):
         Supabase client instance
     """
     if user_token:
-        return app_config.get_authenticated_supabase_client(user_token)
+        return get_authed_supabase_client(user_token)
     return get_supabase()
 
 def get_question(question_ids: List[UUID], user_token: str = None) -> List[Question]:
@@ -263,7 +263,7 @@ def get_submission_review(submission_id: UUID, user_token: str = None) -> dict:
         
         # Build question review details
         question_reviews = []
-        for answer in answers_response.data:
+        for answer in answers_response.data or []:
             # Handle case where question may have been deleted (questions could be None)
             question_data = answer.get("questions") or {}
             
