@@ -13,6 +13,30 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 
+# Mock out Supabase calls for all tests in this module
+@pytest.fixture(autouse=True)
+def mock_supabase_for_tests(mocker):
+    """Mock Supabase client to prevent database calls during prompt routing tests."""
+    # Reset OpenAI client to avoid stale mocks from integration tests
+    import services.ai_services.llm_client_service as llm_service
+    llm_service._client = None
+    llm_service._http_client = None
+    
+    # Mock get_supabase_service to return None (triggers test mode in track_llm_call)
+    mocker.patch("services.db_services.supabase_llm_analytics.get_supabase_service", return_value=None)
+    # Mock config to prevent stale module-level state from integration tests
+    mocker.patch.object(
+        __import__('config', fromlist=['config']).config,
+        'get_supabase_client',
+        return_value=None
+    )
+    # Also mock the email cache lookup to return None
+    mocker.patch(
+        "services.ai_services.llm_client_service._get_user_email_cached",
+        return_value=None
+    )
+
+
 class TestFillBlankPromptRouting:
     """Test fill-in-blank questions use correct prompt."""
     
@@ -50,12 +74,15 @@ class TestFillBlankPromptRouting:
     @pytest.mark.asyncio
     async def test_fill_blank_uses_correct_prompt(self, fill_blank_question_data, mock_openai_response_with_distractors):
         """Verify fill_blank questions route to VERIFY_AND_EXPLAIN_FILL_BLANK_PROMPT."""
-        from services.ai_services.explanation_service import ExplanationService
+        # Create mock OpenAI client
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_openai_response_with_distractors)
         
-        service = ExplanationService()
-        
-        with patch.object(service.client.chat.completions, 'create', new_callable=AsyncMock) as mock_create:
-            mock_create.return_value = mock_openai_response_with_distractors
+        # Patch BEFORE importing ExplanationService
+        with patch('services.ai_services.explanation_service.get_openai_client', return_value=mock_client):
+            # Must reimport to get the patched version
+            from services.ai_services.explanation_service import ExplanationService
+            service = ExplanationService()
             
             is_valid, confidence, issues, explanation, distractor_explanations = await service.verify_and_explain(
                 question_data=fill_blank_question_data,
@@ -65,10 +92,10 @@ class TestFillBlankPromptRouting:
             )
             
             # Verify the call was made
-            mock_create.assert_called_once()
+            mock_client.chat.completions.create.assert_called_once()
             
             # Check the prompt contains fill-blank specific content
-            call_args = mock_create.call_args
+            call_args = mock_client.chat.completions.create.call_args
             messages = call_args.kwargs.get("messages", [])
             user_message = next((m for m in messages if m.get("role") == "user"), None)
             
@@ -133,12 +160,14 @@ class TestTrueFalsePromptRouting:
     @pytest.mark.asyncio
     async def test_true_false_uses_correct_prompt(self, true_false_question_data, mock_openai_response_no_distractors):
         """Verify true_false questions route to VERIFY_AND_EXPLAIN_TRUE_FALSE_PROMPT."""
-        from services.ai_services.explanation_service import ExplanationService
+        # Create mock OpenAI client
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_openai_response_no_distractors)
         
-        service = ExplanationService()
-        
-        with patch.object(service.client.chat.completions, 'create', new_callable=AsyncMock) as mock_create:
-            mock_create.return_value = mock_openai_response_no_distractors
+        # Patch at the import location in explanation_service
+        with patch('services.ai_services.explanation_service.get_openai_client', return_value=mock_client):
+            from services.ai_services.explanation_service import ExplanationService
+            service = ExplanationService()
             
             is_valid, confidence, issues, explanation, distractor_explanations = await service.verify_and_explain(
                 question_data=true_false_question_data,
@@ -148,10 +177,10 @@ class TestTrueFalsePromptRouting:
             )
             
             # Verify the call was made
-            mock_create.assert_called_once()
+            mock_client.chat.completions.create.assert_called_once()
             
             # Check the prompt contains true/false specific content
-            call_args = mock_create.call_args
+            call_args = mock_client.chat.completions.create.call_args
             messages = call_args.kwargs.get("messages", [])
             user_message = next((m for m in messages if m.get("role") == "user"), None)
             
@@ -211,8 +240,6 @@ class TestDistractorExplanationsField:
     @pytest.mark.asyncio
     async def test_mcq_returns_distractor_explanations(self, mock_mcq_response):
         """Verify MCQ questions return populated distractor_explanations."""
-        from services.ai_services.explanation_service import ExplanationService
-        
         mcq_question = {
             "type": "multiple_choice",
             "question": "Which organelle is the powerhouse of the cell?",
@@ -220,10 +247,14 @@ class TestDistractorExplanationsField:
             "correct_answer": "mitochondria"
         }
         
-        service = ExplanationService()
+        # Create mock OpenAI client
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_mcq_response)
         
-        with patch.object(service.client.chat.completions, 'create', new_callable=AsyncMock) as mock_create:
-            mock_create.return_value = mock_mcq_response
+        # Patch at the import location in explanation_service
+        with patch('services.ai_services.explanation_service.get_openai_client', return_value=mock_client):
+            from services.ai_services.explanation_service import ExplanationService
+            service = ExplanationService()
             
             is_valid, confidence, issues, explanation, distractor_explanations = await service.verify_and_explain(
                 question_data=mcq_question,

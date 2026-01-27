@@ -175,12 +175,15 @@ class TestQuizGeneratePDF:
         assert response.status_code == 400, \
             f"Expected 400 for empty PDF, got {response.status_code}: {response.text}"
     
-    def test_unauthorized_request_returns_401(self):
+    def test_unauthorized_request_returns_403_csrf(self):
         """
-        Test that requests without authentication return HTTP 401.
+        Test that requests without authentication return HTTP 403 (CSRF protection).
+        
+        Note: POST requests without Authorization header or X-CSRF-Token are rejected
+        by CSRF middleware before auth can run. This is correct security behavior.
         
         Expected:
-        - Status code: 401
+        - Status code: 403
         """
         pdf_bytes = create_test_pdf_with_content("Test content")
         
@@ -195,8 +198,8 @@ class TestQuizGeneratePDF:
         
         response = client.post("/api/quiz/generate/upload", files=files, data=data)
         
-        assert response.status_code == 401, \
-            f"Expected 401 without auth, got {response.status_code}: {response.text}"
+        assert response.status_code == 403, \
+            f"Expected 403 without auth, got {response.status_code}: {response.text}"
 
 
 if __name__ == "__main__":

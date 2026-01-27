@@ -41,13 +41,16 @@ class TestQuizGenerateText:
         assert "title" in data, f"Response missing title: {data}"
         assert "message" in data, f"Response missing message: {data}"
     
-    def test_generate_quiz_without_auth_returns_401(self, mock_supabase_client):
+    def test_generate_quiz_without_auth_returns_403_csrf(self, mock_supabase_client):
         """
-        Test that quiz generation without authentication returns HTTP 401.
+        Test that quiz generation without authentication returns HTTP 403 (CSRF protection).
+        
+        Note: POST requests without Authorization header or X-CSRF-Token are rejected
+        by CSRF middleware before auth can run. This is correct security behavior.
         
         Expected:
-        - Status code: 401
-        - Error message about authentication
+        - Status code: 403
+        - Error message about CSRF protection
         """
         quiz_payload = {
             "title": "Test Quiz",
@@ -57,8 +60,8 @@ class TestQuizGenerateText:
         
         response = client.post("/api/quiz/generate/text", json=quiz_payload)
         
-        assert response.status_code == 401, \
-            f"Expected 401 without auth, got {response.status_code}: {response.text}"
+        assert response.status_code == 403, \
+            f"Expected 403 without auth, got {response.status_code}: {response.text}"
         
         data = response.json()
         assert "detail" in data or "message" in data, f"Error response missing detail/message: {data}"

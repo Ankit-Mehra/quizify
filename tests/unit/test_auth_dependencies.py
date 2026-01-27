@@ -92,6 +92,7 @@ def credentials():
 async def test_get_current_user_id_valid_session(mock_supabase, redis_client, credentials):
     session_service = SessionService(redis_client)
     refresh_token = "test_refresh_token_valid"
+    # create_session returns client_session_token, not session_id
     await session_service.create_session(
         user_id="user_123",
         device_type="browser",
@@ -99,6 +100,7 @@ async def test_get_current_user_id_valid_session(mock_supabase, redis_client, cr
         user_agent="Mozilla/5.0",
         refresh_token=refresh_token,
     )
+    # Session ID is found via refresh_token lookup
     session_id = await session_service.find_session_by_refresh_token(refresh_token)
     assert session_id is not None
 
@@ -108,7 +110,9 @@ async def test_get_current_user_id_valid_session(mock_supabase, redis_client, cr
     app = Starlette()
     app.state.redis = redis_client
     request = _build_request(app)
-    request._cookies = {"refresh_token": refresh_token}
+    # The refresh_token is used to lookup session_id
+    # Cookie name must match REFRESH_TOKEN_COOKIE_NAME = "quizify_refresh_token"
+    request._cookies = {"quizify_refresh_token": refresh_token}
 
     user_id = await auth_deps.get_current_user_id(request, credentials)
 
@@ -142,7 +146,8 @@ async def test_get_current_user_id_invalid_session(mock_supabase, redis_client, 
     app = Starlette()
     app.state.redis = redis_client
     request = _build_request(app)
-    request._cookies = {"refresh_token": "invalid_refresh_token"}
+    # Cookie name must match REFRESH_TOKEN_COOKIE_NAME = "quizify_refresh_token"
+    request._cookies = {"quizify_refresh_token": "invalid_refresh_token"}
 
     with pytest.raises(HTTPException) as exc_info:
         await auth_deps.get_current_user_id(request, credentials)
@@ -180,7 +185,9 @@ async def test_get_current_user_token_uses_cached_auth(mock_supabase, redis_clie
     app = Starlette()
     app.state.redis = redis_client
     request = _build_request(app)
-    request._cookies = {"refresh_token": refresh_token}
+    # The refresh_token is used to lookup session_id
+    # Cookie name must match REFRESH_TOKEN_COOKIE_NAME = "quizify_refresh_token"
+    request._cookies = {"quizify_refresh_token": refresh_token}
 
     # First call to cache authentication
     await auth_deps.get_current_user_id(request, credentials)

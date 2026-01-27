@@ -244,8 +244,9 @@ class SimpleAsyncRedis:
         return True
     
     async def eval(self, script, numkeys, *keys_and_args):
-        """Mock eval for Lua scripts - just approve session creation."""
-        return 1  # Success
+        """Mock eval for Lua scripts - simulate session creation response."""
+        import json
+        return json.dumps({"status": "added", "count": 1, "evicted_session_id": None})
     
     async def close(self):
         pass
@@ -274,7 +275,7 @@ def mock_supabase_client(mock_supabase, mocker, mock_redis_client):
     
     # Define mock implementations
     def mock_save_file_to_supabase(*args, **kwargs):
-        return {"message": "File uploaded successfully"}
+        return {"message": "File uploaded successfully", "file_id": "mock_file_123"}
     
     def mock_delete_file_from_supabase(*args, **kwargs):
         return {"message": "File deleted successfully"}

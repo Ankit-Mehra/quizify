@@ -47,19 +47,23 @@ class TestAuthLogout:
         finally:
             app.dependency_overrides.clear()
     
-    def test_logout_without_auth_returns_401(self, mock_supabase_client):
+    def test_logout_without_auth_returns_403_csrf(self, mock_supabase_client):
         """
-        Test that logout without authentication returns HTTP 401.
+        Test that logout without authentication returns HTTP 403 (CSRF protection).
+        
+        Note: Without Authorization header or X-CSRF-Token, the CSRF middleware
+        rejects the request before auth can check credentials. This is correct 
+        security behavior - POST requests without CSRF protection are forbidden.
         
         Expected:
-        - Status code: 401
-        - Error message about missing authentication
+        - Status code: 403
+        - Error message about CSRF protection
         """
-        # No headers provided - should fail auth
+        # No headers provided - CSRF protection kicks in first
         response = client.post("/api/auth/logout")
         
-        assert response.status_code == 401, \
-            f"Expected 401 without auth, got {response.status_code}: {response.text}"
+        assert response.status_code == 403, \
+            f"Expected 403 without auth, got {response.status_code}: {response.text}"
         
         data = response.json()
         assert "detail" in data or "message" in data, f"Error response missing detail/message: {data}"
