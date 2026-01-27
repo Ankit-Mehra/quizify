@@ -39,6 +39,24 @@ def get_authed_supabase_client(user_token: str):
     logger.debug(f"Creating authenticated Supabase client with token: {user_token[:4]}...")
     return app_config.get_authenticated_supabase_client(user_token)
 
+def _get_client(user_token: str = None):
+    """
+    Get appropriate Supabase client based on authentication context.
+    
+    This is the centralized helper for client selection to avoid DRY violations.
+    
+    Args:
+        user_token: User's JWT token for RLS enforcement.
+                    If provided, returns authenticated client (enforces RLS).
+                    If None, returns service role client (bypasses RLS - use with caution).
+    
+    Returns:
+        Supabase client instance
+    """
+    if user_token:
+        return app_config.get_authenticated_supabase_client(user_token)
+    return get_supabase()
+
 def get_question(question_ids: List[UUID], user_token: str = None) -> List[Question]:
     """
     Get questions by their IDs using Supabase `.in_` clause
@@ -51,11 +69,7 @@ def get_question(question_ids: List[UUID], user_token: str = None) -> List[Quest
     Returns:
         List of Question objects
     """
-    # Use authenticated client if token provided (enforces RLS)
-    if user_token:
-        supabase = app_config.get_authenticated_supabase_client(user_token)
-    else:
-        supabase = get_supabase()  # Service role - bypasses RLS
+    supabase = _get_client(user_token)
     
     # Convert UUIDs to strings for Supabase query
     # Supabase/PostgREST expects string representation of UUIDs
@@ -99,11 +113,7 @@ def save_submission(submission: QuizSubmission, user_token: str = None):
         user_token: User's authentication token for RLS enforcement (recommended)
                     If None, uses service role (bypasses RLS - use with caution)
     """
-    # Use authenticated client if token provided (enforces RLS)
-    if user_token:
-        supabase = app_config.get_authenticated_supabase_client(user_token)
-    else:
-        supabase = get_supabase()  # Service role - bypasses RLS
+    supabase = _get_client(user_token)
     
     logger.debug(f"Saving submission for quiz_id: {submission.quiz_id}, user_id: {submission.user_id}")
     try:
@@ -137,11 +147,7 @@ def save_answer(answer: QuizAnswer, user_token: str = None):
         user_token: User's authentication token for RLS enforcement (recommended)
                     If None, uses service role (bypasses RLS - use with caution)
     """
-    # Use authenticated client if token provided (enforces RLS)
-    if user_token:
-        supabase = app_config.get_authenticated_supabase_client(user_token)
-    else:
-        supabase = get_supabase()  # Service role - bypasses RLS
+    supabase = _get_client(user_token)
     
     logger.debug(f"Saving answer for question_id: {answer.question_id}")
     try:
@@ -171,11 +177,7 @@ def get_submission_by_id(submission_id: UUID, user_token: str = None) -> QuizSub
         user_token: User's authentication token for RLS enforcement (recommended)
     """
     try:
-        # Use authenticated client if token provided (enforces RLS)
-        if user_token:
-            supabase = get_authed_supabase_client(user_token)
-        else:
-            supabase = get_supabase()
+        supabase = _get_client(user_token)
         
         # Get submission
         submission_data = supabase.table("submissions").select("*").eq("id", str(submission_id)).execute()
@@ -205,6 +207,112 @@ def get_submission_by_id(submission_id: UUID, user_token: str = None) -> QuizSub
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def get_submission_review(submission_id: UUID, user_token: str = None) -> dict:
+    """
+    Retrieve a submission with full answer details and question explanations for review.
+    
+    Args:
+        submission_id: The UUID of the submission
+        user_token: User's authentication token for RLS enforcement (recommended)
+        
+    Returns:
+        Dictionary with submission summary and detailed question reviews including explanations
+    """
+    try:
+        supabase = _get_client(user_token)
+        
+        logger.debug(f"Fetching submission review for submission_id: {submission_id}")
+        
+        # Get submission summary with quiz title
+        submission_response = supabase.table("submissions") \
+            .select("*, quizzes(title)") \
+            .eq("id", str(submission_id)) \
+            .execute()
+        
+        if not submission_response.data:
+            raise HTTPException(status_code=404, detail=f"Submission {submission_id} not found")
+        
+        submission = submission_response.data[0]
+        
+        # Get all answers with question details (including explanation, options, distractor_explanations, bloom, etc.)
+        # Order by question_id for consistent ordering across requests
+        answers_response = supabase.table("answers") \
+            .select("""
+                id,
+                question_id,
+                user_answer,
+                correct_answer,
+                is_correct,
+                questions (
+                    type,
+                    question,
+                    explanation,
+                    options,
+                    distractor_explanations,
+                    bloom_level,
+                    difficulty,
+                    concept_name
+                )
+            """) \
+            .eq("submission_id", str(submission_id)) \
+            .order("question_id") \
+            .execute()
+        
+        if not answers_response.data:
+            logger.warning(f"Submission {submission_id} has no answers recorded")
+        
+        # Build question review details
+        question_reviews = []
+        for answer in answers_response.data:
+            # Handle case where question may have been deleted (questions could be None)
+            question_data = answer.get("questions") or {}
+            
+            review_detail = {
+                "question_id": answer["question_id"],
+                "question_type": question_data.get("type") or "unknown",
+                "question": question_data.get("question") or "[Question no longer available]",
+                "your_answer": answer["user_answer"],
+                "correct_answer": answer["correct_answer"],
+                "is_correct": answer["is_correct"],
+                "explanation": question_data.get("explanation") or "",
+                # Optional enhanced fields
+                "options": question_data.get("options"),
+                "distractor_explanations": question_data.get("distractor_explanations"),
+                "bloom_level": question_data.get("bloom_level"),
+                "difficulty": question_data.get("difficulty"),
+                "concept_name": question_data.get("concept_name")
+            }
+            question_reviews.append(review_detail)
+        
+        # Extract quiz title from nested quizzes object
+        quiz_title = None
+        if submission.get("quizzes"):
+            quiz_title = submission["quizzes"].get("title")
+        
+        # Build full review response
+        review = {
+            "submission_id": UUID(submission["id"]),
+            "quiz_id": UUID(submission["quiz_id"]),
+            "quiz_title": quiz_title,
+            "user_id": UUID(submission["user_id"]),
+            "score": submission["score"],
+            "correct_count": submission["correct_count"],
+            "wrong_count": submission["wrong_count"],
+            "total_questions": submission["total_questions"],
+            "submitted_at": submission["submitted_at"],
+            "questions": question_reviews
+        }
+        
+        logger.debug(f"Successfully retrieved review for submission {submission_id} with {len(question_reviews)} questions")
+        return review
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error retrieving submission review: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to retrieve submission review. Please try again.")
+
+
 def get_user_submissions(user_id: str, user_token: str = None) -> List[dict]:
     """
     Get all submissions for a user with basic info (no detailed answers).
@@ -217,11 +325,7 @@ def get_user_submissions(user_id: str, user_token: str = None) -> List[dict]:
         List of submission summaries with: id, quiz_id, quiz_title, score, submitted_at, total_questions
     """
     try:
-        # Use authenticated client if token provided (enforces RLS)
-        if user_token:
-            supabase = get_authed_supabase_client(user_token)
-        else:
-            supabase = get_supabase()
+        supabase = _get_client(user_token)
         
         logger.debug(f"Fetching submissions for user: {user_id}")
         
@@ -260,11 +364,7 @@ def get_quiz_submissions(quiz_id: str, user_id: str, user_token: str = None) -> 
         List of submission summaries for this quiz
     """
     try:
-        # Use authenticated client if token provided (enforces RLS)
-        if user_token:
-            supabase = get_authed_supabase_client(user_token)
-        else:
-            supabase = get_supabase()
+        supabase = _get_client(user_token)
         
         logger.debug(f"Fetching submissions for quiz {quiz_id} by user {user_id}")
         

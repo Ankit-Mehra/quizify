@@ -1,4 +1,5 @@
 ## Submission Handler
+import json
 from typing import List, Any
 from schemas.quiz import MCQQuestion, TrueFalseQuestion, FillBlankQuestion, MatchingQuestion, Question
 from schemas.submission import QuizSubmission, QuizAnswer, QuizSubmissionRequest
@@ -14,7 +15,8 @@ from services.db_services.supabase_submission import (
     get_user_submissions_cached,
     get_quiz_submissions_cached,
     invalidate_user_submissions_cache,
-    invalidate_quiz_submissions_cache
+    invalidate_quiz_submissions_cache,
+    get_submission_review as get_review_from_db
 )
 from services.db_services.supabase_quiz import get_quiz_from_database
 from dependencies.auth_dependencies import get_current_user_id, get_current_user_token
@@ -49,6 +51,69 @@ def parse_question_models(raw_questions: List[Any]) -> List[Question]:
     return parsed_questions
 
 
+def compare_answers(user_answer, correct_answer, question_type: str) -> bool:
+    """
+    Compare user answer with correct answer based on question type.
+    
+    Handles different answer formats:
+    - multiple_choice/fill_blank: string comparison (case-insensitive)
+    - true_false: boolean comparison (handles string "true"/"false" and bool True/False)
+    - matching: list of integers comparison (order matters)
+    
+    Args:
+        user_answer: User's submitted answer
+        correct_answer: Correct answer from question
+        question_type: Type of question for type-aware comparison
+        
+    Returns:
+        bool: True if answer is correct, False otherwise
+    """
+    if question_type == "matching":
+        # Matching questions: correct_answer is List[int]
+        # User answer could be List[int] or string representation
+        try:
+            # Normalize user answer to list
+            if isinstance(user_answer, str):
+                # Parse string like "[1, 0, 3, 2]" or "1,0,3,2"
+                try:
+                    user_list = json.loads(user_answer)
+                except json.JSONDecodeError:
+                    # Try comma-separated format
+                    user_list = [int(x.strip()) for x in user_answer.split(",")]
+            elif isinstance(user_answer, list):
+                user_list = [int(x) for x in user_answer]
+            else:
+                return False
+            
+            # Normalize correct answer to list
+            if isinstance(correct_answer, str):
+                correct_list = json.loads(correct_answer)
+            elif isinstance(correct_answer, list):
+                correct_list = [int(x) for x in correct_answer]
+            else:
+                return False
+            
+            return user_list == correct_list
+        except (ValueError, TypeError, json.JSONDecodeError) as e:
+            logger.warning(f"Error comparing matching answers: {e}")
+            return False
+    
+    elif question_type == "true_false":
+        # True/False questions: normalize to boolean
+        def to_bool(val):
+            if isinstance(val, bool):
+                return val
+            if isinstance(val, str):
+                return val.strip().lower() == "true"
+            return bool(val)
+        
+        return to_bool(user_answer) == to_bool(correct_answer)
+    
+    else:
+        # multiple_choice, fill_blank: case-insensitive string comparison
+        return str(user_answer).strip().lower() == str(correct_answer).strip().lower()
+
+
 async def submit_quiz(
     quiz_id: UUID,
     submission: QuizSubmissionRequest,
@@ -63,6 +128,13 @@ async def submit_quiz(
             detail="Quiz ID in URL does not match quiz ID in request body"
         )
     
+    # Validate answer count matches total_questions
+    if len(submission.answers) != submission.total_questions:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Answer count mismatch: expected {submission.total_questions} answers, received {len(submission.answers)}"
+        )
+    
     # Validate that the quiz exists before processing submission
     # Note: total_questions > 0 is already validated by Pydantic schema (gt=0)
     try:
@@ -74,6 +146,7 @@ async def submit_quiz(
     
     correct = 0
     wrong = 0
+    skipped = 0
     detailed_results = []
 
     # Fetch raw questions using authenticated client (RLS enforcement)
@@ -90,9 +163,13 @@ async def submit_quiz(
     for ans in submission.answers:
         q = question_map.get(ans.question_id)
         if not q:
+            # Question not found or failed to parse - track as skipped
+            skipped += 1
+            logger.warning(f"Question {ans.question_id} not found in question_map, skipping")
             continue
 
-        is_correct = str(ans.user_answer).strip().lower() == str(q.correct_answer).strip().lower()
+        # Use type-aware answer comparison
+        is_correct = compare_answers(ans.user_answer, q.correct_answer, q.type)
         if is_correct:
             correct += 1
         else:
@@ -101,13 +178,30 @@ async def submit_quiz(
         detailed_results.append({
             "question_id": str(q.id),
             "question": q.question,
+            "question_type": q.type,  # Include question type for frontend rendering
             "your_answer": ans.user_answer,
             "correct_answer": q.correct_answer,
             "is_correct": is_correct,
         })
 
-    # Calculate score as integer (database expects INTEGER type)
-    score = int(round((correct / submission.total_questions) * 100))
+    # Log warning if any questions were skipped (data integrity issue)
+    if skipped > 0:
+        logger.warning(
+            f"Submission for quiz {quiz_id} had {skipped} skipped questions "
+            f"(invalid IDs or parsing errors). Scored {correct + wrong}/{submission.total_questions} questions."
+        )
+
+    # Calculate score based on evaluated questions (not skipped ones)
+    # This prevents penalizing users for backend data issues
+    evaluated_count = correct + wrong
+    if evaluated_count == 0:
+        # No valid questions were evaluated - this is a serious error
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to evaluate any questions. Please contact support."
+        )
+    
+    score = int(round((correct / evaluated_count) * 100))
 
     new_submission = QuizSubmission(
         id=uuid4(),
@@ -116,7 +210,7 @@ async def submit_quiz(
         correct_count=correct,
         wrong_count=wrong,
         score=score,
-        total_questions=submission.total_questions,
+        total_questions=evaluated_count,  # Store actual evaluated count
         submitted_at=datetime.now()
     )
 
@@ -146,7 +240,7 @@ async def submit_quiz(
 
     return {
         "id": new_submission.id,
-        "total_questions": submission.total_questions,
+        "total_questions": evaluated_count,  # Return actual evaluated count
         "correct_count": correct,
         "wrong_count": wrong,
         "score": score,
@@ -219,7 +313,7 @@ async def list_quiz_submissions(
         # Use cached version with authenticated client (RLS enforcement)
         submissions = await get_quiz_submissions_cached(str(quiz_id), user_id, user_token)
         
-        logger.info(f"User {user_id} has {len(submissions)} attempts on quiz {quiz_id}")
+        logger.info(f"User {user_id} has {len(submissions)} submissions for quiz {quiz_id}")
         return {
             "quiz_id": str(quiz_id),
             "user_id": user_id,
@@ -229,3 +323,33 @@ async def list_quiz_submissions(
     except Exception as e:
         logger.error(f"Error listing submissions for quiz {quiz_id}: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to retrieve quiz submissions. Please try again.")
+
+
+async def get_submission_review(
+    submission_id: UUID,
+    user_id: str = Depends(get_current_user_id),
+    user_token: str = Depends(get_current_user_token)
+):
+    """
+    Retrieve detailed review of a submission including all questions, answers, and explanations.
+    This allows users to review what they got right/wrong and learn from their mistakes.
+    """
+    try:
+        logger.info(f"User {user_id} requesting review for submission {submission_id}")
+        
+        # Use authenticated client (RLS enforcement)
+        review = get_review_from_db(submission_id, user_token)
+        
+        # Authorization check: user can only access their own submissions
+        if str(review["user_id"]) != str(user_id):
+            logger.warning(f"User {user_id} attempted to access submission review {submission_id} owned by {review['user_id']}")
+            raise HTTPException(status_code=403, detail="You are not authorized to access this submission")
+        
+        logger.info(f"User {user_id} successfully accessed review for submission {submission_id}")
+        return review
+        
+    except HTTPException:
+        raise  # Re-raise HTTP exceptions (404, 403, etc.)
+    except Exception as e:
+        logger.error(f"Unexpected error retrieving submission review {submission_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve submission review. Please try again.")
