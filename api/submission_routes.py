@@ -1,8 +1,8 @@
 ## Submission Routes
 from fastapi import APIRouter, Response
 from services.logger import app_logger as logger
-from schemas.submission import SubmissionResponse, QuizSubmission, UserSubmissionsResponse, QuizSubmissionsResponse
-from handlers.submission_handler import submit_quiz, get_submission, list_user_submissions, list_quiz_submissions
+from schemas.submission import SubmissionResponse, QuizSubmission, UserSubmissionsResponse, QuizSubmissionsResponse, SubmissionReviewResponse
+from handlers.submission_handler import submit_quiz, get_submission, list_user_submissions, list_quiz_submissions, get_submission_review
 
 router = APIRouter(tags=["Quiz Submissions"])
 logger.info("Submission routes initialized")
@@ -86,4 +86,26 @@ router.add_api_route(
         "Returns submissions ordered by most recent first."
     ),
     response_model=QuizSubmissionsResponse
+)
+
+# Get detailed review of a submission with questions and explanations
+router.add_api_route(
+    path="/submission/{submission_id}/review",
+    endpoint=get_submission_review,
+    methods=["GET"],
+    summary="Review Submission with Detailed Answers",
+    description=(
+        "Retrieve a detailed review of a quiz submission showing:\n\n"
+        "- Which questions were answered correctly/incorrectly\n"
+        "- User's answer vs. correct answer for each question\n"
+        "- Explanations for correct answers\n"
+        "- Distractor explanations for incorrect options (MCQ/fill-blank)\n"
+        "- Question metadata (Bloom level, difficulty, concept)\n\n"
+        "**Perfect for:**\n"
+        "- Learning from mistakes\n"
+        "- Understanding why answers were wrong\n"
+        "- Reviewing quiz performance after submission\n\n"
+        "**Authorization:** Only the user who created the submission can access this review."
+    ),
+    response_model=SubmissionReviewResponse
 )

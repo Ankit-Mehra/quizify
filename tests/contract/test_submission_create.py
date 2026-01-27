@@ -178,6 +178,75 @@ class TestSubmissionCreate:
         assert "detail" in data, f"Error response missing detail: {data}"
         assert "quiz id" in data["detail"].lower() or "match" in data["detail"].lower(), \
             f"Error message should mention quiz_id mismatch: {data['detail']}"
+    
+    def test_submit_with_fewer_answers_than_total_questions_returns_400(self, mock_supabase_client, auth_bypass, auth_headers):
+        """
+        Test that submission with fewer answers than total_questions returns HTTP 400.
+        
+        This validates the answer count mismatch check added to prevent data integrity issues.
+        
+        Expected:
+        - Status code: 400 (Bad Request)
+        - Error message about answer count mismatch
+        """
+        quiz_id = str(uuid4())
+        submission_payload = {
+            "quiz_id": quiz_id,
+            "total_questions": 5,  # Expecting 5 answers
+            "answers": [
+                {"question_id": str(uuid4()), "user_answer": "answer1"},
+                {"question_id": str(uuid4()), "user_answer": "answer2"}
+                # Only 2 answers provided, but total_questions is 5
+            ]
+        }
+        
+        response = client.post(f"/api/quiz/{quiz_id}/submit", headers=auth_headers, json=submission_payload)
+        
+        assert response.status_code == 400, \
+            f"Expected 400 for fewer answers than total_questions, got {response.status_code}: {response.text}"
+        
+        data = response.json()
+        assert "detail" in data, f"Error response missing detail: {data}"
+        assert "mismatch" in data["detail"].lower() or "expected" in data["detail"].lower(), \
+            f"Error message should mention answer count mismatch: {data['detail']}"
+        assert "5" in data["detail"] and "2" in data["detail"], \
+            f"Error message should include expected (5) and received (2) counts: {data['detail']}"
+    
+    def test_submit_with_more_answers_than_total_questions_returns_400(self, mock_supabase_client, auth_bypass, auth_headers):
+        """
+        Test that submission with more answers than total_questions returns HTTP 400.
+        
+        This validates the answer count mismatch check added to prevent data integrity issues.
+        
+        Expected:
+        - Status code: 400 (Bad Request)
+        - Error message about answer count mismatch
+        """
+        quiz_id = str(uuid4())
+        submission_payload = {
+            "quiz_id": quiz_id,
+            "total_questions": 2,  # Expecting 2 answers
+            "answers": [
+                {"question_id": str(uuid4()), "user_answer": "answer1"},
+                {"question_id": str(uuid4()), "user_answer": "answer2"},
+                {"question_id": str(uuid4()), "user_answer": "answer3"},
+                {"question_id": str(uuid4()), "user_answer": "answer4"},
+                {"question_id": str(uuid4()), "user_answer": "answer5"}
+                # 5 answers provided, but total_questions is 2
+            ]
+        }
+        
+        response = client.post(f"/api/quiz/{quiz_id}/submit", headers=auth_headers, json=submission_payload)
+        
+        assert response.status_code == 400, \
+            f"Expected 400 for more answers than total_questions, got {response.status_code}: {response.text}"
+        
+        data = response.json()
+        assert "detail" in data, f"Error response missing detail: {data}"
+        assert "mismatch" in data["detail"].lower() or "expected" in data["detail"].lower(), \
+            f"Error message should mention answer count mismatch: {data['detail']}"
+        assert "2" in data["detail"] and "5" in data["detail"], \
+            f"Error message should include expected (2) and received (5) counts: {data['detail']}"
 
 
 if __name__ == "__main__":
