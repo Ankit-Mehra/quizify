@@ -53,6 +53,10 @@ interface QuestionReviewDetail {
   bloom_level?: string | null;                   // "remember" | "understand" | "apply" | "analyze" | "evaluate" | "create"
   difficulty?: string | null;                    // "easy" | "medium" | "hard"
   concept_name?: string | null;                  // Concept being tested
+  
+  // Matching question fields (for displaying human-readable answers)
+  left?: string[] | null;                        // Left-side items (e.g., ["OpenAI", "Google", "Microsoft"])
+  right?: string[] | null;                       // Right-side options (e.g., ["Chrome", "Edge", "Atlas"])
 }
 ```
 
