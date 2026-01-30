@@ -11,10 +11,10 @@ The submission review API now returns `left` and `right` arrays for matching que
 ```typescript
 interface QuestionReviewDetail {
   question_type: "matching";
-  your_answer: number[];      // Indices: [3, 1, 1, 0]
-  correct_answer: number[];   // Indices: [0, 1, 2, 3]
-  left: string[];             // ["OpenAI", "Google", "Microsoft", "Forrester"]
-  right: string[];            // ["Atlas", "Chrome", "Edge", "Research"]
+  your_answer: number[];        // Indices: [3, 1, 1, 0]
+  correct_answer: number[];     // Indices: [0, 1, 2, 3]
+  left?: string[] | null;       // ["OpenAI", "Google", "Microsoft", "Forrester"]
+  right?: string[] | null;      // ["Atlas", "Chrome", "Edge", "Research"]
   // ... other fields
 }
 ```
