@@ -251,7 +251,9 @@ def get_submission_review(submission_id: UUID, user_token: str = None) -> dict:
                     distractor_explanations,
                     bloom_level,
                     difficulty,
-                    concept_name
+                    concept_name,
+                    left,
+                    right
                 )
             """) \
             .eq("submission_id", str(submission_id)) \
@@ -280,7 +282,10 @@ def get_submission_review(submission_id: UUID, user_token: str = None) -> dict:
                 "distractor_explanations": question_data.get("distractor_explanations"),
                 "bloom_level": question_data.get("bloom_level"),
                 "difficulty": question_data.get("difficulty"),
-                "concept_name": question_data.get("concept_name")
+                "concept_name": question_data.get("concept_name"),
+                # Matching question fields - for human-readable answer display
+                "left": question_data.get("left"),
+                "right": question_data.get("right")
             }
             question_reviews.append(review_detail)
         

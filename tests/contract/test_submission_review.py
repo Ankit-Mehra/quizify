@@ -377,6 +377,156 @@ class TestSubmissionReviewResponseContract:
         for field in optional_fields:
             assert field in question, f"Optional field should be present: {field}"
 
+    def test_matching_question_includes_left_right_fields(self, mock_supabase_client, auth_bypass, auth_headers, mocker):
+        """
+        Test that matching question review details include left and right arrays.
+        
+        Expected:
+        - left and right fields present for matching questions
+        - Fields contain string arrays for human-readable answer display
+        - Enables frontend to show "OpenAI → Chrome" instead of raw indices "3, 1"
+        """
+        from dependencies.auth_dependencies import get_current_user_id
+        
+        submission_id = str(uuid4())
+        question_id = str(uuid4())
+        
+        def mock_user_id_uuid():
+            return MOCK_USER_UUID
+        
+        app.dependency_overrides[get_current_user_id] = mock_user_id_uuid
+        
+        def mock_get_submission_review(sub_id, user_token=None):
+            return {
+                "submission_id": submission_id,
+                "quiz_id": str(uuid4()),
+                "quiz_title": "Matching Quiz",
+                "user_id": MOCK_USER_UUID,
+                "score": 75,
+                "correct_count": 3,
+                "wrong_count": 1,
+                "total_questions": 4,
+                "submitted_at": "2026-01-27T10:00:00Z",
+                "questions": [
+                    {
+                        "question_id": question_id,
+                        "question_type": "matching",
+                        "question": "Match the companies with their products",
+                        "your_answer": [3, 1, 1, 0],  # User's matching indices
+                        "correct_answer": [0, 1, 2, 3],  # Correct matching indices
+                        "is_correct": False,
+                        "explanation": "Match each company to its primary product.",
+                        "options": None,
+                        "distractor_explanations": None,
+                        "bloom_level": "understand",
+                        "difficulty": "medium",
+                        "concept_name": "Tech Companies",
+                        # Matching-specific fields for human-readable display
+                        "left": ["OpenAI", "Google", "Microsoft", "Forrester"],
+                        "right": ["Atlas", "Chrome", "Edge", "Research"]
+                    }
+                ]
+            }
+        
+        mocker.patch(
+            "handlers.submission_handler.get_review_from_db",
+            side_effect=mock_get_submission_review
+        )
+        
+        response = client.get(f"/api/submission/{submission_id}/review", headers=auth_headers)
+        
+        app.dependency_overrides.clear()
+        
+        assert response.status_code == 200
+        data = response.json()
+        
+        question = data["questions"][0]
+        
+        # Verify matching question type
+        assert question["question_type"] == "matching", "Question type should be 'matching'"
+        
+        # Verify left and right fields are present
+        assert "left" in question, "Matching question should include 'left' field"
+        assert "right" in question, "Matching question should include 'right' field"
+        
+        # Verify left and right contain the expected arrays
+        assert question["left"] == ["OpenAI", "Google", "Microsoft", "Forrester"], \
+            "left field should contain item labels"
+        assert question["right"] == ["Atlas", "Chrome", "Edge", "Research"], \
+            "right field should contain option labels"
+        
+        # Verify answer indices are present for matching
+        assert isinstance(question["your_answer"], list), "your_answer should be a list of indices"
+        assert isinstance(question["correct_answer"], list), "correct_answer should be a list of indices"
+
+    def test_non_matching_question_has_null_left_right(self, mock_supabase_client, auth_bypass, auth_headers, mocker):
+        """
+        Test that non-matching questions have null left and right fields.
+        
+        Expected:
+        - left and right fields are null for multiple_choice, true_false, fill_blank
+        """
+        from dependencies.auth_dependencies import get_current_user_id
+        
+        submission_id = str(uuid4())
+        
+        def mock_user_id_uuid():
+            return MOCK_USER_UUID
+        
+        app.dependency_overrides[get_current_user_id] = mock_user_id_uuid
+        
+        def mock_get_submission_review(sub_id, user_token=None):
+            return {
+                "submission_id": submission_id,
+                "quiz_id": str(uuid4()),
+                "quiz_title": "MCQ Quiz",
+                "user_id": MOCK_USER_UUID,
+                "score": 100,
+                "correct_count": 1,
+                "wrong_count": 0,
+                "total_questions": 1,
+                "submitted_at": "2026-01-27T10:00:00Z",
+                "questions": [
+                    {
+                        "question_id": str(uuid4()),
+                        "question_type": "multiple_choice",
+                        "question": "What is 2+2?",
+                        "your_answer": "4",
+                        "correct_answer": "4",
+                        "is_correct": True,
+                        "explanation": "Basic math",
+                        "options": ["3", "4", "5", "6"],
+                        "distractor_explanations": None,
+                        "bloom_level": None,
+                        "difficulty": "easy",
+                        "concept_name": None,
+                        "left": None,  # Null for non-matching
+                        "right": None  # Null for non-matching
+                    }
+                ]
+            }
+        
+        mocker.patch(
+            "handlers.submission_handler.get_review_from_db",
+            side_effect=mock_get_submission_review
+        )
+        
+        response = client.get(f"/api/submission/{submission_id}/review", headers=auth_headers)
+        
+        app.dependency_overrides.clear()
+        
+        assert response.status_code == 200
+        data = response.json()
+        
+        question = data["questions"][0]
+        
+        # Verify non-matching question type
+        assert question["question_type"] == "multiple_choice"
+        
+        # Verify left and right are null for non-matching questions
+        assert question.get("left") is None, "left should be null for non-matching questions"
+        assert question.get("right") is None, "right should be null for non-matching questions"
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

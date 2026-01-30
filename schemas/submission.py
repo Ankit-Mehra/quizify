@@ -90,6 +90,9 @@ class QuestionReviewDetail(DetailedResult):
     bloom_level: str | None = Field(None, description="Bloom's taxonomy level")
     difficulty: str | None = Field(None, description="Question difficulty: easy, medium, hard")
     concept_name: str | None = Field(None, description="Concept being tested")
+    # Matching question fields - needed to display human-readable answers
+    left: List[str] | None = Field(None, description="Left-side items for matching questions")
+    right: List[str] | None = Field(None, description="Right-side options for matching questions")
 
 class SubmissionReviewResponse(BaseModel):
     """Full review of a quiz submission with detailed answers and explanations"""
