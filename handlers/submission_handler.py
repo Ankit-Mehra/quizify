@@ -19,6 +19,7 @@ from services.db_services.supabase_submission import (
     get_submission_review as get_review_from_db
 )
 from services.db_services.supabase_quiz import get_quiz_from_database
+from services.answer_utils import is_unattempted
 from dependencies.auth_dependencies import get_current_user_id, get_current_user_token
 from services.logger import app_logger as logger
 
@@ -51,6 +52,9 @@ def parse_question_models(raw_questions: List[Any]) -> List[Question]:
     return parsed_questions
 
 
+# Note: is_unattempted() is imported from services.answer_utils
+
+
 def compare_answers(user_answer, correct_answer, question_type: str) -> bool:
     """
     Compare user answer with correct answer based on question type.
@@ -59,6 +63,9 @@ def compare_answers(user_answer, correct_answer, question_type: str) -> bool:
     - multiple_choice/fill_blank: string comparison (case-insensitive)
     - true_false: boolean comparison (handles string "true"/"false" and bool True/False)
     - matching: list of integers comparison (order matters)
+    
+    Note: This function assumes the answer is attempted. Call is_unattempted() first
+    to check if the user skipped the question.
     
     Args:
         user_answer: User's submitted answer
@@ -146,7 +153,8 @@ async def submit_quiz(
     
     correct = 0
     wrong = 0
-    skipped = 0
+    unattempted = 0
+    skipped = 0  # Backend data issues (question not found)
     detailed_results = []
 
     # Fetch raw questions using authenticated client (RLS enforcement)
@@ -168,12 +176,18 @@ async def submit_quiz(
             logger.warning(f"Question {ans.question_id} not found in question_map, skipping")
             continue
 
-        # Use type-aware answer comparison
-        is_correct = compare_answers(ans.user_answer, q.correct_answer, q.type)
-        if is_correct:
-            correct += 1
+        # Check if question was unattempted first (cache result to avoid duplicate computation)
+        answer_is_unattempted = is_unattempted(ans.user_answer, q.type)
+        if answer_is_unattempted:
+            unattempted += 1
+            is_correct = False
         else:
-            wrong += 1
+            # Use type-aware answer comparison for attempted questions
+            is_correct = compare_answers(ans.user_answer, q.correct_answer, q.type)
+            if is_correct:
+                correct += 1
+            else:
+                wrong += 1
 
         detailed_results.append({
             "question_id": str(q.id),
@@ -182,18 +196,20 @@ async def submit_quiz(
             "your_answer": ans.user_answer,
             "correct_answer": q.correct_answer,
             "is_correct": is_correct,
+            "is_unattempted": answer_is_unattempted,
         })
 
     # Log warning if any questions were skipped (data integrity issue)
     if skipped > 0:
         logger.warning(
             f"Submission for quiz {quiz_id} had {skipped} skipped questions "
-            f"(invalid IDs or parsing errors). Scored {correct + wrong}/{submission.total_questions} questions."
+            f"(invalid IDs or parsing errors). Scored {correct + wrong + unattempted}/{submission.total_questions} questions."
         )
 
-    # Calculate score based on evaluated questions (not skipped ones)
-    # This prevents penalizing users for backend data issues
-    evaluated_count = correct + wrong
+    # Calculate score based on all evaluated questions (Option B: include unattempted as wrong)
+    # This prevents gaming the system by skipping difficult questions
+    # Formula: correct / (correct + wrong + unattempted) * 100
+    evaluated_count = correct + wrong + unattempted
     if evaluated_count == 0:
         # No valid questions were evaluated - this is a serious error
         raise HTTPException(
@@ -201,6 +217,7 @@ async def submit_quiz(
             detail="Unable to evaluate any questions. Please contact support."
         )
     
+    # Option B: Unattempted questions count against the score
     score = int(round((correct / evaluated_count) * 100))
 
     new_submission = QuizSubmission(
@@ -209,6 +226,7 @@ async def submit_quiz(
         quiz_id=submission.quiz_id,
         correct_count=correct,
         wrong_count=wrong,
+        unattempted_count=unattempted,
         score=score,
         total_questions=evaluated_count,  # Store actual evaluated count
         submitted_at=datetime.now()
@@ -243,6 +261,7 @@ async def submit_quiz(
         "total_questions": evaluated_count,  # Return actual evaluated count
         "correct_count": correct,
         "wrong_count": wrong,
+        "unattempted_count": unattempted,
         "score": score,
         "detailed_results": detailed_results
     }

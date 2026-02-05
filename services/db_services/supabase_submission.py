@@ -1,5 +1,6 @@
 ## Submission DB Services
 from services.logger import db_logger as logger
+from services.answer_utils import is_unattempted
 from typing import List
 from schemas.submission import QuizSubmission, QuizAnswer
 from schemas.quiz import Question
@@ -20,6 +21,7 @@ class SubmissionSummary(BaseModel):
     total_questions: int
     correct_count: int
     wrong_count: int
+    unattempted_count: int = 0  # New field: defaults to 0 for backward compatibility
     submitted_at: str
     quiz_title: str | None = None  # Optional for backward compatibility
 
@@ -269,13 +271,19 @@ def get_submission_review(submission_id: UUID, user_token: str = None) -> dict:
             # Handle case where question may have been deleted (questions could be None)
             question_data = answer.get("questions") or {}
             
+            # Detect unattempted based on user_answer using shared utility
+            user_answer = answer["user_answer"]
+            question_type = question_data.get("type") or "unknown"
+            answer_is_unattempted = is_unattempted(user_answer, question_type)
+            
             review_detail = {
                 "question_id": answer["question_id"],
-                "question_type": question_data.get("type") or "unknown",
+                "question_type": question_type,
                 "question": question_data.get("question") or "[Question no longer available]",
-                "your_answer": answer["user_answer"],
+                "your_answer": user_answer,
                 "correct_answer": answer["correct_answer"],
                 "is_correct": answer["is_correct"],
+                "is_unattempted": answer_is_unattempted,
                 "explanation": question_data.get("explanation") or "",
                 # Optional enhanced fields
                 "options": question_data.get("options"),
@@ -294,6 +302,12 @@ def get_submission_review(submission_id: UUID, user_token: str = None) -> dict:
         if submission.get("quizzes"):
             quiz_title = submission["quizzes"].get("title")
         
+        # Get unattempted_count from database if available, otherwise calculate from question_reviews
+        unattempted_count = submission.get("unattempted_count", 0)
+        if unattempted_count == 0 and question_reviews:
+            # Calculate from question reviews for backward compatibility with old submissions
+            unattempted_count = sum(1 for q in question_reviews if q.get("is_unattempted", False))
+        
         # Build full review response
         review = {
             "submission_id": UUID(submission["id"]),
@@ -303,6 +317,7 @@ def get_submission_review(submission_id: UUID, user_token: str = None) -> dict:
             "score": submission["score"],
             "correct_count": submission["correct_count"],
             "wrong_count": submission["wrong_count"],
+            "unattempted_count": unattempted_count,
             "total_questions": submission["total_questions"],
             "submitted_at": submission["submitted_at"],
             "questions": question_reviews
