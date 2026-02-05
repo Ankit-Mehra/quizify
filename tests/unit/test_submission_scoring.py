@@ -14,28 +14,34 @@ from handlers.submission_handler import submit_quiz
 from schemas.submission import QuizSubmissionRequest, AnswerSubmission
 
 
+@pytest.fixture
+def mock_submission_dependencies(mocker):
+    """
+    Shared fixture for submission handler tests.
+    
+    Mocks all external dependencies (database, cache) so tests
+    can focus on scoring logic without side effects.
+    """
+    # Mock quiz validation
+    mocker.patch(
+        "handlers.submission_handler.get_quiz_from_database",
+        return_value={"id": str(uuid4()), "title": "Test Quiz"}
+    )
+    
+    # Mock save functions
+    mocker.patch("handlers.submission_handler.save_submission", return_value=None)
+    mocker.patch("handlers.submission_handler.save_answer", return_value=None)
+    mocker.patch("handlers.submission_handler.invalidate_user_submissions_cache", return_value=None)
+    mocker.patch("handlers.submission_handler.invalidate_quiz_submissions_cache", return_value=None)
+    
+    return mocker
+
+
 class TestSubmitQuizSkippedQuestions:
     """Tests for scoring logic when questions are skipped."""
     
-    @pytest.fixture
-    def mock_dependencies(self, mocker):
-        """Set up common mocks for submission tests."""
-        # Mock quiz validation
-        mocker.patch(
-            "handlers.submission_handler.get_quiz_from_database",
-            return_value={"id": str(uuid4()), "title": "Test Quiz"}
-        )
-        
-        # Mock save functions
-        mocker.patch("handlers.submission_handler.save_submission", return_value=None)
-        mocker.patch("handlers.submission_handler.save_answer", return_value=None)
-        mocker.patch("handlers.submission_handler.invalidate_user_submissions_cache", return_value=None)
-        mocker.patch("handlers.submission_handler.invalidate_quiz_submissions_cache", return_value=None)
-        
-        return mocker
-    
     @pytest.mark.asyncio
-    async def test_score_calculated_from_evaluated_questions_only(self, mock_dependencies):
+    async def test_score_calculated_from_evaluated_questions_only(self, mock_submission_dependencies):
         """
         Test that score is calculated based on evaluated questions, not total_questions.
         
@@ -67,7 +73,7 @@ class TestSubmitQuizSkippedQuestions:
                 # q3_id is NOT returned - simulating deleted question
             ]
         
-        mock_dependencies.patch(
+        mock_submission_dependencies.patch(
             "handlers.submission_handler.get_question",
             side_effect=mock_get_question
         )
@@ -93,7 +99,7 @@ class TestSubmitQuizSkippedQuestions:
         assert result["total_questions"] == 2, f"Expected total_questions=2 (evaluated), got {result['total_questions']}"
     
     @pytest.mark.asyncio
-    async def test_all_questions_skipped_returns_500(self, mock_dependencies):
+    async def test_all_questions_skipped_returns_500(self, mock_submission_dependencies):
         """
         Test that HTTP 500 is raised when no questions can be evaluated.
         
@@ -105,13 +111,13 @@ class TestSubmitQuizSkippedQuestions:
         q2_id = uuid4()
         
         # Mock get_question to return empty list (no questions found)
-        mock_dependencies.patch(
+        mock_submission_dependencies.patch(
             "handlers.submission_handler.get_question",
             return_value=[]  # No questions returned
         )
         
         # Mock parse_question_models to return empty list
-        mock_dependencies.patch(
+        mock_submission_dependencies.patch(
             "handlers.submission_handler.parse_question_models",
             return_value=[]
         )
@@ -132,7 +138,7 @@ class TestSubmitQuizSkippedQuestions:
         assert "unable to evaluate" in exc_info.value.detail.lower()
     
     @pytest.mark.asyncio
-    async def test_partial_questions_skipped_logs_warning(self, mock_dependencies, caplog):
+    async def test_partial_questions_skipped_logs_warning(self, mock_submission_dependencies, caplog):
         """
         Test that a warning is logged when some questions are skipped.
         """
@@ -159,7 +165,7 @@ class TestSubmitQuizSkippedQuestions:
                 }
             ]
         
-        mock_dependencies.patch(
+        mock_submission_dependencies.patch(
             "handlers.submission_handler.get_question",
             side_effect=mock_get_question
         )
@@ -188,7 +194,7 @@ class TestSubmitQuizSkippedQuestions:
         assert result["correct_count"] == 1
     
     @pytest.mark.asyncio
-    async def test_all_answers_correct_with_skips_scores_100(self, mock_dependencies):
+    async def test_all_answers_correct_with_skips_scores_100(self, mock_submission_dependencies):
         """
         Test that score is 100% when all evaluated answers are correct,
         even if some questions were skipped.
@@ -216,7 +222,7 @@ class TestSubmitQuizSkippedQuestions:
                 }
             ]
         
-        mock_dependencies.patch(
+        mock_submission_dependencies.patch(
             "handlers.submission_handler.get_question",
             side_effect=mock_get_question
         )
@@ -243,21 +249,8 @@ class TestSubmitQuizSkippedQuestions:
 class TestSubmitQuizScoreRounding:
     """Tests for score rounding behavior."""
     
-    @pytest.fixture
-    def mock_dependencies(self, mocker):
-        """Set up common mocks for submission tests."""
-        mocker.patch(
-            "handlers.submission_handler.get_quiz_from_database",
-            return_value={"id": str(uuid4()), "title": "Test Quiz"}
-        )
-        mocker.patch("handlers.submission_handler.save_submission", return_value=None)
-        mocker.patch("handlers.submission_handler.save_answer", return_value=None)
-        mocker.patch("handlers.submission_handler.invalidate_user_submissions_cache", return_value=None)
-        mocker.patch("handlers.submission_handler.invalidate_quiz_submissions_cache", return_value=None)
-        return mocker
-    
     @pytest.mark.asyncio
-    async def test_score_rounds_to_nearest_integer(self, mock_dependencies):
+    async def test_score_rounds_to_nearest_integer(self, mock_submission_dependencies):
         """
         Test that score is rounded to nearest integer.
         1 correct out of 3 = 33.33...% -> rounds to 33
@@ -272,7 +265,7 @@ class TestSubmitQuizScoreRounding:
                 {"id": str(q3_id), "type": "multiple_choice", "question": "Q3", "options": ["A", "B"], "correct_answer": "A"},
             ]
         
-        mock_dependencies.patch("handlers.submission_handler.get_question", side_effect=mock_get_question)
+        mock_submission_dependencies.patch("handlers.submission_handler.get_question", side_effect=mock_get_question)
         
         submission = QuizSubmissionRequest(
             quiz_id=quiz_id,
@@ -293,21 +286,8 @@ class TestSubmitQuizScoreRounding:
 class TestSubmitQuizUnattemptedTracking:
     """Tests for unattempted question tracking in submissions."""
     
-    @pytest.fixture
-    def mock_dependencies(self, mocker):
-        """Set up common mocks for submission tests."""
-        mocker.patch(
-            "handlers.submission_handler.get_quiz_from_database",
-            return_value={"id": str(uuid4()), "title": "Test Quiz"}
-        )
-        mocker.patch("handlers.submission_handler.save_submission", return_value=None)
-        mocker.patch("handlers.submission_handler.save_answer", return_value=None)
-        mocker.patch("handlers.submission_handler.invalidate_user_submissions_cache", return_value=None)
-        mocker.patch("handlers.submission_handler.invalidate_quiz_submissions_cache", return_value=None)
-        return mocker
-    
     @pytest.mark.asyncio
-    async def test_unattempted_empty_string_multiple_choice(self, mock_dependencies):
+    async def test_unattempted_empty_string_multiple_choice(self, mock_submission_dependencies):
         """Test that empty string for multiple_choice is counted as unattempted."""
         quiz_id = uuid4()
         q1_id, q2_id = uuid4(), uuid4()
@@ -318,7 +298,7 @@ class TestSubmitQuizUnattemptedTracking:
                 {"id": str(q2_id), "type": "multiple_choice", "question": "Q2", "options": ["A", "B"], "correct_answer": "A"},
             ]
         
-        mock_dependencies.patch("handlers.submission_handler.get_question", side_effect=mock_get_question)
+        mock_submission_dependencies.patch("handlers.submission_handler.get_question", side_effect=mock_get_question)
         
         submission = QuizSubmissionRequest(
             quiz_id=quiz_id,
@@ -339,7 +319,7 @@ class TestSubmitQuizUnattemptedTracking:
         assert result["score"] == 50
     
     @pytest.mark.asyncio
-    async def test_unattempted_all_negative_ones_matching(self, mock_dependencies):
+    async def test_unattempted_all_negative_ones_matching(self, mock_submission_dependencies):
         """Test that all -1 values for matching is counted as unattempted."""
         quiz_id = uuid4()
         q1_id, q2_id = uuid4(), uuid4()
@@ -364,7 +344,7 @@ class TestSubmitQuizUnattemptedTracking:
                 },
             ]
         
-        mock_dependencies.patch("handlers.submission_handler.get_question", side_effect=mock_get_question)
+        mock_submission_dependencies.patch("handlers.submission_handler.get_question", side_effect=mock_get_question)
         
         submission = QuizSubmissionRequest(
             quiz_id=quiz_id,
@@ -382,7 +362,7 @@ class TestSubmitQuizUnattemptedTracking:
         assert result["unattempted_count"] == 1
     
     @pytest.mark.asyncio
-    async def test_unattempted_invalid_true_false(self, mock_dependencies):
+    async def test_unattempted_invalid_true_false(self, mock_submission_dependencies):
         """Test that invalid string for true_false is counted as unattempted."""
         quiz_id = uuid4()
         q1_id, q2_id, q3_id = uuid4(), uuid4(), uuid4()
@@ -394,7 +374,7 @@ class TestSubmitQuizUnattemptedTracking:
                 {"id": str(q3_id), "type": "true_false", "question": "Q3", "correct_answer": True},
             ]
         
-        mock_dependencies.patch("handlers.submission_handler.get_question", side_effect=mock_get_question)
+        mock_submission_dependencies.patch("handlers.submission_handler.get_question", side_effect=mock_get_question)
         
         submission = QuizSubmissionRequest(
             quiz_id=quiz_id,
@@ -413,7 +393,7 @@ class TestSubmitQuizUnattemptedTracking:
         assert result["unattempted_count"] == 1
     
     @pytest.mark.asyncio
-    async def test_boolean_false_is_attempted_not_unattempted(self, mock_dependencies):
+    async def test_boolean_false_is_attempted_not_unattempted(self, mock_submission_dependencies):
         """Test that boolean False for true_false is counted as attempted (valid answer)."""
         quiz_id = uuid4()
         q1_id = uuid4()
@@ -423,7 +403,7 @@ class TestSubmitQuizUnattemptedTracking:
                 {"id": str(q1_id), "type": "true_false", "question": "Q1", "correct_answer": False},
             ]
         
-        mock_dependencies.patch("handlers.submission_handler.get_question", side_effect=mock_get_question)
+        mock_submission_dependencies.patch("handlers.submission_handler.get_question", side_effect=mock_get_question)
         
         submission = QuizSubmissionRequest(
             quiz_id=quiz_id,
@@ -441,7 +421,7 @@ class TestSubmitQuizUnattemptedTracking:
         assert result["score"] == 100
     
     @pytest.mark.asyncio
-    async def test_score_calculation_with_unattempted(self, mock_dependencies):
+    async def test_score_calculation_with_unattempted(self, mock_submission_dependencies):
         """
         Test score calculation: correct / (correct + wrong + unattempted) * 100
         
@@ -456,7 +436,7 @@ class TestSubmitQuizUnattemptedTracking:
                 for i in range(10)
             ]
         
-        mock_dependencies.patch("handlers.submission_handler.get_question", side_effect=mock_get_question)
+        mock_submission_dependencies.patch("handlers.submission_handler.get_question", side_effect=mock_get_question)
         
         # 6 correct, 2 wrong, 2 unattempted
         submission = QuizSubmissionRequest(
@@ -486,7 +466,7 @@ class TestSubmitQuizUnattemptedTracking:
         assert result["score"] == 60
     
     @pytest.mark.asyncio
-    async def test_detailed_results_include_is_unattempted_flag(self, mock_dependencies):
+    async def test_detailed_results_include_is_unattempted_flag(self, mock_submission_dependencies):
         """Test that detailed_results include is_unattempted flag for each question."""
         quiz_id = uuid4()
         q1_id, q2_id = uuid4(), uuid4()
@@ -497,7 +477,7 @@ class TestSubmitQuizUnattemptedTracking:
                 {"id": str(q2_id), "type": "multiple_choice", "question": "Q2", "options": ["A", "B"], "correct_answer": "A"},
             ]
         
-        mock_dependencies.patch("handlers.submission_handler.get_question", side_effect=mock_get_question)
+        mock_submission_dependencies.patch("handlers.submission_handler.get_question", side_effect=mock_get_question)
         
         submission = QuizSubmissionRequest(
             quiz_id=quiz_id,
