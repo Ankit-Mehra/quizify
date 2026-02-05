@@ -22,7 +22,8 @@ class QuizSubmission(BaseModel):
     user_id: UUID = Field(..., description="ID of the user who submitted")
     score: int = Field(..., description="Calculated score percentage (0-100, rounded to nearest integer)", ge=0, le=100)
     correct_count: int = Field(..., description="Number of correct answers", ge=0)
-    wrong_count: int = Field(..., description="Number of wrong answers", ge=0)
+    wrong_count: int = Field(..., description="Number of wrong answers (attempted but incorrect)", ge=0)
+    unattempted_count: int = Field(default=0, description="Number of unattempted/skipped questions", ge=0)
     total_questions: int = Field(..., description="Total questions answered", gt=0)
     submitted_at: datetime = Field(..., description="Timestamp of submission")
     quiz_title: str | None = Field(None, description="Title of the quiz (for display purposes)")
@@ -54,13 +55,15 @@ class DetailedResult(BaseModel):
     your_answer: Union[str, bool, List[int]] = Field(..., description="User's submitted answer")
     correct_answer: Union[str, bool, List[int]] = Field(..., description="The correct answer")
     is_correct: bool = Field(..., description="Whether the answer was correct")
+    is_unattempted: bool = Field(default=False, description="Whether the question was skipped/not answered")
 
 class SubmissionResponse(BaseModel):
     """Response returned after submitting a quiz with detailed results"""
     id: UUID = Field(..., description="Unique submission ID for future reference")
     total_questions: int = Field(..., description="Total number of questions", gt=0)
     correct_count: int = Field(..., description="Number of correct answers", ge=0)
-    wrong_count: int = Field(..., description="Number of wrong answers", ge=0)
+    wrong_count: int = Field(..., description="Number of wrong answers (attempted but incorrect)", ge=0)
+    unattempted_count: int = Field(default=0, description="Number of unattempted/skipped questions", ge=0)
     score: int = Field(..., description="Calculated percentage score (0-100, rounded to nearest integer)", ge=0, le=100)
     detailed_results: List[DetailedResult] = Field(..., description="Detailed results for each question")
 
@@ -102,7 +105,8 @@ class SubmissionReviewResponse(BaseModel):
     user_id: UUID = Field(..., description="User who submitted")
     score: int = Field(..., description="Percentage score (0-100)", ge=0, le=100)
     correct_count: int = Field(..., description="Number of correct answers", ge=0)
-    wrong_count: int = Field(..., description="Number of wrong answers", ge=0)
+    wrong_count: int = Field(..., description="Number of wrong answers (attempted but incorrect)", ge=0)
+    unattempted_count: int = Field(default=0, description="Number of unattempted/skipped questions", ge=0)
     total_questions: int = Field(..., description="Total questions answered", gt=0)
     submitted_at: datetime = Field(..., description="Timestamp of submission")
     questions: List[QuestionReviewDetail] = Field(..., description="Detailed review for each question with explanations")
