@@ -290,5 +290,239 @@ class TestSubmitQuizScoreRounding:
         assert result["score"] == 33
 
 
+class TestSubmitQuizUnattemptedTracking:
+    """Tests for unattempted question tracking in submissions."""
+    
+    @pytest.fixture
+    def mock_dependencies(self, mocker):
+        """Set up common mocks for submission tests."""
+        mocker.patch(
+            "handlers.submission_handler.get_quiz_from_database",
+            return_value={"id": str(uuid4()), "title": "Test Quiz"}
+        )
+        mocker.patch("handlers.submission_handler.save_submission", return_value=None)
+        mocker.patch("handlers.submission_handler.save_answer", return_value=None)
+        mocker.patch("handlers.submission_handler.invalidate_user_submissions_cache", return_value=None)
+        mocker.patch("handlers.submission_handler.invalidate_quiz_submissions_cache", return_value=None)
+        return mocker
+    
+    @pytest.mark.asyncio
+    async def test_unattempted_empty_string_multiple_choice(self, mock_dependencies):
+        """Test that empty string for multiple_choice is counted as unattempted."""
+        quiz_id = uuid4()
+        q1_id, q2_id = uuid4(), uuid4()
+        
+        def mock_get_question(question_ids, user_token=None):
+            return [
+                {"id": str(q1_id), "type": "multiple_choice", "question": "Q1", "options": ["A", "B"], "correct_answer": "A"},
+                {"id": str(q2_id), "type": "multiple_choice", "question": "Q2", "options": ["A", "B"], "correct_answer": "A"},
+            ]
+        
+        mock_dependencies.patch("handlers.submission_handler.get_question", side_effect=mock_get_question)
+        
+        submission = QuizSubmissionRequest(
+            quiz_id=quiz_id,
+            total_questions=2,
+            answers=[
+                AnswerSubmission(question_id=q1_id, user_answer="A"),  # Correct
+                AnswerSubmission(question_id=q2_id, user_answer=""),   # Unattempted
+            ]
+        )
+        
+        result = await submit_quiz(quiz_id, submission, "12345678-1234-1234-1234-123456789012", "mock_token")
+        
+        assert result["correct_count"] == 1
+        assert result["wrong_count"] == 0
+        assert result["unattempted_count"] == 1
+        assert result["total_questions"] == 2
+        # Score: 1 / (1 + 0 + 1) = 50%
+        assert result["score"] == 50
+    
+    @pytest.mark.asyncio
+    async def test_unattempted_all_negative_ones_matching(self, mock_dependencies):
+        """Test that all -1 values for matching is counted as unattempted."""
+        quiz_id = uuid4()
+        q1_id, q2_id = uuid4(), uuid4()
+        
+        def mock_get_question(question_ids, user_token=None):
+            return [
+                {
+                    "id": str(q1_id), 
+                    "type": "matching", 
+                    "question": "Match them", 
+                    "left": ["A", "B"],
+                    "right": ["1", "2"],
+                    "correct_answer": [0, 1]
+                },
+                {
+                    "id": str(q2_id), 
+                    "type": "matching", 
+                    "question": "Match again", 
+                    "left": ["X", "Y"],
+                    "right": ["1", "2"],
+                    "correct_answer": [1, 0]
+                },
+            ]
+        
+        mock_dependencies.patch("handlers.submission_handler.get_question", side_effect=mock_get_question)
+        
+        submission = QuizSubmissionRequest(
+            quiz_id=quiz_id,
+            total_questions=2,
+            answers=[
+                AnswerSubmission(question_id=q1_id, user_answer=[0, 1]),    # Correct
+                AnswerSubmission(question_id=q2_id, user_answer=[-1, -1]),  # Unattempted
+            ]
+        )
+        
+        result = await submit_quiz(quiz_id, submission, "12345678-1234-1234-1234-123456789012", "mock_token")
+        
+        assert result["correct_count"] == 1
+        assert result["wrong_count"] == 0
+        assert result["unattempted_count"] == 1
+    
+    @pytest.mark.asyncio
+    async def test_unattempted_invalid_true_false(self, mock_dependencies):
+        """Test that invalid string for true_false is counted as unattempted."""
+        quiz_id = uuid4()
+        q1_id, q2_id, q3_id = uuid4(), uuid4(), uuid4()
+        
+        def mock_get_question(question_ids, user_token=None):
+            return [
+                {"id": str(q1_id), "type": "true_false", "question": "Q1", "correct_answer": True},
+                {"id": str(q2_id), "type": "true_false", "question": "Q2", "correct_answer": False},
+                {"id": str(q3_id), "type": "true_false", "question": "Q3", "correct_answer": True},
+            ]
+        
+        mock_dependencies.patch("handlers.submission_handler.get_question", side_effect=mock_get_question)
+        
+        submission = QuizSubmissionRequest(
+            quiz_id=quiz_id,
+            total_questions=3,
+            answers=[
+                AnswerSubmission(question_id=q1_id, user_answer="true"),   # Correct
+                AnswerSubmission(question_id=q2_id, user_answer="false"),  # Correct
+                AnswerSubmission(question_id=q3_id, user_answer=""),       # Unattempted (empty string)
+            ]
+        )
+        
+        result = await submit_quiz(quiz_id, submission, "12345678-1234-1234-1234-123456789012", "mock_token")
+        
+        assert result["correct_count"] == 2
+        assert result["wrong_count"] == 0
+        assert result["unattempted_count"] == 1
+    
+    @pytest.mark.asyncio
+    async def test_boolean_false_is_attempted_not_unattempted(self, mock_dependencies):
+        """Test that boolean False for true_false is counted as attempted (valid answer)."""
+        quiz_id = uuid4()
+        q1_id = uuid4()
+        
+        def mock_get_question(question_ids, user_token=None):
+            return [
+                {"id": str(q1_id), "type": "true_false", "question": "Q1", "correct_answer": False},
+            ]
+        
+        mock_dependencies.patch("handlers.submission_handler.get_question", side_effect=mock_get_question)
+        
+        submission = QuizSubmissionRequest(
+            quiz_id=quiz_id,
+            total_questions=1,
+            answers=[
+                AnswerSubmission(question_id=q1_id, user_answer=False),  # Correct - False is valid answer
+            ]
+        )
+        
+        result = await submit_quiz(quiz_id, submission, "12345678-1234-1234-1234-123456789012", "mock_token")
+        
+        assert result["correct_count"] == 1
+        assert result["wrong_count"] == 0
+        assert result["unattempted_count"] == 0
+        assert result["score"] == 100
+    
+    @pytest.mark.asyncio
+    async def test_score_calculation_with_unattempted(self, mock_dependencies):
+        """
+        Test score calculation: correct / (correct + wrong + unattempted) * 100
+        
+        Example: 6 correct, 2 wrong, 2 unattempted = 6/10 = 60%
+        """
+        quiz_id = uuid4()
+        q_ids = [uuid4() for _ in range(10)]
+        
+        def mock_get_question(question_ids, user_token=None):
+            return [
+                {"id": str(q_ids[i]), "type": "multiple_choice", "question": f"Q{i+1}", "options": ["A", "B"], "correct_answer": "A"}
+                for i in range(10)
+            ]
+        
+        mock_dependencies.patch("handlers.submission_handler.get_question", side_effect=mock_get_question)
+        
+        # 6 correct, 2 wrong, 2 unattempted
+        submission = QuizSubmissionRequest(
+            quiz_id=quiz_id,
+            total_questions=10,
+            answers=[
+                AnswerSubmission(question_id=q_ids[0], user_answer="A"),  # Correct
+                AnswerSubmission(question_id=q_ids[1], user_answer="A"),  # Correct
+                AnswerSubmission(question_id=q_ids[2], user_answer="A"),  # Correct
+                AnswerSubmission(question_id=q_ids[3], user_answer="A"),  # Correct
+                AnswerSubmission(question_id=q_ids[4], user_answer="A"),  # Correct
+                AnswerSubmission(question_id=q_ids[5], user_answer="A"),  # Correct
+                AnswerSubmission(question_id=q_ids[6], user_answer="B"),  # Wrong
+                AnswerSubmission(question_id=q_ids[7], user_answer="B"),  # Wrong
+                AnswerSubmission(question_id=q_ids[8], user_answer=""),   # Unattempted
+                AnswerSubmission(question_id=q_ids[9], user_answer=""),   # Unattempted
+            ]
+        )
+        
+        result = await submit_quiz(quiz_id, submission, "12345678-1234-1234-1234-123456789012", "mock_token")
+        
+        assert result["correct_count"] == 6
+        assert result["wrong_count"] == 2
+        assert result["unattempted_count"] == 2
+        assert result["total_questions"] == 10
+        # Score: 6 / (6 + 2 + 2) = 60%
+        assert result["score"] == 60
+    
+    @pytest.mark.asyncio
+    async def test_detailed_results_include_is_unattempted_flag(self, mock_dependencies):
+        """Test that detailed_results include is_unattempted flag for each question."""
+        quiz_id = uuid4()
+        q1_id, q2_id = uuid4(), uuid4()
+        
+        def mock_get_question(question_ids, user_token=None):
+            return [
+                {"id": str(q1_id), "type": "multiple_choice", "question": "Q1", "options": ["A", "B"], "correct_answer": "A"},
+                {"id": str(q2_id), "type": "multiple_choice", "question": "Q2", "options": ["A", "B"], "correct_answer": "A"},
+            ]
+        
+        mock_dependencies.patch("handlers.submission_handler.get_question", side_effect=mock_get_question)
+        
+        submission = QuizSubmissionRequest(
+            quiz_id=quiz_id,
+            total_questions=2,
+            answers=[
+                AnswerSubmission(question_id=q1_id, user_answer="A"),  # Attempted
+                AnswerSubmission(question_id=q2_id, user_answer=""),   # Unattempted
+            ]
+        )
+        
+        result = await submit_quiz(quiz_id, submission, "12345678-1234-1234-1234-123456789012", "mock_token")
+        
+        # Check detailed_results structure
+        assert len(result["detailed_results"]) == 2
+        
+        # First question: attempted and correct
+        q1_result = next(r for r in result["detailed_results"] if r["question_id"] == str(q1_id))
+        assert q1_result["is_unattempted"] is False
+        assert q1_result["is_correct"] is True
+        
+        # Second question: unattempted
+        q2_result = next(r for r in result["detailed_results"] if r["question_id"] == str(q2_id))
+        assert q2_result["is_unattempted"] is True
+        assert q2_result["is_correct"] is False
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

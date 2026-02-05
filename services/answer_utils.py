@@ -102,8 +102,13 @@ def _is_text_answer_unattempted(user_answer: Union[str, None]) -> bool:
     """
     Check if a text-based answer (multiple_choice, fill_blank) is unattempted.
     
-    Text answers are unattempted if empty or whitespace-only.
+    Text answers are unattempted if None, empty, or whitespace-only.
+    
+    Note: This function handles None explicitly for defensive coding,
+    even though the parent is_unattempted() checks for None first.
     """
+    if user_answer is None:
+        return True
     if isinstance(user_answer, str):
         return user_answer.strip() == ""
     # Non-string types: convert and check
