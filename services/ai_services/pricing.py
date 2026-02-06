@@ -6,8 +6,10 @@ Centralizes pricing information to avoid duplication across services.
 
 from typing import Dict
 
-# Pricing per 1K tokens (as of Dec 2024)
-# Source: https://openai.com/pricing
+# Pricing per 1K tokens
+# Sources:
+#   OpenAI: https://openai.com/pricing
+#   Groq: https://groq.com/pricing/ (as of Feb 2025)
 LLM_PRICING: Dict[str, Dict[str, float]] = {
     "gpt-4.1": {"input": 0.002, "output": 0.008},
     "gpt-4.1-mini": {"input": 0.0004, "output": 0.0016},
@@ -15,6 +17,9 @@ LLM_PRICING: Dict[str, Dict[str, float]] = {
     "gpt-4o": {"input": 0.0025, "output": 0.01},
     "gpt-4o-mini": {"input": 0.00015, "output": 0.0006},
     "text-embedding-3-small": {"input": 0.00002, "output": 0},
+    # Groq models (used for enhanced quiz/flashcard pipeline)
+    "llama-3.1-8b-instant": {"input": 0.00005, "output": 0.00008},
+    "llama-3.3-70b-versatile": {"input": 0.00059, "output": 0.00079},
 }
 
 
