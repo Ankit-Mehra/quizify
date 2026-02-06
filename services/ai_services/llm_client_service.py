@@ -69,6 +69,11 @@ class QuizParseError(Exception):
 
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+
+# Groq model used for enhanced quiz generation and flashcard generation
+GROQ_ENHANCED_MODEL = "llama-3.1-8b-instant"
 
 # LLM request timeout configuration
 # - connect: Time to establish connection (5s is generous for cloud APIs)
@@ -240,6 +245,73 @@ async def cleanup_openai_client() -> None:
     
     _client = None
     logger.info("OpenAI client cleaned up")
+
+
+# =============================================================================
+# Groq Client (OpenAI-compatible, used for enhanced pipeline)
+# =============================================================================
+_groq_client: Optional[BaseAsyncOpenAI] = None
+_groq_http_client: Optional[httpx.AsyncClient] = None
+_groq_client_lock = threading.Lock()
+
+
+def _create_groq_client() -> BaseAsyncOpenAI:
+    """
+    Create a Groq client using OpenAI-compatible SDK.
+    
+    Groq's API is OpenAI-compatible, so we use the standard AsyncOpenAI
+    client with a custom base_url pointing to Groq's API.
+    """
+    global _groq_http_client  # noqa: PLW0603  # type: ignore[global-statement]
+    
+    _groq_http_client = httpx.AsyncClient(
+        timeout=LLM_TIMEOUT,
+        limits=httpx.Limits(max_connections=50, max_keepalive_connections=20)
+    )
+    
+    if not GROQ_API_KEY:
+        logger.warning("GROQ_API_KEY not set - Groq client will fail on use")
+    
+    logger.info(
+        "Using Groq client (OpenAI-compatible, base_url=%s, model=%s)",
+        GROQ_BASE_URL, GROQ_ENHANCED_MODEL
+    )
+    return BaseAsyncOpenAI(
+        api_key=GROQ_API_KEY,
+        base_url=GROQ_BASE_URL,
+        http_client=_groq_http_client
+    )
+
+
+def get_groq_client() -> BaseAsyncOpenAI:
+    """
+    Get or create the Groq client instance (thread-safe).
+    
+    Returns an OpenAI-compatible AsyncOpenAI client pointed at Groq's API.
+    Used by enhanced quiz/flashcard pipeline services.
+    """
+    global _groq_client  # noqa: PLW0603  # type: ignore[global-statement]
+    
+    if _groq_client is not None:
+        return _groq_client
+    
+    with _groq_client_lock:
+        if _groq_client is None:
+            _groq_client = _create_groq_client()
+        return _groq_client
+
+
+async def cleanup_groq_client() -> None:
+    """Cleanup Groq client and httpx resources on shutdown."""
+    global _groq_client, _groq_http_client  # noqa: PLW0603  # type: ignore[global-statement]
+    
+    if _groq_http_client is not None:
+        await _groq_http_client.aclose()
+        _groq_http_client = None
+        logger.info("Groq httpx client closed")
+    
+    _groq_client = None
+    logger.info("Groq client cleaned up")
 
 
 # Mapping from type -> prompt builder
@@ -421,7 +493,9 @@ async def generate_quiz_for_type(
     prompt_builder = QUESTION_TYPE_PROMPTS[qtype]
     prompt = prompt_builder(text, num_questions)
     
-    client = get_openai_client()
+    # Use Groq client (OpenAI-compatible) with llama-3.1-8b-instant
+    client = get_groq_client()
+    model = GROQ_ENHANCED_MODEL
     
     # Build PostHog tracking kwargs with generation mode and source type
     properties = {
@@ -431,28 +505,21 @@ async def generate_quiz_for_type(
         "feature": "quiz_generation",
         "generation_mode": generation_mode,
         "quiz_type": generation_mode,  # Epic 5.1: Add quiz_type (standard/enhanced)
+        "provider": "groq",
+        "model": model,
     }
     if content_source_type:
         properties["content_source_type"] = content_source_type
     
-    # Note: Plan info for PostHog tracking is already included via quiz_type.
-    # Adding plan here would require a DB call per LLM request which is inefficient.
-    # The handler already tracks plan in the capture_event call when needed.
-    
-    posthog_kwargs = _build_posthog_kwargs(
-        user_id=user_id,
-        trace_id=trace_id,
-        properties=properties
-    )
+    # Note: Groq client does not use PostHog wrapper, so posthog_kwargs are not used.
+    # Analytics are tracked via the properties dict above.
 
     # Use retry wrapper for transient errors (rate limits, connection issues)
-    # This service uses OpenAI client directly, so always use OpenAI models
     response = await _retry_with_backoff(
         lambda: client.chat.completions.create(
-            model=config.OPENAI_MODEL_PRIMARY,
+            model=model,
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
-            **posthog_kwargs
         )
     )
 

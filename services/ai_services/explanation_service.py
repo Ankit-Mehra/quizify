@@ -2,8 +2,7 @@ import json
 import time
 from typing import Dict, Any, List, Optional, Tuple
 
-from config import config
-from services.ai_services.llm_client_service import get_openai_client, _build_posthog_kwargs
+from services.ai_services.llm_client_service import get_groq_client, GROQ_ENHANCED_MODEL
 from services.db_services.supabase_llm_analytics import track_llm_call
 from services.posthog_service import capture_exception
 from services.ai_services.pricing import calculate_cost
@@ -233,7 +232,7 @@ class ExplanationService:
     """
     
     def __init__(self):
-        self.client = get_openai_client()
+        self.client = get_groq_client()
 
     async def verify_and_explain(
         self,
@@ -261,7 +260,7 @@ class ExplanationService:
             distractor_explanations_dict is None for true_false and matching, populated for MCQ and fill_blank
         """
         start_time = time.time()
-        model = config.OPENAI_MODEL_MINI
+        model = GROQ_ENHANCED_MODEL
         
         try:
             # Detect question type and build appropriate prompt
@@ -353,19 +352,6 @@ class ExplanationService:
                     context=context[:2000]  # Limit context size
                 )
             
-            # Build PostHog tracking kwargs
-            posthog_kwargs = _build_posthog_kwargs(
-                user_id=user_id,
-                trace_id=trace_id,
-                properties={
-                    "call_type": "verify_explain",
-                    "question_type": question_type,
-                    "generation_mode": "enhanced",
-                    "content_source_type": content_source_type,
-                    "feature": "quiz_generation",
-                }
-            )
-
             response = await self.client.chat.completions.create(
                 model=model,
                 messages=[
@@ -375,7 +361,6 @@ class ExplanationService:
                 response_format={"type": "json_object"},
                 temperature=0.2,
                 max_tokens=800,  # Increased to handle MCQ with multiple detailed distractor explanations
-                **posthog_kwargs
             )
             
             latency_ms = int((time.time() - start_time) * 1000)
@@ -434,7 +419,7 @@ class ExplanationService:
                 properties={
                     "generation_mode": "enhanced",
                     "stage": "verify_and_explain",
-                    "model": config.OPENAI_MODEL_MINI,
+                    "model": GROQ_ENHANCED_MODEL,
                     "content_source_type": content_source_type,
                     "trace_id": trace_id,
                 }
@@ -456,7 +441,7 @@ class ExplanationService:
         Note: Consider using verify_and_explain() instead for better performance.
         """
         start_time = time.time()
-        model = config.OPENAI_MODEL_MINI
+        model = GROQ_ENHANCED_MODEL
         
         try:
             prompt = VERIFICATION_PROMPT.format(
@@ -465,18 +450,6 @@ class ExplanationService:
                 context=context[:2000] # Limit context size
             )
             
-            # Build PostHog tracking kwargs
-            posthog_kwargs = _build_posthog_kwargs(
-                user_id=user_id,
-                trace_id=trace_id,
-                properties={
-                    "call_type": "verification",
-                    "generation_mode": "enhanced",
-                    "content_source_type": content_source_type,
-                    "feature": "quiz_generation",
-                }
-            )
-
             response = await self.client.chat.completions.create(
                 model=model,
                 messages=[
@@ -486,7 +459,6 @@ class ExplanationService:
                 response_format={"type": "json_object"},
                 temperature=0.1,
                 max_tokens=500,  # Increased to allow more detailed verification output
-                **posthog_kwargs
             )
             
             latency_ms = int((time.time() - start_time) * 1000)
@@ -543,7 +515,7 @@ class ExplanationService:
                 properties={
                     "generation_mode": "enhanced",
                     "stage": "verification",
-                    "model": config.OPENAI_MODEL_MINI,
+                    "model": GROQ_ENHANCED_MODEL,
                     "content_source_type": content_source_type,
                     "trace_id": trace_id,
                 }
@@ -563,7 +535,7 @@ class ExplanationService:
         Generate detailed explanation string.
         """
         start_time = time.time()
-        model = config.OPENAI_MODEL_MINI
+        model = GROQ_ENHANCED_MODEL
         
         try:
             # Prepare distractors string
@@ -577,18 +549,6 @@ class ExplanationService:
                 distractors=distractors,
                 context=context[:2000]
             )
-            
-            # Build PostHog tracking kwargs
-            posthog_kwargs = _build_posthog_kwargs(
-                user_id=user_id,
-                trace_id=trace_id,
-                properties={
-                    "call_type": "explanation",
-                    "generation_mode": "enhanced",
-                    "content_source_type": content_source_type,
-                    "feature": "quiz_generation",
-                }
-            )
 
             response = await self.client.chat.completions.create(
                 model=model,
@@ -599,7 +559,6 @@ class ExplanationService:
                 response_format={"type": "json_object"},
                 temperature=0.7,
                 max_tokens=500,  # Cap explanation length for predictable cost
-                **posthog_kwargs
             )
             
             latency_ms = int((time.time() - start_time) * 1000)
@@ -667,7 +626,7 @@ class ExplanationService:
                 properties={
                     "generation_mode": "enhanced",
                     "stage": "explanation_generation",
-                    "model": config.OPENAI_MODEL_MINI,
+                    "model": GROQ_ENHANCED_MODEL,
                     "content_source_type": content_source_type,
                     "trace_id": trace_id,
                 }

@@ -148,8 +148,9 @@ async def app_lifespan(_fastapi_app: FastAPI):  # noqa: ARG001
     logger.info("Application shutdown: cleaning up resources...")
     
     # Close OpenAI httpx client to prevent connection pool leaks
-    from services.ai_services.llm_client_service import cleanup_openai_client
+    from services.ai_services.llm_client_service import cleanup_openai_client, cleanup_groq_client
     await cleanup_openai_client()
+    await cleanup_groq_client()
     
     # Close HTTP client used for token refresh
     await close_http_client()

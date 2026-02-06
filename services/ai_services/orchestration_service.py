@@ -3,8 +3,7 @@ import time
 import random
 from typing import Dict, Any, Optional, List
 
-from config import config
-from services.ai_services.llm_client_service import get_openai_client, _build_posthog_kwargs
+from services.ai_services.llm_client_service import get_groq_client, GROQ_ENHANCED_MODEL
 from services.ai_services.context_service import ContextService
 from services.ai_services.pricing import calculate_cost
 from services.ai_services.explanation_service import ExplanationService
@@ -55,7 +54,7 @@ class QuizOrchestrationService:
     """
     
     def __init__(self):
-        self.client = get_openai_client()
+        self.client = get_groq_client()
         self.context_service = ContextService()
         self.explanation_service = ExplanationService()
 
@@ -209,22 +208,9 @@ class QuizOrchestrationService:
             context=context
         )
         
-        # 4. Call LLM with PostHog tracking
-        # Use OpenAI-specific model - this service uses OpenAI client directly for RAG
-        model = config.OPENAI_MODEL_PRIMARY
-        posthog_kwargs = _build_posthog_kwargs(
-            user_id=user_id,
-            trace_id=trace_id,
-            properties={
-                "call_type": "question_generation",
-                "bloom_level": bloom_level.value,
-                "difficulty": difficulty.value,
-                "question_type": question_type,
-                "generation_mode": "enhanced",
-                "content_source_type": content_source_type,
-                "feature": "quiz_generation",
-            }
-        )
+        # 4. Call LLM
+        # Use Groq (OpenAI-compatible) with llama-3.1-8b-instant for enhanced pipeline
+        model = GROQ_ENHANCED_MODEL
         
         try:
             response = await self.client.chat.completions.create(
@@ -235,7 +221,6 @@ class QuizOrchestrationService:
                 ],
                 response_format={"type": "json_object"},
                 temperature=0.7,
-                **posthog_kwargs
             )
             
             latency_ms = int((time.time() - start_time) * 1000)
@@ -317,7 +302,7 @@ class QuizOrchestrationService:
                 user_id=user_id,
                 trace_id=trace_id,
                 call_type="generation",
-                model=config.OPENAI_MODEL_PRIMARY,
+                model=GROQ_ENHANCED_MODEL,
                 input_tokens=0,
                 output_tokens=0,
                 latency_ms=int((time.time() - start_time) * 1000),
@@ -332,7 +317,7 @@ class QuizOrchestrationService:
                 properties={
                     "generation_mode": "enhanced",
                     "stage": "rag_question_generation",
-                    "model": config.OPENAI_MODEL_PRIMARY,
+                    "model": GROQ_ENHANCED_MODEL,
                     "question_type": question_type,
                     "content_source_type": content_source_type,
                     "trace_id": trace_id,
@@ -453,21 +438,7 @@ class QuizOrchestrationService:
         )
         
         # Call LLM
-        model = config.OPENAI_MODEL_PRIMARY
-        posthog_kwargs = _build_posthog_kwargs(
-            user_id=user_id,
-            trace_id=trace_id,
-            properties={
-                "call_type": "matching_generation",
-                "bloom_level": bloom_level.value,
-                "difficulty": difficulty.value,
-                "question_type": "matching",
-                "generation_mode": "enhanced",
-                "content_source_type": content_source_type,
-                "feature": "quiz_generation",
-                "concepts_used": len(concepts),
-            }
-        )
+        model = GROQ_ENHANCED_MODEL
         
         try:
             response = await self.client.chat.completions.create(
@@ -478,7 +449,6 @@ class QuizOrchestrationService:
                 ],
                 response_format={"type": "json_object"},
                 temperature=0.7,
-                **posthog_kwargs
             )
             
             latency_ms = int((time.time() - start_time) * 1000)
@@ -549,7 +519,7 @@ class QuizOrchestrationService:
                 user_id=user_id,
                 trace_id=trace_id,
                 call_type="matching_generation",
-                model=config.OPENAI_MODEL_PRIMARY,
+                model=GROQ_ENHANCED_MODEL,
                 input_tokens=0,
                 output_tokens=0,
                 latency_ms=int((time.time() - start_time) * 1000),
@@ -563,7 +533,7 @@ class QuizOrchestrationService:
                 properties={
                     "generation_mode": "enhanced",
                     "stage": "rag_matching_generation",
-                    "model": config.OPENAI_MODEL_PRIMARY,
+                    "model": GROQ_ENHANCED_MODEL,
                     "question_type": "matching",
                     "content_source_type": content_source_type,
                     "trace_id": trace_id,
