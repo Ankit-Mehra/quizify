@@ -144,7 +144,7 @@ class Config:
     
     @property  
     def OPENAI_MODEL_FOR_CONCEPTS(self) -> str:
-        """OpenAI model for concept extraction embeddings (LLM calls use Groq separately)."""
+        """OpenAI chat model for concept extraction tasks (embeddings are configured via EMBEDDING_MODEL)."""
         return self.OPENAI_MODEL_NANO
     
     @property
