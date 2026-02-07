@@ -486,6 +486,9 @@ def track_groq_posthog(
     $ai_* property schema as GroqProvider/GeminiProvider for consistent
     analytics dashboards.
     
+    Callers MUST supply context-specific fields (feature, pipeline, quiz_type)
+    via extra_properties to ensure accurate PostHog attribution.
+    
     Args:
         model: Groq model name (e.g. "llama-3.1-8b-instant")
         user_id: User UUID (resolved to email for distinct_id)
@@ -494,9 +497,13 @@ def track_groq_posthog(
         output_tokens: Completion token count
         latency_ms: Call latency in milliseconds
         call_type: Descriptive call type (e.g. "concept_extraction", "verify_explain")
-        extra_properties: Additional custom properties to merge
+        extra_properties: Additional custom properties to merge (should include feature, pipeline, etc.)
     """
-    from services.posthog_service import capture_event
+    from services.posthog_service import capture_event, is_posthog_enabled
+
+    # Early-return when PostHog is disabled to avoid unnecessary cost/email lookups
+    if not is_posthog_enabled():
+        return
 
     cost = calculate_cost(model, input_tokens, output_tokens)
 
@@ -510,10 +517,7 @@ def track_groq_posthog(
         "$ai_output_cost_usd": round((output_tokens / 1_000_000) * (LLM_PRICING.get(model, {}).get("output", 0) * 1000), 6),
         "$ai_total_cost_usd": round(cost, 6),
         "call_type": call_type,
-        "feature": "quiz_generation",
         "generation_mode": "enhanced",
-        "pipeline": "rag_llama_index",
-        "quiz_type": "enhanced",
     }
 
     if trace_id:
@@ -586,6 +590,7 @@ async def generate_quiz_for_type(
         "feature": "quiz_generation",
         "generation_mode": generation_mode,
         "quiz_type": generation_mode,
+        "pipeline": "rag_llama_index" if generation_mode == "enhanced" else "standard",
     }
     if content_source_type:
         properties["content_source_type"] = content_source_type

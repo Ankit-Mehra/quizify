@@ -505,6 +505,9 @@ class ConceptExtractionService:
                 latency_ms=latency_ms,
                 call_type="concept_extraction",
                 extra_properties={
+                    "feature": "concept_extraction",
+                    "pipeline": "rag_llama_index",
+                    "quiz_type": "enhanced",
                     "batch_idx": batch_idx,
                     "chunks_in_batch": num_chunks,
                     "concepts_extracted": len(concepts),

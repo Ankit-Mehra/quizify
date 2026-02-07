@@ -269,6 +269,9 @@ class QuizOrchestrationService:
                 latency_ms=latency_ms,
                 call_type="question_generation",
                 extra_properties={
+                    "feature": "quiz_generation",
+                    "pipeline": "rag_llama_index",
+                    "quiz_type": "enhanced",
                     "question_type": question_type,
                     "bloom_level": bloom_level.value,
                     "difficulty": difficulty.value,
@@ -511,6 +514,9 @@ class QuizOrchestrationService:
                 latency_ms=latency_ms,
                 call_type="matching_generation",
                 extra_properties={
+                    "feature": "quiz_generation",
+                    "pipeline": "rag_llama_index",
+                    "quiz_type": "enhanced",
                     "question_type": "matching",
                     "bloom_level": bloom_level.value,
                     "difficulty": difficulty.value,

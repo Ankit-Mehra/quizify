@@ -413,6 +413,9 @@ class ExplanationService:
                 latency_ms=latency_ms,
                 call_type="verify_explain",
                 extra_properties={
+                    "feature": "quiz_generation",
+                    "pipeline": "rag_llama_index",
+                    "quiz_type": "enhanced",
                     "question_type": question_type,
                     "content_source_type": content_source_type,
                 },
@@ -527,6 +530,9 @@ class ExplanationService:
                 latency_ms=latency_ms,
                 call_type="verification",
                 extra_properties={
+                    "feature": "quiz_generation",
+                    "pipeline": "rag_llama_index",
+                    "quiz_type": "enhanced",
                     "content_source_type": content_source_type,
                 },
             )
@@ -645,6 +651,9 @@ class ExplanationService:
                 latency_ms=latency_ms,
                 call_type="explanation",
                 extra_properties={
+                    "feature": "quiz_generation",
+                    "pipeline": "rag_llama_index",
+                    "quiz_type": "enhanced",
                     "content_source_type": content_source_type,
                 },
             )
