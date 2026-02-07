@@ -81,7 +81,7 @@ class Config:
     GEMINI_MODEL_NANO: str = os.getenv("GEMINI_MODEL_NANO", "gemini-2.0-flash-lite")
     
     # Groq Models (tiered: primary > mini > nano)
-    GROQ_MODEL_PRIMARY: str = os.getenv("GROQ_MODEL_PRIMARY", "llama-3.3-70b-versatile")
+    GROQ_MODEL_PRIMARY: str = os.getenv("GROQ_MODEL_PRIMARY", "meta-llama/llama-4-scout-17b-16e-instruct")
     GROQ_MODEL_MINI: str = os.getenv("GROQ_MODEL_MINI", "llama-3.1-8b-instant")
     GROQ_MODEL_NANO: str = os.getenv("GROQ_MODEL_NANO", "llama-3.1-8b-instant")
     
@@ -127,6 +127,7 @@ class Config:
     
     @property
     def GROQ_MODEL_DEFAULT(self) -> str:
+        """Default Groq model for standard pipeline (primary tier)."""
         return self.GROQ_MODEL_PRIMARY
     
     # ============================================================================

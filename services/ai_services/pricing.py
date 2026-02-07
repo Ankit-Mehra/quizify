@@ -20,6 +20,7 @@ LLM_PRICING: Dict[str, Dict[str, float]] = {
     # Groq models (used for enhanced quiz/flashcard pipeline)
     "llama-3.1-8b-instant": {"input": 0.00005, "output": 0.00008},
     "llama-3.3-70b-versatile": {"input": 0.00059, "output": 0.00079},
+    "meta-llama/llama-4-scout-17b-16e-instruct": {"input": 0.00011, "output": 0.00034},
 }
 
 
