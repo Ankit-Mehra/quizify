@@ -365,6 +365,9 @@ class ExplanationService:
             
             latency_ms = int((time.time() - start_time) * 1000)
             content = response.choices[0].message.content
+            usage = getattr(response, "usage", None)
+            input_tok = usage.prompt_tokens if usage else 0
+            output_tok = usage.completion_tokens if usage else 0
             
             # Defensive JSON parsing
             try:
@@ -376,12 +379,12 @@ class ExplanationService:
                     trace_id=trace_id,
                     call_type="verify_explain",
                     model=model,
-                    input_tokens=response.usage.prompt_tokens,
-                    output_tokens=response.usage.completion_tokens,
+                    input_tokens=input_tok,
+                    output_tokens=output_tok,
                     latency_ms=latency_ms,
                     success=False,
                     error_message=f"JSON decode error: {str(json_err)}",
-                    cost_usd=calculate_cost(model, response.usage.prompt_tokens, response.usage.completion_tokens)
+                    cost_usd=calculate_cost(model, input_tok, output_tok)
                 )
                 return False, 0.0, ["Model returned invalid JSON"], "", None
             
@@ -391,10 +394,10 @@ class ExplanationService:
                 trace_id=trace_id,
                 call_type="verify_explain",
                 model=model,
-                input_tokens=response.usage.prompt_tokens,
-                output_tokens=response.usage.completion_tokens,
+                input_tokens=input_tok,
+                output_tokens=output_tok,
                 latency_ms=latency_ms,
-                cost_usd=calculate_cost(model, response.usage.prompt_tokens, response.usage.completion_tokens),
+                cost_usd=calculate_cost(model, input_tok, output_tok),
                 metadata={
                     "is_accurate": result.get("is_accurate"),
                     "quiz_type": "enhanced",
@@ -405,8 +408,8 @@ class ExplanationService:
                 model=model,
                 user_id=user_id,
                 trace_id=trace_id,
-                input_tokens=response.usage.prompt_tokens,
-                output_tokens=response.usage.completion_tokens,
+                input_tokens=input_tok,
+                output_tokens=output_tok,
                 latency_ms=latency_ms,
                 call_type="verify_explain",
                 extra_properties={
@@ -476,6 +479,9 @@ class ExplanationService:
             
             latency_ms = int((time.time() - start_time) * 1000)
             content = response.choices[0].message.content
+            usage = getattr(response, "usage", None)
+            input_tok = usage.prompt_tokens if usage else 0
+            output_tok = usage.completion_tokens if usage else 0
             
             # Defensive JSON parsing
             try:
@@ -487,12 +493,12 @@ class ExplanationService:
                     trace_id=trace_id,
                     call_type="verification",
                     model=model,
-                    input_tokens=response.usage.prompt_tokens,
-                    output_tokens=response.usage.completion_tokens,
+                    input_tokens=input_tok,
+                    output_tokens=output_tok,
                     latency_ms=latency_ms,
                     success=False,
                     error_message=f"JSON decode error: {str(json_err)}",
-                    cost_usd=calculate_cost(model, response.usage.prompt_tokens, response.usage.completion_tokens)
+                    cost_usd=calculate_cost(model, input_tok, output_tok)
                 )
                 return False, 0.0, ["Model returned invalid JSON"]
             
@@ -502,10 +508,10 @@ class ExplanationService:
                 trace_id=trace_id,
                 call_type="verification",
                 model=model,
-                input_tokens=response.usage.prompt_tokens,
-                output_tokens=response.usage.completion_tokens,
+                input_tokens=input_tok,
+                output_tokens=output_tok,
                 latency_ms=latency_ms,
-                cost_usd=calculate_cost(model, response.usage.prompt_tokens, response.usage.completion_tokens),
+                cost_usd=calculate_cost(model, input_tok, output_tok),
                 metadata={
                     "is_accurate": result.get("is_accurate"),
                     "quiz_type": "enhanced",
@@ -516,8 +522,8 @@ class ExplanationService:
                 model=model,
                 user_id=user_id,
                 trace_id=trace_id,
-                input_tokens=response.usage.prompt_tokens,
-                output_tokens=response.usage.completion_tokens,
+                input_tokens=input_tok,
+                output_tokens=output_tok,
                 latency_ms=latency_ms,
                 call_type="verification",
                 extra_properties={
@@ -588,6 +594,9 @@ class ExplanationService:
             
             latency_ms = int((time.time() - start_time) * 1000)
             content = response.choices[0].message.content
+            usage = getattr(response, "usage", None)
+            input_tok = usage.prompt_tokens if usage else 0
+            output_tok = usage.completion_tokens if usage else 0
             
             # Defensive JSON parsing
             try:
@@ -599,12 +608,12 @@ class ExplanationService:
                     trace_id=trace_id,
                     call_type="explanation",
                     model=model,
-                    input_tokens=response.usage.prompt_tokens,
-                    output_tokens=response.usage.completion_tokens,
+                    input_tokens=input_tok,
+                    output_tokens=output_tok,
                     latency_ms=latency_ms,
                     success=False,
                     error_message=f"JSON decode error: {str(json_err)}",
-                    cost_usd=calculate_cost(model, response.usage.prompt_tokens, response.usage.completion_tokens)
+                    cost_usd=calculate_cost(model, input_tok, output_tok)
                 )
                 # Return user-friendly fallback
                 correct_answer = question_data.get("correct_answer", "")
@@ -618,10 +627,10 @@ class ExplanationService:
                 trace_id=trace_id,
                 call_type="explanation",
                 model=model,
-                input_tokens=response.usage.prompt_tokens,
-                output_tokens=response.usage.completion_tokens,
+                input_tokens=input_tok,
+                output_tokens=output_tok,
                 latency_ms=latency_ms,
-                cost_usd=calculate_cost(model, response.usage.prompt_tokens, response.usage.completion_tokens),
+                cost_usd=calculate_cost(model, input_tok, output_tok),
                 metadata={
                     "quiz_type": "enhanced",
                     "pipeline": "rag_llama_index"
@@ -631,8 +640,8 @@ class ExplanationService:
                 model=model,
                 user_id=user_id,
                 trace_id=trace_id,
-                input_tokens=response.usage.prompt_tokens,
-                output_tokens=response.usage.completion_tokens,
+                input_tokens=input_tok,
+                output_tokens=output_tok,
                 latency_ms=latency_ms,
                 call_type="explanation",
                 extra_properties={

@@ -224,7 +224,7 @@ class QuizOrchestrationService:
             )
             
             latency_ms = int((time.time() - start_time) * 1000)
-            usage = response.usage
+            usage = getattr(response, "usage", None)
             content = response.choices[0].message.content
             
             # 5. Parse Response
@@ -239,14 +239,16 @@ class QuizOrchestrationService:
             self._validate_question_structure(result, question_type)
                 
             # 6. Track Analytics (sync, fire-and-forget)
-            cost = calculate_cost(model, usage.prompt_tokens, usage.completion_tokens)
+            input_tok = usage.prompt_tokens if usage else 0
+            output_tok = usage.completion_tokens if usage else 0
+            cost = calculate_cost(model, input_tok, output_tok)
             track_llm_call(
                 user_id=user_id,
                 trace_id=trace_id,
                 call_type="generation",
                 model=model,
-                input_tokens=usage.prompt_tokens,
-                output_tokens=usage.completion_tokens,
+                input_tokens=input_tok,
+                output_tokens=output_tok,
                 latency_ms=latency_ms,
                 cost_usd=cost,
                 metadata={
@@ -262,8 +264,8 @@ class QuizOrchestrationService:
                 model=model,
                 user_id=user_id,
                 trace_id=trace_id,
-                input_tokens=usage.prompt_tokens,
-                output_tokens=usage.completion_tokens,
+                input_tokens=input_tok,
+                output_tokens=output_tok,
                 latency_ms=latency_ms,
                 call_type="question_generation",
                 extra_properties={
@@ -467,7 +469,7 @@ class QuizOrchestrationService:
             )
             
             latency_ms = int((time.time() - start_time) * 1000)
-            usage = response.usage
+            usage = getattr(response, "usage", None)
             content = response.choices[0].message.content
             
             # Parse Response
@@ -481,14 +483,16 @@ class QuizOrchestrationService:
             self._validate_question_structure(result, "matching")
             
             # Track Analytics
-            cost = calculate_cost(model, usage.prompt_tokens, usage.completion_tokens)
+            input_tok = usage.prompt_tokens if usage else 0
+            output_tok = usage.completion_tokens if usage else 0
+            cost = calculate_cost(model, input_tok, output_tok)
             track_llm_call(
                 user_id=user_id,
                 trace_id=trace_id,
                 call_type="matching_generation",
                 model=model,
-                input_tokens=usage.prompt_tokens,
-                output_tokens=usage.completion_tokens,
+                input_tokens=input_tok,
+                output_tokens=output_tok,
                 latency_ms=latency_ms,
                 cost_usd=cost,
                 metadata={
@@ -502,8 +506,8 @@ class QuizOrchestrationService:
                 model=model,
                 user_id=user_id,
                 trace_id=trace_id,
-                input_tokens=usage.prompt_tokens,
-                output_tokens=usage.completion_tokens,
+                input_tokens=input_tok,
+                output_tokens=output_tok,
                 latency_ms=latency_ms,
                 call_type="matching_generation",
                 extra_properties={

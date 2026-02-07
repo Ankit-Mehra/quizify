@@ -466,7 +466,7 @@ class ConceptExtractionService:
             
             # Parse response
             content = response.choices[0].message.content
-            usage = response.usage
+            usage = getattr(response, "usage", None)
             
             try:
                 data = json.loads(content)
@@ -476,14 +476,16 @@ class ConceptExtractionService:
                 concepts = []
             
             # Track analytics (Supabase)
-            cost = calculate_cost(model, usage.prompt_tokens, usage.completion_tokens)
+            input_tok = usage.prompt_tokens if usage else 0
+            output_tok = usage.completion_tokens if usage else 0
+            cost = calculate_cost(model, input_tok, output_tok)
             track_llm_call(
                 user_id=user_id,
                 trace_id=trace_id,
                 call_type="extraction_batch",
                 model=model,
-                input_tokens=usage.prompt_tokens,
-                output_tokens=usage.completion_tokens,
+                input_tokens=input_tok,
+                output_tokens=output_tok,
                 latency_ms=latency_ms,
                 cost_usd=cost,
                 metadata={
@@ -498,8 +500,8 @@ class ConceptExtractionService:
                 model=model,
                 user_id=user_id,
                 trace_id=trace_id,
-                input_tokens=usage.prompt_tokens,
-                output_tokens=usage.completion_tokens,
+                input_tokens=input_tok,
+                output_tokens=output_tok,
                 latency_ms=latency_ms,
                 call_type="concept_extraction",
                 extra_properties={
