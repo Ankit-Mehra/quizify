@@ -510,7 +510,10 @@ def track_groq_posthog(
         "$ai_output_cost_usd": round((output_tokens / 1_000_000) * (LLM_PRICING.get(model, {}).get("output", 0) * 1000), 6),
         "$ai_total_cost_usd": round(cost, 6),
         "call_type": call_type,
+        "feature": "quiz_generation",
         "generation_mode": "enhanced",
+        "pipeline": "rag_llama_index",
+        "quiz_type": "enhanced",
     }
 
     if trace_id:
