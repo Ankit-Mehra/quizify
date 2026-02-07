@@ -570,14 +570,12 @@ async def generate_quiz_for_type(
         # Enhanced pipeline uses Groq for faster inference
         client = get_groq_client()
         model = GROQ_ENHANCED_MODEL
-        provider = "groq"
     else:
         # Standard pipeline uses OpenAI (with PostHog wrapper)
         client = get_openai_client()
         model = config.OPENAI_MODEL_PRIMARY
-        provider = "openai"
     
-    # Build analytics properties
+    # Build analytics properties (provider/model tracked via $ai_* in track_groq_posthog)
     properties = {
         "question_type": qtype,
         "num_questions": num_questions,
@@ -585,8 +583,6 @@ async def generate_quiz_for_type(
         "feature": "quiz_generation",
         "generation_mode": generation_mode,
         "quiz_type": generation_mode,
-        "provider": provider,
-        "model": model,
     }
     if content_source_type:
         properties["content_source_type"] = content_source_type
