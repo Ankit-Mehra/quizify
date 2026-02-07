@@ -72,9 +72,9 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GROQ_BASE_URL = os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
 
-# Groq model used for enhanced quiz generation and flashcard generation
-# Sourced from config to avoid duplication with config.GROQ_MODEL_MINI
-GROQ_ENHANCED_MODEL = config.GROQ_MODEL_MINI
+# Groq model for enhanced quiz generation and flashcard generation.
+# Uses same env var as config.GROQ_MODEL_MINI to keep a single source of truth.
+GROQ_ENHANCED_MODEL = os.getenv("GROQ_MODEL_MINI", "llama-3.1-8b-instant")
 
 # LLM request timeout configuration
 # - connect: Time to establish connection (5s is generous for cloud APIs)
@@ -539,8 +539,16 @@ async def generate_quiz_for_type(
         if usage:
             properties["input_tokens"] = usage.prompt_tokens
             properties["output_tokens"] = usage.completion_tokens
+        if trace_id:
+            properties["trace_id"] = trace_id
+        # Use cached user email as distinct_id for consistent PostHog identity
+        distinct_id = user_id
+        if user_id:
+            email = _get_user_email_cached(user_id)
+            if email:
+                distinct_id = email
         capture_event(
-            distinct_id=user_id,
+            distinct_id=distinct_id,
             event="$ai_generation",
             properties=properties,
         )

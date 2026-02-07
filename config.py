@@ -134,7 +134,7 @@ class Config:
     # ============================================================================
     # These are used by services that require OpenAI specifically:
     # - Embedding-based services (RAG, concept extraction) - OpenAI embeddings only
-    # NOTE: Enhanced quiz mode and flashcard generation now use Groq (llama-3.1-8b-instant)
+    # - Fallback model references for services that have migrated to Groq for LLM calls
     # NOTE: Groq/Gemini don't support embeddings, so embedding services must use OpenAI
     
     @property
@@ -144,12 +144,12 @@ class Config:
     
     @property  
     def OPENAI_MODEL_FOR_CONCEPTS(self) -> str:
-        """Model for concept extraction (legacy, now uses Groq via GROQ_ENHANCED_MODEL)."""
+        """OpenAI model for concept extraction embeddings (LLM calls use Groq separately)."""
         return self.OPENAI_MODEL_NANO
     
     @property
     def OPENAI_MODEL_FOR_FLASHCARDS(self) -> str:
-        """Model for flashcard generation (legacy, now uses Groq via provider abstraction)."""
+        """OpenAI model fallback for flashcards (LLM calls use Groq separately)."""
         return self.OPENAI_MODEL_MINI
     
     # LlamaIndex & RAG Configuration
