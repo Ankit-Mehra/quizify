@@ -70,10 +70,11 @@ class QuizParseError(Exception):
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+GROQ_BASE_URL = os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
 
 # Groq model used for enhanced quiz generation and flashcard generation
-GROQ_ENHANCED_MODEL = "llama-3.1-8b-instant"
+# Sourced from config to avoid duplication with config.GROQ_MODEL_MINI
+GROQ_ENHANCED_MODEL = config.GROQ_MODEL_MINI
 
 # LLM request timeout configuration
 # - connect: Time to establish connection (5s is generous for cloud APIs)
@@ -475,7 +476,11 @@ async def generate_quiz_for_type(
     content_source_type: Optional[str] = None,
 ) -> List[Question]:
     """
-    Generate quiz questions of a specific type using GPT-4o.
+    Generate quiz questions of a specific type.
+    
+    Routes to the appropriate LLM provider based on generation_mode:
+    - "standard": Uses OpenAI client (with PostHog tracking)
+    - "enhanced": Uses Groq client (faster, cheaper) with PostHog capture_event
     
     Args:
         qtype: Question type (mcq, true_false, fill_blank, matching)
@@ -489,39 +494,71 @@ async def generate_quiz_for_type(
     Returns:
         List of generated Question objects
     """
-    logger.debug("Generating %s questions of type %s", num_questions, qtype)
+    logger.debug("Generating %s questions of type %s (mode=%s)", num_questions, qtype, generation_mode)
     prompt_builder = QUESTION_TYPE_PROMPTS[qtype]
     prompt = prompt_builder(text, num_questions)
     
-    # Use Groq client (OpenAI-compatible) with llama-3.1-8b-instant
-    client = get_groq_client()
-    model = GROQ_ENHANCED_MODEL
+    # Route to appropriate provider based on generation mode
+    if generation_mode == "enhanced":
+        # Enhanced pipeline uses Groq for faster inference
+        client = get_groq_client()
+        model = GROQ_ENHANCED_MODEL
+        provider = "groq"
+    else:
+        # Standard pipeline uses OpenAI (with PostHog wrapper)
+        client = get_openai_client()
+        model = config.OPENAI_MODEL_PRIMARY
+        provider = "openai"
     
-    # Build PostHog tracking kwargs with generation mode and source type
+    # Build analytics properties
     properties = {
         "question_type": qtype,
         "num_questions": num_questions,
         "content_length": len(text),
         "feature": "quiz_generation",
         "generation_mode": generation_mode,
-        "quiz_type": generation_mode,  # Epic 5.1: Add quiz_type (standard/enhanced)
-        "provider": "groq",
+        "quiz_type": generation_mode,
+        "provider": provider,
         "model": model,
     }
     if content_source_type:
         properties["content_source_type"] = content_source_type
     
-    # Note: Groq client does not use PostHog wrapper, so posthog_kwargs are not used.
-    # Analytics are tracked via the properties dict above.
-
-    # Use retry wrapper for transient errors (rate limits, connection issues)
-    response = await _retry_with_backoff(
-        lambda: client.chat.completions.create(
-            model=model,
-            messages=[{"role": "user", "content": prompt}],
-            response_format={"type": "json_object"},
+    if generation_mode == "enhanced":
+        # Groq client doesn't use PostHog wrapper - call LLM directly and track via capture_event
+        response = await _retry_with_backoff(
+            lambda: client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"},
+            )
         )
-    )
+        # Track analytics via PostHog capture_event for Groq calls
+        from services.posthog_service import capture_event
+        usage = getattr(response, "usage", None)
+        if usage:
+            properties["input_tokens"] = usage.prompt_tokens
+            properties["output_tokens"] = usage.completion_tokens
+        capture_event(
+            distinct_id=user_id,
+            event="$ai_generation",
+            properties=properties,
+        )
+    else:
+        # Standard pipeline: OpenAI client with PostHog wrapper tracks automatically
+        posthog_kwargs = _build_posthog_kwargs(
+            user_id=user_id,
+            trace_id=trace_id,
+            properties=properties,
+        )
+        response = await _retry_with_backoff(
+            lambda: client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"},
+                **posthog_kwargs,
+            )
+        )
 
     raw_json = response.choices[0].message.content.strip()
 
