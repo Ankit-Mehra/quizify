@@ -48,7 +48,7 @@ from services.ai_services.prompt_smart import (
     build_quiz_prompt_matching,
 )
 from services.ai_services.prompts import build_quiz_prompt_mixed
-from services.ai_services.pricing import calculate_cost, LLM_PRICING
+from services.ai_services.pricing import calculate_cost
 from services.posthog_service import get_posthog_client, is_posthog_enabled, is_posthog_wrapper_active
 from services.logger import ai_logger as logger
 from config import config
@@ -513,8 +513,8 @@ def track_groq_posthog(
         "$ai_latency_ms": latency_ms,
         "$ai_input_tokens": input_tokens,
         "$ai_output_tokens": output_tokens,
-        "$ai_input_cost_usd": round((input_tokens / 1_000_000) * (LLM_PRICING.get(model, {}).get("input", 0) * 1000), 6),
-        "$ai_output_cost_usd": round((output_tokens / 1_000_000) * (LLM_PRICING.get(model, {}).get("output", 0) * 1000), 6),
+        "$ai_input_cost_usd": round(calculate_cost(model, input_tokens, 0), 6),
+        "$ai_output_cost_usd": round(calculate_cost(model, 0, output_tokens), 6),
         "$ai_total_cost_usd": round(cost, 6),
         "call_type": call_type,
         "generation_mode": "enhanced",
