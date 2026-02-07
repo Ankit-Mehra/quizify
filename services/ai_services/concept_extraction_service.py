@@ -4,7 +4,7 @@ import asyncio
 from typing import List, Dict, Any, Optional
 from uuid import uuid4
 
-from services.ai_services.llm_client_service import get_openai_client, get_groq_client, GROQ_ENHANCED_MODEL, _build_posthog_kwargs, track_groq_posthog
+from services.ai_services.llm_client_service import get_openai_client, get_groq_client, _build_posthog_kwargs, track_groq_posthog
 from services.logger import ai_logger as logger
 from services.db_services.supabase_concepts import create_concepts
 from services.db_services.supabase_llm_analytics import track_llm_call
@@ -411,8 +411,9 @@ class ConceptExtractionService:
             List of formatted concept dicts ready for DB storage
         """
         start_time = time.time()
-        # Use Groq for LLM concept extraction (embeddings still use OpenAI)
-        model = GROQ_ENHANCED_MODEL
+        # Use Groq nano model for concept extraction (fastest/cheapest tier);
+        # embeddings still use OpenAI.
+        model = config.GROQ_MODEL_NANO
         num_chunks = len(chunks)
         
         # Build sections text with numbered headers
