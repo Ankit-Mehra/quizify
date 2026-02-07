@@ -48,6 +48,7 @@ from services.ai_services.prompt_smart import (
     build_quiz_prompt_matching,
 )
 from services.ai_services.prompts import build_quiz_prompt_mixed
+from services.ai_services.pricing import calculate_cost, LLM_PRICING
 from services.posthog_service import get_posthog_client, is_posthog_enabled, is_posthog_wrapper_active
 from services.logger import ai_logger as logger
 from config import config
@@ -466,6 +467,72 @@ def _build_posthog_kwargs(
     return kwargs
 
 
+def track_groq_posthog(
+    *,
+    model: str,
+    user_id: Optional[str],
+    trace_id: Optional[str],
+    input_tokens: int,
+    output_tokens: int,
+    latency_ms: int,
+    call_type: str,
+    extra_properties: Optional[Dict[str, Any]] = None,
+) -> None:
+    """
+    Track a Groq LLM call to PostHog with standard $ai_* property names.
+    
+    This is the canonical way to record PostHog analytics for enhanced-pipeline
+    Groq calls that bypass the PostHog-wrapped OpenAI client. Uses the same
+    $ai_* property schema as GroqProvider/GeminiProvider for consistent
+    analytics dashboards.
+    
+    Args:
+        model: Groq model name (e.g. "llama-3.1-8b-instant")
+        user_id: User UUID (resolved to email for distinct_id)
+        trace_id: Workflow correlation ID
+        input_tokens: Prompt token count
+        output_tokens: Completion token count
+        latency_ms: Call latency in milliseconds
+        call_type: Descriptive call type (e.g. "concept_extraction", "verify_explain")
+        extra_properties: Additional custom properties to merge
+    """
+    from services.posthog_service import capture_event
+
+    cost = calculate_cost(model, input_tokens, output_tokens)
+
+    properties: Dict[str, Any] = {
+        "$ai_provider": "groq",
+        "$ai_model": model,
+        "$ai_latency_ms": latency_ms,
+        "$ai_input_tokens": input_tokens,
+        "$ai_output_tokens": output_tokens,
+        "$ai_input_cost_usd": round((input_tokens / 1_000_000) * (LLM_PRICING.get(model, {}).get("input", 0) * 1000), 6),
+        "$ai_output_cost_usd": round((output_tokens / 1_000_000) * (LLM_PRICING.get(model, {}).get("output", 0) * 1000), 6),
+        "$ai_total_cost_usd": round(cost, 6),
+        "call_type": call_type,
+        "generation_mode": "enhanced",
+    }
+
+    if trace_id:
+        properties["$ai_trace_id"] = trace_id
+
+    if extra_properties:
+        properties.update(extra_properties)
+
+    # Resolve user email for consistent PostHog identity
+    distinct_id = user_id
+    if user_id:
+        email = _get_user_email_cached(user_id)
+        if email:
+            distinct_id = email
+
+    capture_event(
+        distinct_id=distinct_id,
+        event="$ai_generation",
+        properties=properties,
+    )
+
+
 async def generate_quiz_for_type(
     qtype: str,
     text: str,
@@ -525,7 +592,8 @@ async def generate_quiz_for_type(
         properties["content_source_type"] = content_source_type
     
     if generation_mode == "enhanced":
-        # Groq client doesn't use PostHog wrapper - call LLM directly and track via capture_event
+        # Groq client doesn't use PostHog wrapper - call LLM directly and track via track_groq_posthog
+        start_time = time.time()
         response = await _retry_with_backoff(
             lambda: client.chat.completions.create(
                 model=model,
@@ -533,24 +601,17 @@ async def generate_quiz_for_type(
                 response_format={"type": "json_object"},
             )
         )
-        # Track analytics via PostHog capture_event for Groq calls
-        from services.posthog_service import capture_event
+        latency_ms = int((time.time() - start_time) * 1000)
         usage = getattr(response, "usage", None)
-        if usage:
-            properties["input_tokens"] = usage.prompt_tokens
-            properties["output_tokens"] = usage.completion_tokens
-        if trace_id:
-            properties["trace_id"] = trace_id
-        # Use cached user email as distinct_id for consistent PostHog identity
-        distinct_id = user_id
-        if user_id:
-            email = _get_user_email_cached(user_id)
-            if email:
-                distinct_id = email
-        capture_event(
-            distinct_id=distinct_id,
-            event="$ai_generation",
-            properties=properties,
+        track_groq_posthog(
+            model=model,
+            user_id=user_id,
+            trace_id=trace_id,
+            input_tokens=usage.prompt_tokens if usage else 0,
+            output_tokens=usage.completion_tokens if usage else 0,
+            latency_ms=latency_ms,
+            call_type="quiz_generation",
+            extra_properties=properties,
         )
     else:
         # Standard pipeline: OpenAI client with PostHog wrapper tracks automatically

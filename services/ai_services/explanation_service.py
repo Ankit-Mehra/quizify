@@ -2,7 +2,7 @@ import json
 import time
 from typing import Dict, Any, List, Optional, Tuple
 
-from services.ai_services.llm_client_service import get_groq_client, GROQ_ENHANCED_MODEL
+from services.ai_services.llm_client_service import get_groq_client, GROQ_ENHANCED_MODEL, track_groq_posthog
 from services.db_services.supabase_llm_analytics import track_llm_call
 from services.posthog_service import capture_exception
 from services.ai_services.pricing import calculate_cost
@@ -401,6 +401,19 @@ class ExplanationService:
                     "pipeline": "rag_llama_index"
                 }
             )
+            track_groq_posthog(
+                model=model,
+                user_id=user_id,
+                trace_id=trace_id,
+                input_tokens=response.usage.prompt_tokens,
+                output_tokens=response.usage.completion_tokens,
+                latency_ms=latency_ms,
+                call_type="verify_explain",
+                extra_properties={
+                    "question_type": question_type,
+                    "content_source_type": content_source_type,
+                },
+            )
             
             return (
                 result.get("is_accurate", False),
@@ -498,6 +511,18 @@ class ExplanationService:
                     "quiz_type": "enhanced",
                     "pipeline": "rag_llama_index"
                 }
+            )
+            track_groq_posthog(
+                model=model,
+                user_id=user_id,
+                trace_id=trace_id,
+                input_tokens=response.usage.prompt_tokens,
+                output_tokens=response.usage.completion_tokens,
+                latency_ms=latency_ms,
+                call_type="verification",
+                extra_properties={
+                    "content_source_type": content_source_type,
+                },
             )
             
             return (
@@ -601,6 +626,18 @@ class ExplanationService:
                     "quiz_type": "enhanced",
                     "pipeline": "rag_llama_index"
                 }
+            )
+            track_groq_posthog(
+                model=model,
+                user_id=user_id,
+                trace_id=trace_id,
+                input_tokens=response.usage.prompt_tokens,
+                output_tokens=response.usage.completion_tokens,
+                latency_ms=latency_ms,
+                call_type="explanation",
+                extra_properties={
+                    "content_source_type": content_source_type,
+                },
             )
             
             # Format final string

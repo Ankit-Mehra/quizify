@@ -3,7 +3,7 @@ import time
 import random
 from typing import Dict, Any, Optional, List
 
-from services.ai_services.llm_client_service import get_groq_client, GROQ_ENHANCED_MODEL
+from services.ai_services.llm_client_service import get_groq_client, GROQ_ENHANCED_MODEL, track_groq_posthog
 from services.ai_services.context_service import ContextService
 from services.ai_services.pricing import calculate_cost
 from services.ai_services.explanation_service import ExplanationService
@@ -258,6 +258,21 @@ class QuizOrchestrationService:
                     "pipeline": "rag_llama_index"  # Epic 5.2: Tag pipeline type
                 }
             )
+            track_groq_posthog(
+                model=model,
+                user_id=user_id,
+                trace_id=trace_id,
+                input_tokens=usage.prompt_tokens,
+                output_tokens=usage.completion_tokens,
+                latency_ms=latency_ms,
+                call_type="question_generation",
+                extra_properties={
+                    "question_type": question_type,
+                    "bloom_level": bloom_level.value,
+                    "difficulty": difficulty.value,
+                    "content_source_type": content_source_type,
+                },
+            )
             
             # 7. Verify + Explain in ONE LLM call (50% faster than separate calls)
             is_valid, _confidence, issues, explanation, distractor_explanations = await self.explanation_service.verify_and_explain(
@@ -482,6 +497,21 @@ class QuizOrchestrationService:
                     "bloom_level": bloom_level.value,
                     "difficulty": difficulty.value
                 }
+            )
+            track_groq_posthog(
+                model=model,
+                user_id=user_id,
+                trace_id=trace_id,
+                input_tokens=usage.prompt_tokens,
+                output_tokens=usage.completion_tokens,
+                latency_ms=latency_ms,
+                call_type="matching_generation",
+                extra_properties={
+                    "question_type": "matching",
+                    "bloom_level": bloom_level.value,
+                    "difficulty": difficulty.value,
+                    "content_source_type": content_source_type,
+                },
             )
             
             # For matching questions, explanation is generated inline during generation (faster)

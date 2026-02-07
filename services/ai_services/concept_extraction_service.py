@@ -4,7 +4,7 @@ import asyncio
 from typing import List, Dict, Any, Optional
 from uuid import uuid4
 
-from services.ai_services.llm_client_service import get_openai_client, get_groq_client, GROQ_ENHANCED_MODEL, _build_posthog_kwargs
+from services.ai_services.llm_client_service import get_openai_client, get_groq_client, GROQ_ENHANCED_MODEL, _build_posthog_kwargs, track_groq_posthog
 from services.logger import ai_logger as logger
 from services.db_services.supabase_concepts import create_concepts
 from services.db_services.supabase_llm_analytics import track_llm_call
@@ -475,7 +475,7 @@ class ConceptExtractionService:
                 logger.error("Batch %d: Failed to parse JSON: %s...", batch_idx, content[:100])
                 concepts = []
             
-            # Track analytics
+            # Track analytics (Supabase)
             cost = calculate_cost(model, usage.prompt_tokens, usage.completion_tokens)
             track_llm_call(
                 user_id=user_id,
@@ -492,6 +492,21 @@ class ConceptExtractionService:
                     "document_id": document_id,
                     "concepts_extracted": len(concepts)
                 }
+            )
+            # Track analytics (PostHog with standard $ai_* fields)
+            track_groq_posthog(
+                model=model,
+                user_id=user_id,
+                trace_id=trace_id,
+                input_tokens=usage.prompt_tokens,
+                output_tokens=usage.completion_tokens,
+                latency_ms=latency_ms,
+                call_type="concept_extraction",
+                extra_properties={
+                    "batch_idx": batch_idx,
+                    "chunks_in_batch": num_chunks,
+                    "concepts_extracted": len(concepts),
+                },
             )
             
             logger.debug("Batch %s: extracted %s concepts in %sms", batch_idx, len(concepts), latency_ms)
