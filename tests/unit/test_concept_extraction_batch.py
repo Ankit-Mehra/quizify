@@ -264,10 +264,13 @@ class TestConceptExtractionServiceInit:
     
     def test_service_initializes(self):
         """Verify service can be instantiated."""
-        with patch('services.ai_services.concept_extraction_service.get_openai_client') as mock_client:
-            mock_client.return_value = MagicMock()
+        with patch('services.ai_services.concept_extraction_service.get_groq_client') as mock_groq, \
+             patch('services.ai_services.concept_extraction_service.get_openai_client') as mock_openai:
+            mock_groq.return_value = MagicMock()
+            mock_openai.return_value = MagicMock()
             service = ConceptExtractionService()
             assert service.client is not None
+            assert service.openai_client is not None
 
 
 class TestBatchCalculations:

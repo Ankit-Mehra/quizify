@@ -4,7 +4,7 @@ import asyncio
 from typing import List, Dict, Any, Optional
 from uuid import uuid4
 
-from services.ai_services.llm_client_service import get_openai_client, _build_posthog_kwargs
+from services.ai_services.llm_client_service import get_openai_client, get_groq_client, _build_posthog_kwargs, track_groq_posthog
 from services.logger import ai_logger as logger
 from services.db_services.supabase_concepts import create_concepts
 from services.db_services.supabase_llm_analytics import track_llm_call
@@ -108,9 +108,10 @@ class ConceptExtractionService:
     """
     
     def __init__(self):
-        # Single PostHog-wrapped client for all operations
-        # PostHog automatically tracks token usage and latency
-        self.client = get_openai_client()
+        # Groq client for LLM text extraction (concept identification)
+        self.client = get_groq_client()
+        # OpenAI client kept for embeddings (Groq doesn't support embeddings)
+        self.openai_client = get_openai_client()
     
     async def _get_embeddings(self, texts: List[str], user_id: str, trace_id: str) -> List[List[float]]:
         """Generate embeddings using OpenAI client (with PostHog tracking)."""
@@ -134,8 +135,8 @@ class ConceptExtractionService:
             start_time = time.time()
             
             try:
-                # Use the wrapped client for PostHog analytics with user context
-                response = await self.client.embeddings.create(
+                # Use OpenAI client for embeddings (Groq doesn't support embeddings)
+                response = await self.openai_client.embeddings.create(
                     input=batch,
                     model=config.EMBEDDING_MODEL,
                     dimensions=config.EMBEDDING_DIMENSIONS,
@@ -410,9 +411,9 @@ class ConceptExtractionService:
             List of formatted concept dicts ready for DB storage
         """
         start_time = time.time()
-        # Use OpenAI-specific nano model - concept extraction uses OpenAI client directly
-        # (Groq/Gemini don't support embeddings, so RAG pipeline always uses OpenAI)
-        model = config.OPENAI_MODEL_FOR_CONCEPTS
+        # Use Groq nano model for concept extraction (fastest/cheapest tier);
+        # embeddings still use OpenAI.
+        model = config.GROQ_MODEL_NANO
         num_chunks = len(chunks)
         
         # Build sections text with numbered headers
@@ -430,18 +431,6 @@ class ConceptExtractionService:
         sections_text = "\n\n".join(sections_parts)
         
         try:
-            # Build PostHog kwargs for tracking (distinct_id, trace_id, properties)
-            posthog_kwargs = _build_posthog_kwargs(
-                user_id=user_id,
-                trace_id=trace_id,
-                properties={
-                    "generation_mode": "concept_extraction",
-                    "batch_idx": batch_idx,
-                    "chunks_in_batch": num_chunks,
-                    "document_id": document_id,
-                }
-            )
-            
             # Calculate max concepts and tokens based on mode
             # Single-call: entire document -> request config.MAX_CONCEPTS_PER_DOCUMENT, allow 6000 tokens
             # Multi-batch: each batch -> request MAX_CONCEPTS_PER_BATCH (or num_chunks if smaller), cap at 800 tokens
@@ -452,7 +441,7 @@ class ConceptExtractionService:
                 max_concepts_for_batch = min(MAX_CONCEPTS_PER_BATCH, num_chunks)
                 max_output_tokens = MAX_OUTPUT_TOKENS_PER_BATCH
             
-            # PostHog-wrapped client automatically tracks tokens and latency
+            # Use Groq client for concept extraction
             response = await self.client.chat.completions.create(
                 model=model,
                 messages=[
@@ -472,14 +461,13 @@ class ConceptExtractionService:
                 response_format={"type": "json_object"},
                 temperature=0.3,
                 max_tokens=max_output_tokens,
-                **posthog_kwargs
             )
             
             latency_ms = int((time.time() - start_time) * 1000)
             
             # Parse response
             content = response.choices[0].message.content
-            usage = response.usage
+            usage = getattr(response, "usage", None)
             
             try:
                 data = json.loads(content)
@@ -488,15 +476,17 @@ class ConceptExtractionService:
                 logger.error("Batch %d: Failed to parse JSON: %s...", batch_idx, content[:100])
                 concepts = []
             
-            # Track analytics
-            cost = calculate_cost(model, usage.prompt_tokens, usage.completion_tokens)
+            # Track analytics (Supabase)
+            input_tok = usage.prompt_tokens if usage else 0
+            output_tok = usage.completion_tokens if usage else 0
+            cost = calculate_cost(model, input_tok, output_tok)
             track_llm_call(
                 user_id=user_id,
                 trace_id=trace_id,
                 call_type="extraction_batch",
                 model=model,
-                input_tokens=usage.prompt_tokens,
-                output_tokens=usage.completion_tokens,
+                input_tokens=input_tok,
+                output_tokens=output_tok,
                 latency_ms=latency_ms,
                 cost_usd=cost,
                 metadata={
@@ -505,6 +495,24 @@ class ConceptExtractionService:
                     "document_id": document_id,
                     "concepts_extracted": len(concepts)
                 }
+            )
+            # Track analytics (PostHog with standard $ai_* fields)
+            track_groq_posthog(
+                model=model,
+                user_id=user_id,
+                trace_id=trace_id,
+                input_tokens=input_tok,
+                output_tokens=output_tok,
+                latency_ms=latency_ms,
+                call_type="concept_extraction",
+                extra_properties={
+                    "feature": "concept_extraction",
+                    "pipeline": "rag_llama_index",
+                    "quiz_type": "enhanced",
+                    "batch_idx": batch_idx,
+                    "chunks_in_batch": num_chunks,
+                    "concepts_extracted": len(concepts),
+                },
             )
             
             logger.debug("Batch %s: extracted %s concepts in %sms", batch_idx, len(concepts), latency_ms)

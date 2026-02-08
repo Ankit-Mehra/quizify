@@ -81,7 +81,7 @@ class Config:
     GEMINI_MODEL_NANO: str = os.getenv("GEMINI_MODEL_NANO", "gemini-2.0-flash-lite")
     
     # Groq Models (tiered: primary > mini > nano)
-    GROQ_MODEL_PRIMARY: str = os.getenv("GROQ_MODEL_PRIMARY", "llama-3.3-70b-versatile")
+    GROQ_MODEL_PRIMARY: str = os.getenv("GROQ_MODEL_PRIMARY", "meta-llama/llama-4-scout-17b-16e-instruct")
     GROQ_MODEL_MINI: str = os.getenv("GROQ_MODEL_MINI", "llama-3.1-8b-instant")
     GROQ_MODEL_NANO: str = os.getenv("GROQ_MODEL_NANO", "llama-3.1-8b-instant")
     
@@ -127,6 +127,7 @@ class Config:
     
     @property
     def GROQ_MODEL_DEFAULT(self) -> str:
+        """Default Groq model for standard pipeline (primary tier)."""
         return self.GROQ_MODEL_PRIMARY
     
     # ============================================================================
@@ -134,9 +135,8 @@ class Config:
     # ============================================================================
     # These are used by services that require OpenAI specifically:
     # - Embedding-based services (RAG, concept extraction) - OpenAI embeddings only
-    # - Enhanced quiz mode - uses OpenAI client for all operations
-    # - Flashcard generation - uses OpenAI client
-    # NOTE: Groq/Gemini don't support embeddings, so these services must use OpenAI
+    # - Fallback model references for services that have migrated to Groq for LLM calls
+    # NOTE: Groq/Gemini don't support embeddings, so embedding services must use OpenAI
     
     @property
     def OPENAI_MODEL_FOR_RAG(self) -> str:
@@ -145,12 +145,12 @@ class Config:
     
     @property  
     def OPENAI_MODEL_FOR_CONCEPTS(self) -> str:
-        """Model for concept extraction (always uses OpenAI)."""
+        """OpenAI model fallback for concept extraction (chat calls use Groq; embeddings via EMBEDDING_MODEL)."""
         return self.OPENAI_MODEL_NANO
     
     @property
     def OPENAI_MODEL_FOR_FLASHCARDS(self) -> str:
-        """Model for flashcard generation (always uses OpenAI)."""
+        """OpenAI model fallback for flashcards (LLM calls use Groq separately)."""
         return self.OPENAI_MODEL_MINI
     
     # LlamaIndex & RAG Configuration

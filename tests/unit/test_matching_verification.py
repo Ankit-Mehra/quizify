@@ -205,12 +205,12 @@ class TestMatchingQuestionVerification:
     @pytest.mark.asyncio
     async def test_verify_and_explain_matching_integration(self, matching_question_data, mock_openai_response):
         """Integration test: verify_and_explain correctly handles matching questions."""
-        # Create mock OpenAI client
+        # Create mock Groq client (OpenAI-compatible)
         mock_client = MagicMock()
         mock_client.chat.completions.create = AsyncMock(return_value=mock_openai_response)
         
         # Patch at the import location in explanation_service
-        with patch('services.ai_services.explanation_service.get_openai_client', return_value=mock_client):
+        with patch('services.ai_services.explanation_service.get_groq_client', return_value=mock_client):
             from services.ai_services.explanation_service import ExplanationService
             service = ExplanationService()
             
@@ -249,12 +249,12 @@ class TestMatchingQuestionVerification:
     @pytest.mark.asyncio
     async def test_verify_and_explain_mcq_still_works(self, mcq_question_data, mock_openai_response):
         """Ensure MCQ verification still works after matching changes."""
-        # Create mock OpenAI client
+        # Create mock Groq client (OpenAI-compatible)
         mock_client = MagicMock()
         mock_client.chat.completions.create = AsyncMock(return_value=mock_openai_response)
         
         # Patch at the import location in explanation_service
-        with patch('services.ai_services.explanation_service.get_openai_client', return_value=mock_client):
+        with patch('services.ai_services.explanation_service.get_groq_client', return_value=mock_client):
             from services.ai_services.explanation_service import ExplanationService
             service = ExplanationService()
             

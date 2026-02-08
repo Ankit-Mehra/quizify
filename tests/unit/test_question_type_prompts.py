@@ -74,12 +74,12 @@ class TestFillBlankPromptRouting:
     @pytest.mark.asyncio
     async def test_fill_blank_uses_correct_prompt(self, fill_blank_question_data, mock_openai_response_with_distractors):
         """Verify fill_blank questions route to VERIFY_AND_EXPLAIN_FILL_BLANK_PROMPT."""
-        # Create mock OpenAI client
+        # Create mock Groq client (OpenAI-compatible)
         mock_client = MagicMock()
         mock_client.chat.completions.create = AsyncMock(return_value=mock_openai_response_with_distractors)
         
         # Patch BEFORE importing ExplanationService
-        with patch('services.ai_services.explanation_service.get_openai_client', return_value=mock_client):
+        with patch('services.ai_services.explanation_service.get_groq_client', return_value=mock_client):
             # Must reimport to get the patched version
             from services.ai_services.explanation_service import ExplanationService
             service = ExplanationService()
@@ -160,12 +160,12 @@ class TestTrueFalsePromptRouting:
     @pytest.mark.asyncio
     async def test_true_false_uses_correct_prompt(self, true_false_question_data, mock_openai_response_no_distractors):
         """Verify true_false questions route to VERIFY_AND_EXPLAIN_TRUE_FALSE_PROMPT."""
-        # Create mock OpenAI client
+        # Create mock Groq client (OpenAI-compatible)
         mock_client = MagicMock()
         mock_client.chat.completions.create = AsyncMock(return_value=mock_openai_response_no_distractors)
         
         # Patch at the import location in explanation_service
-        with patch('services.ai_services.explanation_service.get_openai_client', return_value=mock_client):
+        with patch('services.ai_services.explanation_service.get_groq_client', return_value=mock_client):
             from services.ai_services.explanation_service import ExplanationService
             service = ExplanationService()
             
@@ -247,12 +247,12 @@ class TestDistractorExplanationsField:
             "correct_answer": "mitochondria"
         }
         
-        # Create mock OpenAI client
+        # Create mock Groq client (OpenAI-compatible)
         mock_client = MagicMock()
         mock_client.chat.completions.create = AsyncMock(return_value=mock_mcq_response)
         
         # Patch at the import location in explanation_service
-        with patch('services.ai_services.explanation_service.get_openai_client', return_value=mock_client):
+        with patch('services.ai_services.explanation_service.get_groq_client', return_value=mock_client):
             from services.ai_services.explanation_service import ExplanationService
             service = ExplanationService()
             

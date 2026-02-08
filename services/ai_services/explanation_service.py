@@ -2,8 +2,7 @@ import json
 import time
 from typing import Dict, Any, List, Optional, Tuple
 
-from config import config
-from services.ai_services.llm_client_service import get_openai_client, _build_posthog_kwargs
+from services.ai_services.llm_client_service import get_groq_client, GROQ_ENHANCED_MODEL, track_groq_posthog
 from services.db_services.supabase_llm_analytics import track_llm_call
 from services.posthog_service import capture_exception
 from services.ai_services.pricing import calculate_cost
@@ -233,7 +232,7 @@ class ExplanationService:
     """
     
     def __init__(self):
-        self.client = get_openai_client()
+        self.client = get_groq_client()
 
     async def verify_and_explain(
         self,
@@ -261,7 +260,7 @@ class ExplanationService:
             distractor_explanations_dict is None for true_false and matching, populated for MCQ and fill_blank
         """
         start_time = time.time()
-        model = config.OPENAI_MODEL_MINI
+        model = GROQ_ENHANCED_MODEL
         
         try:
             # Detect question type and build appropriate prompt
@@ -353,19 +352,6 @@ class ExplanationService:
                     context=context[:2000]  # Limit context size
                 )
             
-            # Build PostHog tracking kwargs
-            posthog_kwargs = _build_posthog_kwargs(
-                user_id=user_id,
-                trace_id=trace_id,
-                properties={
-                    "call_type": "verify_explain",
-                    "question_type": question_type,
-                    "generation_mode": "enhanced",
-                    "content_source_type": content_source_type,
-                    "feature": "quiz_generation",
-                }
-            )
-
             response = await self.client.chat.completions.create(
                 model=model,
                 messages=[
@@ -375,11 +361,13 @@ class ExplanationService:
                 response_format={"type": "json_object"},
                 temperature=0.2,
                 max_tokens=800,  # Increased to handle MCQ with multiple detailed distractor explanations
-                **posthog_kwargs
             )
             
             latency_ms = int((time.time() - start_time) * 1000)
             content = response.choices[0].message.content
+            usage = getattr(response, "usage", None)
+            input_tok = usage.prompt_tokens if usage else 0
+            output_tok = usage.completion_tokens if usage else 0
             
             # Defensive JSON parsing
             try:
@@ -391,12 +379,12 @@ class ExplanationService:
                     trace_id=trace_id,
                     call_type="verify_explain",
                     model=model,
-                    input_tokens=response.usage.prompt_tokens,
-                    output_tokens=response.usage.completion_tokens,
+                    input_tokens=input_tok,
+                    output_tokens=output_tok,
                     latency_ms=latency_ms,
                     success=False,
                     error_message=f"JSON decode error: {str(json_err)}",
-                    cost_usd=calculate_cost(model, response.usage.prompt_tokens, response.usage.completion_tokens)
+                    cost_usd=calculate_cost(model, input_tok, output_tok)
                 )
                 return False, 0.0, ["Model returned invalid JSON"], "", None
             
@@ -406,15 +394,31 @@ class ExplanationService:
                 trace_id=trace_id,
                 call_type="verify_explain",
                 model=model,
-                input_tokens=response.usage.prompt_tokens,
-                output_tokens=response.usage.completion_tokens,
+                input_tokens=input_tok,
+                output_tokens=output_tok,
                 latency_ms=latency_ms,
-                cost_usd=calculate_cost(model, response.usage.prompt_tokens, response.usage.completion_tokens),
+                cost_usd=calculate_cost(model, input_tok, output_tok),
                 metadata={
                     "is_accurate": result.get("is_accurate"),
                     "quiz_type": "enhanced",
                     "pipeline": "rag_llama_index"
                 }
+            )
+            track_groq_posthog(
+                model=model,
+                user_id=user_id,
+                trace_id=trace_id,
+                input_tokens=input_tok,
+                output_tokens=output_tok,
+                latency_ms=latency_ms,
+                call_type="verify_explain",
+                extra_properties={
+                    "feature": "quiz_generation",
+                    "pipeline": "rag_llama_index",
+                    "quiz_type": "enhanced",
+                    "question_type": question_type,
+                    "content_source_type": content_source_type,
+                },
             )
             
             return (
@@ -434,7 +438,7 @@ class ExplanationService:
                 properties={
                     "generation_mode": "enhanced",
                     "stage": "verify_and_explain",
-                    "model": config.OPENAI_MODEL_MINI,
+                    "model": GROQ_ENHANCED_MODEL,
                     "content_source_type": content_source_type,
                     "trace_id": trace_id,
                 }
@@ -456,7 +460,7 @@ class ExplanationService:
         Note: Consider using verify_and_explain() instead for better performance.
         """
         start_time = time.time()
-        model = config.OPENAI_MODEL_MINI
+        model = GROQ_ENHANCED_MODEL
         
         try:
             prompt = VERIFICATION_PROMPT.format(
@@ -465,18 +469,6 @@ class ExplanationService:
                 context=context[:2000] # Limit context size
             )
             
-            # Build PostHog tracking kwargs
-            posthog_kwargs = _build_posthog_kwargs(
-                user_id=user_id,
-                trace_id=trace_id,
-                properties={
-                    "call_type": "verification",
-                    "generation_mode": "enhanced",
-                    "content_source_type": content_source_type,
-                    "feature": "quiz_generation",
-                }
-            )
-
             response = await self.client.chat.completions.create(
                 model=model,
                 messages=[
@@ -486,11 +478,13 @@ class ExplanationService:
                 response_format={"type": "json_object"},
                 temperature=0.1,
                 max_tokens=500,  # Increased to allow more detailed verification output
-                **posthog_kwargs
             )
             
             latency_ms = int((time.time() - start_time) * 1000)
             content = response.choices[0].message.content
+            usage = getattr(response, "usage", None)
+            input_tok = usage.prompt_tokens if usage else 0
+            output_tok = usage.completion_tokens if usage else 0
             
             # Defensive JSON parsing
             try:
@@ -502,12 +496,12 @@ class ExplanationService:
                     trace_id=trace_id,
                     call_type="verification",
                     model=model,
-                    input_tokens=response.usage.prompt_tokens,
-                    output_tokens=response.usage.completion_tokens,
+                    input_tokens=input_tok,
+                    output_tokens=output_tok,
                     latency_ms=latency_ms,
                     success=False,
                     error_message=f"JSON decode error: {str(json_err)}",
-                    cost_usd=calculate_cost(model, response.usage.prompt_tokens, response.usage.completion_tokens)
+                    cost_usd=calculate_cost(model, input_tok, output_tok)
                 )
                 return False, 0.0, ["Model returned invalid JSON"]
             
@@ -517,15 +511,30 @@ class ExplanationService:
                 trace_id=trace_id,
                 call_type="verification",
                 model=model,
-                input_tokens=response.usage.prompt_tokens,
-                output_tokens=response.usage.completion_tokens,
+                input_tokens=input_tok,
+                output_tokens=output_tok,
                 latency_ms=latency_ms,
-                cost_usd=calculate_cost(model, response.usage.prompt_tokens, response.usage.completion_tokens),
+                cost_usd=calculate_cost(model, input_tok, output_tok),
                 metadata={
                     "is_accurate": result.get("is_accurate"),
                     "quiz_type": "enhanced",
                     "pipeline": "rag_llama_index"
                 }
+            )
+            track_groq_posthog(
+                model=model,
+                user_id=user_id,
+                trace_id=trace_id,
+                input_tokens=input_tok,
+                output_tokens=output_tok,
+                latency_ms=latency_ms,
+                call_type="verification",
+                extra_properties={
+                    "feature": "quiz_generation",
+                    "pipeline": "rag_llama_index",
+                    "quiz_type": "enhanced",
+                    "content_source_type": content_source_type,
+                },
             )
             
             return (
@@ -543,7 +552,7 @@ class ExplanationService:
                 properties={
                     "generation_mode": "enhanced",
                     "stage": "verification",
-                    "model": config.OPENAI_MODEL_MINI,
+                    "model": GROQ_ENHANCED_MODEL,
                     "content_source_type": content_source_type,
                     "trace_id": trace_id,
                 }
@@ -563,7 +572,7 @@ class ExplanationService:
         Generate detailed explanation string.
         """
         start_time = time.time()
-        model = config.OPENAI_MODEL_MINI
+        model = GROQ_ENHANCED_MODEL
         
         try:
             # Prepare distractors string
@@ -577,18 +586,6 @@ class ExplanationService:
                 distractors=distractors,
                 context=context[:2000]
             )
-            
-            # Build PostHog tracking kwargs
-            posthog_kwargs = _build_posthog_kwargs(
-                user_id=user_id,
-                trace_id=trace_id,
-                properties={
-                    "call_type": "explanation",
-                    "generation_mode": "enhanced",
-                    "content_source_type": content_source_type,
-                    "feature": "quiz_generation",
-                }
-            )
 
             response = await self.client.chat.completions.create(
                 model=model,
@@ -599,11 +596,13 @@ class ExplanationService:
                 response_format={"type": "json_object"},
                 temperature=0.7,
                 max_tokens=500,  # Cap explanation length for predictable cost
-                **posthog_kwargs
             )
             
             latency_ms = int((time.time() - start_time) * 1000)
             content = response.choices[0].message.content
+            usage = getattr(response, "usage", None)
+            input_tok = usage.prompt_tokens if usage else 0
+            output_tok = usage.completion_tokens if usage else 0
             
             # Defensive JSON parsing
             try:
@@ -615,12 +614,12 @@ class ExplanationService:
                     trace_id=trace_id,
                     call_type="explanation",
                     model=model,
-                    input_tokens=response.usage.prompt_tokens,
-                    output_tokens=response.usage.completion_tokens,
+                    input_tokens=input_tok,
+                    output_tokens=output_tok,
                     latency_ms=latency_ms,
                     success=False,
                     error_message=f"JSON decode error: {str(json_err)}",
-                    cost_usd=calculate_cost(model, response.usage.prompt_tokens, response.usage.completion_tokens)
+                    cost_usd=calculate_cost(model, input_tok, output_tok)
                 )
                 # Return user-friendly fallback
                 correct_answer = question_data.get("correct_answer", "")
@@ -634,14 +633,29 @@ class ExplanationService:
                 trace_id=trace_id,
                 call_type="explanation",
                 model=model,
-                input_tokens=response.usage.prompt_tokens,
-                output_tokens=response.usage.completion_tokens,
+                input_tokens=input_tok,
+                output_tokens=output_tok,
                 latency_ms=latency_ms,
-                cost_usd=calculate_cost(model, response.usage.prompt_tokens, response.usage.completion_tokens),
+                cost_usd=calculate_cost(model, input_tok, output_tok),
                 metadata={
                     "quiz_type": "enhanced",
                     "pipeline": "rag_llama_index"
                 }
+            )
+            track_groq_posthog(
+                model=model,
+                user_id=user_id,
+                trace_id=trace_id,
+                input_tokens=input_tok,
+                output_tokens=output_tok,
+                latency_ms=latency_ms,
+                call_type="explanation",
+                extra_properties={
+                    "feature": "quiz_generation",
+                    "pipeline": "rag_llama_index",
+                    "quiz_type": "enhanced",
+                    "content_source_type": content_source_type,
+                },
             )
             
             # Format final string
@@ -667,7 +681,7 @@ class ExplanationService:
                 properties={
                     "generation_mode": "enhanced",
                     "stage": "explanation_generation",
-                    "model": config.OPENAI_MODEL_MINI,
+                    "model": GROQ_ENHANCED_MODEL,
                     "content_source_type": content_source_type,
                     "trace_id": trace_id,
                 }
