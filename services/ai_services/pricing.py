@@ -9,7 +9,7 @@ from typing import Dict
 # Pricing per 1K tokens
 # Sources:
 #   OpenAI: https://openai.com/pricing
-#   Groq: https://groq.com/pricing/ (as of Feb 2025)
+#   Groq: https://groq.com/pricing/
 LLM_PRICING: Dict[str, Dict[str, float]] = {
     "gpt-4.1": {"input": 0.002, "output": 0.008},
     "gpt-4.1-mini": {"input": 0.0004, "output": 0.0016},

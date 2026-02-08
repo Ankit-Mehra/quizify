@@ -275,8 +275,8 @@ def _create_groq_client() -> BaseAsyncOpenAI:
         logger.warning("GROQ_API_KEY not set - Groq client will fail on use")
     
     logger.info(
-        "Using Groq client (OpenAI-compatible, base_url=%s, model=%s)",
-        GROQ_BASE_URL, GROQ_ENHANCED_MODEL
+        "Using Groq client (OpenAI-compatible, base_url=%s)",
+        GROQ_BASE_URL
     )
     return BaseAsyncOpenAI(
         api_key=GROQ_API_KEY,
@@ -499,7 +499,7 @@ def track_groq_posthog(
         call_type: Descriptive call type (e.g. "concept_extraction", "verify_explain")
         extra_properties: Additional custom properties to merge (should include feature, pipeline, etc.)
     """
-    from services.posthog_service import capture_event, is_posthog_enabled
+    from services.posthog_service import capture_event
 
     # Early-return when PostHog is disabled to avoid unnecessary cost/email lookups
     if not is_posthog_enabled():
