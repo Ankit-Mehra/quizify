@@ -115,7 +115,7 @@ watchfiles==1.0.4
 websockets==14.2
 wsproto==1.2.0
 yarl>=1.22.0
-posthog==7.5.1
+posthog==7.9.4
 sentry-sdk==2.53.0
 
 # OpenTelemetry for PostHog Logs
