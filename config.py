@@ -307,9 +307,14 @@ class Config:
     # ============================================================================
     
     SENTRY_DSN: str = os.getenv("SENTRY_DSN", "")
-    SENTRY_TRACES_SAMPLE_RATE: float = float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "1.0"))
-    SENTRY_PROFILE_SESSION_SAMPLE_RATE: float = float(os.getenv("SENTRY_PROFILE_SESSION_SAMPLE_RATE", "1.0"))
-    SENTRY_SEND_DEFAULT_PII: bool = os.getenv("SENTRY_SEND_DEFAULT_PII", "true").lower() == "true"
+    
+    # Sampling rates default to 0.1 (10%) to avoid high volume/costs in production.
+    # Set to 1.0 in development for full visibility. Must be in [0.0, 1.0].
+    SENTRY_TRACES_SAMPLE_RATE: float = float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.1"))
+    SENTRY_PROFILE_SESSION_SAMPLE_RATE: float = float(os.getenv("SENTRY_PROFILE_SESSION_SAMPLE_RATE", "0.1"))
+    
+    # PII defaults to false — must be explicitly opted in via env var
+    SENTRY_SEND_DEFAULT_PII: bool = os.getenv("SENTRY_SEND_DEFAULT_PII", "false").lower() == "true"
     SENTRY_ENABLE_LOGS: bool = os.getenv("SENTRY_ENABLE_LOGS", "true").lower() == "true"
     
     @classmethod
