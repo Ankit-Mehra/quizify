@@ -41,6 +41,20 @@ async def health_check():
     return {"status": "ok"}
 
 
+@router.get("/sentry-debug")
+async def trigger_error():
+    """
+    Sentry verification endpoint - triggers a test error.
+    
+    Use this to verify Sentry is capturing errors correctly.
+    Visit this endpoint in a browser to send a test event to Sentry.
+    
+    Raises:
+        ZeroDivisionError: Always raises to test Sentry error capture
+    """
+    _ = 1 / 0
+
+
 # ============================================================================
 # SERVICE HEALTH CHECKS (ADMIN ONLY)
 # ============================================================================

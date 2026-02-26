@@ -302,6 +302,16 @@ class Config:
     # Feature flag to enable/disable PostHog LLM analytics
     POSTHOG_LLM_ANALYTICS_ENABLED: bool = os.getenv("POSTHOG_LLM_ANALYTICS_ENABLED", "true").lower() == "true"
     
+    # ============================================================================
+    # Sentry Configuration (for error tracking and performance monitoring)
+    # ============================================================================
+    
+    SENTRY_DSN: str = os.getenv("SENTRY_DSN", "")
+    SENTRY_TRACES_SAMPLE_RATE: float = float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "1.0"))
+    SENTRY_PROFILE_SESSION_SAMPLE_RATE: float = float(os.getenv("SENTRY_PROFILE_SESSION_SAMPLE_RATE", "1.0"))
+    SENTRY_SEND_DEFAULT_PII: bool = os.getenv("SENTRY_SEND_DEFAULT_PII", "true").lower() == "true"
+    SENTRY_ENABLE_LOGS: bool = os.getenv("SENTRY_ENABLE_LOGS", "true").lower() == "true"
+    
     @classmethod
     def is_testing(cls) -> bool:
         """

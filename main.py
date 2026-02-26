@@ -10,6 +10,7 @@ import os
 import json
 import re
 from dotenv import load_dotenv
+import sentry_sdk
 
 # Load environment variables from .env file FIRST
 load_dotenv()
@@ -20,6 +21,19 @@ from config import config as app_config  # noqa: E402
 
 # Validate configuration at startup (will raise RuntimeError if misconfigured)
 app_config.validate_config()
+
+# ============================================================================
+# Sentry SDK Initialization (MUST be before FastAPI app creation)
+# ============================================================================
+if app_config.SENTRY_DSN:
+    sentry_sdk.init(
+        dsn=app_config.SENTRY_DSN,
+        send_default_pii=app_config.SENTRY_SEND_DEFAULT_PII,
+        enable_logs=app_config.SENTRY_ENABLE_LOGS,
+        traces_sample_rate=app_config.SENTRY_TRACES_SAMPLE_RATE,
+        profile_session_sample_rate=app_config.SENTRY_PROFILE_SESSION_SAMPLE_RATE,
+        profile_lifecycle="trace",
+    )
 
 # Import modules that depend on environment variables
 from services.logger import app_logger as logger  # noqa: E402
