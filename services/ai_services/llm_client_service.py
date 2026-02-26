@@ -276,7 +276,7 @@ def _create_groq_client() -> BaseAsyncOpenAI:
     
     logger.info(
         "Using Groq client (OpenAI-compatible, base_url=%s)",
-        GROQ_BASE_URL
+        GROQ_BASE_URL,
     )
     return BaseAsyncOpenAI(
         api_key=GROQ_API_KEY,

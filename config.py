@@ -145,7 +145,7 @@ class Config:
     
     @property  
     def OPENAI_MODEL_FOR_CONCEPTS(self) -> str:
-        """OpenAI model fallback for concept extraction (chat calls use Groq; embeddings via EMBEDDING_MODEL)."""
+        """OpenAI model fallback for concept extraction (LLM calls use Groq; embeddings via EMBEDDING_MODEL)."""
         return self.OPENAI_MODEL_NANO
     
     @property
@@ -301,6 +301,21 @@ class Config:
     
     # Feature flag to enable/disable PostHog LLM analytics
     POSTHOG_LLM_ANALYTICS_ENABLED: bool = os.getenv("POSTHOG_LLM_ANALYTICS_ENABLED", "true").lower() == "true"
+    
+    # ============================================================================
+    # Sentry Configuration (for error tracking and performance monitoring)
+    # ============================================================================
+    
+    SENTRY_DSN: str = os.getenv("SENTRY_DSN", "")
+    
+    # Sampling rates default to 0.1 (10%) to avoid high volume/costs in production.
+    # Set to 1.0 in development for full visibility. Must be in [0.0, 1.0].
+    SENTRY_TRACES_SAMPLE_RATE: float = float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.1"))
+    SENTRY_PROFILE_SESSION_SAMPLE_RATE: float = float(os.getenv("SENTRY_PROFILE_SESSION_SAMPLE_RATE", "0.1"))
+    
+    # PII defaults to false — must be explicitly opted in via env var
+    SENTRY_SEND_DEFAULT_PII: bool = os.getenv("SENTRY_SEND_DEFAULT_PII", "false").lower() == "true"
+    SENTRY_ENABLE_LOGS: bool = os.getenv("SENTRY_ENABLE_LOGS", "true").lower() == "true"
     
     @classmethod
     def is_testing(cls) -> bool:

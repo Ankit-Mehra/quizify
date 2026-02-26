@@ -41,6 +41,30 @@ async def health_check():
     return {"status": "ok"}
 
 
+@router.get(
+    "/sentry-debug",
+    dependencies=[Depends(get_current_user_id)],
+    openapi_extra={"security": [{"BearerAuth": []}]}
+)
+async def trigger_error(current_user_id: str = Depends(get_current_user_id)):
+    """
+    Sentry verification endpoint - triggers a test error (ADMIN ONLY).
+    
+    Restricted to admin users to prevent abuse in production
+    (e.g., spamming Sentry with synthetic errors and alert noise).
+    
+    Raises:
+        HTTPException: 403 if the current user is not an admin
+        ZeroDivisionError: Always raises to test Sentry error capture
+    """
+    if not is_admin(current_user_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required",
+        )
+    _ = 1 / 0
+
+
 # ============================================================================
 # SERVICE HEALTH CHECKS (ADMIN ONLY)
 # ============================================================================

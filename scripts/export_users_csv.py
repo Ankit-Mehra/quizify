@@ -20,11 +20,24 @@ def export_users_to_csv():
     """Export all verified users to CSV"""
     supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
     
-    # Get all users from auth.users
-    result = supabase.auth.admin.list_users()
+    # Get all users from auth.users (with pagination)
+    all_users = []
+    page = 1
+    per_page = 100
+    
+    while True:
+        result = supabase.auth.admin.list_users(page=page, per_page=per_page)
+        if not result:
+            break
+        all_users.extend(result)
+        if len(result) < per_page:
+            break
+        page += 1
+    
+    print(f"📊 Found {len(all_users)} total users in database")
     
     users = []
-    for user in result:
+    for user in all_users:
         if user.email and user.email_confirmed_at:  # Only verified emails
             # Get name, default to "Quizify User" if empty (Zoho doesn't like nulls)
             name = ""
