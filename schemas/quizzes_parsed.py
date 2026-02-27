@@ -9,8 +9,8 @@ DEFAULT_MATCHING_QUESTION = "Match the items from the left column with the corre
 
 
 class QuestionBaseParsed(BaseModel):
-    explanation: str
-    source: str
+    explanation: str = ""
+    source: str = ""
 
 class MCQQuestionParsed(QuestionBaseParsed):
     type: Literal["multiple_choice"]

@@ -64,7 +64,7 @@ Formatting rules:
     - `right` MUST be a JSON array of exactly 4 strings (NEVER null)
     - `correct_answer` MUST be a JSON array of 4 integer indices like [0, 1, 2, 3] (NEVER null)
 
-CRITICAL: Never return null for options, left, right, or correct_answer fields. Always provide valid arrays.
+CRITICAL: Every question MUST have `explanation` and `source` string fields. Never omit or return null for `explanation` or `source`. Never return null for options, left, right, or correct_answer fields. Always provide valid arrays.
 
 Rules:
 - Be factual, clear, and based on the provided text.
@@ -195,6 +195,7 @@ OUTPUT REQUIREMENTS (STRICTLY FOLLOW):
    - Explain WHY each pair belongs together
    - Use your knowledge to provide educational context
    - DO NOT just list "X matches Y" - explain the relationship
+7. "source" - A brief excerpt from the context that supports this question
 
 NEVER return null for any field. All arrays must have exactly 4 items.
 
@@ -205,8 +206,10 @@ JSON FORMAT (copy this structure exactly):
   "right": ["Relativity", "Gravity", "Radioactivity", "Evolution"],
   "correct_answer": [0, 1, 2, 3],
   "confidence_score": 0.95,
-  "explanation": "Einstein developed the theory of relativity, revolutionizing our understanding of space and time. Newton formulated the law of universal gravitation. Marie Curie pioneered research on radioactivity, discovering polonium and radium. Darwin proposed the theory of evolution by natural selection."
+  "explanation": "Einstein developed the theory of relativity, revolutionizing our understanding of space and time. Newton formulated the law of universal gravitation. Marie Curie pioneered research on radioactivity, discovering polonium and radium. Darwin proposed the theory of evolution by natural selection.",
+  "source": "This matches information found in the section on famous scientists."
 }}
+
 """
 
 # Map question types to their specific RAG prompts
