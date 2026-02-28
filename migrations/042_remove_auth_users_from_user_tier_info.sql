@@ -170,13 +170,28 @@ $$;
 COMMENT ON FUNCTION public.handle_user_email_change() IS
 'Trigger function that syncs email from auth.users to profiles on email change.';
 
--- Create trigger on auth.users for email changes (requires superuser)
--- Note: If this fails due to permissions, apply via Supabase Dashboard SQL editor
-DROP TRIGGER IF EXISTS on_auth_user_email_change ON auth.users;
-CREATE TRIGGER on_auth_user_email_change
-    AFTER UPDATE OF email ON auth.users
-    FOR EACH ROW
-    EXECUTE FUNCTION public.handle_user_email_change();
+-- Create trigger on auth.users for email changes (requires elevated privileges)
+-- Wrapped in DO block to gracefully handle insufficient permissions
+DO $$
+BEGIN
+    BEGIN
+        DROP TRIGGER IF EXISTS on_auth_user_email_change ON auth.users;
+    EXCEPTION
+        WHEN insufficient_privilege THEN
+            RAISE NOTICE 'Skipping drop of trigger on_auth_user_email_change on auth.users due to insufficient privileges';
+    END;
+
+    BEGIN
+        CREATE TRIGGER on_auth_user_email_change
+            AFTER UPDATE OF email ON auth.users
+            FOR EACH ROW
+            EXECUTE FUNCTION public.handle_user_email_change();
+    EXCEPTION
+        WHEN insufficient_privilege THEN
+            RAISE NOTICE 'Skipping creation of trigger on_auth_user_email_change on auth.users due to insufficient privileges';
+    END;
+END;
+$$;
 
 -- ============================================================================
 -- Step 5: Rewrite user_tier_info view — source everything from profiles
@@ -219,7 +234,7 @@ SELECT
     p.billing_plan,
     -- Storage fields
     COALESCE(p.storage_quota_bytes, 262144000::bigint) AS storage_quota_bytes,
-    get_storage_usage(p.id) AS storage_used_bytes,
+    public.get_storage_usage(p.id) AS storage_used_bytes,
     -- Quiz counts (computed from tables)
     (SELECT count(*) FROM public.quizzes q WHERE q.created_by = p.id)::integer AS current_quiz_count,
     (SELECT count(*) FROM public.submissions s WHERE s.user_id = p.id)::integer AS quizzes_attempted,
@@ -240,12 +255,14 @@ COMMENT ON VIEW public.user_tier_info IS
 'Unified view of user tier, quota, credits, and subscription. Sources ALL data from profiles (no auth.users dependency). Used by backend service_role queries.';
 
 -- ============================================================================
--- Step 6: Secure access — revoke anon, grant SELECT to authenticated only
+-- Step 6: Secure access — revoke anon, grant SELECT to authenticated and service_role
 -- ============================================================================
 
 REVOKE ALL ON public.user_tier_info FROM anon;
 REVOKE ALL ON public.user_tier_info FROM authenticated;
+REVOKE ALL ON public.user_tier_info FROM service_role;
 GRANT SELECT ON public.user_tier_info TO authenticated;
+GRANT SELECT ON public.user_tier_info TO service_role;
 
 -- ============================================================================
 -- Step 7: Update get_my_tier_info function to use profiles instead of auth.users

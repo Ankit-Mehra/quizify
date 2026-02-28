@@ -586,6 +586,8 @@ def get_user_tier_info(user_id: str):
         # Always use service role for querying user_tier_info view
         # Service role is used for consistency (bypasses RLS) though the view
         # now sources from public.profiles only (migration 042 removed auth.users join)
+        # TODO: Consider switching to authenticated client (user_token) now that
+        #       the view no longer depends on auth.users — would enforce RLS scoping
         
         # Use the explicit service role client
         supabase = app_config.get_service_role_client()
