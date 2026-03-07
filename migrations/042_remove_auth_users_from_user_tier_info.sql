@@ -276,6 +276,9 @@ GRANT SELECT ON public.user_tier_info TO service_role;
 
 DROP FUNCTION IF EXISTS public.get_my_tier_info();
 
+-- SECURITY NOTE: Uses empty search_path to prevent temp schema hijacking.
+-- All table/function references are schema-qualified for deterministic resolution.
+-- quota_exceeded uses credit-based logic consistent with user_tier_info view.
 CREATE FUNCTION public.get_my_tier_info()
 RETURNS TABLE (
     id UUID,
@@ -299,7 +302,7 @@ RETURNS TABLE (
 LANGUAGE sql
 SECURITY DEFINER
 STABLE
-SET search_path = public
+SET search_path = ''
 AS $$
     SELECT
         p.id,
@@ -315,22 +318,17 @@ AS $$
         p.subscription_canceled_at,
         (p.google_refresh_token IS NOT NULL) AS google_connected,
         p.google_connected_at,
-        (SELECT count(*) FROM quizzes q WHERE q.created_by = p.id) AS current_quiz_count,
-        (SELECT count(*) FROM submissions s WHERE s.user_id = p.id) AS quizzes_attempted,
+        (SELECT count(*) FROM public.quizzes q WHERE q.created_by = p.id) AS current_quiz_count,
+        (SELECT count(*) FROM public.submissions s WHERE s.user_id = p.id) AS quizzes_attempted,
         CASE
-            WHEN COALESCE(p.billing_plan, 'free') = 'free' THEN 5
-            WHEN COALESCE(p.billing_plan, 'free') = 'premium' THEN 100
             WHEN COALESCE(p.billing_plan, 'free') = 'pro' THEN -1
             ELSE 5
         END AS quota_limit,
-        CASE
-            WHEN COALESCE(p.billing_plan, 'free') = 'pro' THEN false
-            WHEN COALESCE(p.billing_plan, 'free') = 'premium' THEN
-                ((SELECT count(*) FROM quizzes q WHERE q.created_by = p.id) >= 100)
-            ELSE
-                ((SELECT count(*) FROM quizzes q WHERE q.created_by = p.id) >= 5)
-        END AS quota_exceeded
-    FROM profiles p
+        -- Credit-based quota_exceeded (consistent with user_tier_info view)
+        (COALESCE(p.credit_units_remaining, 0)
+            + COALESCE(p.credit_units_purchased, 0)
+            + COALESCE(p.free_credit_units_remaining, 0)) <= 0 AS quota_exceeded
+    FROM public.profiles p
     WHERE p.id = auth.uid();
 $$;
 
