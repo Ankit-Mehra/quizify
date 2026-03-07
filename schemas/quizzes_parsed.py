@@ -12,6 +12,23 @@ class QuestionBaseParsed(BaseModel):
     explanation: str = ""
     source: str = ""
 
+    @field_validator("explanation", "source", mode="before")
+    @classmethod
+    def ensure_explanation_source_not_none(cls, v):
+        """Handle LLM returning null for explanation/source fields.
+
+        Pydantic does not apply default values when a field is explicitly set
+        to null/None, so we coerce these to empty strings to align with the
+        declared defaults.
+        """
+        if v is None:
+            logger.warning(
+                "QuestionBaseParsed received null explanation/source - LLM output quality issue"
+            )
+            return ""
+        return v
+
+
 class MCQQuestionParsed(QuestionBaseParsed):
     type: Literal["multiple_choice"]
     question: str

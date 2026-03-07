@@ -31,6 +31,11 @@ ADD COLUMN IF NOT EXISTS email TEXT;
 COMMENT ON COLUMN public.profiles.email IS
 'User email synced from auth.users on signup and email change. Source of truth is auth.users; this is a denormalized copy for the user_tier_info view to avoid joining auth.users.';
 
+-- Prevent authenticated/anon clients from directly updating the denormalized email column.
+-- Email should only be changed via auth.users → profiles sync (e.g., trigger or service role).
+REVOKE UPDATE (email) ON TABLE public.profiles FROM anon;
+REVOKE UPDATE (email) ON TABLE public.profiles FROM authenticated;
+
 -- ============================================================================
 -- Step 2: Backfill existing users'' emails from auth.users
 -- ============================================================================

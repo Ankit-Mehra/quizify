@@ -562,8 +562,12 @@ def get_user_tier_info(user_id: str):
     - Uses SERVICE ROLE client for consistency and backwards compatibility
     - The user_tier_info view sources only from public.profiles (no auth.users dependency)
       since migration 042 removed the direct join on auth.users
-    - emails are synced to profiles.email via trigger on signup and email change
-    - user_id comes from authenticated JWT (validated by FastAPI dependency injection)
+    - emails are intended to be synced to profiles.email via triggers on signup and,
+      where database privileges allow, on email change; in restricted environments
+      the email-change trigger creation may be skipped, so this sync is best-effort
+      and should not be treated as a hard security guarantee
+    - user_id is the authoritative identifier and is expected to come from a validated
+      authenticated JWT (enforced by FastAPI dependency injection in callers)
     - No data leakage risk: Query is explicitly filtered by user_id parameter
     
     Args:
