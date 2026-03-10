@@ -2,7 +2,7 @@
 	"info": {
 		"_postman_id": "quiz-gen-001",
 		"name": "Quizify - Quiz Generation & Management",
-		"description": "Complete test suite for quiz generation endpoints including text, file, and file-id generation with quota validation.\n\n**Setup Instructions:**\n1. Set `{{base_url}}` variable (e.g., http://localhost:8000)\n2. Set `{{auth_token}}` variable with your JWT token\n3. Run endpoints in order (some depend on previous responses)\n\n**Last Updated:** 2025-10-12",
+		"description": "Complete test suite for quiz generation endpoints including text, file, file-id, and URL generation with quota validation.\n\n**Features:**\n- Standard mode: Fast quiz generation\n- Enhanced mode: RAG-based quality with Bloom's taxonomy\n- Question types: multiple_choice, true_false, fill_blank, matching, mixed\n- Content sources: Text, File (PDF/DOCX/TXT), URL\n- Pagination and filtering for quiz lists\n\n**Setup Instructions:**\n1. Set `{{base_url}}` variable (e.g., http://localhost:8000)\n2. Set `{{auth_token}}` variable with your JWT token\n3. Run endpoints in order (some depend on previous responses)\n\n**Quota Limits:**\n- Free: 5 quizzes\n- Basic: 20 quizzes\n- Educator: 500 quizzes\n\n**Last Updated:** 2025-12-24",
 		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
 	},
 	"item": [
@@ -89,7 +89,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"title\": \"Python Basics Quiz\",\n  \"content\": \"Python is a high-level, interpreted programming language known for its simplicity and readability. It was created by Guido van Rossum and first released in 1991. Python supports multiple programming paradigms including procedural, object-oriented, and functional programming. The language uses indentation to define code blocks instead of braces or keywords. Python has a large standard library and an extensive ecosystem of third-party packages available through PyPI (Python Package Index). It is widely used in web development, data science, artificial intelligence, scientific computing, and automation.\",\n  \"num_questions\": 5,\n  \"question_type\": [\"mixed\"]\n}",
+							"raw": "{\n  \"title\": \"Python Basics Quiz\",\n  \"content\": \"Python is a high-level, interpreted programming language known for its simplicity and readability. It was created by Guido van Rossum and first released in 1991. Python supports multiple programming paradigms including procedural, object-oriented, and functional programming. The language uses indentation to define code blocks instead of braces or keywords. Python has a large standard library and an extensive ecosystem of third-party packages available through PyPI (Python Package Index). It is widely used in web development, data science, artificial intelligence, scientific computing, and automation.\",\n  \"num_questions\": 5,\n  \"question_type\": [\"mixed\"],\n  \"mode\": \"standard\"\n}",
 							"options": {
 								"raw": {
 									"language": "json"
@@ -101,7 +101,7 @@
 							"host": ["{{base_url}}"],
 							"path": ["api", "quiz", "generate", "text"]
 						},
-						"description": "Generate a quiz from text content. Validates quota before generation.\n\n**Authentication Required:** Bearer token in Authorization header\n\n**Quota Validation:**\n- Checked BEFORE quiz generation (avoids wasting AI API calls)\n- Returns 403 if quota exceeded\n- Quota limits: Free (5), Basic (100), Educator (500)\n\n**Request Body:**\n- title: Quiz title (string, required)\n- content: Text content to generate quiz from (min 10 chars, required)\n- num_questions: Number of questions (1-50, default: 5)\n- question_type: Array of types: [\"multiple_choice\", \"true_false\", \"fill_blank\", \"matching\", \"mixed\"]\n\n**Success Response (200):**\n```json\n{\n  \"quiz_id\": \"uuid\",\n  \"title\": \"Quiz Title\",\n  \"message\": \"Quiz generated successfully\"\n}\n```\n\n**Error Responses:**\n- 401: Unauthorized (missing/invalid token)\n- 403: Quota exceeded\n- 422: Validation error (content too short, invalid question type)"
+						"description": "Generate a quiz from text content. Validates quota before generation.\n\n**Authentication Required:** Bearer token in Authorization header\n\n**Generation Modes:**\n- mode='standard': Fast generation (default)\n- mode='enhanced': RAG-based quality with Bloom's taxonomy\n\n**Quota Validation:**\n- Checked BEFORE quiz generation (avoids wasting AI API calls)\n- Returns 403 if quota exceeded\n- Quota limits: Free (5), Basic (20), Educator (500)\n\n**Request Body:**\n- title: Quiz title (string, required)\n- content: Text content to generate quiz from (min 10 chars, required)\n- num_questions: Number of questions (1-50, default: 10)\n- question_type: Array of types: [\"multiple_choice\", \"true_false\", \"fill_blank\", \"matching\", \"mixed\"]\n- mode: Generation mode (\"standard\" or \"enhanced\")\n\n**Success Response (200):**\n```json\n{\n  \"quiz_id\": \"uuid\",\n  \"title\": \"Quiz Title\",\n  \"message\": \"Quiz generated successfully\",\n  \"questions\": [...],\n  \"generation_stats\": {}\n}\n```\n\n**Error Responses:**\n- 401: Unauthorized (missing/invalid token)\n- 403: Quota exceeded\n- 422: Validation error (content too short, invalid question type)"
 					},
 					"response": []
 				},
@@ -154,7 +154,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"title\": \"Test Quota Limit\",\n  \"content\": \"This request should fail if user has reached quota limit.\",\n  \"num_questions\": 5,\n  \"question_type\": [\"mixed\"]\n}",
+							"raw": "{\n  \"title\": \"Test Quota Limit\",\n  \"content\": \"This request should fail if user has reached quota limit. Python is a programming language.\",\n  \"num_questions\": 5,\n  \"question_type\": [\"mixed\"],\n  \"mode\": \"standard\"\n}",
 							"options": {
 								"raw": {
 									"language": "json"
@@ -166,7 +166,7 @@
 							"host": ["{{base_url}}"],
 							"path": ["api", "quiz", "generate", "text"]
 						},
-						"description": "Test quota exceeded error (403). Run this after reaching your tier limit.\n\n**Quota Limits:**\n- Free: 5 quizzes\n- Basic: 100 quizzes\n- Educator: 500 quizzes\n\n**Response Format:**\n```json\n{\n  \"detail\": {\n    \"detail\": \"Quiz quota exceeded for free tier (5/5). Upgrade to basic for 100 quizzes.\",\n    \"current_count\": 5,\n    \"quota_limit\": 5,\n    \"user_tier\": \"free\"\n  }\n}\n```\n\n**Note:** Quota is checked BEFORE quiz generation to avoid wasting AI API calls."
+						"description": "Test quota exceeded error (403). Run this after reaching your tier limit.\n\n**Quota Limits:**\n- Free: 5 quizzes\n- Basic: 20 quizzes\n- Educator: 500 quizzes\n\n**Response Format:**\n```json\n{\n  \"detail\": {\n    \"detail\": \"Quiz quota exceeded for free tier (5/5). Upgrade to basic for 20 quizzes.\",\n    \"current_count\": 5,\n    \"quota_limit\": 5,\n    \"user_tier\": \"free\"\n  }\n}\n```\n\n**Note:** Quota is checked BEFORE quiz generation to avoid wasting AI API calls."
 					},
 					"response": []
 				},
@@ -214,6 +214,70 @@
 							"path": ["api", "quiz", "generate", "text"]
 						},
 						"description": "Test validation error - content too short (< 10 characters)"
+					},
+					"response": []
+				},
+				{
+					"name": "Generate Quiz from Text (Enhanced Mode)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response has enhanced fields\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('quiz_id');",
+									"    pm.expect(jsonData).to.have.property('questions');",
+									"    pm.expect(jsonData).to.have.property('generation_stats');",
+									"});",
+									"",
+									"pm.test(\"Questions have enhanced metadata\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    if (jsonData.questions && jsonData.questions.length > 0) {",
+									"        var q = jsonData.questions[0];",
+									"        pm.expect(q).to.have.property('bloom_level');",
+									"        pm.expect(q).to.have.property('difficulty');",
+									"        pm.expect(q).to.have.property('explanation');",
+									"    }",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"title\": \"Python Advanced Quiz (Enhanced)\",\n  \"content\": \"Python is a high-level, interpreted programming language known for its simplicity and readability. It was created by Guido van Rossum and first released in 1991. Python supports multiple programming paradigms including procedural, object-oriented, and functional programming. The language uses indentation to define code blocks instead of braces or keywords. Python has a large standard library and an extensive ecosystem of third-party packages available through PyPI (Python Package Index). It is widely used in web development, data science, artificial intelligence, scientific computing, and automation. Python's design philosophy emphasizes code readability with its notable use of significant whitespace.\",\n  \"num_questions\": 5,\n  \"question_type\": [\"multiple_choice\", \"true_false\"],\n  \"mode\": \"enhanced\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/quiz/generate/text",
+							"host": ["{{base_url}}"],
+							"path": ["api", "quiz", "generate", "text"]
+						},
+						"description": "Generate quiz using Enhanced mode (RAG-based with Bloom's taxonomy).\n\n**Enhanced Mode Features:**\n- RAG-based question generation for higher quality\n- Bloom's taxonomy levels: remember, understand, apply, analyze, evaluate, create\n- Difficulty levels: easy, medium, hard\n- Concept tracking for better coverage\n- Fact-checking and validation\n\n**Enhanced Questions Include:**\n- bloom_level: Cognitive level of the question\n- difficulty: Easy/Medium/Hard\n- concept_name: Human-readable concept being tested\n- confidence_score: AI confidence in question quality\n- distractor_explanations: Why wrong answers are wrong (MCQ)"
 					},
 					"response": []
 				}
@@ -282,6 +346,12 @@
 									"key": "question_type",
 									"value": "mixed",
 									"type": "text"
+								},
+								{
+									"key": "mode",
+									"value": "standard",
+									"type": "text",
+									"description": "Generation mode: standard or enhanced"
 								}
 							]
 						},
@@ -290,7 +360,7 @@
 							"host": ["{{base_url}}"],
 							"path": ["api", "quiz", "generate", "file"]
 						},
-						"description": "Upload a file and generate quiz. Supports PDF, DOCX, TXT.\n\n**Authentication Required:** Bearer token in Authorization header\n\n**Quota Validation:**\n- Checked BEFORE file processing (prevents wasting resources)\n- Returns 403 if quota exceeded\n- Quota limits: Free (5), Basic (100), Educator (500)\n\n**File Requirements:**\n- Supported formats: PDF (.pdf), Word (.docx), Text (.txt)\n- Maximum size: 10MB (10485760 bytes)\n- Minimum extractable text: 50 characters\n\n**Form Data Fields:**\n- file: File upload (required)\n- title: Quiz title (required)\n- num_questions: Number of questions (1-50, default: 10)\n- question_type: Comma-separated types or \"mixed\"\n\n**Success Response (201):**\n```json\n{\n  \"quiz_id\": \"uuid\",\n  \"title\": \"Quiz Title\",\n  \"message\": \"Quiz generated successfully from file\",\n  \"questions\": [...]\n}\n```\n\n**Error Responses:**\n- 400: Unsupported file type or insufficient content\n- 401: Unauthorized\n- 403: Quota exceeded\n- 413: File too large (>10MB)\n- 422: Validation error\n\n**Note:** Unlike text endpoint, this returns questions array in response"
+						"description": "Upload a file and generate quiz. Supports PDF, DOCX, TXT.\n\n**Authentication Required:** Bearer token in Authorization header\n\n**Generation Modes:**\n- mode='standard': Fast generation (default)\n- mode='enhanced': RAG-based quality with Bloom's taxonomy\n\n**Quota Validation:**\n- Checked BEFORE file processing (prevents wasting resources)\n- Returns 403 if quota exceeded\n- Quota limits: Free (5), Basic (20), Educator (500)\n\n**File Requirements:**\n- Supported formats: PDF (.pdf), Word (.docx), Text (.txt)\n- Maximum size: 10MB (10485760 bytes)\n- Minimum extractable text: 50 characters\n\n**Form Data Fields:**\n- file: File upload (required)\n- title: Quiz title (required)\n- num_questions: Number of questions (1-50, default: 10)\n- question_type: Comma-separated types or \"mixed\"\n- mode: Generation mode (\"standard\" or \"enhanced\")\n\n**Success Response (201):**\n```json\n{\n  \"quiz_id\": \"uuid\",\n  \"title\": \"Quiz Title\",\n  \"message\": \"Quiz generated successfully from file\",\n  \"questions\": [...],\n  \"generation_stats\": {}\n}\n```\n\n**Error Responses:**\n- 400: Unsupported file type or insufficient content\n- 401: Unauthorized\n- 403: Quota exceeded\n- 413: File too large (>10MB)\n- 422: Validation error\n\n**Note:** Unlike text endpoint, this returns questions array in response"
 					},
 					"response": []
 				},
@@ -396,7 +466,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"title\": \"Quiz from Stored File\",\n  \"num_questions\": 8,\n  \"question_type\": [\"multiple_choice\", \"true_false\"]\n}",
+							"raw": "{\n  \"title\": \"Quiz from Stored File\",\n  \"num_questions\": 8,\n  \"question_type\": [\"multiple_choice\", \"true_false\"],\n  \"mode\": \"standard\"\n}",
 							"options": {
 								"raw": {
 									"language": "json"
@@ -408,7 +478,7 @@
 							"host": ["{{base_url}}"],
 							"path": ["api", "quiz", "generate", "{{file_id}}"]
 						},
-						"description": "Generate quiz from a previously uploaded file using its file_id.\n\n**Prerequisites:**\n1. Upload a file first (use file upload endpoint)\n2. Get the file_id from upload response\n3. Set {{file_id}} variable in Postman\n\n**Benefits:**\n- Don't need to re-upload file\n- Faster processing\n- Can generate multiple quizzes from same file"
+						"description": "Generate quiz from a previously uploaded file using its file_id.\n\n**Prerequisites:**\n1. Upload a file first (use file upload endpoint)\n2. Get the file_id from upload response\n3. Set {{file_id}} variable in Postman\n\n**Generation Modes:**\n- mode='standard': Fast generation (default)\n- mode='enhanced': RAG-based quality with Bloom's taxonomy\n\n**Benefits:**\n- Don't need to re-upload file\n- Faster processing\n- Can generate multiple quizzes from same file"
 					},
 					"response": []
 				},
@@ -476,17 +546,30 @@
 									"    pm.response.to.have.status(200);",
 									"});",
 									"",
-									"pm.test(\"Response is array\", function () {",
+									"pm.test(\"Response has pagination fields\", function () {",
 									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData).to.be.an('array');",
+									"    pm.expect(jsonData).to.have.property('quizzes');",
+									"    pm.expect(jsonData).to.have.property('total');",
+									"    pm.expect(jsonData).to.have.property('page');",
+									"    pm.expect(jsonData).to.have.property('limit');",
+									"    pm.expect(jsonData).to.have.property('total_pages');",
+									"    pm.expect(jsonData).to.have.property('has_next');",
+									"    pm.expect(jsonData).to.have.property('has_previous');",
+									"});",
+									"",
+									"pm.test(\"Quizzes is an array\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.quizzes).to.be.an('array');",
 									"});",
 									"",
 									"pm.test(\"Quiz objects have required fields\", function () {",
 									"    var jsonData = pm.response.json();",
-									"    if (jsonData.length > 0) {",
-									"        pm.expect(jsonData[0]).to.have.property('id');",
-									"        pm.expect(jsonData[0]).to.have.property('title');",
-									"        pm.expect(jsonData[0]).to.have.property('created_at');",
+									"    if (jsonData.quizzes.length > 0) {",
+									"        pm.expect(jsonData.quizzes[0]).to.have.property('id');",
+									"        pm.expect(jsonData.quizzes[0]).to.have.property('title');",
+									"        pm.expect(jsonData.quizzes[0]).to.have.property('created_at');",
+									"        pm.expect(jsonData.quizzes[0]).to.have.property('generation_mode');",
+									"        pm.expect(jsonData.quizzes[0]).to.have.property('content_source_type');",
 									"    }",
 									"});"
 								],
@@ -504,11 +587,53 @@
 							}
 						],
 						"url": {
-							"raw": "{{base_url}}/api/quiz/my-quizzes",
+							"raw": "{{base_url}}/api/quiz/my-quizzes?page=1&limit=10",
 							"host": ["{{base_url}}"],
-							"path": ["api", "quiz", "my-quizzes"]
+							"path": ["api", "quiz", "my-quizzes"],
+							"query": [
+								{
+									"key": "page",
+									"value": "1",
+									"description": "Page number (1-indexed)"
+								},
+								{
+									"key": "limit",
+									"value": "10",
+									"description": "Items per page (1-100)"
+								},
+								{
+									"key": "title",
+									"value": "",
+									"disabled": true,
+									"description": "Filter by title (partial match)"
+								},
+								{
+									"key": "source_type",
+									"value": "",
+									"disabled": true,
+									"description": "Filter by source: file, url, or text"
+								},
+								{
+									"key": "mode",
+									"value": "",
+									"disabled": true,
+									"description": "Filter by mode: standard or enhanced"
+								},
+								{
+									"key": "start_date",
+									"value": "",
+									"disabled": true,
+									"description": "Filter by date range start (ISO format)"
+								},
+								{
+									"key": "end_date",
+									"value": "",
+									"disabled": true,
+									"description": "Filter by date range end (ISO format)"
+								}
+							]
 						},
-						"description": "Get all quizzes created by the authenticated user.\n\n**Note:** Currently returns ALL quizzes (no search/filter). Future versions will support:\n- ?title=python (search by title)\n- ?start_date=2025-01-01 (filter by date)\n- ?limit=10&offset=0 (pagination)"
+						"description": "Get paginated list of quizzes created by the authenticated user.\n\n**Pagination:**\n- page: Page number (1-indexed, default: 1)\n- limit: Items per page (1-100, default: 10)\n\n**Filtering:**\n- title: Search by title (partial match)\n- source_type: Filter by content source (file, url, text)\n- mode: Filter by generation mode (standard, enhanced)\n- start_date: Filter by creation date range start\n- end_date: Filter by creation date range end\n\n**Response:**\n```json\n{\n  \"quizzes\": [...],\n  \"total\": 25,\n  \"page\": 1,\n  \"limit\": 10,\n  \"total_pages\": 3,\n  \"has_next\": true,\n  \"has_previous\": false\n}\n```"
 					},
 					"response": []
 				},

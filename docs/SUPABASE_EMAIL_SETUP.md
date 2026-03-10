@@ -1,4 +1,85 @@
-# Supabase Email Verification Setup Guide
+# Supabase Email Configuration for Quizify
+
+## Email Template for Signup Confirmation
+
+Use this template in **Supabase Dashboard → Authentication → Email Templates → Confirm signup**:
+
+```html
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif; background-color: #f4f4f4;">
+  <!-- Wrapper table for email client compatibility -->
+  <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: #f4f4f4;">
+    <tr>
+      <td style="padding: 20px 0;">
+        <!-- Main content table (the "card") -->
+        <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="600" style="margin: 0 auto; background-color: #ffffff; border: 2px solid #e5e7eb; border-radius: 8px;">
+          <tr>
+            <td style="padding: 40px 40px 30px 40px;">
+              <!-- Logo -->
+              <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                <tr>
+                  <td style="text-align: center; padding-bottom: 30px;">
+                    <h1 style="margin: 0; color: #6366f1; font-size: 32px;">🎓 Quizify</h1>
+                  </td>
+                </tr>
+              </table>
+              
+              <!-- Heading -->
+              <h2 style="color: #1f2937; font-size: 24px; margin: 0 0 20px 0; font-weight: 600;">Welcome to Quizify!</h2>
+              
+              <!-- Body text -->
+              <p style="color: #374151; font-size: 16px; line-height: 1.6; margin: 0 0 16px 0;">Hey there, genius-in-the-making! 🚀</p>
+              
+              <p style="color: #374151; font-size: 16px; line-height: 1.6; margin: 0 0 24px 0;">You've joined Quizify, the place where curiosity gets a gold star. 🌟 Before you start flexing your quiz skills, hit the button below to verify your email.</p>
+              
+              <!-- Button -->
+              <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                <tr>
+                  <td style="text-align: center; padding: 20px 0;">
+                    <a href="https://api.quizify.ca/api/auth/confirm?token={{ .TokenHash }}&type=signup" style="display: inline-block; padding: 14px 28px; background-color: #6366f1; color: #ffffff; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 16px;">Verify Email Address</a>
+                  </td>
+                </tr>
+              </table>
+              
+              <!-- Warning box -->
+              <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 20px 0;">
+                <tr>
+                  <td style="background-color: #fef3c7; border-left: 4px solid #f59e0b; padding: 12px; border-radius: 4px;">
+                    <p style="margin: 0; color: #92400e; font-size: 14px; line-height: 1.5;">
+                      <strong>⚠️ Important:</strong> This link will expire in 24 hours for security reasons.
+                    </p>
+                  </td>
+                </tr>
+              </table>
+              
+              <!-- Alternative link -->
+              <p style="color: #374151; font-size: 14px; line-height: 1.6; margin: 20px 0 8px 0;">If the button doesn't work, copy and paste this link into your browser:</p>
+              <p style="color: #6366f1; font-size: 12px; line-height: 1.5; word-break: break-all; margin: 0 0 20px 0;">https://api.quizify.ca/api/auth/confirm?token={{ .TokenHash }}&type=signup</p>
+              
+              <!-- Disclaimer -->
+              <p style="color: #6b7280; font-size: 14px; line-height: 1.6; margin: 0;">If you didn't create an account with Quizify, you can safely ignore this email.</p>
+            </td>
+          </tr>
+          
+          <!-- Footer -->
+          <tr>
+            <td style="padding: 20px 40px 30px 40px; border-top: 1px solid #e5e7eb;">
+              <p style="margin: 0 0 8px 0; color: #1f2937; font-size: 14px; font-weight: 600;">The Quizify Team</p>
+              <p style="margin: 0; color: #9ca3af; font-size: 12px; line-height: 1.5;">This is an automated message, please do not reply to this email.</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+```
 
 ## Overview
 Supabase handles email verification automatically using magic links. When a user signs up, Supabase sends them an email with a verification link. No backend endpoint is needed!
@@ -287,7 +368,7 @@ Sent when users change their email address and need to verify the new one.
               <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
                 <tr>
                   <td style="text-align: center; padding: 20px 0;">
-                    <a href="{{ .ConfirmationURL }}" style="display: inline-block; padding: 14px 28px; background-color: #6366f1; color: #ffffff; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 16px;">Confirm New Email</a>
+                    <a href="https://api.quizify.ca/api/auth/confirm?token={{ .TokenHash }}&type=email_change" style="display: inline-block; padding: 14px 28px; background-color: #6366f1; color: #ffffff; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 16px;">Confirm New Email</a>
                   </td>
                 </tr>
               </table>
@@ -295,9 +376,9 @@ Sent when users change their email address and need to verify the new one.
               <!-- Warning box -->
               <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 20px 0;">
                 <tr>
-                  <td style="background-color: #fef3c7; border-left: 4px solid #f59e0b; padding: 12px; border-radius: 4px;">
-                    <p style="margin: 0; color: #92400e; font-size: 14px; line-height: 1.5;">
-                      <strong>⏰ Heads up!</strong> This link expires in 24 hours. After that, you'll need to request another email change.
+                  <td style="background-color: #dbeafe; border-left: 4px solid #3b82f6; padding: 12px; border-radius: 4px;">
+                    <p style="margin: 0; color: #1e3a8a; font-size: 14px; line-height: 1.5;">
+                      <strong>📧 Note:</strong> You'll need to confirm this change from both your new and current email addresses.
                     </p>
                   </td>
                 </tr>
@@ -305,7 +386,7 @@ Sent when users change their email address and need to verify the new one.
               
               <!-- Alternative link -->
               <p style="color: #374151; font-size: 14px; line-height: 1.6; margin: 20px 0 8px 0;">Button not working? Copy and paste this link into your browser:</p>
-              <p style="color: #6366f1; font-size: 12px; line-height: 1.5; word-break: break-all; margin: 0 0 20px 0;">{{ .ConfirmationURL }}</p>
+              <p style="color: #6366f1; font-size: 12px; line-height: 1.5; word-break: break-all; margin: 0 0 20px 0;">https://api.quizify.ca/api/auth/confirm?token={{ .TokenHash }}&type=email_change</p>
               
               <!-- Disclaimer -->
               <p style="color: #6b7280; font-size: 14px; line-height: 1.6; margin: 0;">Didn't request this change? Your account might be under attack! 🚨 Please secure your account immediately or contact support.</p>
@@ -370,7 +451,7 @@ Sent when users request a password reset.
               <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
                 <tr>
                   <td style="text-align: center; padding: 20px 0;">
-                    <a href="{{ .ConfirmationURL }}" style="display: inline-block; padding: 14px 28px; background-color: #6366f1; color: #ffffff; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 16px;">Reset My Password</a>
+                    <a href="https://api.quizify.ca/api/auth/confirm?token={{ .TokenHash }}&type=recovery" style="display: inline-block; padding: 14px 28px; background-color: #6366f1; color: #ffffff; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 16px;">Reset My Password</a>
                   </td>
                 </tr>
               </table>
@@ -380,7 +461,7 @@ Sent when users request a password reset.
                 <tr>
                   <td style="background-color: #fef3c7; border-left: 4px solid #f59e0b; padding: 12px; border-radius: 4px;">
                     <p style="margin: 0; color: #92400e; font-size: 14px; line-height: 1.5;">
-                      <strong>⏰ Time's ticking!</strong> This reset link expires in 1 hour for security reasons.
+                      <strong>⚠️ Important:</strong> This reset link expires in 1 hour for security reasons.
                     </p>
                   </td>
                 </tr>
@@ -388,7 +469,7 @@ Sent when users request a password reset.
               
               <!-- Alternative link -->
               <p style="color: #374151; font-size: 14px; line-height: 1.6; margin: 20px 0 8px 0;">Button playing hide-and-seek? Use this link instead:</p>
-              <p style="color: #6366f1; font-size: 12px; line-height: 1.5; word-break: break-all; margin: 0 0 20px 0;">{{ .ConfirmationURL }}</p>
+              <p style="color: #6366f1; font-size: 12px; line-height: 1.5; word-break: break-all; margin: 0 0 20px 0;">https://api.quizify.ca/api/auth/confirm?token={{ .TokenHash }}&type=recovery</p>
               
               <!-- Disclaimer -->
               <p style="color: #6b7280; font-size: 14px; line-height: 1.6; margin: 0;">Didn't request a password reset? Someone might be trying to access your account. 🚨 Please secure your account or contact our support team ASAP!</p>
@@ -516,6 +597,77 @@ Supabase automatically rate-limits email sending:
 - Free tier: ~30 emails/hour
 - Pro tier: Higher limits + custom SMTP recommended
 
+## Email Template for Password Recovery
+
+Use this in **Supabase Dashboard → Authentication → Email Templates → Reset Password**:
+
+```html
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif; background-color: #f4f4f4;">
+  <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: #f4f4f4;">
+    <tr>
+      <td style="padding: 20px 0;">
+        <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="600" style="margin: 0 auto; background-color: #ffffff; border: 2px solid #e5e7eb; border-radius: 8px;">
+          <tr>
+            <td style="padding: 40px 40px 30px 40px;">
+              <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                <tr>
+                  <td style="text-align: center; padding-bottom: 30px;">
+                    <h1 style="margin: 0; color: #6366f1; font-size: 32px;">🎓 Quizify</h1>
+                  </td>
+                </tr>
+              </table>
+              
+              <h2 style="color: #1f2937; font-size: 24px; margin: 0 0 20px 0; font-weight: 600;">Reset Your Password</h2>
+              
+              <p style="color: #374151; font-size: 16px; line-height: 1.6; margin: 0 0 16px 0;">Hello! 👋</p>
+              
+              <p style="color: #374151; font-size: 16px; line-height: 1.6; margin: 0 0 24px 0;">You requested to reset your Quizify password. Click the button below to create a new password and regain access to your account.</p>
+              
+              <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                <tr>
+                  <td style="text-align: center; padding: 20px 0;">
+                    <a href="https://api.quizify.ca/api/auth/confirm?token={{ .TokenHash }}&type=recovery" style="display: inline-block; padding: 14px 28px; background-color: #6366f1; color: #ffffff; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 16px;">Reset Password</a>
+                  </td>
+                </tr>
+              </table>
+              
+              <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 20px 0;">
+                <tr>
+                  <td style="background-color: #fef3c7; border-left: 4px solid #f59e0b; padding: 12px; border-radius: 4px;">
+                    <p style="margin: 0; color: #92400e; font-size: 14px; line-height: 1.5;">
+                      <strong>⚠️ Important:</strong> This link will expire in 1 hour for security reasons.
+                    </p>
+                  </td>
+                </tr>
+              </table>
+              
+              <p style="color: #374151; font-size: 14px; line-height: 1.6; margin: 20px 0 8px 0;">If the button doesn't work, copy and paste this link:</p>
+              <p style="color: #6366f1; font-size: 12px; line-height: 1.5; word-break: break-all; margin: 0 0 20px 0;">https://api.quizify.ca/api/auth/confirm?token={{ .TokenHash }}&type=recovery</p>
+              
+              <p style="color: #6b7280; font-size: 14px; line-height: 1.6; margin: 0;">If you didn't request a password reset, please ignore this email or contact support if you have concerns.</p>
+            </td>
+          </tr>
+          
+          <tr>
+            <td style="padding: 20px 40px 30px 40px; border-top: 1px solid #e5e7eb;">
+              <p style="margin: 0 0 8px 0; color: #1f2937; font-size: 14px; font-weight: 600;">The Quizify Team</p>
+              <p style="margin: 0; color: #9ca3af; font-size: 12px; line-height: 1.5;">This is an automated message, please do not reply to this email.</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+```
+
 ## Summary Checklist
 
 - [ ] Customize email templates with your branding
@@ -531,3 +683,5 @@ Supabase automatically rate-limits email sending:
 **Need Help?**
 - [Supabase Email Templates Docs](https://supabase.com/docs/guides/auth/auth-email-templates)
 - [Supabase Auth Configuration](https://supabase.com/docs/guides/auth/auth-smtp)
+
+````

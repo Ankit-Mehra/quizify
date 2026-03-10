@@ -9,8 +9,17 @@ from fastapi import HTTPException
 from services.web_scraping_service import (
     validate_url,
     is_private_ip,
-    resolve_hostname_to_ips
+    resolve_hostname_to_ips,
+    clear_dns_cache
 )
+
+
+@pytest.fixture(autouse=True)
+def clear_cache_between_tests():
+    """Clear DNS cache before and after each test to ensure isolation."""
+    clear_dns_cache()
+    yield
+    clear_dns_cache()
 
 
 class TestIsPrivateIP:
@@ -121,14 +130,23 @@ class TestResolveHostnameToIPs:
 class TestValidateURL:
     """Test URL validation with SSRF protection."""
     
-    def test_valid_https_url(self):
+    @patch('services.web_scraping_service.resolve_hostname_to_ips')
+    def test_valid_https_url(self, mock_resolve):
         """Test valid HTTPS URLs pass validation."""
+        # Mock DNS resolution to return public IPs
+        mock_resolve.return_value = ['93.184.216.34']  # example.com public IP
+        
         # Should not raise exception
         validate_url('https://example.com')
+        
+        mock_resolve.return_value = ['142.250.80.68']  # google.com public IP
         validate_url('https://www.google.com/search?q=test')
     
-    def test_valid_http_url(self):
+    @patch('services.web_scraping_service.resolve_hostname_to_ips')
+    def test_valid_http_url(self, mock_resolve):
         """Test valid HTTP URLs pass validation."""
+        # Mock DNS resolution to return public IPs
+        mock_resolve.return_value = ['93.184.216.34']  # example.com public IP
         # Should not raise exception
         validate_url('http://example.com')
     

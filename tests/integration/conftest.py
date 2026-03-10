@@ -6,6 +6,7 @@ to enable integration testing without real external dependencies.
 """
 
 import pytest
+from fastapi import HTTPException
 from unittest.mock import Mock, patch
 
 # Mock Supabase responses for integration tests
@@ -21,9 +22,10 @@ class MockSupabaseAuthResponse:
 class MockSupabaseAuth:
     """Mock Supabase auth for integration tests."""
     
-    def __init__(self):
+    def __init__(self, client=None):
         self._users = {}  # email -> (user_id, password)
         self._next_user_id = 1000
+        self._client = client
     
     def sign_up(self, credentials):
         """Mock user signup."""
@@ -31,17 +33,21 @@ class MockSupabaseAuth:
         password = credentials.get("password", "")
         
         if not email or "@" not in email:
-            raise Exception(f"Email address \"{email}\" is invalid")
+            raise ValueError(f"Email address \"{email}\" is invalid")
         
         if email in self._users:
-            raise Exception("User already registered")
+            raise ValueError("User already registered")
         
-        if len(password) < 6:
-            raise Exception("Password should be at least 6 characters")
+        if len(password) < 8:
+            raise ValueError("Password should be at least 8 characters")
         
         user_id = f"user_{self._next_user_id}"
         self._next_user_id += 1
         self._users[email] = (user_id, password)
+        
+        # Add user to tier info table
+        if self._client:
+            self._client.add_user_tier_info(user_id, email)
         
         return MockSupabaseAuthResponse(user_id, email)
     
@@ -51,22 +57,30 @@ class MockSupabaseAuth:
         password = credentials.get("password", "")
         
         if not email or not password:
-            raise Exception("Invalid login credentials")
+            raise ValueError("Invalid login credentials")
         
         if email not in self._users:
-            raise Exception("Invalid login credentials")
+            raise ValueError("Invalid login credentials")
         
         user_id, stored_password = self._users[email]
         if password != stored_password:
-            raise Exception("Invalid login credentials")
+            raise ValueError("Invalid login credentials")
         
-        return MockSupabaseAuthResponse(user_id, email)
+        response = MockSupabaseAuthResponse(user_id, email)
+        
+        # Register token mapping for auth verification
+        _token_user_map[response.session.access_token] = {
+            "id": user_id,
+            "email": email
+        }
+        
+        return response
     
     def sign_out(self):
         """Mock user logout."""
         return Mock()
     
-    def get_user(self, jwt):
+    def get_user(self, _jwt):
         """Mock get user from token."""
         # For integration tests, just return a mock user
         return Mock(user=Mock(id="mock_user_123", email="test@example.com"))
@@ -77,13 +91,14 @@ class MockSupabaseStorage:
     
     def __init__(self):
         self._files = {}  # file_id -> file_data
+        self.bucket_name = ""  # Initialize in __init__
     
     def from_(self, bucket_name):
         """Return self to allow method chaining."""
         self.bucket_name = bucket_name
         return self
     
-    def upload(self, path, file_data, file_options=None):
+    def upload(self, path, file_data, _file_options=None):
         """Mock file upload."""
         file_id = f"file_{len(self._files) + 1}"
         self._files[file_id] = {
@@ -93,7 +108,7 @@ class MockSupabaseStorage:
         }
         return Mock(path=path)
     
-    def remove(self, paths):
+    def remove(self, _paths):
         """Mock file removal."""
         return Mock()
     
@@ -105,10 +120,11 @@ class MockSupabaseStorage:
 class MockSupabaseTable:
     """Mock Supabase table operations."""
     
-    def __init__(self, table_name):
+    def __init__(self, table_name, quiz_storage=None):
         self.table_name = table_name
         self._data = []
         self._query: dict = {}
+        self._quiz_storage = quiz_storage
         # Default tier data for user_tier_info queries
         if table_name == "user_tier_info":
             self._data = [
@@ -117,17 +133,18 @@ class MockSupabaseTable:
                     "email": "test@example.com",
                     "account_tier": "free",
                     "current_quiz_count": 0,
+                    "quizzes_attempted": 0,
                     "quota_limit": 5,
                     "quota_exceeded": False
                 }
             ]
     
-    def select(self, *args, **kwargs):
+    def select(self, *_args, **_kwargs):
         """Mock select query."""
         self._query = {"operation": "select"}
         return self
     
-    def insert(self, data, **kwargs):
+    def insert(self, data, **_kwargs):
         """Mock insert query."""
         if isinstance(data, list):
             self._data.extend(data)
@@ -146,13 +163,34 @@ class MockSupabaseTable:
         self._query = {"operation": "delete"}
         return self
     
+    def add_data(self, data):
+        """Add data directly to table (public method for tests)."""
+        self._data.append(data)
+    
     def eq(self, column, value):
         """Mock equality filter."""
         self._query["filter"] = {column: value}  # type: ignore
         return self
     
+    def single(self):
+        """Mock single query."""
+        self._query["single"] = True
+        return self
+    
     def execute(self):
         """Mock execute query."""
+        # Special handling for questions table - fetch from quiz storage
+        if self.table_name == "questions" and "filter" in self._query:
+            filter_col, filter_val = list(self._query["filter"].items())[0]
+            if filter_col == "quiz_id" and self._quiz_storage:
+                quiz = self._quiz_storage.get_quiz(filter_val)
+                if quiz:
+                    return Mock(
+                        data=quiz.get("questions", []),
+                        error=None,
+                        count=len(quiz.get("questions", []))
+                    )
+        
         # Apply filter if specified
         result_data = self._data
         if "filter" in self._query:
@@ -160,28 +198,56 @@ class MockSupabaseTable:
             result_data = [row for row in self._data if row.get(filter_col) == filter_val]
         
         # If no data and not a specific table, return default
-        if not result_data and self.table_name not in ["user_tier_info"]:
+        if not result_data and self.table_name not in ["user_tier_info", "questions"]:
             result_data = [{"id": "mock_123"}]
-        
+
+        # Handle single()
+        if self._query.get("single"):
+            data = result_data[0] if result_data else None
+            return Mock(
+                data=data,
+                error=None,
+                count=1 if data else 0
+            )
+
         return Mock(
             data=result_data,
-            error=None
+            error=None,
+            count=len(result_data)
         )
 
 
 class MockSupabaseClient:
     """Mock Supabase client for integration tests."""
     
-    def __init__(self):
-        self.auth = MockSupabaseAuth()
+    def __init__(self, quiz_storage=None):
+        self.auth = MockSupabaseAuth(self)  # Pass self reference to auth
         self.storage = MockSupabaseStorage()
         self._tables = {}
+        self._quiz_storage = quiz_storage
     
     def table(self, table_name):
         """Mock table accessor."""
         if table_name not in self._tables:
-            self._tables[table_name] = MockSupabaseTable(table_name)
+            self._tables[table_name] = MockSupabaseTable(table_name, self._quiz_storage)
         return self._tables[table_name]
+    
+    def rpc(self, _function, _params=None):
+        """Mock RPC call."""
+        return Mock(execute=lambda: Mock(data=True, error=None))
+    
+    def add_user_tier_info(self, user_id, email):
+        """Add user tier info when user signs up."""
+        tier_table = self.table("user_tier_info")
+        tier_table.add_data({
+            "id": user_id,
+            "email": email,
+            "account_tier": "free",
+            "current_quiz_count": 0,
+            "quizzes_attempted": 0,
+            "quota_limit": 5,
+            "quota_exceeded": False
+        })
 
 
 class MockQuizStorage:
@@ -202,7 +268,7 @@ class MockQuizStorage:
         
         # Add IDs to questions to match real database behavior
         saved_questions = []
-        for i, q in enumerate(quizzes):
+        for _i, q in enumerate(quizzes):
             question_with_id = q.copy() if isinstance(q, dict) else q.model_dump()
             question_with_id['id'] = str(uuid.uuid4())  # Generate proper UUID
             question_with_id['quiz_id'] = quiz_id
@@ -333,9 +399,9 @@ def create_mock_quiz_response(num_questions, question_types=None, text="sample t
 
 
 # Mock AI services
-async def mock_generate_quizzes_single_async(text, num_questions, question_types=None):
+async def mock_generate_quizzes_single_async(text, num_questions, question_types=None, model_token_limit=8000, user_id=None, trace_id=None, generation_mode=None, content_source_type=None):
     """
-    Mock OpenAI quiz generation.
+    Mock OpenAI quiz generation with PostHog analytics support.
     
     Default behavior: Returns exactly min(num_questions, 10) questions for predictable tests.
     
@@ -394,12 +460,12 @@ async def mock_generate_quizzes_single_async(text, num_questions, question_types
     return questions
 
 
-def mock_save_quiz_to_database(title, quizzes, created_by, content_source_type=None, content_source_reference=None, user_token=None):
+def mock_save_quiz_to_database(title, quizzes, created_by, content_source_type=None, content_source_reference=None, user_token=None, generation_mode=None):
     """Mock saving quiz to database - returns (quiz_id, saved_questions) tuple."""
     return _quiz_storage.save_quiz(title, quizzes, created_by, content_source_type, content_source_reference)
 
 
-def mock_save_file_to_supabase(*args, **kwargs):
+def mock_save_file_to_supabase(*_args, **_kwargs):
     """Mock file upload to storage."""
     return {"message": "File uploaded successfully", "file_id": "mock_file_123"}
 
@@ -409,7 +475,10 @@ def mock_save_metadata(metadata, user_token=None):
     return {"success": True, "quiz_id": "mock_quiz_123"}
 
 
-def mock_requests_get(url, headers=None, **kwargs):
+# Module-level token-to-user mapping for mock auth
+_token_user_map = {}
+
+def mock_requests_get(url, headers=None, **_kwargs):
     """Mock requests.get for auth verification."""
     if "/auth/v1/user" in url:
         # Extract token from headers
@@ -423,7 +492,15 @@ def mock_requests_get(url, headers=None, **kwargs):
                     json=lambda: {"error": "Invalid token"},
                     raise_for_status=lambda: None
                 )
-            # Accept all other tokens (should be real-looking tokens from login)
+            # Look up user from token mapping (set during login)
+            if token in _token_user_map:
+                user_data = _token_user_map[token]
+                return Mock(
+                    status_code=200,
+                    json=lambda: {"id": user_data["id"], "email": user_data["email"]},
+                    raise_for_status=lambda: None
+                )
+            # Fallback for tokens not in map (legacy test support)
             return Mock(
                 status_code=200,
                 json=lambda: {"id": "mock_user_123", "email": "test@example.com"},
@@ -438,15 +515,245 @@ def mock_requests_get(url, headers=None, **kwargs):
     return Mock(status_code=200, json=lambda: {}, raise_for_status=lambda: None)
 
 
-def mock_get_user_quizzes(user_id):
-    """Mock getting user quizzes."""
-    return _quiz_storage.get_user_quizzes(user_id)
+class MockSupabaseAsyncClient:
+    """Async mock of httpx.AsyncClient for Supabase auth calls."""
+
+    def __init__(self, *_args, **kwargs):
+        self.timeout = kwargs.get("timeout", None)
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def get(self, url, headers=None):
+        return mock_requests_get(url, headers=headers)
 
 
-def mock_get_quiz_from_database(quiz_id, user_id=None):
+def mock_get_user_quizzes(user_id, user_token=None, title=None, start_date=None, end_date=None, source_type=None, mode=None, page=1, limit=20):
+    """Mock getting user quizzes with optional filtering and pagination."""
+    quizzes = _quiz_storage.get_user_quizzes(user_id)
+    # Note: Filtering not implemented in mock - returns all quizzes with pagination wrapper
+    total = len(quizzes)
+    total_pages = (total + limit - 1) // limit if total > 0 else 0
+    return {
+        "quizzes": quizzes,
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "total_pages": total_pages,
+        "has_next": page < total_pages,
+        "has_previous": page > 1
+    }
+
+
+def mock_get_quiz_from_database(quiz_id, user_token=None):
     """Mock getting quiz from database."""
-    return _quiz_storage.get_quiz(quiz_id, user_id)
+    return _quiz_storage.get_quiz(quiz_id, user_token)
 
+
+# === Billing Service Mocks ===
+# These mock the credit/billing system for integration tests
+
+class MockUserBillingState:
+    """Mock billing state for integration tests."""
+    def __init__(self, plan="free", available_credits=5.0, free_remaining=10, subscription_remaining=0):
+        self.plan = plan
+        self.available_credits = available_credits
+        self.free_remaining = free_remaining
+        self.subscription_remaining = subscription_remaining
+
+
+async def mock_get_billing_state(_user_id: str):
+    """Mock billing state - always returns sufficient credits for testing."""
+    return MockUserBillingState(
+        plan="free",
+        available_credits=5.0,  # Enough for testing
+        free_remaining=10,
+        subscription_remaining=0
+    )
+
+
+async def mock_consume_units(_user_id: str, _quiz_type: str) -> bool:
+    """Mock credit consumption - always succeeds for testing."""
+    return True
+
+
+async def mock_refund_units(_user_id: str, _quiz_type: str) -> bool:
+    """Mock credit refund - always succeeds for testing."""
+    return True
+
+
+async def mock_finalize_credits_after_success(_user_id: str, _quiz_type: str) -> None:
+    """Mock finalizing credits - no-op for testing."""
+    return None
+
+
+async def mock_invalidate_user_tier_cache(_user_id: str) -> None:
+    """Mock cache invalidation - no-op for testing."""
+    return None
+
+
+async def mock_get_quiz_metadata_cached(quiz_id, user_id, _user_token=None):
+    """Mock cached metadata retrieval using in-memory quiz storage."""
+    quiz = _quiz_storage.get_quiz(quiz_id, user_id)
+    if not quiz:
+        raise HTTPException(status_code=404, detail="Quiz not found")
+
+    created_by = quiz.get("created_by") or quiz.get("user_id") or (user_id or "mock_user_123")
+
+    return {
+        "id": quiz_id,
+        "title": quiz.get("title", "Mock Quiz"),
+        "created_by": created_by,
+        "created_at": quiz.get("created_at", "2025-10-04T00:00:00"),
+        "question_count": len(quiz.get("questions", [])),
+        "content_source_type": quiz.get("content_source_type"),
+        "content_source_reference": quiz.get("content_source_reference"),
+    }
+
+
+class SimpleAsyncRedis:
+    """
+    Simple in-memory Redis mock that works across event loops.
+    Avoids fakeredis event loop binding issues.
+    """
+    def __init__(self):
+        self._data = {}
+        self._sets = {}
+        self._expires = {}
+    
+    async def set(self, key, value, ex=None):
+        self._data[key] = value
+        if ex:
+            self._expires[key] = ex
+        return True
+    
+    async def get(self, key):
+        return self._data.get(key)
+    
+    async def delete(self, *keys):
+        count = 0
+        for key in keys:
+            if key in self._data:
+                del self._data[key]
+                count += 1
+        return count
+    
+    async def hset(self, name, key=None, value=None, mapping=None):
+        if name not in self._data:
+            self._data[name] = {}
+        if mapping:
+            self._data[name].update(mapping)
+        elif key and value:
+            self._data[name][key] = value
+        return 1
+    
+    async def hgetall(self, name):
+        return self._data.get(name, {})
+    
+    async def hdel(self, name, *keys):
+        if name not in self._data:
+            return 0
+        count = 0
+        for key in keys:
+            if key in self._data[name]:
+                del self._data[name][key]
+                count += 1
+        return count
+    
+    async def sadd(self, name, *values):
+        if name not in self._sets:
+            self._sets[name] = set()
+        before = len(self._sets[name])
+        self._sets[name].update(values)
+        return len(self._sets[name]) - before
+    
+    async def smembers(self, name):
+        return self._sets.get(name, set())
+    
+    async def srem(self, name, *values):
+        if name not in self._sets:
+            return 0
+        count = 0
+        for value in values:
+            if value in self._sets[name]:
+                self._sets[name].remove(value)
+                count += 1
+        return count
+    
+    async def scard(self, name):
+        return len(self._sets.get(name, set()))
+    
+    async def expire(self, name, time):
+        self._expires[name] = time
+        return True
+    
+    async def eval(self, _script, _numkeys, *keys_and_args):
+        """Mock eval for Lua scripts - simulate session creation response."""
+        import json
+        # Return a properly formatted JSON response for session creation script
+        return json.dumps({"status": "added", "count": 1, "evicted_session_id": None})
+    
+    async def close(self):
+        pass
+
+@pytest.fixture(scope="module", autouse=True)
+def setup_redis_module():
+    """Set up simple async Redis mock for the test module."""
+    from main import app
+    
+    # Use simple mock that doesn't have event loop binding issues
+    redis_client = SimpleAsyncRedis()
+    app.state.redis = redis_client
+    
+    yield redis_client
+    
+    # Cleanup
+    app.state.redis = None
+
+# Track session_id for each user_id in integration tests
+_user_session_map = {}
+
+async def mock_validate_request_session_integration(request, user_id: str):
+    """
+    Mock session validation for integration tests.
+    Works around TestClient cookie propagation limitations.
+    """
+    from services.redis.sessions import SessionService
+    
+    # Get Redis client
+    redis_client = getattr(request.app.state, "redis", None)
+    if not redis_client:
+
+        raise HTTPException(status_code=503, detail="Redis unavailable")
+    
+    session_service = SessionService(redis_client)
+    
+    # Try to get existing session for this user
+    if user_id in _user_session_map:
+        session_id = _user_session_map[user_id]
+        # Validate it still exists
+        session_info = await session_service.validate_session(session_id)
+        if session_info:
+            request.state.session_id = session_id
+            return
+    
+    # Create a new test session for this user
+    refresh_token = f"test_refresh_{user_id}"
+    _ = await session_service.create_session(
+        user_id=user_id,
+        device_type="test_client",
+        ip_address="127.0.0.1",
+        user_agent="TestClient",
+        refresh_token=refresh_token
+    )
+    
+    # Look up the session_id
+    session_id = await session_service.find_session_by_refresh_token(refresh_token)
+    _user_session_map[user_id] = session_id
+    request.state.session_id = session_id
 
 @pytest.fixture(scope="module", autouse=True)
 def setup_integration_mocks():
@@ -457,27 +764,50 @@ def setup_integration_mocks():
     Uses context managers stacked with contextlib for cleaner setup.
     """
     from contextlib import ExitStack
+    from dependencies.auth_dependencies import reset_http_client
     
-    mock_supabase = MockSupabaseClient()
+    # Reset HTTP client singleton before patching (ensures fresh mock client is used)
+    reset_http_client()
+    
+    # Pass the quiz storage to the mock client so it can access saved quizzes
+    mock_supabase = MockSupabaseClient(quiz_storage=_quiz_storage)
     
     # Use ExitStack to manage multiple patches without deep nesting
     with ExitStack() as stack:
         # Patch the lazy loading functions for all modules that use Supabase
         stack.enter_context(patch("handlers.auth_handlers.get_supabase", return_value=mock_supabase))
         stack.enter_context(patch("services.db_services.supabase_quiz.get_supabase", return_value=mock_supabase))
+        stack.enter_context(patch("services.storage_service.get_supabase", return_value=mock_supabase))
+        stack.enter_context(patch("services.db_services.supabase_quiz.get_authed_supabase_client", return_value=mock_supabase))
         stack.enter_context(patch("services.db_services.supabase_file.get_supabase", return_value=mock_supabase))
         stack.enter_context(patch("services.db_services.supabase_submission.get_supabase", return_value=mock_supabase))
+        stack.enter_context(patch("services.db_services.supabase_quiz.get_quiz_metadata_cached", side_effect=mock_get_quiz_metadata_cached))
         
         # Patch external dependencies
-        stack.enter_context(patch("dependencies.auth_dependencies.requests.get", side_effect=mock_requests_get))
+        stack.enter_context(patch("dependencies.auth_dependencies.httpx.AsyncClient", MockSupabaseAsyncClient))
+        
+        # Patch session validation for TestClient cookie propagation workaround
+        stack.enter_context(patch("dependencies.auth_dependencies._validate_request_session", side_effect=mock_validate_request_session_integration))
         
         # Patch handler-level functions
+        stack.enter_context(patch("handlers.quiz_handlers.get_quiz_metadata_cached", side_effect=mock_get_quiz_metadata_cached))
+        stack.enter_context(patch("handlers.quiz_handlers.get_authed_supabase_client", return_value=mock_supabase))
         stack.enter_context(patch("handlers.quiz_handlers.generate_quizzes_single_async", side_effect=mock_generate_quizzes_single_async))
         stack.enter_context(patch("handlers.quiz_handlers.save_quiz_to_database", side_effect=mock_save_quiz_to_database))
         stack.enter_context(patch("handlers.quiz_handlers.get_user_quizzes", side_effect=mock_get_user_quizzes))
-        stack.enter_context(patch("handlers.quiz_handlers.get_quiz_from_database", side_effect=mock_get_quiz_from_database))
-        stack.enter_context(patch("handlers.quiz_handlers.save_file_to_supabase", side_effect=mock_save_file_to_supabase))
+        stack.enter_context(patch("handlers.submission_handler.get_quiz_from_database", side_effect=mock_get_quiz_from_database))
+        stack.enter_context(patch("handlers.quiz_handlers.save_file_to_supabase_async", side_effect=mock_save_file_to_supabase))
         stack.enter_context(patch("handlers.quiz_handlers.save_metadata", side_effect=mock_save_metadata))
-        stack.enter_context(patch("handlers.file_handlers.save_file_to_supabase", side_effect=mock_save_file_to_supabase))
+        stack.enter_context(patch("handlers.file_handlers.save_file_to_supabase_async", side_effect=mock_save_file_to_supabase))
+        
+        # Patch billing service functions for quiz generation credits
+        # These are imported into quiz_handlers, so patch at the usage location
+        stack.enter_context(patch("handlers.quiz_handlers.get_billing_state", side_effect=mock_get_billing_state))
+        stack.enter_context(patch("handlers.quiz_handlers.consume_units", side_effect=mock_consume_units))
+        stack.enter_context(patch("handlers.quiz_handlers.refund_units", side_effect=mock_refund_units))
+        stack.enter_context(patch("handlers.quiz_handlers.finalize_credits_after_success", side_effect=mock_finalize_credits_after_success))
+        stack.enter_context(patch("handlers.quiz_handlers.invalidate_user_tier_cache", side_effect=mock_invalidate_user_tier_cache))
         
         yield mock_supabase
+    
+    # Cleanup handled by ExitStack context manager and setup_redis_for_test fixture

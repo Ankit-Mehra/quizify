@@ -1,8 +1,8 @@
 ## Submission Routes
 from fastapi import APIRouter, Response
 from services.logger import app_logger as logger
-from schemas.submission import SubmissionResponse, QuizSubmission
-from handlers.submission_handler import submit_quiz, get_submission
+from schemas.submission import SubmissionResponse, QuizSubmission, UserSubmissionsResponse, QuizSubmissionsResponse, SubmissionReviewResponse
+from handlers.submission_handler import submit_quiz, get_submission, list_user_submissions, list_quiz_submissions, get_submission_review
 
 router = APIRouter(tags=["Quiz Submissions"])
 logger.info("Submission routes initialized")
@@ -52,4 +52,60 @@ router.add_api_route(
     summary="Get Submission Details",
     description="Retrieve details of a previously submitted quiz",
     response_model=QuizSubmission
+)
+
+# List all submissions for current user
+router.add_api_route(
+    path="/submissions",
+    endpoint=list_user_submissions,
+    methods=["GET"],
+    summary="List My Submissions",
+    description=(
+        "Get all quiz submissions for the authenticated user.\n\n"
+        "Returns a list of submissions with:\n"
+        "- Submission ID\n"
+        "- Quiz ID\n"
+        "- Score\n"
+        "- Total questions\n"
+        "- Correct/wrong counts\n"
+        "- Submission timestamp\n\n"
+        "Submissions are ordered by most recent first."
+    ),
+    response_model=UserSubmissionsResponse
+)
+
+# List submissions for a specific quiz
+router.add_api_route(
+    path="/quiz/{quiz_id}/submissions",
+    endpoint=list_quiz_submissions,
+    methods=["GET"],
+    summary="List Quiz Attempts",
+    description=(
+        "Get all attempts (submissions) for a specific quiz by the authenticated user.\n\n"
+        "Useful for viewing attempt history and tracking progress on a particular quiz.\n\n"
+        "Returns submissions ordered by most recent first."
+    ),
+    response_model=QuizSubmissionsResponse
+)
+
+# Get detailed review of a submission with questions and explanations
+router.add_api_route(
+    path="/submission/{submission_id}/review",
+    endpoint=get_submission_review,
+    methods=["GET"],
+    summary="Review Submission with Detailed Answers",
+    description=(
+        "Retrieve a detailed review of a quiz submission showing:\n\n"
+        "- Which questions were answered correctly/incorrectly\n"
+        "- User's answer vs. correct answer for each question\n"
+        "- Explanations for correct answers\n"
+        "- Distractor explanations for incorrect options (MCQ/fill-blank)\n"
+        "- Question metadata (Bloom level, difficulty, concept)\n\n"
+        "**Perfect for:**\n"
+        "- Learning from mistakes\n"
+        "- Understanding why answers were wrong\n"
+        "- Reviewing quiz performance after submission\n\n"
+        "**Authorization:** Only the user who created the submission can access this review."
+    ),
+    response_model=SubmissionReviewResponse
 )

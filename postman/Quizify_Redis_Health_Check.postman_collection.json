@@ -1,0 +1,717 @@
+{
+	"info": {
+		"_postman_id": "redis-health-check-collection",
+		"name": "Quizify Redis Health Check",
+		"description": "Test Redis connectivity and health monitoring endpoints for Epic 1 verification.\n\n**Purpose:**\n- Verify Redis connection is established\n- Monitor Redis latency and performance\n- Test fallback behavior when Redis unavailable\n- Validate health check endpoints return correct status codes\n\n**Usage:**\n1. Set environment variables (local/staging/production)\n2. Run \"Basic Health Check\" to verify app is running\n3. Run \"Redis Health Check\" to verify Redis connectivity\n4. Use \"Redis Health Check (Expect Failure)\" when testing fallback mode\n\n**Epic 1 Verification:**\n- All tests should pass with Redis enabled\n- App should gracefully handle Redis unavailability",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "Health Checks",
+			"item": [
+				{
+					"name": "Basic Health Check",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response has correct structure\", function () {",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('status');",
+									"});",
+									"",
+									"pm.test(\"Status is ok\", function () {",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.status).to.eql('ok');",
+									"});",
+									"",
+									"pm.test(\"Response time is acceptable\", function () {",
+									"    pm.expect(pm.response.responseTime).to.be.below(1000);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{BASE_URL}}/health",
+							"host": [
+								"{{BASE_URL}}"
+							],
+							"path": [
+								"health"
+							]
+						},
+						"description": "Basic application health check.\n\n**Expected Response (200 OK):**\n```json\n{\n  \"status\": \"ok\"\n}\n```\n\n**Purpose:**\n- Verify application is running\n- Check basic endpoint availability\n- Baseline for API responsiveness\n\n**Note:** Timestamp is omitted for faster response times. Use Redis health check for more detailed diagnostics."
+					},
+					"response": []
+				},
+				{
+					"name": "Redis Health Check (Success)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200 (Redis connected)\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response has correct structure\", function () {",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('connected');",
+									"    pm.expect(jsonData).to.have.property('latency_ms');",
+									"});",
+									"",
+									"pm.test(\"Redis is connected\", function () {",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.connected).to.be.true;",
+									"});",
+									"",
+									"pm.test(\"Latency is within acceptable range\", function () {",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.latency_ms).to.be.a('number');",
+									"    pm.expect(jsonData.latency_ms).to.be.below(100); // 100ms threshold",
+									"});",
+									"",
+									"pm.test(\"No error field present\", function () {",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.not.have.property('error');",
+									"});",
+									"",
+									"pm.test(\"Response time is acceptable\", function () {",
+									"    pm.expect(pm.response.responseTime).to.be.below(2000);",
+									"});",
+									"",
+									"// Store latency for monitoring",
+									"const jsonData = pm.response.json();",
+									"if (jsonData.latency_ms) {",
+									"    pm.environment.set(\"redis_latency_ms\", jsonData.latency_ms);",
+									"    console.log(`Redis Latency: ${jsonData.latency_ms}ms`);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{BASE_URL}}/health/redis",
+							"host": [
+								"{{BASE_URL}}"
+							],
+							"path": [
+								"health",
+								"redis"
+							]
+						},
+						"description": "Redis connectivity health check - expects Redis to be available.\n\n**Expected Response (200 OK):**\n```json\n{\n  \"connected\": true,\n  \"latency_ms\": 1.23\n}\n```\n\n**Purpose:**\n- Verify Redis connection is established\n- Measure Redis response latency\n- Confirm Epic 1 Redis infrastructure is working\n\n**Acceptance Criteria:**\n- Status code: 200 OK\n- `connected`: true\n- `latency_ms`: < 100ms (Railway internal network)\n- No `error` field in response"
+					},
+					"response": []
+				},
+				{
+					"name": "Redis Health Check (Expect Failure)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"// This test is designed to verify fallback behavior when Redis is unavailable",
+									"// If Redis is actually connected, skip the failure tests",
+									"",
+									"const jsonData = pm.response.json();",
+									"const isConnected = jsonData.connected === true;",
+									"",
+									"if (isConnected) {",
+									"    console.log(\"⚠️ SKIPPED: Redis is actually connected (status 200).\");",
+									"    console.log(\"   This test expects Redis to be unavailable (status 503).\");",
+									"    console.log(\"   To test fallback behavior:\");",
+									"    console.log(\"   1. Stop Redis: docker-compose stop redis\");",
+									"    console.log(\"   2. Restart app with REDIS_ENABLED=false\");",
+									"    console.log(\"   3. Or pause Redis service in Railway\");",
+									"    ",
+									"    pm.test(\"⚠️ SKIP: Redis is connected - cannot test failure mode\", function () {",
+									"        pm.expect(isConnected).to.be.true;",
+									"    });",
+									"} else {",
+									"    // Redis is actually disconnected - run failure tests",
+									"    pm.test(\"✅ Status code is 503 (Service Unavailable)\", function () {",
+									"        pm.response.to.have.status(503);",
+									"    });",
+									"    ",
+									"    pm.test(\"✅ Response has correct structure\", function () {",
+									"        pm.expect(jsonData).to.have.property('connected');",
+									"        pm.expect(jsonData).to.have.property('error');",
+									"    });",
+									"    ",
+									"    pm.test(\"✅ Redis is not connected\", function () {",
+									"        pm.expect(jsonData.connected).to.be.false;",
+									"    });",
+									"    ",
+									"    pm.test(\"✅ Error message is present\", function () {",
+									"        pm.expect(jsonData.error).to.be.a('string');",
+									"        pm.expect(jsonData.error.length).to.be.above(0);",
+									"    });",
+									"    ",
+									"    pm.test(\"✅ No latency field when disconnected\", function () {",
+									"        pm.expect(jsonData).to.not.have.property('latency_ms');",
+									"    });",
+									"    ",
+									"    console.log(`✅ Redis Error: ${jsonData.error}`);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{BASE_URL}}/health/redis",
+							"host": [
+								"{{BASE_URL}}"
+							],
+							"path": [
+								"health",
+								"redis"
+							]
+						},
+						"description": "Redis health check when Redis is unavailable - tests fallback behavior.\n\n**⚠️ IMPORTANT:** This test will be SKIPPED if Redis is actually connected.\nTo test fallback behavior, you must disable Redis first.\n\n**Expected Response (503 Service Unavailable):**\n```json\n{\n  \"connected\": false,\n  \"error\": \"Redis client not initialized\"\n}\n```\n\n**How to test fallback mode:**\n1. Stop Redis: `docker-compose stop redis`\n2. Restart app with: `REDIS_ENABLED=false uvicorn main:app`\n3. Or pause Redis service in Railway dashboard\n4. Then run this test\n\n**Purpose:**\n- Verify graceful degradation when Redis unavailable\n- Test fallback mechanism\n- Confirm proper HTTP status codes (503)\n\n**Acceptance Criteria:**\n- Status code: 503 Service Unavailable\n- `connected`: false\n- `error`: descriptive error message\n- No `latency_ms` field in response\n\n**Test Behavior:**\n- If Redis connected (200): Test is SKIPPED with warning\n- If Redis unavailable (503): All failure tests run"
+					},
+					"response": []
+				}
+			],
+			"description": "Basic health monitoring endpoints for application and Redis connectivity."
+		},
+		{
+			"name": "Diagnostics",
+			"item": [
+				{
+					"name": "Redis Detailed Info (Authenticated)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200 (authenticated)\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"const jsonData = pm.response.json();",
+									"",
+									"pm.test(\"Response has all required sections\", function () {",
+									"    pm.expect(jsonData).to.have.property('connected');",
+									"    pm.expect(jsonData).to.have.property('redis_version');",
+									"    pm.expect(jsonData).to.have.property('memory');",
+									"    pm.expect(jsonData).to.have.property('performance');",
+									"    pm.expect(jsonData).to.have.property('data');",
+									"    pm.expect(jsonData).to.have.property('network');",
+									"});",
+									"",
+									"pm.test(\"Redis is connected\", function () {",
+									"    pm.expect(jsonData.connected).to.be.true;",
+									"});",
+									"",
+									"// Performance analysis",
+									"const perf = jsonData.performance;",
+									"console.log(\"\\n=== Redis Performance Metrics ===\");",
+									"console.log(`PING latency: ${perf.ping_latency_ms}ms`);",
+									"console.log(`SET latency:  ${perf.set_latency_ms}ms`);",
+									"console.log(`GET latency:  ${perf.get_latency_ms}ms`);",
+									"console.log(`Connected clients: ${perf.connected_clients}`);",
+									"console.log(`Ops per second: ${perf.instantaneous_ops_per_sec}`);",
+									"",
+									"// Memory analysis",
+									"console.log(\"\\n=== Memory Usage ===\");",
+									"console.log(`Used: ${jsonData.memory.used_memory_human}`);",
+									"console.log(`Peak: ${jsonData.memory.used_memory_peak_human}`);",
+									"console.log(`Max:  ${jsonData.memory.maxmemory_human}`);",
+									"console.log(`Fragmentation: ${jsonData.memory.mem_fragmentation_ratio}`);",
+									"",
+									"// Data stats",
+									"console.log(\"\\n=== Data Statistics ===\");",
+									"console.log(`Total keys: ${jsonData.data.total_keys}`);",
+									"console.log(`Cache hits: ${jsonData.data.keyspace_hits}`);",
+									"console.log(`Cache misses: ${jsonData.data.keyspace_misses}`);",
+									"console.log(`Evicted keys: ${jsonData.data.evicted_keys}`);",
+									"",
+									"// Hit rate calculation",
+									"const hits = jsonData.data.keyspace_hits || 0;",
+									"const misses = jsonData.data.keyspace_misses || 0;",
+									"const total = hits + misses;",
+									"if (total > 0) {",
+									"    const hitRate = (hits / total * 100).toFixed(2);",
+									"    console.log(`Hit rate: ${hitRate}%`);",
+									"}",
+									"",
+									"// Performance classification",
+									"const avgLatency = (perf.ping_latency_ms + perf.get_latency_ms + perf.set_latency_ms) / 3;",
+									"console.log(\"\\n=== Performance Classification ===\");",
+									"console.log(`Average latency: ${avgLatency.toFixed(2)}ms`);",
+									"",
+									"if (avgLatency < 10) {",
+									"    console.log(\"✅ EXCELLENT: Railway internal network (< 10ms)\");",
+									"} else if (avgLatency < 50) {",
+									"    console.log(\"✅ GOOD: Acceptable for production (< 50ms)\");",
+									"} else if (avgLatency < 100) {",
+									"    console.log(\"⚠️ ACCEPTABLE: May indicate network issues (< 100ms)\");",
+									"} else {",
+									"    console.log(\"❌ SLOW: Investigate connection/network (>= 100ms)\");",
+									"}",
+									"",
+									"pm.test(\"Performance metrics are within acceptable range\", function () {",
+									"    pm.expect(perf.ping_latency_ms).to.be.a('number');",
+									"    pm.expect(perf.get_latency_ms).to.be.a('number');",
+									"    pm.expect(perf.set_latency_ms).to.be.a('number');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{AUTH_TOKEN}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{BASE_URL}}/health/redis/info",
+							"host": [
+								"{{BASE_URL}}"
+							],
+							"path": [
+								"health",
+								"redis",
+								"info"
+							]
+						},
+						"description": "**AUTHENTICATED ENDPOINT** - Detailed Redis diagnostics for production debugging.\\n\\n**Security:** Requires Bearer token authentication.\\n\\n**Purpose:**\\n- Diagnose performance issues (e.g., 340ms cache hit latency)\\n- Analyze memory usage and fragmentation\\n- Monitor cache hit rates\\n- Identify network latency bottlenecks\\n- Check Redis version and configuration\\n\\n**Shows:**\\n1. **Performance Metrics:**\\n   - PING, SET, GET latency (actual measurements)\\n   - Connected clients\\n   - Operations per second\\n\\n2. **Memory Info:**\\n   - Used/peak/max memory\\n   - Fragmentation ratio\\n   - Eviction policy\\n\\n3. **Data Statistics:**\\n   - Total keys\\n   - Cache hits/misses\\n   - Hit rate percentage\\n   - Evicted keys\\n\\n4. **Network Stats:**\\n   - Bytes in/out\\n   - Rejected connections\\n\\n**Prerequisites:**\\n1. Login to get AUTH_TOKEN:\\n   ```bash\\n   POST {{BASE_URL}}/api/auth/login\\n   {\\\"email\\\": \\\"your@email.com\\\", \\\"password\\\": \\\"yourpassword\\\"}\\n   ```\\n2. Set AUTH_TOKEN in environment variables\\n\\n**Expected Response (200 OK):**\\n```json\\n{\\n  \\\"connected\\\": true,\\n  \\\"redis_version\\\": \\\"7.4.6\\\",\\n  \\\"redis_mode\\\": \\\"standalone\\\",\\n  \\\"memory\\\": {\\n    \\\"used_memory_human\\\": \\\"1.20M\\\",\\n    \\\"maxmemory_human\\\": \\\"256.00M\\\",\\n    \\\"maxmemory_policy\\\": \\\"allkeys-lru\\\",\\n    \\\"mem_fragmentation_ratio\\\": 11.85\\n  },\\n  \\\"performance\\\": {\\n    \\\"ping_latency_ms\\\": 1.97,\\n    \\\"set_latency_ms\\\": 0.98,\\n    \\\"get_latency_ms\\\": 0.51\\n  },\\n  \\\"data\\\": {\\n    \\\"total_keys\\\": 1,\\n    \\\"keyspace_hits\\\": 3,\\n    \\\"keyspace_misses\\\": 1\\n  }\\n}\\n```\\n\\n**Use Cases:**\\n- **Railway Hobby Plan Diagnosis**: Check if PING/GET < 30ms\\n- **Network Issue Detection**: If latencies > 200ms, Railway networking problem\\n- **Memory Pressure**: Check fragmentation ratio (should be < 1.5)\\n- **Cache Effectiveness**: Monitor hit rate (aim for > 80%)\\n\\n**Troubleshooting:**\\n- **401 Unauthorized**: AUTH_TOKEN missing or expired\\n- **503 Service Unavailable**: Redis not connected\\n- **Generic error**: Check Railway logs for detailed exception"
+					},
+					"response": []
+				}
+			],
+			"description": "Advanced diagnostics endpoints requiring authentication for production debugging."
+		},
+		{
+			"name": "Performance Tests",
+			"item": [
+				{
+					"name": "Redis Latency Benchmark",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"const jsonData = pm.response.json();",
+									"",
+									"// Performance thresholds",
+									"const EXCELLENT_THRESHOLD = 5;   // < 5ms = excellent (Railway internal)",
+									"const GOOD_THRESHOLD = 10;        // < 10ms = good",
+									"const ACCEPTABLE_THRESHOLD = 50;  // < 50ms = acceptable",
+									"const latency = jsonData.latency_ms;",
+									"",
+									"pm.test(\"Redis latency is measured\", function () {",
+									"    pm.expect(latency).to.be.a('number');",
+									"});",
+									"",
+									"pm.test(\"Redis latency is acceptable (< 50ms)\", function () {",
+									"    pm.expect(latency).to.be.below(ACCEPTABLE_THRESHOLD);",
+									"});",
+									"",
+									"// Performance classification",
+									"if (latency < EXCELLENT_THRESHOLD) {",
+									"    console.log(`✅ EXCELLENT: Redis latency ${latency}ms (< ${EXCELLENT_THRESHOLD}ms)`);",
+									"    pm.environment.set(\"redis_performance\", \"excellent\");",
+									"} else if (latency < GOOD_THRESHOLD) {",
+									"    console.log(`✅ GOOD: Redis latency ${latency}ms (< ${GOOD_THRESHOLD}ms)`);",
+									"    pm.environment.set(\"redis_performance\", \"good\");",
+									"} else if (latency < ACCEPTABLE_THRESHOLD) {",
+									"    console.log(`⚠️ ACCEPTABLE: Redis latency ${latency}ms (< ${ACCEPTABLE_THRESHOLD}ms)`);",
+									"    pm.environment.set(\"redis_performance\", \"acceptable\");",
+									"} else {",
+									"    console.log(`❌ SLOW: Redis latency ${latency}ms (>= ${ACCEPTABLE_THRESHOLD}ms)`);",
+									"    pm.environment.set(\"redis_performance\", \"slow\");",
+									"}",
+									"",
+									"// Track latency over time",
+									"const latencies = pm.environment.get(\"redis_latency_history\") || [];",
+									"latencies.push({",
+									"    timestamp: new Date().toISOString(),",
+									"    latency_ms: latency",
+									"});",
+									"",
+									"// Keep last 10 measurements",
+									"if (latencies.length > 10) {",
+									"    latencies.shift();",
+									"}",
+									"pm.environment.set(\"redis_latency_history\", JSON.stringify(latencies));",
+									"",
+									"// Calculate average",
+									"const avg = latencies.reduce((sum, item) => sum + item.latency_ms, 0) / latencies.length;",
+									"console.log(`Average latency (last ${latencies.length} requests): ${avg.toFixed(2)}ms`);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{BASE_URL}}/health/redis",
+							"host": [
+								"{{BASE_URL}}"
+							],
+							"path": [
+								"health",
+								"redis"
+							]
+						},
+						"description": "Benchmark Redis latency and classify performance.\n\n**Performance Tiers:**\n- Excellent: < 5ms (typical Railway internal network)\n- Good: < 10ms (acceptable for production)\n- Acceptable: < 50ms (may indicate network issues)\n- Slow: >= 50ms (investigate connection problems)\n\n**Purpose:**\n- Measure Redis response time\n- Track latency trends over time\n- Identify performance degradation\n- Validate Railway network configuration\n\n**Usage:**\n- Run multiple times to get average latency\n- Use Collection Runner for automated benchmarking\n- Compare local vs staging vs production\n\n**Expected Results:**\n- Railway internal network: 1-5ms\n- External Redis: 10-50ms (depending on distance)"
+					},
+					"response": []
+				},
+				{
+					"name": "Concurrent Health Checks",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Redis is connected\", function () {",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.connected).to.be.true;",
+									"});",
+									"",
+									"pm.test(\"Response time under load is acceptable\", function () {",
+									"    pm.expect(pm.response.responseTime).to.be.below(3000);",
+									"});",
+									"",
+									"// Track response times",
+									"const responseTime = pm.response.responseTime;",
+									"console.log(`Response time: ${responseTime}ms`);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{BASE_URL}}/health/redis",
+							"host": [
+								"{{BASE_URL}}"
+							],
+							"path": [
+								"health",
+								"redis"
+							]
+						},
+						"description": "Test Redis performance under concurrent load.\n\n**How to run:**\n1. Open Collection Runner\n2. Select \"Quizify Redis Health Check\" collection\n3. Set Iterations: 10-50\n4. Set Delay: 0ms\n5. Run\n\n**What to observe:**\n- All requests should succeed (200 OK)\n- Latency should remain stable\n- No connection errors or timeouts\n- Connection pool should handle load\n\n**Purpose:**\n- Verify connection pool configuration (20 connections)\n- Test Redis under concurrent requests\n- Identify connection pool exhaustion\n- Validate timeout settings\n\n**Expected Results:**\n- 100% success rate\n- Stable latency across all requests\n- No \"connection pool exhausted\" errors"
+					},
+					"response": []
+				}
+			],
+			"description": "Performance and load testing for Redis connectivity."
+		},
+		{
+			"name": "Environment Tests",
+			"item": [
+				{
+					"name": "Local Redis Health",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Redis is connected\", function () {",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.connected).to.be.true;",
+									"});",
+									"",
+									"pm.test(\"Local Redis latency is excellent\", function () {",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.latency_ms).to.be.below(10);",
+									"});",
+									"",
+									"console.log(`✅ Local Redis: ${pm.response.json().latency_ms}ms`);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "http://localhost:8000/health/redis",
+							"protocol": "http",
+							"host": [
+								"localhost"
+							],
+							"port": "8000",
+							"path": [
+								"health",
+								"redis"
+							]
+						},
+						"description": "Test Redis health on local development environment.\n\n**Prerequisites:**\n- Docker Compose running: `docker-compose up -d`\n- App running locally: `uvicorn main:app --reload`\n- Redis on localhost:6379\n\n**Expected:**\n- Very low latency (< 5ms on local machine)\n- Consistent performance\n\n**Purpose:**\n- Verify local development setup\n- Test before deploying to staging/production\n- Debug Redis configuration locally"
+					},
+					"response": []
+				},
+				{
+					"name": "Staging Redis Health",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Redis is connected\", function () {",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.connected).to.be.true;",
+									"});",
+									"",
+									"pm.test(\"Staging Redis latency is good\", function () {",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.latency_ms).to.be.below(20);",
+									"});",
+									"",
+									"console.log(`✅ Staging Redis: ${pm.response.json().latency_ms}ms`);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{STAGING_URL}}/health/redis",
+							"host": [
+								"{{STAGING_URL}}"
+							],
+							"path": [
+								"health",
+								"redis"
+							]
+						},
+						"description": "Test Redis health on staging environment.\n\n**Prerequisites:**\n- Staging deployment active in Railway\n- Redis service provisioned for staging\n- STAGING_URL environment variable set\n\n**Expected:**\n- Railway internal network latency (1-5ms)\n- Stable connection\n\n**Purpose:**\n- Verify staging environment configuration\n- Test Epic 1 before production deployment\n- Compare staging vs production performance"
+					},
+					"response": []
+				},
+				{
+					"name": "Production Redis Health",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Redis is connected\", function () {",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.connected).to.be.true;",
+									"});",
+									"",
+									"pm.test(\"Production Redis latency is excellent\", function () {",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.latency_ms).to.be.below(10);",
+									"});",
+									"",
+									"pm.test(\"No errors in production\", function () {",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.not.have.property('error');",
+									"});",
+									"",
+									"console.log(`✅ Production Redis: ${pm.response.json().latency_ms}ms`);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{PRODUCTION_URL}}/health/redis",
+							"host": [
+								"{{PRODUCTION_URL}}"
+							],
+							"path": [
+								"health",
+								"redis"
+							]
+						},
+						"description": "Test Redis health on production environment.\n\n**Prerequisites:**\n- Production deployment active\n- Redis service running\n- PRODUCTION_URL environment variable set\n\n**Expected:**\n- Railway internal network latency (1-5ms)\n- 100% uptime\n- No errors\n\n**Purpose:**\n- Verify production Redis connectivity\n- Monitor production health\n- Validate Epic 1 in production\n\n**⚠️ Important:**\nRun this sparingly in production. Use Railway monitoring for continuous health checks."
+					},
+					"response": []
+				}
+			],
+			"description": "Environment-specific health checks for local, staging, and production."
+		},
+		{
+			"name": "Epic 1 Verification Suite",
+			"item": [
+				{
+					"name": "1. Verify App Is Running",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"✅ Step 1: App is running\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"console.log(\"✅ Step 1 PASSED: Application is running\");"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{BASE_URL}}/health",
+							"host": [
+								"{{BASE_URL}}"
+							],
+							"path": [
+								"health"
+							]
+						},
+						"description": "Epic 1 Verification - Step 1: Verify application is running"
+					},
+					"response": []
+				},
+				{
+					"name": "2. Verify Redis Connection",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"✅ Step 2: Redis is connected\", function () {",
+									"    pm.response.to.have.status(200);",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.connected).to.be.true;",
+									"});",
+									"",
+									"console.log(\"✅ Step 2 PASSED: Redis connection established\");"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{BASE_URL}}/health/redis",
+							"host": [
+								"{{BASE_URL}}"
+							],
+							"path": [
+								"health",
+								"redis"
+							]
+						},
+						"description": "Epic 1 Verification - Step 2: Verify Redis connection"
+					},
+					"response": []
+				},
+				{
+					"name": "3. Verify Redis Performance",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"✅ Step 3: Redis latency is acceptable\", function () {",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.latency_ms).to.be.below(100);",
+									"});",
+									"",
+									"const latency = pm.response.json().latency_ms;",
+									"console.log(`✅ Step 3 PASSED: Redis latency ${latency}ms (< 100ms)`);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{BASE_URL}}/health/redis",
+							"host": [
+								"{{BASE_URL}}"
+							],
+							"path": [
+								"health",
+								"redis"
+							]
+						},
+						"description": "Epic 1 Verification - Step 3: Verify Redis performance"
+					},
+					"response": []
+				}
+			],
+			"description": "Complete Epic 1 verification suite - run in sequence to verify Redis infrastructure.\n\n**How to run:**\n1. Set BASE_URL environment variable\n2. Run collection with Collection Runner\n3. All tests should pass\n\n**Success Criteria:**\n- All 3 steps pass\n- Redis connected with acceptable latency\n- No errors in any response"
+		}
+	],
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					"// Set default BASE_URL if not set",
+					"if (!pm.environment.get(\"BASE_URL\")) {",
+					"    pm.environment.set(\"BASE_URL\", \"http://localhost:8000\");",
+					"    console.log(\"Using default BASE_URL: http://localhost:8000\");",
+					"}"
+				]
+			}
+		}
+	]
+}

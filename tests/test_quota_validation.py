@@ -1,23 +1,26 @@
 """
-Unit tests for quota validation logic.
-Tests the validate_user_quota function and get_user_tier_info function.
+Unit tests for credit reservation/refund logic.
+Tests the reserve_credits_atomic, refund_credits_on_failure, and finalize_credits_after_success functions.
+
+Updated to use the atomic credit reservation pattern that prevents TOCTOU race conditions.
 """
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, AsyncMock
 from fastapi import HTTPException
-from handlers.quiz_handlers import validate_user_quota
+from handlers.quiz_handlers import reserve_credits_atomic, refund_credits_on_failure, finalize_credits_after_success
 from services.db_services.supabase_quiz import get_user_tier_info
+from schemas.billing import UserBillingState
 
 
 class TestGetUserTierInfo:
     """Tests for get_user_tier_info function."""
     
-    @patch('services.db_services.supabase_quiz.get_supabase')
-    def test_get_user_tier_info_success(self, mock_get_supabase):
+    @patch('services.db_services.supabase_quiz.app_config.get_service_role_client')
+    def test_get_user_tier_info_success(self, mock_get_service_role_client):
         """Test successful retrieval of user tier info."""
-        # Mock the Supabase client
+        # Mock the Supabase service role client
         mock_supabase = MagicMock()
-        mock_get_supabase.return_value = mock_supabase
+        mock_get_service_role_client.return_value = mock_supabase
         
         # Mock the response
         mock_response = MagicMock()
@@ -27,7 +30,11 @@ class TestGetUserTierInfo:
             'account_tier': 'free',
             'current_quiz_count': 3,
             'quota_limit': 5,
-            'quota_exceeded': False
+            'quizzes_attempted': 3,
+            'quota_exceeded': False,
+            'credit_units_monthly': 6,
+            'credit_units_remaining': 4,
+            'credit_units_purchased': 0
         }]
         mock_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = mock_response
         
@@ -36,16 +43,14 @@ class TestGetUserTierInfo:
         
         # Assertions
         assert result['account_tier'] == 'free'
-        assert result['current_quiz_count'] == 3
-        assert result['quota_limit'] == 5
-        assert result['quota_exceeded'] is False
+        assert result['credit_units_remaining'] == 4
         
-    @patch('services.db_services.supabase_quiz.get_supabase')
-    def test_get_user_tier_info_user_not_found(self, mock_get_supabase):
+    @patch('services.db_services.supabase_quiz.app_config.get_service_role_client')
+    def test_get_user_tier_info_user_not_found(self, mock_get_service_role_client):
         """Test error handling when user is not found."""
-        # Mock the Supabase client
+        # Mock the Supabase service role client
         mock_supabase = MagicMock()
-        mock_get_supabase.return_value = mock_supabase
+        mock_get_service_role_client.return_value = mock_supabase
         
         # Mock empty response
         mock_response = MagicMock()
@@ -60,118 +65,122 @@ class TestGetUserTierInfo:
         assert "User not found" in str(exc_info.value.detail)
 
 
-class TestValidateUserQuota:
-    """Tests for validate_user_quota function."""
+class TestReserveCreditsAtomic:
+    """Tests for reserve_credits_atomic function (atomic consume before generation)."""
+    pytestmark = pytest.mark.asyncio
     
-    @patch('handlers.quiz_handlers.get_user_tier_info')
-    def test_validate_quota_free_tier_under_limit(self, mock_get_tier_info):
-        """Test quota validation for free tier user under limit."""
-        mock_get_tier_info.return_value = {
-            'id': 'test-user-id',
-            'email': 'test@example.com',
-            'account_tier': 'free',
-            'current_quiz_count': 3,
-            'quota_limit': 5,
-            'quota_exceeded': False
-        }
+    @patch('handlers.quiz_handlers.consume_units', new_callable=AsyncMock)
+    async def test_reserve_credits_success(self, mock_consume):
+        """Test credit reservation succeeds when user has sufficient credits."""
+        mock_consume.return_value = True
         
         # Should not raise exception
-        validate_user_quota('test-user-id')
+        await reserve_credits_atomic('test-user-id', quiz_type='enhanced')
         
-    @patch('handlers.quiz_handlers.get_user_tier_info')
-    def test_validate_quota_free_tier_at_limit(self, mock_get_tier_info):
-        """Test quota validation for free tier user at limit."""
-        mock_get_tier_info.return_value = {
-            'id': 'test-user-id',
-            'email': 'test@example.com',
-            'account_tier': 'free',
-            'current_quiz_count': 5,
-            'quota_limit': 5,
-            'quota_exceeded': True
-        }
+        # Verify consume_units was called atomically
+        mock_consume.assert_called_once_with('test-user-id', 'enhanced')
+    
+    @patch('handlers.quiz_handlers.get_billing_state', new_callable=AsyncMock)
+    @patch('handlers.quiz_handlers.consume_units', new_callable=AsyncMock)
+    async def test_reserve_credits_insufficient_free_user(self, mock_consume, mock_get_state):
+        """Test credit reservation fails with 402 for free user with insufficient credits."""
+        mock_consume.return_value = False  # Atomic consume failed
+        mock_get_state.return_value = UserBillingState(
+            user_id='test-user-id',
+            plan='free',
+            credit_units_monthly=6,
+            credit_units_remaining=0,
+            credit_units_purchased=0,
+            free_credit_units_monthly=6,
+            free_credit_units_remaining=0
+        )
         
-        # Should raise 403 exception
         with pytest.raises(HTTPException) as exc_info:
-            validate_user_quota('test-user-id')
+            await reserve_credits_atomic('test-user-id', quiz_type='enhanced')
         
-        assert exc_info.value.status_code == 403
+        assert exc_info.value.status_code == 402
         detail = exc_info.value.detail
-        assert detail['current_count'] == 5
-        assert detail['quota_limit'] == 5
-        assert detail['user_tier'] == 'free'
-        assert 'Upgrade to basic for 100 quizzes' in detail['detail']
+        assert detail['error'] == 'insufficient_credits'
+        assert 'Upgrade' in detail['message']  # Free users should see upgrade prompt
+        # Verify error detail contains required fields for frontend
+        # Note: credits = units/2, so enhanced (4 units) = 2 credits shown as 1.0 in API
+        assert 'required_credits' in detail
+        assert 'available_credits' in detail
+        assert detail['required_credits'] == 1.0  # Enhanced mode
+        assert detail['available_credits'] == 0
+    
+    @patch('handlers.quiz_handlers.get_billing_state', new_callable=AsyncMock)
+    @patch('handlers.quiz_handlers.consume_units', new_callable=AsyncMock)
+    async def test_reserve_credits_insufficient_pro_user(self, mock_consume, mock_get_state):
+        """Test credit reservation fails with 402 for pro user with insufficient credits."""
+        mock_consume.return_value = False  # Atomic consume failed
+        mock_get_state.return_value = UserBillingState(
+            user_id='test-user-id',
+            plan='pro',
+            credit_units_monthly=80,
+            credit_units_remaining=0,
+            credit_units_purchased=0,
+            free_credit_units_monthly=6,
+            free_credit_units_remaining=0
+        )
         
-    @patch('handlers.quiz_handlers.get_user_tier_info')
-    def test_validate_quota_basic_tier_under_limit(self, mock_get_tier_info):
-        """Test quota validation for basic tier user under limit."""
-        mock_get_tier_info.return_value = {
-            'id': 'test-user-id',
-            'email': 'test@example.com',
-            'account_tier': 'basic',
-            'current_quiz_count': 50,
-            'quota_limit': 100,
-            'quota_exceeded': False
-        }
-        
-        # Should not raise exception
-        validate_user_quota('test-user-id')
-        
-    @patch('handlers.quiz_handlers.get_user_tier_info')
-    def test_validate_quota_basic_tier_at_limit(self, mock_get_tier_info):
-        """Test quota validation for basic tier user at limit."""
-        mock_get_tier_info.return_value = {
-            'id': 'test-user-id',
-            'email': 'test@example.com',
-            'account_tier': 'basic',
-            'current_quiz_count': 100,
-            'quota_limit': 100,
-            'quota_exceeded': True
-        }
-        
-        # Should raise 403 exception
         with pytest.raises(HTTPException) as exc_info:
-            validate_user_quota('test-user-id')
+            await reserve_credits_atomic('test-user-id', quiz_type='standard')
         
-        assert exc_info.value.status_code == 403
+        assert exc_info.value.status_code == 402
         detail = exc_info.value.detail
-        assert detail['current_count'] == 100
-        assert detail['quota_limit'] == 100
-        assert detail['user_tier'] == 'basic'
-        assert 'Upgrade to educator for 500 quizzes' in detail['detail']
+        assert detail['error'] == 'insufficient_credits'
+        assert 'Purchase' in detail['message']  # Pro users should see purchase prompt
+        # Verify error detail contains required fields for frontend
+        # Note: credits = units/2, so standard (2 units) = 1 credit shown as 0.5 in API
+        assert 'required_credits' in detail
+        assert 'available_credits' in detail
+        assert detail['required_credits'] == 0.5  # Standard mode
+        assert detail['available_credits'] == 0
+
+
+class TestRefundCreditsOnFailure:
+    """Tests for refund_credits_on_failure function (refund after failed generation)."""
+    pytestmark = pytest.mark.asyncio
+    
+    @patch('handlers.quiz_handlers.invalidate_user_tier_cache', new_callable=AsyncMock)
+    @patch('handlers.quiz_handlers.refund_units', new_callable=AsyncMock)
+    async def test_refund_credits_success(self, mock_refund, mock_invalidate):
+        """Test credit refund succeeds after failed generation."""
+        mock_refund.return_value = True
+        mock_invalidate.return_value = None
         
-    @patch('handlers.quiz_handlers.get_user_tier_info')
-    def test_validate_quota_educator_tier_under_limit(self, mock_get_tier_info):
-        """Test quota validation for educator tier user under limit."""
-        mock_get_tier_info.return_value = {
-            'id': 'test-user-id',
-            'email': 'test@example.com',
-            'account_tier': 'educator',
-            'current_quiz_count': 450,
-            'quota_limit': 500,
-            'quota_exceeded': False
-        }
+        # Should not raise
+        await refund_credits_on_failure('test-user-id', quiz_type='enhanced')
         
-        # Should not raise exception
-        validate_user_quota('test-user-id')
+        mock_refund.assert_called_once_with('test-user-id', 'enhanced')
+        mock_invalidate.assert_called_once_with('test-user-id')
+    
+    @patch('handlers.quiz_handlers.invalidate_user_tier_cache', new_callable=AsyncMock)
+    @patch('handlers.quiz_handlers.refund_units', new_callable=AsyncMock)
+    async def test_refund_credits_handles_failure_gracefully(self, mock_refund, mock_invalidate):
+        """Test credit refund failure is logged but doesn't raise."""
+        mock_refund.return_value = False  # Refund failed
+        mock_invalidate.return_value = None
         
-    @patch('handlers.quiz_handlers.get_user_tier_info')
-    def test_validate_quota_educator_tier_at_limit(self, mock_get_tier_info):
-        """Test quota validation for educator tier user at limit."""
-        mock_get_tier_info.return_value = {
-            'id': 'test-user-id',
-            'email': 'test@example.com',
-            'account_tier': 'educator',
-            'current_quiz_count': 500,
-            'quota_limit': 500,
-            'quota_exceeded': True
-        }
+        # Should not raise even if refund fails (best-effort)
+        await refund_credits_on_failure('test-user-id', quiz_type='standard')
         
-        # Should raise 403 exception
-        with pytest.raises(HTTPException) as exc_info:
-            validate_user_quota('test-user-id')
+        mock_refund.assert_called_once_with('test-user-id', 'standard')
+        # Cache should still be invalidated
+        mock_invalidate.assert_called_once_with('test-user-id')
+
+
+class TestFinalizeCreditsAfterSuccess:
+    """Tests for finalize_credits_after_success function."""
+    pytestmark = pytest.mark.asyncio
+    
+    @patch('handlers.quiz_handlers.invalidate_user_tier_cache', new_callable=AsyncMock)
+    async def test_finalize_credits_invalidates_cache(self, mock_invalidate):
+        """Test finalize_credits_after_success invalidates the cache."""
+        mock_invalidate.return_value = None
         
-        assert exc_info.value.status_code == 403
-        detail = exc_info.value.detail
-        assert detail['current_count'] == 500
-        assert detail['quota_limit'] == 500
-        assert detail['user_tier'] == 'educator'
+        # Should not raise
+        await finalize_credits_after_success('test-user-id', quiz_type='enhanced')
+        
+        mock_invalidate.assert_called_once_with('test-user-id')

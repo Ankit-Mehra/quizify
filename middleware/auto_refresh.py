@@ -2,21 +2,75 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from starlette.status import HTTP_401_UNAUTHORIZED
+from starlette.datastructures import MutableHeaders
 import os
-import requests
+import httpx
+from services.logger import app_logger as logger
+from services.cookie_utils import (
+    delete_auth_cookie as _delete_auth_cookie,
+    set_auth_cookies as _set_auth_cookies,
+    ACCESS_TOKEN_COOKIE_NAME,
+    REFRESH_TOKEN_COOKIE_NAME,
+)
+from services.redis.sessions import SessionService
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-ACCESS_TOKEN_EXPIRE = 3600  # 1 hour
+
+# Module-level async HTTP client for connection reuse
+_http_client: httpx.AsyncClient | None = None
+
+
+def _get_http_client() -> httpx.AsyncClient:
+    """Get or create the shared async HTTP client."""
+    global _http_client  # noqa: PLW0603  # type: ignore[global-statement]
+    if _http_client is None:
+        _http_client = httpx.AsyncClient(timeout=10.0)
+    return _http_client
+
+
+async def close_http_client() -> None:
+    """
+    Close the shared HTTP client gracefully.
+    
+    Should be called during application shutdown to prevent resource leaks.
+    """
+    global _http_client  # noqa: PLW0603  # type: ignore[global-statement]
+    if _http_client is not None:
+        await _http_client.aclose()
+        _http_client = None
+        logger.debug("Auto-refresh HTTP client closed")
+
+
+def _extract_refresh_token(request: Request) -> str | None:
+    """
+    Extract refresh_token from cookies.
+    
+    Starlette automatically returns the last value if duplicate cookies exist,
+    so we can use the simple request.cookies interface.
+    
+    Returns None if the cookie is missing or empty.
+    """
+    token = request.cookies.get(REFRESH_TOKEN_COOKIE_NAME)
+    return token if token else None
 
 # Public routes that should NOT trigger token logic
 EXCLUDE_PATHS = [
     "/docs",
     "/openapi.json",
     "/redoc",
+    "/health",  # Health check endpoint (public, no auth required)
+    "/api/contact",  # Contact form endpoints (public, no auth required)
+    "/api/share/public",  # Public quiz sharing (no auth required)
     "/api/auth/login",
     "/api/auth/signup",
-    "/api/auth/logout"
+    "/api/auth/confirm",  # Email confirmation callback (no auth required)
+    "/api/auth/forgot-password",  # Password reset request (no auth required)
+    "/api/auth/reset-password",  # Password reset with token (no auth required)
+    "/api/auth/resend-verification",  # Resend verification email (no auth required)
+    "/api/auth/google/signin",  # Google OAuth initiate (no auth required)
+    "/api/auth/google/signin/callback",  # Google OAuth callback (no auth required)
+    "/api/auth/google/signin/token",  # Google ID token signin (no auth required)
 ]
 
 class SupabaseAutoRefreshMiddleware(BaseHTTPMiddleware):
@@ -27,8 +81,8 @@ class SupabaseAutoRefreshMiddleware(BaseHTTPMiddleware):
         if any(path.startswith(p) for p in EXCLUDE_PATHS):
             return await call_next(request)
 
-        access_token = request.cookies.get("access_token")
-        refresh_token = request.cookies.get("refresh_token")
+        access_token = request.cookies.get(ACCESS_TOKEN_COOKIE_NAME)
+        refresh_token = _extract_refresh_token(request)
 
         if access_token:
             headers = {
@@ -37,15 +91,20 @@ class SupabaseAutoRefreshMiddleware(BaseHTTPMiddleware):
             }
 
             try:
-                user_resp = requests.get(f"{SUPABASE_URL}/auth/v1/user", headers=headers)
+                client = _get_http_client()
+                user_resp = await client.get(f"{SUPABASE_URL}/auth/v1/user", headers=headers)
                 if user_resp.status_code == 200:
                     return await call_next(request)
-            except Exception:
-                pass  # Fall through to refresh
+                logger.info("Access token invalid, attempting refresh", extra={"status": user_resp.status_code})
+            except Exception:  # noqa: BLE001
+                logger.exception("Access token validation failed, attempting refresh")
+                # Fall through to refresh
 
         if refresh_token:
             try:
-                refresh_resp = requests.post(
+                logger.debug("Attempting token refresh via Supabase")
+                client = _get_http_client()
+                refresh_resp = await client.post(
                     f"{SUPABASE_URL}/auth/v1/token?grant_type=refresh_token",
                     headers={
                         "apikey": SUPABASE_KEY,
@@ -57,30 +116,102 @@ class SupabaseAutoRefreshMiddleware(BaseHTTPMiddleware):
                 if refresh_resp.status_code == 200:
                     session = refresh_resp.json()
                     new_access_token = session.get("access_token")
+                    new_refresh_token = session.get("refresh_token")
                     if not new_access_token:
-                        raise Exception("No access token returned")
+                        raise ValueError("No access token returned from refresh")
+
+                    # Make refreshed token available to downstream dependencies immediately
+                    request.state.access_token = new_access_token
+
+                    # Inject Authorization header so HTTPBearer dependencies pick it up
+                    headers = MutableHeaders(scope=request.scope)
+                    headers["Authorization"] = f"Bearer {new_access_token}"
+                    logger.debug("Successfully refreshed access token")
+                    
+                    # CRITICAL: Update Redis session mapping if refresh token changed
+                    # Supabase returns a NEW refresh token on refresh - we must update the mapping
+                    # or subsequent requests will fail to find the session
+                    if new_refresh_token and new_refresh_token != refresh_token:
+                        redis_client = getattr(request.app.state, "redis", None)
+                        if redis_client:
+                            try:
+                                session_service = SessionService(redis_client)
+                                session_id = await session_service.find_session_by_refresh_token(refresh_token)
+                                if session_id:
+                                    await session_service.update_refresh_token(
+                                        session_id=session_id,
+                                        old_refresh_token=refresh_token,
+                                        new_refresh_token=new_refresh_token
+                                    )
+                                    logger.info(
+                                        f"Updated Redis session {session_id[:12]}... with new refresh token"
+                                    )
+                                else:
+                                    logger.warning(
+                                        "Could not find session for old refresh token during refresh - "
+                                        "session mapping may be stale"
+                                    )
+                            except Exception as redis_error:
+                                # Log but don't fail - the request can still proceed
+                                # Next request will fail with 401 if session not found
+                                logger.error(f"Failed to update Redis session with new refresh token: {redis_error}")
 
                     response = await call_next(request)
-                    response.set_cookie(
-                        key="access_token",
-                        value=new_access_token,
-                        httponly=True,
-                        secure=True,
-                        samesite="lax",
-                        max_age=ACCESS_TOKEN_EXPIRE
-                    )
+                    # Use shared cookie utility to ensure consistent settings with login
+                    # This prevents duplicate cookies from mismatched SameSite attributes
+                    _set_auth_cookies(response, new_access_token, new_refresh_token or refresh_token)
                     return response
 
                 else:
-                    return JSONResponse(
-                        status_code=HTTP_401_UNAUTHORIZED,
-                        content={"detail": "Session expired or invalid refresh token"}
+                    logger.warning(
+                        "Refresh token invalid - clearing cookies",
+                        extra={"status": refresh_resp.status_code, "response": refresh_resp.text}
                     )
-            except Exception as e:
-                return JSONResponse(
+                    
+                    # Cleanup Redis session before returning 401
+                    redis_client = getattr(request.app.state, "redis", None)
+                    if redis_client and refresh_token:
+                        try:
+                            session_service = SessionService(redis_client)
+                            session_id = await session_service.find_session_by_refresh_token(refresh_token)
+                            if session_id:
+                                await session_service.logout(session_id)
+                                logger.info("Cleaned up expired session %s... on auto-logout (refresh failed)", session_id[:12])
+                        except Exception as cleanup_error:  # noqa: BLE001
+                            logger.warning("Failed to cleanup session on auto-logout: %s", cleanup_error)
+                    
+                    # Don't call the next handler - return 401 directly and clear cookies
+                    response = JSONResponse(
+                        status_code=HTTP_401_UNAUTHORIZED,
+                        content={"detail": "Session expired. Please log in again."}
+                    )
+                    # Clear both tokens so frontend knows user is logged out
+                    _delete_auth_cookie(response, REFRESH_TOKEN_COOKIE_NAME)
+                    _delete_auth_cookie(response, ACCESS_TOKEN_COOKIE_NAME)
+                    return response
+            except Exception:  # noqa: BLE001
+                logger.exception("Token refresh failed - clearing cookies")
+                
+                # Cleanup Redis session before returning 401
+                redis_client = getattr(request.app.state, "redis", None)
+                if redis_client and refresh_token:
+                    try:
+                        session_service = SessionService(redis_client)
+                        session_id = await session_service.find_session_by_refresh_token(refresh_token)
+                        if session_id:
+                            await session_service.logout(session_id)
+                            logger.info("Cleaned up expired session %s... on auto-logout (refresh exception)", session_id[:12])
+                    except Exception as cleanup_error:  # noqa: BLE001
+                        logger.warning("Failed to cleanup session on auto-logout: %s", cleanup_error)
+                
+                response = JSONResponse(
                     status_code=HTTP_401_UNAUTHORIZED,
-                    content={"detail": f"Token refresh failed: {str(e)}"}
+                    content={"detail": "Session expired. Please log in again."}
                 )
+                # Clear both tokens
+                _delete_auth_cookie(response, REFRESH_TOKEN_COOKIE_NAME)
+                _delete_auth_cookie(response, ACCESS_TOKEN_COOKIE_NAME)
+                return response
 
         # No access and no refresh token — let route-level auth handle it
         return await call_next(request)

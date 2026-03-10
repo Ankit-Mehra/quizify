@@ -1,9 +1,10 @@
 from fastapi import APIRouter, HTTPException, Response
 from schemas.quiz import (
     QuizMetadata, 
-    QuizGenerationResponse,
     QuizzesResponse,
-    MyQuizzesResponse
+    PaginatedQuizzesResponse,
+    DeleteQuizResponse,
+    EnhancedQuizGenerationResponse
 )
 from handlers.quiz_handlers import (
     generate_quiz_from_file_openai,
@@ -47,40 +48,43 @@ router.add_api_route(
     endpoint=generate_quiz_from_text,
     methods=["POST"],
     summary="Generate Quiz from Text",
-    response_model=QuizGenerationResponse,
+    description="Generate a quiz from text content. Use mode='standard' for fast generation or mode='enhanced' for RAG-based quality with Bloom's taxonomy.",
+    response_model=EnhancedQuizGenerationResponse,
     tags=["Quiz Generation"]
 )
 
-# Generate quiz from file
+# Generate quiz from direct file upload
 router.add_api_route(
-    path="/quiz/generate/file",
+    path="/quiz/generate/upload",
     endpoint=generate_quiz_from_file_openai,
     methods=["POST"],
-    summary="Generate Quiz from File (Gemini)",
-    response_model=QuizGenerationResponse,
+    summary="Generate Quiz from File Upload",
+    description="Generate a quiz from a direct file upload (PDF/DOCX). Use mode='standard' for fast generation or mode='enhanced' for RAG-based quality.",
+    response_model=EnhancedQuizGenerationResponse,
     status_code=201,
     tags=["Quiz Generation"]
 )
 
-# Generate quiz from URL (must come BEFORE /quiz/generate/{file_id} to avoid route conflict)
+# Generate quiz from URL
 router.add_api_route(
     path="/quiz/generate/url",
     endpoint=generate_quiz_from_url,
     methods=["POST"],
     summary="Generate Quiz from Web URL",
-    description="Generate a quiz from a web page URL. Available for all tiers with quota limits (Free: 5, Basic: 20, Educator: 500).",
-    response_model=QuizGenerationResponse,
+    description="Generate a quiz from a web page URL. Use mode='standard' for fast generation or mode='enhanced' for RAG-based quality. Available for all tiers with quota limits.",
+    response_model=EnhancedQuizGenerationResponse,
     status_code=201,
     tags=["Quiz Generation"]
 )
 
-# Generate quiz from file ID (must come AFTER specific routes like /url to avoid capturing them)
+# Generate quiz from existing file ID
 router.add_api_route(
-    path="/quiz/generate/{file_id}",
+    path="/quiz/generate/file/{file_id}",
     endpoint=generate_quiz_from_fileid,
     methods=["POST"],
     summary="Generate Quiz from File ID",
-    response_model=QuizGenerationResponse,
+    description="Generate a quiz from a previously uploaded file using its UUID. Use mode='standard' for fast generation or mode='enhanced' for RAG-based quality.",
+    response_model=EnhancedQuizGenerationResponse,
     tags=["Quiz Generation"]
 )
 
@@ -89,9 +93,9 @@ router.add_api_route(
     path="/quiz/my-quizzes",
     endpoint=get_user_quizzes_handler,
     methods=["GET"],
-    response_model=List[MyQuizzesResponse],
+    response_model=PaginatedQuizzesResponse,
     summary="Get User Quizzes",
-    description="Returns a list of all quizzes created by the current user, with metadata such as title, creation date, and question count.",
+    description="Returns a paginated list of quizzes created by the current user. Supports filtering by title, date range, source type (file/url/text), and generation mode (standard/enhanced). Use page and limit for pagination.",
     tags=["Quiz Management"]
 )
 
@@ -131,5 +135,8 @@ router.add_api_route(
     endpoint=delete_quiz_by_id_handler,
     methods=["DELETE"],
     summary="Delete Quiz by ID",
+    response_model=DeleteQuizResponse,
     tags=["Quiz Management"]
 )
+
+

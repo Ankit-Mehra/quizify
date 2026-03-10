@@ -4,10 +4,10 @@ import tempfile
 from docx import Document
 from services.logger import app_logger as logger
 
-logger.info("Doc service initialized")
+logger.debug("Doc service initialized")
 
 def extract_text_from_pdf(contents):
-    logger.info("Extracting text from PDF")
+    logger.debug("Extracting text from PDF")
     # Create a temporary file with proper context management
     with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as temp:
         temp.write(contents)
@@ -20,9 +20,9 @@ def extract_text_from_pdf(contents):
             text += page.get_text()
         doc.close()
         return text
-    except Exception as e:
-        logger.error(f"Error extracting text from PDF: {str(e)}")
-        raise Exception(f"Failed to extract text from PDF: {str(e)}")
+    except Exception:
+        logger.exception("Error extracting text from PDF")
+        raise Exception("Failed to extract text from PDF")
     finally:
         # Clean up the temporary file
         if os.path.exists(temp_path):
@@ -30,7 +30,7 @@ def extract_text_from_pdf(contents):
 
 def extract_text_from_docx(contents):
     # Create a temporary file to save the binary content
-    logger.info("Extracting text from DOCX")
+    logger.debug("Extracting text from DOCX")
     with tempfile.NamedTemporaryFile(suffix='.docx', delete=False) as temp:
         temp.write(contents)
         temp_path = temp.name
@@ -48,7 +48,7 @@ def extract_text_from_docx(contents):
             os.remove(temp_path)
 
 def extract_text_from_plain_text(contents):
-    logger.info("Extracting text from plain text")
+    logger.debug("Extracting text from plain text")
     # Try different encodings to handle various file types
     encodings = ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']
     
@@ -62,6 +62,6 @@ def extract_text_from_plain_text(contents):
     return contents.decode('utf-8', errors='replace')
 
 def is_pdf(bytes_data: bytes) -> bool:
-    logger.info("Checking if file is PDF")
+    logger.debug("Checking if file is PDF")
     return bytes_data.startswith(b"%PDF")
 

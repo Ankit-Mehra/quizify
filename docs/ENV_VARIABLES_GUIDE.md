@@ -109,9 +109,39 @@ ADMIN_USER_IDS=uuid-1,uuid-2,uuid-3
 
 ---
 
+## 🔐 Session Management Security
+
+### 8. IP Hash Secret (REQUIRED for production)
+```bash
+IP_HASH_SECRET=your-random-secret-key-min-32-chars
+```
+**Used by:**
+- `services/redis/sessions.py` - Salted IP address hashing for session metadata
+
+**Why required:**
+- ✅ Prevents rainbow table attacks on stored IP hashes
+- ✅ Makes stored IP addresses non-reversible even if Redis is exposed
+- ⚠️ If not set, IP addresses are stored as "redacted" (privacy fallback)
+
+**How to generate:**
+```bash
+# Generate a secure random secret (Linux/Mac)
+python3 -c "import secrets; print(secrets.token_urlsafe(32))"
+
+# Or use OpenSSL
+openssl rand -base64 32
+```
+
+**Example:**
+```bash
+IP_HASH_SECRET=Kj8s_9Xp2mN4vB7qL1wZ5rT3hY6fD0aE8cG4uI9oP2x
+```
+
+---
+
 ## 🌐 Web Scraping Configuration
 
-### 8. Scraper User Agent (Optional)
+### 9. Scraper User Agent (Optional)
 ```bash
 SCRAPER_USER_AGENT=Mozilla/5.0 (compatible; QuizifyBot/1.0; +https://quizify.app/bot)
 ```
@@ -175,6 +205,9 @@ SUPABASE_STORAGE_NAME=quiz-files
 
 # AI
 OPENAI_API_KEY=sk-proj-...
+
+# Security - Session Management (REQUIRED)
+IP_HASH_SECRET=your-random-secret-key-min-32-chars
 
 # Production Settings (secure)
 DEVELOPMENT_MODE=false
@@ -242,3 +275,35 @@ SUPABASE_STORAGE_NAME=quiz-files  # ⚠️ Add this!
    - Update `BACKEND_CORS_ORIGINS` with your real domain
 
 That's it! The lazy loading refactor made your code cleaner but didn't reduce the number of required environment variables. 🎉
+
+---
+
+## 🕐 Cron Job Configuration (REQUIRED for Production)
+
+### CRON_API_KEY
+
+```bash
+CRON_API_KEY=your_secure_random_key_here
+```
+
+**Used by:**
+- `api/cron_routes.py` - Monthly credit reset endpoint
+- Railway cron job (or other schedulers)
+
+**Why required:** 
+- Authenticates scheduled tasks that reset free user credits monthly
+- Without this, the cron endpoint will block all requests in production
+
+**How to generate:**
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+
+**Setup instructions:**
+- See [RAILWAY_CRON_SETUP.md](./RAILWAY_CRON_SETUP.md) for complete Railway cron job configuration
+- This is critical for production - free users won't get monthly credit resets without it
+
+**Security:**
+- Keep this key secret (like a password)
+- Anyone with this key can trigger credit resets
+- Uses constant-time comparison to prevent timing attacks

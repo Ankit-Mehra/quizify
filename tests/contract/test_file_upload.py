@@ -9,7 +9,6 @@ Tests file upload functionality including:
 import pytest
 from fastapi.testclient import TestClient
 from main import app
-from dependencies.auth_dependencies import get_current_user_id
 import io
 
 client = TestClient(app)
@@ -47,13 +46,16 @@ class TestFileUpload:
         # Response should contain some file information
         assert data is not None, "Response should not be None"
     
-    def test_file_upload_without_auth_returns_401(self, mock_supabase_client):
+    def test_file_upload_without_auth_returns_403_csrf(self, mock_supabase_client):
         """
-        Test that file upload without authentication returns HTTP 401.
+        Test that file upload without authentication returns HTTP 403 (CSRF protection).
+        
+        Note: POST requests without Authorization header or X-CSRF-Token are rejected
+        by CSRF middleware before auth can run. This is correct security behavior.
         
         Expected:
-        - Status code: 401
-        - Error message about authentication
+        - Status code: 403
+        - Error message about CSRF protection
         """
         text_bytes = create_test_text_file()
         
@@ -63,8 +65,8 @@ class TestFileUpload:
         
         response = client.post("/api/files/upload", files=files)
         
-        assert response.status_code == 401, \
-            f"Expected 401 without auth, got {response.status_code}: {response.text}"
+        assert response.status_code == 403, \
+            f"Expected 403 without auth, got {response.status_code}: {response.text}"
         
         data = response.json()
         assert "detail" in data or "message" in data, f"Error response missing detail/message: {data}"

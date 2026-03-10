@@ -35,7 +35,7 @@ def create_test_docx(content: str) -> bytes:
     return buffer.read()
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="function")
 def auth_token():
     """Create a test user and return auth token."""
     signup_payload = {
@@ -44,7 +44,10 @@ def auth_token():
         "name": "Quiz Flow Test User"
     }
     signup_response = client.post("/api/auth/signup", json=signup_payload)
-    assert signup_response.status_code == 201
+    # If user already exists (from previous test run), try login directly
+    if signup_response.status_code != 201:
+        # Ensure it's because user exists
+        assert signup_response.status_code == 400 or signup_response.status_code == 409
     
     login_payload = {
         "email": TEST_EMAIL,
@@ -74,6 +77,10 @@ class TestQuizGenerationFlow:
         5. Verify all data persisted correctly
         """
         headers = {"Authorization": f"Bearer {auth_token}"}
+        
+        # Extract cookies from the client (they should have been set during login)
+        # TestClient maintains cookies, but we need to ensure they're being sent
+        # Note: Cookies are automatically included by TestClient in subsequent requests
         
         # Step 1: Upload file
         file_content = """
@@ -117,7 +124,7 @@ class TestQuizGenerationFlow:
             "question_type": ["multiple_choice", "true_false"]  # Provide as list, not JSON string
         }
         
-        quiz_response = client.post("/api/quiz/generate/file", headers=headers, files=quiz_files, data=quiz_data)
+        quiz_response = client.post("/api/quiz/generate/upload", headers=headers, files=quiz_files, data=quiz_data)
         
         assert quiz_response.status_code == 201, \
             f"Quiz generation failed: {quiz_response.text}"
@@ -135,8 +142,10 @@ class TestQuizGenerationFlow:
         assert my_quizzes_response.status_code == 200, \
             f"Failed to retrieve user quizzes: {my_quizzes_response.text}"
         
-        my_quizzes = my_quizzes_response.json()
-        assert isinstance(my_quizzes, list), "User quizzes should be a list"
+        my_quizzes_data = my_quizzes_response.json()
+        assert isinstance(my_quizzes_data, dict), "User quizzes should be a paginated response"
+        assert "quizzes" in my_quizzes_data, "Response should contain quizzes key"
+        my_quizzes = my_quizzes_data["quizzes"]
         
         # Find our quiz in the list
         our_quiz = next((q for q in my_quizzes if q.get("id") == quiz_id or q.get("quiz_id") == quiz_id), None)

@@ -6,14 +6,15 @@ Business logic for administrative operations.
 from fastapi import HTTPException, status, Depends
 from typing import List, Dict, Any
 from services.logger import app_logger as logger
-from config import config
 from schemas.user import UserTierUpdate, UserWithTier, RoleUpdate
 from dependencies.auth_dependencies import get_current_user_id
 
 # Lazy load Supabase client to avoid initialization issues in tests
+from config import config as app_config
+
 def get_supabase():
     """Get Supabase client (lazy loaded)"""
-    return config.get_supabase_client()
+    return app_config.get_supabase_client()
 
 def is_admin(user_id: str) -> bool:
     """
@@ -31,7 +32,7 @@ def is_admin(user_id: str) -> bool:
     import os
     
     # For testing, allow any authenticated user to be admin
-    if config.is_testing():
+    if app_config.is_testing():
         logger.info(f"Testing mode: Granting admin access to user {user_id}")
         return True
     
@@ -227,11 +228,12 @@ async def update_user_tier(
         )
     
     try:
-        # Validate tier value
-        valid_tiers = ["free", "basic", "educator"]
-        if tier_update.new_tier not in valid_tiers:
+        # Validate tier (premium kept for backward compatibility, maps to pro in billing)
+        valid_tiers = ["free", "pro"]
+        # Also accept premium for backward compatibility with existing admin tools
+        if tier_update.new_tier not in valid_tiers and tier_update.new_tier != "premium":
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
+                status_code=400,
                 detail=f"Invalid tier. Must be one of: {', '.join(valid_tiers)}"
             )
         

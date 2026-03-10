@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 from services.db_services.supabase_file import get_file_metadata, create_presigned_url
-from schemas.files import FileMetadataResponse, FileDownloadResponse, FileUploadResponse
+from schemas.files import FileMetadataResponse, FileDownloadResponse, FileUploadResponse, FileDeleteResponse
 from handlers.file_handlers import upload_file, delete_file
 from services.logger import app_logger as logger
 
@@ -41,6 +41,7 @@ router.add_api_route(
     path="/{file_id}",
     endpoint=delete_file,
     methods=["DELETE"],
+    response_model=FileDeleteResponse,
     summary="Delete File by ID",
     tags=["Files"]
 )

@@ -1,9 +1,10 @@
 # API Contract: Generate Quiz from Text (ACTUAL IMPLEMENTATION)
 
 **Endpoint**: `POST /api/quiz/generate/text`  
-**Status**: ✅ IMPLEMENTED (No quota validation)  
+**Status**: ✅ FULLY IMPLEMENTED  
 **Authentication**: Required (Bearer token)  
-**Last Updated**: 2025-10-08
+**Response Model**: `QuizGenerationResponse`  
+**Last Updated**: 2025-10-28
 
 ---
 
@@ -33,29 +34,48 @@ Content-Type: application/json
   - Valid types: `"multiple_choice"`, `"true_false"`, `"fill_blank"`, `"matching"`, `"mixed"`
 
 ### Current Business Rules
-- ❌ **No quota checking** - Users can generate unlimited quizzes
-- ❌ **No tier validation** - All authenticated users can use this endpoint
+- ✅ **Quota checking enabled** - Uses `validate_user_quota()` before generation
+- ✅ **Tier-based limits enforced** - Free: 5, Basic: 20, Educator: 500 quizzes
 - ✅ **User authentication required** - Returns 401 if not authenticated
 - ✅ **Content saved to Supabase Storage** - As `{title}.txt` file
 - ✅ **Metadata saved to database** - Includes word count, timestamps
+- ✅ **Returns generated questions** - Questions array included in response
 
 ---
 
 ## Response
 
 ### Success (200 OK) - ACTUAL
+
+**Response Model**: `QuizGenerationResponse`
+
 ```json
 {
   "quiz_id": "550e8400-e29b-41d4-a716-446655440000",
   "title": "Python Basics Quiz",
-  "message": "Quiz generated successfully from text"
+  "message": "Quiz generated successfully from text",
+  "questions": [
+    {
+      "id": "q1-uuid",
+      "quiz_id": "550e8400-e29b-41d4-a716-446655440000",
+      "type": "multiple_choice",
+      "question": "What is Python?",
+      "options": ["A snake", "A programming language", "A framework", "A database"],
+      "correct_answer": "A programming language",
+      "explanation": "",
+      "source": ""
+    }
+  ]
 }
 ```
 
-**Note**: Response does NOT include:
-- ❌ `questions_generated` count
-- ❌ `questions_requested` count
-- ❌ `questions` array (questions are stored in database, not returned)
+### Response Fields
+- `quiz_id` (string): UUID of the created quiz
+- `title` (string): Quiz title
+- `message` (string): Success message
+- `questions` (array, optional): List of generated questions with database IDs
+- `source_url` (string, optional): Not present for text-based quizzes
+- `file_id` (string, optional): Not present for text-based quizzes
 
 ---
 
@@ -72,6 +92,19 @@ Content-Type: application/json
 - No Bearer token provided
 - Invalid/expired token
 - `current_user_id` is undefined
+
+### 403 Forbidden - Quota Exceeded
+```json
+{
+  "detail": "Quiz generation quota exceeded. You have created X/Y quizzes. Please upgrade your tier for more quota."
+}
+```
+
+**Triggered when**:
+- User has reached their tier's quiz quota
+- Free tier: 5 quizzes
+- Basic tier: 20 quizzes  
+- Educator tier: 500 quizzes
 
 ### 422 Unprocessable Entity
 ```json
@@ -217,6 +250,6 @@ When quiz generation succeeds, the following actions occur:
 
 ---
 
-**Contract Version**: Actual Implementation as of 2025-10-08  
-**Differs from Spec**: Yes (missing quota validation, tier checking, threshold validation)  
-**Production Ready**: ⚠️ NO - Missing quota enforcement allows unlimited generation
+**Contract Version**: Actual Implementation as of 2025-10-23 (Corrected)  
+**Differs from Spec**: Partially (missing 75% threshold validation, min content length)  
+**Production Ready**: ✅ YES - Has quota validation (Line 321) + 10MB size limit (Line 336-340)
