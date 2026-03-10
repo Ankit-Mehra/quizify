@@ -559,13 +559,18 @@ def get_user_tier_info(user_id: str):
     Get user tier information including quota status from user_tier_info view.
     
     SECURITY MODEL:
-    - This function ALWAYS uses SERVICE ROLE client (not authenticated client)
-    - Reason: user_tier_info view accesses auth.users table which requires elevated permissions
-    - Safety: user_id comes from authenticated JWT (validated by FastAPI dependency injection)
-    - No data leakage risk: Query is explicitly filtered by user_id parameter
-    
-    This is the ONE documented exception to the "use authenticated clients everywhere" rule.
-    All other database operations should use authenticated clients for RLS enforcement.
+    - Uses SERVICE ROLE client for consistency and backwards compatibility
+    - The user_tier_info view sources only from public.profiles (no auth.users dependency)
+      since migration 042 removed the direct join on auth.users
+    - emails are intended to be synced to profiles.email via triggers on signup and,
+      where database privileges allow, on email change; in restricted environments
+      the email-change trigger creation may be skipped, so this sync is best-effort
+      and should not be treated as a hard security guarantee
+    - user_id is the authoritative identifier and is expected to come from a validated
+      authenticated JWT (enforced by FastAPI dependency injection in callers)
+    - Data leakage risk is minimized when callers only pass the authenticated user's id;
+      this function relies on correct caller behavior while using a service-role client
+      that bypasses RLS and filters by the provided user_id
     
     Args:
         user_id: The UUID of the user (must be validated from JWT token by caller)
@@ -573,8 +578,8 @@ def get_user_tier_info(user_id: str):
     Returns:
         dict: User tier information with keys:
             - id: User UUID
-            - email: User email
-            - account_tier: 'free', 'premium', or 'pro'
+            - email: User email (synced from auth.users to profiles)
+            - account_tier: Account tier string (typically 'free' or 'pro', derived from profiles.billing_plan; legacy data may still use 'premium' in older schemas)
             - current_quiz_count: Number of quizzes created
             - quizzes_attempted: Number of quizzes attempted (submissions)
             - quota_limit: Max quizzes allowed for tier
@@ -585,12 +590,12 @@ def get_user_tier_info(user_id: str):
     """
     try:
         # Always use service role for querying user_tier_info view
-        # This is necessary because the view accesses auth.users table
-        # Security is maintained by:
-        # 1. user_id comes from authenticated JWT (validated by FastAPI dependency)
-        # 2. We only return data for the specific user_id (no risk of data leakage)
+        # Service role is used for consistency (bypasses RLS) though the view
+        # now sources from public.profiles only (migration 042 removed auth.users join)
+        # TODO: Consider switching to authenticated client (user_token) now that
+        #       the view no longer depends on auth.users — would enforce RLS scoping
         
-        # Use the explicit service role client for this privileged operation
+        # Use the explicit service role client
         supabase = app_config.get_service_role_client()
         
         # Debug: Verify we got a client and check the key being used

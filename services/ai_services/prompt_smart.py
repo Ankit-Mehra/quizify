@@ -25,6 +25,7 @@ def build_prompt(
 
     Rules:
     - Output only valid JSON, no comments, no markdown.
+    - EVERY generated question MUST include a valid "explanation" (string) and "source" (string) field.
     {extra_instructions.strip()}
     """).strip()
 
