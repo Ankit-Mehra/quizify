@@ -568,7 +568,9 @@ def get_user_tier_info(user_id: str):
       and should not be treated as a hard security guarantee
     - user_id is the authoritative identifier and is expected to come from a validated
       authenticated JWT (enforced by FastAPI dependency injection in callers)
-    - No data leakage risk: Query is explicitly filtered by user_id parameter
+    - Data leakage risk is minimized when callers only pass the authenticated user's id;
+      this function relies on correct caller behavior while using a service-role client
+      that bypasses RLS and filters by the provided user_id
     
     Args:
         user_id: The UUID of the user (must be validated from JWT token by caller)
@@ -577,7 +579,7 @@ def get_user_tier_info(user_id: str):
         dict: User tier information with keys:
             - id: User UUID
             - email: User email (synced from auth.users to profiles)
-            - account_tier: 'free', 'premium', or 'pro'
+            - account_tier: Account tier string (typically 'free' or 'pro', derived from profiles.billing_plan; legacy data may still use 'premium' in older schemas)
             - current_quiz_count: Number of quizzes created
             - quizzes_attempted: Number of quizzes attempted (submissions)
             - quota_limit: Max quizzes allowed for tier
