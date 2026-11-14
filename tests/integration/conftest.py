@@ -438,14 +438,14 @@ def mock_requests_get(url, headers=None, **kwargs):
     return Mock(status_code=200, json=lambda: {}, raise_for_status=lambda: None)
 
 
-def mock_get_user_quizzes(user_id):
+def mock_get_user_quizzes(user_id, user_token=None):
     """Mock getting user quizzes."""
     return _quiz_storage.get_user_quizzes(user_id)
 
 
-def mock_get_quiz_from_database(quiz_id, user_id=None):
-    """Mock getting quiz from database."""
-    return _quiz_storage.get_quiz(quiz_id, user_id)
+def mock_get_quiz_from_database(quiz_id, user_token=None):
+    """Mock getting quiz from database. user_token is ignored in mock."""
+    return _quiz_storage.get_quiz(quiz_id, user_id=None)
 
 
 @pytest.fixture(scope="module", autouse=True)

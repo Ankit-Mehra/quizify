@@ -109,10 +109,15 @@ def save_quiz_to_database(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-def get_quiz_from_database(quiz_id: str):
+def get_quiz_from_database(quiz_id: str, user_token: Optional[str] = None):
     try:
-        supabase = get_supabase()
-        logger.info(f"Fetching quiz with ID: {quiz_id}")
+        # Use authenticated client if token provided for RLS consistency
+        if user_token:
+            supabase = get_authed_supabase_client(user_token)
+            logger.info(f"Using authenticated client to fetch quiz: {quiz_id}")
+        else:
+            supabase = get_supabase()
+            logger.info(f"Using service role to fetch quiz: {quiz_id}")
         
         # Get the quiz metadata
         quiz = supabase.table("quizzes").select("*").eq("id", quiz_id).execute()
